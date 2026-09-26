@@ -228,8 +228,12 @@ ok("群白名单保存失败会如实报（不许静默丢）", "群白名单保
 
 # ── ──
 ok("向导标题与总步数已是五步", "五步上手" in _page and _sm.has(_page, "第 1 步/共 5 步") and _sm.has(_page, "第 5 步/共 5 步"))
-ok("第 2 步是「机器人昵称＝你自己微信的原名」（有输入框、并写明默认值只是占位）",
-   'id="obNick"' in _page and "你自己微信的原名" in _page and "群deepseek" in _page
+# ⛔ 这条以前还要求页面上出现一个**具体的占位昵称**（并解释"那只是占位"）。
+#    那个默认值已经去掉了（它是某个具体微信号的昵称，随包发出去等于把别人的名字发给第三方，
+#    而它在对方机器上毫无用处）⇒ 现在断言改成正面的口径：
+#    **问用户要他自己微信的原名**，并说清留空的行为（只认角色身份名）。
+ok("第 2 步是「机器人昵称＝你自己微信的原名」（有输入框、写明留空行为、且不写死任何具体昵称）",
+   'id="obNick"' in _page and "你自己微信的原名" in _page and "留空" in _page
    and _sm.has(_page, "setPath(cfg,'wechat.bot_nickname', nick)"))
 ok("第 4 步有真的「恢复」按钮（打 /api/resume，并如实报成功/失败）",
    'id="obResume"' in _page and _sm.has(_page, "await getJSON('/api/resume'") and "恢复失败" in _page)

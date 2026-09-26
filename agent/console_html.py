@@ -2331,7 +2331,7 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="mid" id="holidayRows">
         <div class="row"><label>问候白名单</label><div class="grow">
-          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：群deepseek, 文件传输助手（逗号或换行分隔）"></textarea>
+          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：家人群, 文件传输助手（逗号或换行分隔）"></textarea>
           <div class="hint">只有名单里的会话会被主动问候；<b>留空＝即使选了 active 也不会主动发</b>（防"节日变群发"）</div>
         </div></div>
         <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
@@ -5495,8 +5495,9 @@ async function onboarding(){
         const body=$('obBody');
         const _curNick = getPath(cfg,'wechat.bot_nickname')||'';
         body.innerHTML='<div class="row" style="align-items:flex-start"><label>机器人昵称</label><div class="grow">'+
-          '<input type="text" id="obNick" placeholder="填你自己微信的原名" value="'+esc(_curNick==='群deepseek'?'':_curNick)+'">'+
-          '<div class="hint">默认的「群deepseek」只是个占位，不是你的名字。填成<b>你自己微信的原名</b>（你那个号在微信里叫什么，就填什么）。</div>'+
+          '<input type="text" id="obNick" placeholder="填你自己微信的原名" value="'+esc(_curNick)+'">'+
+          '<div class="hint">填<b>你自己微信的原名</b>（机器人那个号在微信里叫什么，就填什么）——'+
+          '群友 @ 的就是这个名字。留空也行：那样它只认「角色身份名」。</div>'+
           '</div></div>';
         $('obNext').textContent='保存并继续'; step=2; return;
       }

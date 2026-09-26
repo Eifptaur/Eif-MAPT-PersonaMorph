@@ -236,13 +236,13 @@ class _Wizard(DraggableDialog, QDialog):
         self.nick_w = QLineEdit()
         self.nick_w.setObjectName("obNick")
         self.nick_w.setPlaceholderText("填你自己微信的原名")
-        self.nick_w.setText("" if cur == "群deepseek" else cur)
+        self.nick_w.setText(cur)
         row.addWidget(lb)
         row.addWidget(self.nick_w, 1)
         self.body_lay.addLayout(row)
         self.body_lay.addWidget(desc(
-            t, "默认的「群deepseek」只是个占位，不是你的名字。填成你自己微信的原名"
-               "（你那个号在微信里叫什么，就填什么）。"))
+            t, "填你自己微信的原名（机器人那个号在微信里叫什么，就填什么）——"
+               "群友 @ 的就是这个名字。留空也行：那样它只认「角色身份名」。"))
         self.b_next.setText("保存并继续")
 
     def _render_step3_groups(self, groups: list) -> None:

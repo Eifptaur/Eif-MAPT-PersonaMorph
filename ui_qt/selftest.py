@@ -9138,6 +9138,84 @@ def t_dev_dir_guard() -> None:
        not _scripts, "；".join(_scripts)[:150])
 
 
+#: 默认表与示例文件**值不一样**的键 —— 记的是 `键: (默认值, 示例值, 为什么可以不一样)`。
+#   为什么要有这条闸门：两处都是"给外人看的默认"，值不一致的地方正是**个人值 / 私有口径**最爱藏的角落
+#   （实测抓到过一次：默认表里躺着一个具体微信号的昵称，示例文件里却是空串 ⇒ 随包发给别人时，
+#   对方面板里显示的是**别人的名字**）。不禁止差异（示例有意更保守），但**必须逐条登记理由**，
+#   且**值一变就红**（记了值才会在你悄悄改动它的那一刻发现）。
+#   注：只允许"差异消失"（对齐是好事），不允许"差异新增"。
+DEF_VS_EXAMPLE_OK = {
+    "image_gen.online_allowed": (True, False, "示例更保守：拿示例当起点的人不该被默认允许出网"),
+    "memory.summarize_on_exit": (True, False, "示例更保守：关掉「退出时总结」（那一步会调一次模型）"),
+    "send.quote_on_new_talk": (True, False, "示例更保守：不自动引用对方最近一句话"),
+    "ui.lock_window_pos": (True, False, "示例更保守：不动用户的窗口几何"),
+    # ⚠️ 长值（URL）记**形状**（前缀 + 省略号）而不是整串：把整串抄进来等于在产品里**多存一份**，
+    #    而出包闸门对"仓库名"是敏感的（实测：抄进来当场多一条 warn）。
+    "update.url": ("https://raw.githubusercontent.com/…", "",
+                   "示例留空：不给外人指更新源（默认表里指本项目自己的 manifest）"),
+    "wechat.media_dir": ("media", "", "示例留空＝用默认落点（media/）"),
+}
+
+
+def t_default_value_guard() -> None:
+    """自检：**默认表与示例文件的值差异必须逐条登记**（记三元组，值一变就红）。
+
+    两处都是"默认"的落点，所以它们**不一致的地方就是值得看一眼的地方**：
+      · 差异**新增** ⇒ 有人往默认表里塞了新值（可能是个人的/私有的）⇒ 必须写理由；
+      · 已登记的键**值变了** ⇒ 同样红（记了值才能在下一次悄悄改动时发现）；
+      · 差异**消失**（两边对齐了）⇒ 允许，是好事，但记录该跟着删（不强制）。
+    """
+    import io as _io # noqa: PLC0415
+    import json as _json # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+
+    from agent.config import DEFAULT_CONFIG as _D # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+
+    def _flat(_d, _pre=""):
+        _out = {}
+        for _k, _v in (_d or {}).items():
+            _p = (_pre + "." + _k) if _pre else _k
+            if isinstance(_v, dict):
+                _out.update(_flat(_v, _p))
+            else:
+                _out[_p] = _v
+        return _out
+
+    def _shape_eq(_live, _rec):
+        """登记值以 `…` 结尾 ⇒ 按**前缀**比（长值只记形状，不在产品里多存一份）。"""
+        if isinstance(_rec, str) and _rec.endswith("…"):
+            return isinstance(_live, str) and _live.startswith(_rec[:-1])
+        return _live == _rec
+
+    try:
+        _ex = _json.loads(_io.open(_o.path.join(_root, "config.example.json"), encoding="utf-8").read())
+    except Exception as _e: # noqa: BLE001
+        ck("示例文件可读（默认值对账的前提）", False, "%s" % _e)
+        return
+    _a, _b = _flat(_D), _flat(_ex)
+
+    _unlisted, _drifted = [], []
+    for _k in sorted(set(_a) & set(_b)):
+        if isinstance(_a[_k], (dict, list, tuple)) or isinstance(_b[_k], (dict, list, tuple)):
+            continue
+        if _a[_k] == _b[_k]:
+            continue
+        _rec = DEF_VS_EXAMPLE_OK.get(_k)
+        if _rec is None:
+            _unlisted.append("%s(默认=%r, 示例=%r)" % (_k, _a[_k], _b[_k]))
+        elif not (_shape_eq(_a[_k], _rec[0]) and _shape_eq(_b[_k], _rec[1])):
+            _drifted.append("%s 现在是 (默认=%r, 示例=%r)，登记的是 (%r, %r)"
+                            % (_k, _a[_k], _b[_k], _rec[0], _rec[1]))
+    ck("默认表与示例的值差异**全部已登记**（新增差异 ⇒ 先写理由）",
+       not _unlisted, "；".join(_unlisted[:5])[:200])
+    ck("已登记的差异**值没被改过**（记了值才盯得住悄悄改动）",
+       not _drifted, "；".join(_drifted[:4])[:200])
+    ck("登记表本身有内容（这条闸门还在真的守着东西）",
+       len(DEF_VS_EXAMPLE_OK) >= 3, "%d 条" % len(DEF_VS_EXAMPLE_OK))
+
+
 def t_delivery_ledger_guard() -> None:
     """自检：**"已发送"记账必须在真的发出去之后**（不许谎报送达）。
 
@@ -9245,6 +9323,7 @@ def main() -> int:
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
+                   t_default_value_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()
