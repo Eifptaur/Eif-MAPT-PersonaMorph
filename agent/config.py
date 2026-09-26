@@ -171,6 +171,15 @@ DEFAULT_CONFIG = {
         "fallback_max_chars": 60, # 兜底只发短话（长文多半是分析）；0=不限
         "fallback_block_selfref": True, # 拦掉"我不打算回 / 没什么可说"这类自我指涉（内心判断不该进群）
         "uia_setvalue": True, # 输入用 UIA SetValue 后台直写（不点输入框/不粘贴），发送回车仍需瞬时置前
+        # ── 新一段对话时自动引用（`sender.SendQueue._should_auto_quote`）──
+        # ⚠️ 这三个键以前**只存在于示例文件、默认表里没有** ⇒ 后果有两层：
+        #   ① 控制台的勾选框读不到值就渲染成"未勾选"，而后端 `cfg.get(...) is False` 的写法在
+        #      **缺键时判成"开着"** ⇒ 用户看到关着、实际在自动引用（显示与行为不一致）；
+        #   ② 谁拿示例当参照就会以为默认是关的。现在把**代码当前的缺键行为**显式写出来：
+        #      值取代码回退值 ⇒ 行为一个字不变，只是把"默认"这件事从"隐式"变"显式"。
+        "quote_on_new_talk": True, # 关掉它就等于 `False`（代码按 `is False` 判，缺键＝开）
+        "quote_reply_probability": 0.7, # 命中概率
+        "quote_new_talk_gap_s": 300, # 机器人上条消息超过这么多秒才算"新一轮对话"
         # 大图自动压缩（对账清单第 22 条）：发送前按"最长边 / 文件大小"双阈值压一压，见 agent/img_compress.py。
         #   默认**开**：这是"省事"型能力（不改语义、压不动就原样发并说明），关掉也不会更安全。
         "image_compress": {
@@ -311,6 +320,9 @@ DEFAULT_CONFIG = {
         "vc_params": "", # 原样附在请求里的参数（JSON 文本），如 {"f0_up_key":0,"index_rate":0.7,"speaker":"x"}
         "vc_json_field": "", # 变声端点回 JSON 时取哪个字段（回音频字节就留空）
         "vc_fail_open": False, # 变声失败时是否照发未变声的原音（默认否＝不发：「不假装」红线）
+        # HTTP 语音服务（`voice_models` 读；以前只在示例文件里有、默认表没声明）
+        "http_url": "", # 自建 TTS/语音服务地址；留空＝不用这条路
+        "http_json_field": "", # 回 JSON 时取哪个字段当音频（回二进制就留空）
         "vc_timeout_ms": 60000, # 变声（含本地模型推理）通常比合成慢，给足时间
     },
     # ── 本地文件搜索（「把某个文件发给我」；默认关）─────────────────────────────
@@ -375,6 +387,7 @@ DEFAULT_CONFIG = {
         #   装完自动：写 `backends` + 打开总开关 + 起服务（首次加载模型约 15 秒），用户不用填任何地址。
         "local_sd": {
             "enabled": True, # 允许走"安装/使用本地轻量后端"这条路（不装也无副作用）
+            "preset": "quality", # 用哪套预设（见 agent/sd_local.py::PRESETS；留空＝DEFAULT_PRESET）
             "port": 7860, # 本地服务端口（默认 A1111 的口，产品能自动探到）
             "model_dir": "data/sd_model", # 模型放哪（相对仓库根；也可写绝对路径）
             "allow_online_install": False, # **默认关**：不开就不联网下载（要下 10.8 GB，必须用户明确同意）
@@ -579,6 +592,11 @@ DEFAULT_CONFIG = {
         "discover_max_members": 3,
         "share_across_groups": False, # true=所有群共享一个记忆池（群间互通）；false=每群独立（默认）
         "shared_groups": [], # 可选：只在这几个群间共享记忆（填群名；比全共享更精准，需勾选下方群）
+        "summarize_on_exit": True, # 关闭机器人时把本次对话总结成群友印象（只在那时调一次模型）
+    },
+    # ── 用量统计 ────────────────────────────────────────────────────────
+    "stats": {
+        "period": "weekly", # 控制台「统计周期」的默认档：weekly | monthly | all
     },
     # ── 反应评分引擎（v1：正反馈 + 种子库，让机器人越聊越有趣）──────────
     "scoring": {
@@ -652,6 +670,9 @@ DEFAULT_CONFIG = {
         "restore_window_after_use": True, # 默认开：动过的窗口几何，用完自动还原
         "allow_foreground": False, # 是否允许把微信置前（默认关：抢前台＝打扰用户，属最高目标禁止项）
         "theme": "whale", # 主题：whale（默认鲸落深海）| light | dark | system
+        # 界面文案风格（Qt 侧 `shell.py` 读；web 侧按 `webui.py` 的 `text_style == "whale"` 判）
+        #   normal＝正常说法 / whale＝鲸语（替换一批界面词，见 `whale_text.py`）
+        "text_style": "normal",
         # 余额的**显示伪装**（
         # 可以在界面显示上把金额改掉，但是实际上还是那么多」）⇒ 这是**显示层**的事：
         # `real`＝照实显示 / `hide`＝显示成"已隐藏" / `fake`＝显示成 balance_fake 填的数字。

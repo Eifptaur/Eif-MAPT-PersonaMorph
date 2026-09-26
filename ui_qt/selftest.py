@@ -9011,6 +9011,26 @@ def t_cfg_wired_guard() -> None:
     ck("界面行为类键（ui.*）单独计一档、不混进「后端有没有读」的分母",
        _ui_only >= 1, "%d 个（豁免理由：实现在页面/壳里）" % _ui_only)
 
+    # ⭐ 第三个轴：**控制台能改的键，默认表必须声明它**。
+    #    否则出现"界面能改、默认表不认识"的键 ⇒ 用户一改就落进 config.json，而 `cfg()` 合并
+    #    默认表时它不在表里 ⇒ 没有权威默认值，行为只能靠各处 `.get(键, 手写默认)` 拼：
+    #    谁漏写一处就静默走另一套（本项目反复栽在这上面：默认值与"缺键时的隐式行为"不一致，
+    #    最典型的是 `send.quote_on_new_talk` —— 缺键时后端按"开着"跑，而界面渲染成未勾选）。
+    _paths = set()
+
+    def _walk(_d, _pre=""):
+        for _k, _v in (_d or {}).items():
+            _p = (_pre + "." + _k) if _pre else _k
+            _paths.add(_p)
+            if isinstance(_v, dict):
+                _walk(_v, _p)
+
+    from agent.config import DEFAULT_CONFIG as _DEF # noqa: PLC0415
+    _walk(_DEF)
+    _undeclared = [k for k in _keys if k not in _paths]
+    ck("控制台能改的键，默认表都声明了（默认值不许只存在于各处手写回退里）",
+       not _undeclared, "；".join(_undeclared[:8])[:200])
+
     _fake, _missing_label = [], []
     for _k in _keys:
         _read = _consumed(_k)

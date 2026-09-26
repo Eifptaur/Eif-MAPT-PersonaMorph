@@ -121,21 +121,37 @@ ROUTES = {
     "/api/wechat-groups": ("GET", "POST"),
     "/api/wechat/dir": ("GET", "POST"),
     "/api/wechat/recheck": ("GET",),
-    "/dsh-whale/audio.json": ("POST",),
-    "/dsh-whale/bubble.json": ("POST",),
-    "/dsh-whale/size.json": ("POST",),
-    # ⚠️ 下面 6 条是 `_handle_body_request` 里的**字面分支**，以前漏登记（判据 A1 抓出来的）。
-    #    这里只声明 POST —— 与上面 3 条同一口径：本表覆盖的是 `do_GET` / `_handle_body_request`
-    #    两条字面分派链；挂件那条 GET 链（`Handler._whale_get`，19 条）走的是
-    #    `path.startswith("/dsh-whale/")` 的**非字面分支**，由本文件的 `PATTERNS` 兜底登记，
-    #    不在这里逐条枚举（逐条枚举会与 PATTERNS 口径打架）。
-    "/dsh-whale/api-models.json": ("POST",),
+    # ── 挂件（鲸鱼）的端点 ────────────────────────────────────────────────
+    # ⚠️ 挂件面由**两条**链应答，判据必须两条都扫（否则整块在覆盖之外 —— 曾经就是这样，
+    #    表里只登记了 3 条、真值 19 条而判据一条都不报）：
+    #      · GET：`WebUI._whale_get`（`do_GET` 按 `path.startswith("/dsh-whale/")` 转交过去，
+    #        那一支是非字面分支、登记在下方 `PATTERNS`）；
+    #      · POST：`Handler._handle_body_request` 里的字面分支。
+    #    两条都接的写 ("GET", "POST")。
+    # `/dsh-whale/*` 里除 `/assets/` `/wallpaper/` `/api/version` 外**全需口令**。
+    "/dsh-whale/": ("GET",), # 挂件首页（内联页）
+    "/dsh-whale/api-models.json": ("GET", "POST"),
+    "/dsh-whale/audio-fragment.wav": ("GET",), # 上传的音频片段（按 id 取字节）
+    "/dsh-whale/audio.json": ("GET", "POST"),
     "/dsh-whale/balance-adjustments.json": ("POST",),
+    "/dsh-whale/balance.json": ("GET",),
     "/dsh-whale/bubble-img-upload.json": ("POST",),
+    "/dsh-whale/bubble-img.png": ("GET",), # 上传的气泡图（按 id 取字节）
+    "/dsh-whale/bubble-imgs.json": ("GET",),
+    "/dsh-whale/bubble.json": ("GET", "POST"),
+    "/dsh-whale/image.png": ("GET",),
+    "/dsh-whale/last-turn.json": ("GET",),
     "/dsh-whale/role-delete.json": ("POST",),
+    "/dsh-whale/role-image.png": ("GET",), # 自定义角色图（按 id 取字节）
     "/dsh-whale/role-pin.json": ("POST",),
-    "/dsh-whale/roles.json": ("POST",),
-    "/dsh-whale/usage-settings.json": ("POST",),
+    "/dsh-whale/roles.json": ("GET", "POST"),
+    "/dsh-whale/rua.gif": ("GET",),
+    "/dsh-whale/size.json": ("GET", "POST"),
+    "/dsh-whale/sound/press.mp3": ("GET",),
+    "/dsh-whale/sound/release.mp3": ("GET",),
+    "/dsh-whale/usage-records.json": ("GET",),
+    "/dsh-whale/usage-settings.json": ("GET", "POST"),
+    "/dsh-whale/widget.js": ("GET",), # 上游 widget 脚本（页面靠它跑）
     "/index.html": ("GET",),
 }
 
@@ -463,7 +479,10 @@ HANDLERS = {
     },
 }
 
-#: 两条链里**非字面**的分支（条件原文）：这些路径没法按字符串枚举。
+#: **字面枚举不出来**的分支（条件原文）。这里**不只有路由分支**，也含守卫/鉴权那种"提前返回"，
+#: 因为它们和路由分支在判据眼里是同一类东西（都不是 `path == "..."`），必须一并登记、
+#: 否则判据数到的分支数会比这里多，A2 就会红。三条分派链（`do_GET` / `_handle_body_request` /
+#: `WebUI._whale_get`）都算在内。
 PATTERNS = [
     'path.startswith("/wallpaper/")',
     'not self._auth_ok()',
@@ -472,6 +491,7 @@ PATTERNS = [
     '"/" not in path[1:]',
     'path.startswith("/dsh-whale/")',
     'length < 0 or length > _MAX_BODY',
+    'whale is None', # `_whale_get` 开头：鲸鱼模块不可用就提前返回（守卫，不是路由分支）
 ]
 
 # ── Phase B 记账───────────

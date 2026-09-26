@@ -319,7 +319,12 @@ def _kp(d, pre=""):
 try:
     from agent.config import DEFAULT_CONFIG as _DEF
     _ex = json.loads(io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read())
-    _dk, _ek = _kp(_DEF), _kp(_ex)
+    # ⚠️ `_` 开头的键是**注释键**，不是设置：示例用它们承载"这个开关到底管什么、默认怎么算"的
+    #    长说明（如 `input._note_allow_real_fallback`），后端不读、控制台也不暴露 ⇒
+    #    它们不参与"同键"比较。要别的**后端口径**必须用真键（会被上面那条死键扫描管着）。
+    _is_note = lambda k: any(seg.startswith("_") for seg in k.split("."))  # noqa: E731
+    _dk = {k for k in _kp(_DEF) if not _is_note(k)}
+    _ek = {k for k in _kp(_ex) if not _is_note(k)}
     check("config.example.json 与默认配置同键", _dk == _ek,
           "示例 %d 键 / 默认 %d 键；缺=%s 多=%s"
           % (len(_ek), len(_dk), sorted(_dk - _ek)[:5], sorted(_ek - _dk)[:5]))

@@ -55,20 +55,11 @@
   "google_first": true,
   "search_url": "https://cn.bing.com/search",
   "max_results": 6,
-  "bing": {
-   "api_key": "",
-   "base_url": "",
-   "model": "",
-   "engine": "",
-   "count": 6
-  },
   "deepseek": {
    "api_key": "",
    "base_url": "https://api.deepseek.com/responses",
    "model": "deepseek-flash",
-   "timeout_ms": 60000,
-   "engine": "",
-   "count": 6
+   "timeout_ms": 60000
   },
   "zhipu": {
    "api_key": "",

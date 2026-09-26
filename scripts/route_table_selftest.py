@@ -91,10 +91,28 @@ def _lit(test):
 
 
 def code_routes():
-    """代码里两条链实际应答的字面路由：`{路径: {"GET"/"POST"}}`，外加非字面分支数。"""
+    """代码里三条链实际应答的字面路由：`{路径: {"GET"/"POST"}}`，外加非字面分支数。
+
+    ⚠️ **为什么必须是三条**：`do_GET` 遇到 `/dsh-whale/…` 会转交给 `Handler._whale_get`
+    再分派（那一支在 `do_GET` 里是 `path.startswith(...)`，属非字面分支、已登记在
+    `agent/routes.py::PATTERNS`）。以前只扫两条链 ⇒ **挂件那条 GET 链完全在判据的覆盖之外**：
+    它独占的 13 条路径既不在表里、判据也不会报（实测：表 113 条、真值 126 条，而判据只报出
+    6 条"漏登记"）。这类"判据自己看不到的一面"最危险 —— 全绿并不代表全量对齐。
+    """
+    def _any_fn(name):
+        """按名字在**整棵树**里找函数：三条链不在同一个类里（`do_GET`/`_handle_body_request`
+        在 `Handler`，而 `_whale_get` 在 `WebUI`）⇒ 只搜 `Handler` 会找不到、直接 None 崩。"""
+        for _n in ast.walk(TREE):
+            if isinstance(_n, ast.FunctionDef) and _n.name == name:
+                return _n
+        return None
+
     out, npatt = {}, 0
-    for fname, method in (("do_GET", "GET"), ("_handle_body_request", "POST")):
-        f = _fn(fname)
+    for fname, method in (("do_GET", "GET"), ("_handle_body_request", "POST"),
+                          ("_whale_get", "GET")):
+        f = _any_fn(fname)
+        if f is None:
+            raise RuntimeError("分派链 %s 找不到（改名了？判据得跟着改）" % fname)
         # ⚠️ 扫**每一条**顶层 if 链：`do_GET` 里 `/api/version`（免认证）与 `/api/update`
         #   在主链**之前**的另一条链上（只取最大的那条会漏掉它们）。
         for st in f.body:
