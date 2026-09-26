@@ -526,6 +526,19 @@ class WhaleHostWebView:
         except Exception as e:  # noqa: BLE001 — 校准失败也只是画面不对，不该炸挂件
             self._err = "%s: %s" % (type(e).__name__, e)
 
+    def notify_moved(self) -> None:
+        """告诉内核「父窗挪了」。
+
+        窗口化承载下父窗位置变化不会自动通知内核；官方要求在 WM_MOVE/WM_MOVING 时调
+        `NotifyParentWindowPositionChanged`（否则辅助功能与部分弹窗会错位）。本产品的
+        拖动是**带着窗口连续挪**，更需要这一句。
+        """
+        try:
+            if self._ctrl is not None:
+                self._ctrl.NotifyParentWindowPositionChanged()
+        except Exception:  # noqa: BLE001 — 通知失败只是显示不刷新，不该炸挂件
+            pass
+
     def _apply_bounds(self) -> None:
         self._apply_bounds_on(self._ctrl)
 
@@ -776,10 +789,20 @@ def build_host_html(port: int, token: str) -> str:
         "var r=rootEl();"
         # 减号挂进本体内部：百分比才相对本体算（见上方 CSS 注解），并跟着本体一起挪/藏
         "if(b&&r&&b.parentNode!==r){try{r.appendChild(b);}catch(e){}}"
-        "if(b&&!b.__pm){b.__pm=1;b.addEventListener('click',function(e){"
-        "e.stopPropagation();e.preventDefault();setCollapsed(true);});}"
-        "if(d&&!d.__pm){d.__pm=1;d.addEventListener('click',function(e){"
-        "e.stopPropagation();e.preventDefault();setCollapsed(false);});}"
+        # ⛔ 减号/圆点挂在 document 的**捕获**段，不挂在本体元素上：原版自己的 click 处理
+        #    也在 document 捕获段，一旦它的处理里 stopPropagation（气泡/弹层逻辑会这么做），
+        #    挂在本体上的监听就轮不到 —— 用户实测「点减号没反应」正是这个形态。
+        #    同节点同阶段之间只有 stopImmediatePropagation 拦得住，挂这里最稳。
+        "if(!window.__pmBtn){"
+        "window.__pmBtn=1;"
+        "document.addEventListener('click',function(e){"
+        "try{var t=e.target;"
+        "if(t&&t.closest&&t.closest('.pm-min-btn')){"
+        "e.stopPropagation();e.preventDefault();setCollapsed(true);return;}"
+        "if(t&&t.closest&&t.closest('.pm-dot')){"
+        "e.stopPropagation();e.preventDefault();setCollapsed(false);}"
+        "}catch(err){}},true);"
+        "}"
         "}"
         # ── 拖动转发 ────────────────────────────────────────────────────────
         # 机制：WebView2 的画面是一个铺满宿主窗的**子 HWND**，鼠标消息被子窗
@@ -791,8 +814,7 @@ def build_host_html(port: int, token: str) -> str:
         # 点按钮是 click、拖本体/空白是拖动，互不干扰。
         "function dragSetup(){"
         "if(window.__pmDrag)return;window.__pmDrag=1;"
-        "var dragging=false,ox=0,oy=0,begun=false;"
-        # 只认「落在挂件本体或页面上、且不是按钮/菜单/弹窗」的按下 —— 那些要留给原版逻辑
+        "var dragging=false;"
         "function isInteractive(el){"
         "if(!el||!el.closest)return false;"
         "return !!(el.closest('button')||el.closest('input')||el.closest('select')||"
@@ -805,31 +827,14 @@ def build_host_html(port: int, token: str) -> str:
         "document.addEventListener('mousedown',function(e){"
         "if(e.button!==0)return;"
         "if(isInteractive(e.target))return;"
-        # ⛔ 必须 preventDefault：鼠标在图片/文本上按下后一移动，浏览器会进入
-        # **原生拖拽/选区**，那期间 mousemove 不再派发 ⇒ 页面连"开始拖"都报不出来
-        # ⇒ 宿主不知道要跟光标（现象＝"捏住挂件只能在窗口里晃"）。
-        # 原版只在**触摸**手势里拦这一下，鼠标这条路由宿主补上；交互区（按钮/
-        # 菜单/输入框）不拦，原版自己的拖拽排布照常。
         "e.preventDefault();"
-        "dragging=true;begun=false;ox=e.screenX;oy=e.screenY;"
-        "},true);"
-        "document.addEventListener('mousemove',function(e){"
-        "if(!dragging)return;"
-        "var dx=e.screenX-ox,dy=e.screenY-oy;"
-        # 阈值：小于它算「点击」不算拖（免得点一下本体就把窗口挪歪）
-        "if(!begun&&(Math.abs(dx)+Math.abs(dy))<=4)return;"
-        "if(!begun){begun=true;post({pm:'dragbegin'});}"
+        "dragging=true;post({pm:'dragbegin'});"
         "},true);"
         "document.addEventListener('mouseup',function(){"
-        "if(dragging&&begun)post({pm:'dragend'});"
-        "dragging=false;begun=false;"
+        "if(dragging)post({pm:'dragend'});"
+        "dragging=false;"
         "},true);"
         "}"
-        # ── 可命中区上报 ────────────────────────────────────────────────────
-        # 宿主窗是半透明窗，Windows 对它的命中测试**按像素 alpha** 走：alpha=0 的
-        # 地方鼠标直接穿到桌面。所以宿主只在本页报告的矩形上铺一层 alpha=1 的极淡底
-        # ——铺到哪、哪才能被点到，其余保持全透明（桌面照常可点）。
-        # 报的是「本体 + 当前可见弹层」的外接矩形：弹层一开/一关就重报一次。
         "function rectsNow(){"
         "var pad=6,out=[];"
         "function add(el){try{"

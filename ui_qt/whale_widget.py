@@ -184,7 +184,10 @@ class WhaleWidget(QWidget):
             self._veil = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in rects]
         except Exception:  # noqa: BLE001
             return
-        self._fit_window(rects)
+        # ⛔ 窗口调整必须**跳出 WebView2 的回调**再做：_fit_window 会 setFixedSize/move，
+        #    进而调 put_Bounds —— 在 WebView2 的事件回调里同步调它的 API 是官方明令
+        #    避免的重入（可能死锁或不生效）。
+        QTimer.singleShot(0, lambda rs=list(self._veil): self._fit_window(rs))
         self.update()
 
     def _fit_window(self, rects) -> None:  # noqa: ANN001
@@ -371,7 +374,10 @@ class WhaleWidget(QWidget):
             if self._drag_cursor is None or self._drag_win is None:
                 self._drag_timer.stop()
                 return
-            if not (ctypes.windll.user32.GetAsyncKeyState(1) & 0x8000):
+            # ⛔ 左右键都要看：鼠标左右键互换（左手习惯）时，浏览器里的"左键"对应的是
+            #    物理右键 —— 只看 VK_LBUTTON 会在按下的那一刻就判"已松手"⇒ 拖动刚起步就断。
+            _u = ctypes.windll.user32
+            if not ((_u.GetAsyncKeyState(1) | _u.GetAsyncKeyState(2)) & 0x8000):
                 self._on_pagedrag("end")
                 return
             d = QCursor.pos() - self._drag_cursor
@@ -539,6 +545,8 @@ class WhaleWidget(QWidget):
         super().moveEvent(ev)
         if self._host is not None and self._host.ok:
             self._host.resize(self.width(), self.height())
+            # 父窗挪了要**明确通知内核**（窗口化承载下它不会自动知道）
+            self._host.notify_moved()
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         """**必须关控制器** —— 不关会留下杀不掉的浏览器孤儿进程。"""

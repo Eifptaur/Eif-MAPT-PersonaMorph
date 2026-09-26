@@ -7662,8 +7662,11 @@ def t_whale_guard() -> None:
        and "+ self.width()" in _inspect.getsource(WhaleWidget._save_anchor))
     ck("上屏校验按**本体**判（按整窗判会让「左上角露一点」过关、本体却在屏幕外）",
        "self.width() - _BASE" in _inspect.getsource(WhaleWidget._onscreen))
-    ck("宿主页含拖动转发脚本（mousedown/mousemove + postMessage）",
-       "postMessage" in _html and "mousemove" in _html and "dragSetup" in _html, "")
+    ck("宿主页含拖动转发脚本（按下即报 dragbegin + postMessage，位置由宿主跟真实光标）",
+       "dragbegin" in _html and "postMessage" in _html and "dragSetup" in _html, "")
+    ck("减号/圆点挂在 document **捕获**段（挂本体上会被原版自己的捕获处理截掉）",
+       "__pmBtn" in _html and "addEventListener('click'" in _html
+       and "t.closest('.pm-min-btn')" in _html, "")
     ck("拖动只认非交互区（按钮/菜单/输入框的按下留给原版逻辑）",
        "isInteractive" in _html and "closest('button')" in _html, "")
     ck("宿主页含减号与收起标记（pm-min-btn / pm-dot）",
