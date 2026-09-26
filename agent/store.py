@@ -52,12 +52,15 @@ def chat_file(chat_key: str) -> str:
 
 
 def _safe_name(chat_key: str) -> str:
-    return re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
+    from .keys import safe_name
+
+    return safe_name(chat_key)
 
 
 def _key_hash(chat_key: str) -> str:
-    import hashlib
-    return hashlib.md5(str(chat_key).encode("utf-8")).hexdigest()[:8]
+    from .keys import key_hash
+
+    return key_hash(chat_key)
 
 
 def chat_file_legacy(chat_key: str) -> str:

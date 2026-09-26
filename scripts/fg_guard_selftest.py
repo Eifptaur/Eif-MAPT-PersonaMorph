@@ -382,8 +382,9 @@ def main():
                bool(_real_other) and _wx2._wm_close_safe(_real_other, "自检") is True, _real_other)
         finally:
             _ib2.find_main_window, _ib2.find_render_child = _o_find, _o_rc
-        ok("⑫ 静态：所有 `WM_CLOSE` 投递点都过咽喉点（≥5 处调用 + 1 处定义）",
-           wsrc.count("_wm_close_safe(") >= 6, wsrc.count("_wm_close_safe("))
+        ok("⑫ 静态：所有 `WM_CLOSE` 投递点都过咽喉点（≥5 处调用 + 唯一咽喉点）",
+           wsrc.count("_win_close(") >= 5 and wsrc.count("def _wm_close_safe(") == 1,
+           "%d 处调用 / %d 处定义" % (wsrc.count("_win_close("), wsrc.count("def _wm_close_safe(")))
         ok("⑫ 静态：咽喉点注释里写明了「同型事故第二次」", "同型事故第二次" in wsrc)
     finally:
         cfg_mod.get_config = real_get

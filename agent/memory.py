@@ -48,7 +48,8 @@ def _chat_dir_name(chat_key: str) -> str:
     ⇒ 现在**一律**挂 `_key_hash(chat_key)` 的 8 位尾巴（与 `store.chat_file()` 同口径）：
        归一化只用来"给人看"，唯一性由哈希保证。老目录靠 `_chat_dir()` 的向后兼容继续用。
     """
-    safe = re.sub(r"[^a-z0-9_]", "_", str(chat_key), flags=re.IGNORECASE)
+    from .keys import safe_name as _safe_name_impl
+    safe = _safe_name_impl(chat_key)
     if len(safe) > _DIR_NAME_MAX:
         safe = safe[:_DIR_NAME_MAX]
     return "%s_%s" % (safe, _key_hash(chat_key))
@@ -63,8 +64,9 @@ def _chat_dir_name_legacy(chat_key: str) -> str:
 
 
 def _key_hash(chat_key: str) -> str:
-    import hashlib
-    return hashlib.md5(str(chat_key).encode("utf-8")).hexdigest()[:8]
+    from .keys import key_hash
+
+    return key_hash(chat_key)
 
 
 def _member_file_name(user_id: str, name: str = "") -> str:

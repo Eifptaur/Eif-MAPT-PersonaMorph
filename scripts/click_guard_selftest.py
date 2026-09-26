@@ -143,7 +143,8 @@ ok("八处点击都带了可对账的 tag（缺：%s）" % (_missing or "无"), 
 ok("`_click_posted` 调用点 ≥ 8", _SRC.count("self._click_posted(") >= 8,
    str(_SRC.count("self._click_posted(")))
 ok("关窗走安全咽喉点（绝不关微信主窗）",
-   "_wm_close_safe(int(hwnd)" in _SRC[_SRC.index("def _close_stray_window("):][:900])
+   ("winops.close(" in _SRC[_SRC.index("def _close_stray_window("):][:900]
+    or "_win_close(" in _SRC[_SRC.index("def _close_stray_window("):][:900]))
 
 print("── G. 防回归：不许把『证据复用』这类加速器偷偷加回来 ──")
 ok("没有会话证据记账/复用机器（`_proof_fresh`）", "_proof_fresh" not in _SRC)

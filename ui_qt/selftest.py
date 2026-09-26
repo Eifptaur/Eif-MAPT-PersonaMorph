@@ -9612,8 +9612,128 @@ def t_guard_family_guard() -> None:
         _vg.note_blocked = _save_note
 
 
+def t_winops_guard() -> None:
+    """自检：**关微信窗口**只有一条路（F11）。
+
+    这一族踩过**两次同型事故**：微信主窗被 Qt 重建、`hwnd` 变了 ⇒ 不在任何白名单里
+    ⇒ 被当成"菜单浮层" `WM_CLOSE` 掉 ⇒ **用户的微信主窗口整个消失**。
+    规矩是"发 `WM_CLOSE` 之前**当场**问一次：这个句柄是不是主窗/渲染子窗"（缓存正是第一次事故的成因）。
+
+    ⇒ 判据：`agent/` 里凡是**会发 `WM_CLOSE` 的函数**，函数体里必须问过那道判据
+      （`ok_to_close(` / `_wm_close_safe(` / `winops`）。只有两类**关的不是微信窗**的允许例外，
+      且必须在白名单里写清理由 —— 否则下一个"顺手加一处关窗"就又绕过判据了
+      （`wechat_ui.close_subwindow` 历史上就是这么绕过去的：判据在 `wechat` 里，它 import 不到）。
+    """
+    import ast as _ast # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    #: ⛔ 例外白名单：**(文件, 函数) → 理由**。关的不是"微信的窗"才算例外。
+    _EXEMPT = {
+        ("agent/ui_adapt.py", "dismiss_overlays"):
+            "关的是**系统输入叠加层**（TouchKeyboard 那一族），收窄手段是「类名 + 标题白名单」，目标是别人的窗",
+        ("agent/tray.py", "shutdown"):
+            "关的是**我们自己的**托盘窗，不是微信的窗",
+    }
+    _GUARD = ("ok_to_close(", "_wm_close_safe(", "winops")
+    _hits, _naked, _files = [], [], 0
+    for _f in sorted((_root / "agent").glob("*.py")):
+        _src = _f.read_text(encoding="utf-8")
+        _files += 1
+        if _f.name == "winops.py":
+            continue # 实现点自身：`WM_CLOSE` 就该长在这里
+        try:
+            _tree = _ast.parse(_src)
+        except SyntaxError:
+            continue
+        for _n in _ast.walk(_tree):
+            if not isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            # ⛔ **必须剥掉 docstring**：`_wait_dialog_gone` 的说明里就写着 `PostMessage(WM_CLOSE)`
+            #   （"它是异步的"那段），拿整段源码当信号会把它误判成"裸关窗"。
+            _body = "\n".join(_l for _l in (_ast.get_source_segment(_src, _n) or "").split("\n")
+                              if not _l.strip().startswith("#"))
+            if _n.body and isinstance(_n.body[0], _ast.Expr) and isinstance(
+                    getattr(_n.body[0], "value", None), _ast.Constant):
+                _ds = _n.body[0].value.value
+                if isinstance(_ds, str) and _ds:
+                    _body = _body.replace(_ds, "")
+            if "PostMessage" not in _body:
+                continue
+            if not ("0x0010" in _body or "WM_CLOSE" in _body):
+                continue
+            _key = ("agent/%s" % _f.name, _n.name)
+            _hits.append("%s::%s" % _key)
+            if any(_g in _body for _g in _GUARD):
+                continue
+            if _key in _EXEMPT:
+                continue
+            _naked.append("%s::%s" % _key)
+    ck("发 `WM_CLOSE` 的函数都必须先问过「绝不关主窗」那道判据（裸关窗 = 用户的微信可能被关掉）",
+       not _naked, "裸关窗：%s" % "、".join(_naked[:4]))
+    #: 分母守卫：扫不到函数时上面那条会"全绿"
+    ck("上述扫描真的扫到了关窗函数（分母守卫 > 0）", len(_hits) > 0, "命中 %d 个函数" % len(_hits))
+    #: 反向控制：判据器必须**能认出裸关窗**（拿一份样本文本试）
+    _probe = "def f(u):\n    import ctypes\n    ctypes.windll.user32.PostMessageW(h, 0x0010, 0, 0)\n"
+    _pn = [n for n in _ast.walk(_ast.parse(_probe))
+           if isinstance(n, _ast.FunctionDef)]
+    _pb = _ast.get_source_segment(_probe, _pn[0]) or ""
+    ck("「裸关窗」判定器有效（样本文本必须同时命中 PostMessage 与 0x0010，且不含守卫）",
+       "PostMessage" in _pb and "0x0010" in _pb and not any(_g in _pb for _g in _GUARD), "")
+    #: 实现点唯一：判据只有一份，`wechat._wm_close_safe` 只许是**纯转发**
+    _wn = (_root / "agent" / "winops.py").read_text(encoding="utf-8")
+    _wx2 = (_root / "agent" / "wechat.py").read_text(encoding="utf-8")
+    _fwd = False
+    for _n in _ast.walk(_ast.parse(_wx2)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "_wm_close_safe":
+            _fwd = all(isinstance(_st, (_ast.Import, _ast.ImportFrom, _ast.Return, _ast.Expr))
+                       for _st in _n.body)
+    ck("关窗判据只有一处实现（`winops.ok_to_close`），`wechat._wm_close_safe` 是纯转发",
+       _wn.count("def ok_to_close") == 1 and _wn.count("def close(") == 1 and _fwd, "")
+
+
+def t_keys_guard() -> None:
+    """自检：**键 → 磁盘名**的哈希只有一处实现，且两套存储必须算出同一个值（F9）。
+
+    为什么值得一条闸门：`chat_key` 要变成文件名（消息档案）和目录名（记忆）**两套**。
+    两套各有一份 `_key_hash()`（**逐字相同**的 3 行）—— 改一处漏一处，同一个群在两套存储里就会
+    算出**不同的哈希**，于是"记忆与消息档挂不上"（这正是当初"记忆页列不出群"那类问题的形状）。
+    ⇒ 哈希收口到 `keys.key_hash()`；判据除了"实现唯一"，还要**真的比一次值**：
+      两套存储对同一个 key 必须给出**同一个 8 位尾巴**（这才是"同口径"的可执行含义）。
+    """
+    _root = HERE.parents[0]
+    _ks = (_root / "agent" / "keys.py").read_text(encoding="utf-8")
+    _st = (_root / "agent" / "store.py").read_text(encoding="utf-8")
+    _mm = (_root / "agent" / "memory.py").read_text(encoding="utf-8")
+    ck("哈希实现唯一（`md5` 只许出现在 keys.py）",
+       "hashlib.md5" in _ks and "hashlib.md5" not in _st and "hashlib.md5" not in _mm
+       and _st.count("from .keys import key_hash") == 1
+       and _mm.count("from .keys import key_hash") == 1, "")
+    ck("安全名实现唯一（`store._safe_name` 只许是转发；`feedback._safe_name` 同名异义、不许动它）",
+       "def safe_name" in _ks and "flags=re.IGNORECASE" not in _st
+       and _st.count("from .keys import safe_name") == 1, "")
+    #: ⭐ 行为断言：两套存储对同一个 key 给同一个尾巴（这是本族的全部意义）
+    import os as _os # noqa: PLC0415
+    from agent import keys as _keys # noqa: PLC0415
+    from agent import memory as _mem # noqa: PLC0415
+    from agent import store as _st2 # noqa: PLC0415
+
+    _cases = ["group:wxid_a-b", "group:wxid_a_b", "group:wxid_x@chatroom", "", "群名很长的中文群聊"]
+    _mism = [c for c in _cases
+             if _keys.key_hash(c) not in _st2.chat_file(c) or _keys.key_hash(c) not in _mem._chat_dir_name(c)]
+    ck("两套存储（消息档案 / 记忆目录）对同一个 key 算出**同一个**哈希尾巴",
+       not _mism, "不一致：%s" % _mism[:3])
+    #: 反向控制：这两个 key 只差一个字符、转义后同名 ⇒ 哈希**必须**不同（否则两套存储都会互相覆盖）
+    ck("转义后同形的两个 key 靠哈希区分（`a-b` vs `a_b` 不许撞同一份存储）",
+       _keys.safe_name("group:wxid_a-b") == _keys.safe_name("group:wxid_a_b")
+       and _keys.key_hash("group:wxid_a-b") != _keys.key_hash("group:wxid_a_b"), "")
+    ck("`store.chat_file` 仍在 `data/messages/` 下、`memory._chat_dir_name` 仍在转义目录下（口径没被搬错）",
+       _st2.chat_file("group:wxid_a-b").replace(_os.sep, "/").find("messages/") > 0
+       and _mem._chat_dir_name("group:wxid_a-b").startswith("group_wxid_a_b_"), "")
+
+
 def t_default_value_guard() -> None:
     """自检：**默认表与示例文件的值差异必须逐条登记**（记三元组，值一变就红）。
+
 
     两处都是"默认"的落点，所以它们**不一致的地方就是值得看一眼的地方**：
       · 差异**新增** ⇒ 有人往默认表里塞了新值（可能是个人的/私有的）⇒ 必须写理由；
@@ -9779,7 +9899,7 @@ def main() -> int:
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
                    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
-                   t_packaged_modules_guard,
+                   t_packaged_modules_guard, t_winops_guard, t_keys_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

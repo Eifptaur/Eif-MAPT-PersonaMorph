@@ -324,6 +324,14 @@ def close_subwindow(gui, hwnd, retries: int = 3) -> bool:
     import ctypes
     user32 = ctypes.windll.user32
     WM_CLOSE, WM_SYSCOMMAND, SC_CLOSE = 0x0010, 0x0112, 0xF060
+    # ⛔ **同一道判据，关窗之前必须问一次**：绝不关微信主窗/渲染子窗。
+    #   这里原来是**裸关窗**（判据只在 `wechat._wm_close_safe` 里，而本模块 import 不到它，
+    #   于是绕过去了）—— 那是"用户的微信被关掉"那两次同型事故的同一种走法。
+    #   判据现在收在 `winops`（只依赖 input_backend）⇒ 哪个模块都能问。
+    from .winops import ok_to_close as _ok_to_close
+    if not _ok_to_close(hwnd, "关微信子窗"):
+        log.info("拒绝关这个句柄（它像微信主窗/渲染子窗）：hwnd=%s —— 宁可留浮层，不动用户的窗", hwnd)
+        return False
     for _ in range(max(1, int(retries))):
         try:
             if not user32.IsWindow(int(hwnd)):
