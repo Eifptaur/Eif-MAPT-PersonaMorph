@@ -168,8 +168,11 @@ def main():
     _IH = img.size[1]
     _TOP = max(80, (_IH - 6) - 720)
     _PL = 262
-    STUB = [("@#deepseek说讠舌！", 455 - _PL, 243 - _TOP, 137, 22), # E 的消息（真帧实测）
-            ("「E」拍拍*deepseek」", 656 - _PL, 517 - _TOP, 6, 17), # 居中拍拍提示（无头像）
+    # ⚠️ 桩文本里的名字用**中性合成名**，并且**噪声形态照旧**（`#` 代替首字、`讠舌` 是「话」的残形）：
+    #    这一组要测的是"**模糊**匹配得上、但不是完全相等" ⇒ 桩文本与上面锚点必须**同一套名字**，
+    #    否则一改名字相似度就掉到阈值以下（实测：把名字换成短的中性词后这两条断言当场红）。
+    STUB = [("@#示例群说讠舌！", 455 - _PL, 243 - _TOP, 137, 22), # 某甲的消息（真帧实测）
+            ("「某甲」拍拍*示例群」", 656 - _PL, 517 - _TOP, 6, 17), # 居中拍拍提示（无头像）
             ("05：05", 274 - _PL, 149 - _TOP, 16, 11)] # 会话列表时间（该被 x 过滤掉）
     _old_grab, _old_rec, _old_blk = _ch_mod.grab_render, _co_mod.recognize, _co_mod.blocked
     _ch_mod.grab_render = lambda gui=None, render=None, tries=12: img
@@ -194,27 +197,27 @@ def main():
     try:
         fake = _FakeAd()
         # 正例：锚点用 E 的真消息文本 ⇒ 必须落到 E 的头像方块内
-        loc = fake._send_poke_locate(_FakeGUI(), "E", ["。。。", "@示例群 说话！"], scroll=False)
+        loc = fake._send_poke_locate(_FakeGUI(), "某甲", ["。。。", "@示例群 说话！"], scroll=False)
         ok("⑦ 正例：锚点命中 ⇒ 返回头像方块中心", loc is not None and loc[:2] == (386, 220), loc)
         blk = getattr(fake, "_poke_block", None)
         ok("⑦ 正例：落点在命中的头像方块内",
            bool(loc) and bool(blk)
            and blk[0] + 4 <= loc[0] <= blk[2] - 4 and blk[1] + 4 <= loc[1] <= blk[3] - 4, blk)
         # 负例：锚点一条都对不上 ⇒ 必须如实失败（**不许**取"最下面那条"猜人）
-        loc2 = fake._send_poke_locate(_FakeGUI(), "E", ["绝不存在zzz", "也不存在yyy"], scroll=False)
+        loc2 = fake._send_poke_locate(_FakeGUI(), "某甲", ["绝不存在zzz", "也不存在yyy"], scroll=False)
         why2 = getattr(fake, "_poke_locate_why", "")
         ok("⑦ 负例：锚点对不上 ⇒ 不返回任何点（不猜是谁）", loc2 is None, loc2)
         ok("⑦ 负例：失败原因写明「不敢猜是谁」", "不敢猜是谁" in (why2 or ""), why2[:60])
         # 负例：没有任何锚点（库里取不到 TA 的文本）⇒ 同样不许猜
-        loc3 = fake._send_poke_locate(_FakeGUI(), "E", [], scroll=False)
+        loc3 = fake._send_poke_locate(_FakeGUI(), "某甲", [], scroll=False)
         ok("⑦ 负例：没有锚点 ⇒ 不返回任何点", loc3 is None, loc3)
         # 负例：**只有系统提示**（居中、无头像）⇒ 不许拿它认人
-        #   现场：`「E」拍拍「示例群」` 与锚点模糊相似度 0.593 > 0.5 ⇒ 曾被当成 E 的消息行
+        #   现场：`「某甲」拍拍「示例群」` 与锚点模糊相似度 0.593 > 0.5 ⇒ 曾被当成 E 的消息行
         _old_rec2 = _co_mod.recognize
         _co_mod.recognize = lambda image, timeout=None: [
-            ("「E」拍拍「示例群」", 656 - _PL, 517 - _TOP, 6, 17)]
+            ("「某甲」拍拍「示例群」", 656 - _PL, 517 - _TOP, 6, 17)]
         try:
-            loc4 = fake._send_poke_locate(_FakeGUI(), "E", ["示例群 说话！"], scroll=False)
+            loc4 = fake._send_poke_locate(_FakeGUI(), "某甲", ["示例群 说话！"], scroll=False)
             why4 = getattr(fake, "_poke_locate_why", "")
         finally:
             _co_mod.recognize = _old_rec2
@@ -283,7 +286,7 @@ def main():
            "log = logging.getLogger" in _ibsrc)
         ok("⑨ 放大重读用懒加载的 `_PILImage`（本模块 PIL 不是模块级导入）",
            "_PILImage" in _ibsrc)
-        ok("⑨ 验证判据认「我拍拍」（真机 DB 原文 `我拍拍「E」`，**没有「了」**；原来只认"
+        ok("⑨ 验证判据认「我拍拍」（真机 DB 原文 `我拍拍「某甲」`，**没有「了」**；原来只认"
            "「你拍了拍」/「拍了拍」⇒ 真拍上了也报失败）",
            '"我拍拍" in t' in _wsrc2)
 
@@ -293,14 +296,14 @@ def main():
     from agent.wechat import poke_text_is_mine as _ptm
     _N = "示例群"
     _cases = [
-        ("我拍拍「E」", "E", True, "真机 DB 原文（我发起）"),
-        ("「E」拍拍「示例群」", "E", False, "真机 DB 原文（别人拍我）"),
-        ('你拍了拍"E"', "E", True, "界面文案"),
-        ("我拍了拍「E」的肩膀", "E", True, "自定义后缀（我发起）"),
-        ("「E」拍了拍「示例群」的肩膀", "E", False, "自定义后缀（别人拍我）"),
-        ('"示例群" 拍了拍 "E"', "E", True, "主语是我"),
-        ('"E" 拍了拍 "示例群"', "E", False, "主语是对方"),
-        ("", "E", False, "空串"),
+        ("我拍拍「某甲」", "某甲", True, "真机 DB 原文（我发起）"),
+        ("「某甲」拍拍「示例群」", "某甲", False, "真机 DB 原文（别人拍我）"),
+        ('你拍了拍"某甲"', "某甲", True, "界面文案"),
+        ("我拍了拍「某甲」的肩膀", "某甲", True, "自定义后缀（我发起）"),
+        ("「某甲」拍了拍「示例群」的肩膀", "某甲", False, "自定义后缀（别人拍我）"),
+        ('"示例群" 拍了拍 "某甲"', "某甲", True, "主语是我"),
+        ('"某甲" 拍了拍 "示例群"', "某甲", False, "主语是对方"),
+        ("", "某甲", False, "空串"),
     ]
     _bad = []
     for _t, _tgt, _want, _why in _cases:
@@ -311,7 +314,7 @@ def main():
 
     # ⑪ ⭐ "这条 [拍一拍] 是不是我们自己拍出去的回执"——**
     #    （session 实锤：`trigger="[拍一拍]"`（**没有名字**）→ `send_message("谁拍我")`）。
-    #    根因：解析侧"我拍别人"的 title 是 `我拍拍「E」`，抠不出名字 ⇒ 文本就是光秃秃 `[拍一拍]`；
+    #    根因：解析侧"我拍别人"的 title 是 `我拍拍「某甲」`，抠不出名字 ⇒ 文本就是光秃秃 `[拍一拍]`；
     #    而监听分支原来**不分方向**，一律 `orch.on_incoming` ⇒ 回执被当成"别人拍我"喂给模型。
     from agent.wechat import poke_event_is_ours as _ours
     _SELF = "wxid_" + "ukl2ti5eyhu029" # 运行时拼：字面量 wxid_ 会被打包隐私闸当成真账号

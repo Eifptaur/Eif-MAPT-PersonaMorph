@@ -83,8 +83,15 @@ ok("同一支笔、同尺寸：笔宽按高度等比 + 字形边长统一",
 ok("悬停底色三按钮同一套", "_hover" in wg_src and "_down" in wg_src and wg_src.count("Color.FromArgb(") >= 2)
 ok("三个按钮都是 GlyphButton（min/max/close）",
    lc.count("new GlyphButton()") >= 3 and 'GlyphKind.Min' in lc and 'GlyphKind.Max' in lc and 'GlyphKind.Close' in lc)
-ok("三个按钮尺寸一致（34×26）", lc.count("Size = new Size(34, 26)") >= 3, lc.count("Size = new Size(34, 26)"))
-bad_glyph = [g for g in ("\"—\"", "\"✕\"", "\"❐\"") if g in lc]
+# ⚠️ 两个断言都跟产品形态一起更新过，别照抄旧字面量：
+#   ① 三个标题栏按钮不再各写一遍同一个字面尺寸，而是**统一走 StyleKit 的常量**
+#      （`new Size(StyleKit.TitleBarBtnW, GlyphH)`）⇒ 旧断言 `new Size(34, 26)` 会老化；
+#   ② 「不许有文本字形按钮」**只许查代码行**：那几个字形**本来就写在注释里**讲历史
+#      （`// 旧实现用 — / □ / ✕ 三种字形…`）⇒ 直接 grep 原文会把注释当成"还在用字形按钮"的假红。
+_TITLEBTN = "Size = new Size(StyleKit.TitleBarBtnW, GlyphH)"
+ok("三个按钮尺寸一致（都走 StyleKit 常量）", lc.count(_TITLEBTN) >= 3, lc.count(_TITLEBTN))
+_lc_code = "\n".join(_l.split("//")[0] for _l in lc.split("\n"))
+bad_glyph = [g for g in ("\"—\"", "\"✕\"", "\"❐\"") if g in _lc_code]
 ok("不再有文本字形按钮（— / ✕ / ❐）", not bad_glyph, bad_glyph)
 
 print("\n── ④ 三个状态胶囊统一 ──")

@@ -101,7 +101,12 @@ print("\n── C. 「缺运行库」这条链在源码里（不靠肉眼看）�
 lc = io.open(os.path.join(ROOT, "launcher-src", "launcher.cs"), encoding="utf-8").read()
 wg = io.open(os.path.join(ROOT, "launcher-src", "webview2guide.cs"), encoding="utf-8").read()
 ok("OpenConsole 里先查运行库（HasRuntime）", "WebView2Guide.HasRuntime()" in lc)
-ok("有 install 分支（一键装）", 'f.Action == "install"' in lc and 'Action = "install"' in wg)
+# ⚠️ 引导器里主按钮的 Action 是**三元式**赋的：主按钮「一键装」、次按钮「用浏览器打开」共用一个
+#    委托（`Action = (pri == ins) ? "install" : "browser"`）⇒ 原来断言字面 `Action = "install"`
+#    会老化（产品改成三元式之后这里就没有那个字面量了）。
+_GUIDE_MAIN_ACTION = 'Action = (pri == ins) ? "install" : "browser"'
+ok("有 install 分支（一键装）", 'f.Action == "install"' in lc and _GUIDE_MAIN_ACTION in wg,
+   "引导器三元式=%s" % (_GUIDE_MAIN_ACTION in wg))
 ok("有 browser 分支（用浏览器打开）", 'f.Action == "browser"' in lc and 'Action = "browser"' in wg)
 ok("有 copy 分支（复制网址）", 'f.Action == "copy"' in lc and 'Action = "copy"' in wg)
 ok("还写了日志留现场（NoteFallback）", lc.count("NoteFallback(dir, \"缺 WebView2 运行库") >= 3,

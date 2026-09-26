@@ -106,7 +106,9 @@ ok("自动弹一次 + 手动入口", "__pdShown" in H and 'id="pdOpen"' in H)
 ok("作业状态行在面板里", 'id="actStat"' in H and "没有在跑的事" in H)
 ok("状态暴露 jobs（控制台读这个）", 'st["jobs"] = _jobs.status()' in W)
 ok("无人值守能关弹窗", 'os.environ.get("WX_NO_UI_POP") == "1"' in G)
-ok("待空态文案是「没有待的事」", "没有待的事" in H)
+# 文案已明确化为「没有**待拍板**的事」（原来的「没有待的事」读起来不知道在待什么）⇒ 断言跟着走。
+# 判据的意图不变：**空态必须有一句明确文案**，不许空着让人猜。
+ok("待空态文案是「没有待拍板的事」", "没有待拍板的事" in H)
 
 print("── F. 后台作业（jobs）真跑 ──")
 J.reset()
