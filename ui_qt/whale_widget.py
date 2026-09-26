@@ -120,20 +120,27 @@ class WhaleWidget(QWidget):
             return f
 
     def paintEvent(self, _e) -> None:  # noqa: N802
-        """WebView2 正常时由内核合成画面（本窗口只垫**键色**底）。
+        """铺一层**极淡的可命中底**，画面由 WebView2 内核合成在它之上。
 
-        键色像素经窗口颜色键抠像 = 透明且点击穿透；只有降级态才画提示卡
-        （同样垫键色，卡片内容浮在桌面上）。
+        ⛔ 这一层不是为了好看，是为了**让窗口能被点到**：半透明窗在 Windows 上
+        按像素 alpha 做命中测试，**alpha 为零的地方鼠标消息直接穿过去**。而本窗口
+        正常态什么都不画（画面全在 WebView2 子窗里）⇒ 整块方形的 alpha 全是 0
+        ⇒ 系统眼里"没有可点的表面"，于是**连子窗也一起收不到鼠标**，表现就是
+        「看着一切正常，却点不动、拖不动」。降级态之所以一直能拖，正是因为
+        提示卡本身有像素。
+        alpha=1/255 肉眼不可见，但足以把这块方形恢复成命中区域：鲸鱼身上交给
+        页面（原版菜单、页面转发拖动），空白处落到本窗口（Qt 直接拖窗）。
 
-        ⛔ 判据是「**页面真的加载成功了**」而不是「控制器建好了」：
+        判据是「**页面真的加载成功了**」而不是「控制器建好了」：
         `WhaleHostWebView.ok` 只说明 WebView2 环境/控制器就绪，**不代表
         `navigate_to_string` 成功**。只看 `.ok` 时，"控制器就绪但页面没内容"
         的半成品状态两头落空：Qt 侧不画降级卡、WebView2 侧没内容 ⇒ 空窗。
         `load_failed` 把"页面没起来"单独记下来，让降级卡在这种状态下兜底。
         """
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 1))
         if self._host is not None and self._host.ok and not self._load_failed:
             return
-        p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._paint_fallback(p)
 

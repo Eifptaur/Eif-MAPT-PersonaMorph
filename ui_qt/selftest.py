@@ -5356,6 +5356,9 @@ def t_g13() -> None:
     # 位置记忆属于**用户现场状态**：本组要写它来验跨实例恢复，跑完必须还原，
     # 否则自检会把用户拖过的位置改成测试用的坐标。
     _pos_keep = st.value("whale_pos")
+    # 清残留必须**在建窗之前**：建窗时才读位置，晚一步就等于拿上一跑的坐标当起点 ——
+    # 起点会一跑一跑地往屏幕边缘漂，漂到越界后 "跨实例恢复" 这条就会假失败。
+    st.setValue("whale_pos", "")
     keep: list = []
     try:
         w = ww.WhaleWidget(t)
@@ -5363,7 +5366,6 @@ def t_g13() -> None:
         w._boot_webview = lambda *a, **k: None # 桩：本组只验交互，不建 WebView2
 
         # 拖拽（位移 > 阈值）= 移动窗口 + 位置记忆
-        st.setValue("whale_pos", "") # 清位置残留
         pos0 = w.pos()
         w.mousePressEvent(QMouseEvent(QEvent.Type.MouseButtonPress,
                                       QPointF(10, 10), QPointF(w.x() + 10, w.y() + 10),
@@ -7523,6 +7525,17 @@ def t_whale_guard() -> None:
     _h = _inspect.getsource(WhaleHostWebView)
     ck("宿主接页面的 postMessage（add_WebMessageReceived 已接线）",
        "add_WebMessageReceived" in _h and "_on_web_message" in _h, "")
+
+    # ⛔ 分层窗的命中测试按**像素 alpha** 走：alpha=0 的地方鼠标消息直接穿过去。
+    # 本窗口正常态什么都不画（画面全在 WebView2 子窗里）⇒ 若不在提前返回之前
+    # 铺一层有 alpha 的底，整块方形就是"没有可点的表面"，连子窗也一起收不到鼠标。
+    _pv = _inspect.getsource(WhaleWidget.paintEvent)
+    _i_fill = _pv.find("fillRect")
+    _i_ret = _pv.find("return")
+    ck("可命中底敷在**提前返回之前**（否则正常态整窗 alpha=0 ⇒ 点不动也拖不动）",
+       _i_fill != -1 and _i_ret != -1 and _i_fill < _i_ret
+       and "QColor(0, 0, 0, 1)" in _pv,
+       "fill@%s return@%s" % (_i_fill, _i_ret))
 
     ck("宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
        hasattr(WhaleHostWebView, "on_drag"))
