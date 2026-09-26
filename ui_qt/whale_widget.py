@@ -229,17 +229,6 @@ class WhaleWidget(QWidget):
         # 让本轮 showEvent 走完（窗口完成映射）再起，避免拿到未生效的 HWND
         QTimer.singleShot(0, self._boot_webview)
 
-    def _dpr(self) -> float:
-        """当前屏幕缩放 —— WebView2 的 Bounds 收的是**物理像素**，必须乘上它。
-
-        传逻辑像素的后果：画面只铺满窗口的一角（被按 1/DPR 缩），页面视口也跟着变小，
-        弹层会比窗口更早被裁掉。
-        """
-        try:
-            return float(self.devicePixelRatioF() or 1.0)
-        except Exception:  # noqa: BLE001
-            return 1.0
-
     def _boot_webview(self) -> None:
         """建 WebView2 并把原版挂件页加载进去。
 
@@ -250,8 +239,9 @@ class WhaleWidget(QWidget):
         """
         try:
             hwnd = int(self.winId())
-            dpr = self._dpr()
-            self._host = WhaleHostWebView(hwnd, int(self.W * dpr), int(self.H * dpr))
+            # 传**逻辑像素**：`put_Bounds` 到底按逻辑还是物理解释随运行库而异，
+            # 宿主会用页面视口自校准（见 whale_host._calibrate_bounds），这里不猜。
+            self._host = WhaleHostWebView(hwnd, self.W, self.H)
             # 拖动交接：页面自己报位移（见 whale_host.build_host_html 的 dragSetup），
             # 这里收下来挪窗口。**不再**给子窗加 WS_EX_TRANSPARENT —— 那会让
             # 页内控件（减号、原版菜单）一起收不到点击。
@@ -475,8 +465,7 @@ class WhaleWidget(QWidget):
         """窗口移动时通知内核重排（WebView2 不跟随父窗自动挪，会留在原地）。"""
         super().moveEvent(ev)
         if self._host is not None and self._host.ok:
-            dpr = self._dpr()
-            self._host.resize(int(self.W * dpr), int(self.H * dpr))
+            self._host.resize(self.W, self.H)
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         """**必须关控制器** —— 不关会留下杀不掉的浏览器孤儿进程。"""

@@ -105,12 +105,15 @@ class WhaleHostWebView:
     """
 
     def __init__(self, hwnd: int, width: int, height: int) -> None:
-        # ⛔ width/height 是**物理像素**（设备像素）：`put_Bounds` 收的就是物理像素，
-        #    传逻辑像素会让画面只铺满窗口的一角（高 DPI 下按 1/DPR 缩），
-        #    而页面视口的 CSS 像素 = 物理 / 缩放 ⇒ 与 Qt 的逻辑坐标仍然一一对应。
+        # width/height 是**逻辑像素**（= Qt 的窗口尺寸）。真正的物理像素由下面
+        # `_bounds_factor` 决定：`put_Bounds` 到底按逻辑像素还是物理像素解释，
+        # 随运行库版本/DPI 设置而异，所以**用页面视口自校准**（见 `_calibrate_bounds`），
+        # 不靠猜。
         self.hwnd = int(hwnd)
         self.width = int(width)
         self.height = int(height)
+        self._bounds_factor = 1.0 # 1.0 = 按逻辑像素传；校准后可能变成页面缩放
+        self._calibrated = False
         self._env = None
         self._ctrl = None
         self._ctrl2 = None
@@ -379,6 +382,8 @@ class WhaleHostWebView:
             elif kind == "rects":
                 # 页面报告的「本体 + 当前可见弹层」外接矩形：宿主据此铺可命中底
                 # （半透明窗按像素 alpha 做命中测试，alpha=0 的地方鼠标会穿到桌面）。
+                # 一并带上的视口尺寸用于**自校准 Bounds 口径**（见 _calibrate_bounds）。
+                self._calibrate_bounds(msg.get("vw"), msg.get("dpr"))
                 cb = self._on_rects
                 if cb is not None:
                     rs = msg.get("rs")
@@ -490,6 +495,37 @@ class WhaleHostWebView:
             self._ctrl2 = None
             self._trans_err = "%s: %s" % (type(e).__name__, e)
 
+    def _calibrate_bounds(self, vw, dpr) -> None:  # noqa: ANN001
+        """用页面视口**自校准** `put_Bounds` 的口径（只做一次）。
+
+        为什么需要：`put_Bounds` 收的是逻辑像素还是物理像素，随运行库版本/系统缩放
+        而异。传错的表现极其隐蔽 —— **画面整块被画到窗口之外**，于是窗口全空：
+        本体、菜单、减号一起消失，而控制器、页面、脚本全都正常（用户看到的就是
+        「啥都没有」）。
+
+        判据：页面视口（CSS 像素）就是内核认为的可视尺寸。
+          · 视口 ≈ 传入值 ⇒ 内核按**逻辑像素**解释 ⇒ 口径正确，不动；
+          · 视口明显小于传入值 ⇒ 内核按**物理像素**解释（视口 = 传入值 / 页面缩放）
+            ⇒ 画面被缩到窗口一角再往外推 ⇒ 改传「传入值 × 页面缩放」重设一次。
+        """
+        if self._calibrated or not self._ok or self._ctrl is None:
+            return
+        try:
+            vw = int(vw or 0)
+            scale = float(dpr or 0) or 1.0
+        except (TypeError, ValueError):
+            return
+        if vw <= 0 or self.width <= 0:
+            return
+        self._calibrated = True
+        if vw >= self.width - 4:
+            return # 口径正确
+        self._bounds_factor = scale
+        try:
+            self._apply_bounds()
+        except Exception as e:  # noqa: BLE001 — 校准失败也只是画面不对，不该炸挂件
+            self._err = "%s: %s" % (type(e).__name__, e)
+
     def _apply_bounds(self) -> None:
         self._apply_bounds_on(self._ctrl)
 
@@ -501,8 +537,10 @@ class WhaleHostWebView:
             _fields_ = [("left", ctypes.c_int32), ("top", ctypes.c_int32),
                         ("right", ctypes.c_int32), ("bottom", ctypes.c_int32)]
 
+        f = float(self._bounds_factor)
         ctrl.put_Bounds(
-            ctypes.cast(ctypes.byref(RECT(0, 0, self.width, self.height)), c_void_p))
+            ctypes.cast(ctypes.byref(RECT(0, 0, int(self.width * f),
+                                          int(self.height * f))), c_void_p))
 
     def _schedule(self, fn) -> None:  # noqa: ANN001
         """把续跑任务交给 Qt 事件循环（回调线程里不能直接跑重活/建下一环）。"""
@@ -815,9 +853,14 @@ def build_host_html(port: int, token: str) -> str:
         "if(p==='fixed'||p==='absolute')add(el);}catch(e){}}"
         "return out;}"
         "function reportRects(){"
-        "try{var r=rectsNow();var sig=JSON.stringify(r);"
+        "try{var r=rectsNow();var meta=[window.innerWidth,window.devicePixelRatio];"
+        # 视口尺寸一并带上：宿主用它**自校准 Bounds 口径**（传逻辑像素还是物理像素，
+        # 随运行库而异；传错会让画面整块画到窗口之外 = 用户"啥都看不到"）。
+        # 视口也进签名，窗口尺寸一变就会重报一次。
+        "var sig=JSON.stringify([r,meta]);"
         "if(sig===window.__pmRectSig)return;window.__pmRectSig=sig;"
-        "post({pm:'rects',rs:r});}catch(e){}}"
+        "post({pm:'rects',rs:r,vw:window.innerWidth,dpr:window.devicePixelRatio});"
+        "}catch(e){}}"
         "function rectWatch(){"
         "if(window.__pmRect)return;window.__pmRect=1;"
         "reportRects();"

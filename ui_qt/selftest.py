@@ -7554,10 +7554,6 @@ def t_whale_guard() -> None:
     ck("可命中底只铺「本体 + 可见弹层」的报告矩形（整窗铺满会吃掉桌面鼠标）",
        "_veil" in _pv and "_veil_rects" in _pv
        and "self.W - _BASE" in _vr and "self.rect()" not in _pv)
-    ck("WebView2 Bounds 用物理像素（传逻辑像素画面只铺满窗口一角、视口也变小）",
-       "self._dpr()" in _inspect.getsource(WhaleWidget._boot_webview)
-       and "int(self.W * dpr)" in _inspect.getsource(WhaleWidget._boot_webview))
-
     ck("宿主暴露 on_drag 回调接口（Qt 侧据此挪窗口）",
        hasattr(WhaleHostWebView, "on_drag"))
 
@@ -7596,6 +7592,38 @@ def t_whale_guard() -> None:
        ".pm-min-btn{position:absolute" in _html and "appendChild(b)" in _html)
     ck("收起状态不落盘（落盘了下一次启动只剩一个小圆点 = 「挂件不见了」）",
        "pm-whale-collapsed" not in _html)
+    ck("Bounds 口径靠**页面视口自校准**（传逻辑还是物理随运行库而异，传错＝画面全在窗外）",
+       "self._calibrate_bounds" in _inspect.getsource(WhaleHostWebView._on_web_message)
+       and "_bounds_factor" in _inspect.getsource(WhaleHostWebView._calibrate_bounds)
+       and "vw" in _html and "dpr" in _html)
+
+    # 校准决策本身的功能断言（不建 WebView2：直接喂视口读数给那段逻辑）——
+    # 这是"画面整块画到窗口外 ⇒ 用户啥都看不到"那条故障的唯一出口，必须钉住。
+    class _Stub:
+        def __init__(self) -> None:
+            self._calibrated = False
+            self._ok = True
+            self._ctrl = object()
+            self.width, self.height = 440, 560
+            self._bounds_factor = 1.0
+            self._err = ""
+            self.applied: list = []
+
+        def _apply_bounds(self) -> None:
+            self.applied.append(self._bounds_factor)
+
+    _s1 = _Stub()
+    WhaleHostWebView._calibrate_bounds(_s1, 440, 1.5) # 视口 = 传入值 ⇒ 口径正确
+    _s2 = _Stub()
+    WhaleHostWebView._calibrate_bounds(_s2, 293, 1.5) # 视口 < 传入值 ⇒ 内核按物理解释
+    ck("校准：视口=传入值则不动、视口偏小则按页面缩放重设一次",
+       _s1.applied == [] and _s2.applied == [1.5],
+       "ok=%s fixed=%s" % (_s1.applied, _s2.applied))
+    _s3 = _Stub()
+    WhaleHostWebView._calibrate_bounds(_s3, 293, 1.5)
+    WhaleHostWebView._calibrate_bounds(_s3, 100, 2.0) # 只校准一次，不反复抖
+    ck("校准只做一次（避免每来一条上报就重设 Bounds）",
+       _s3.applied == [1.5], "%s" % (_s3.applied,))
     ck("位置记忆记的是**本体右下角**（窗口尺寸再变，本体也不会被顶到屏幕外）",
        "whale_anchor" in _inspect.getsource(WhaleWidget._read_anchor)
        and "+ self.W" in _inspect.getsource(WhaleWidget._save_anchor))
