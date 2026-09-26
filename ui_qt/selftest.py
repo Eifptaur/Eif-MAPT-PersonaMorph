@@ -8927,6 +8927,202 @@ def t_gate_middle() -> None:
         ck("内容层可调用", False, "%s: %s" % (type(_e).__name__, _e))
 
 
+#: 控制台里**故意留着但尚未接线**的开关。判据不是"有没有这个键"，而是"**有没有骗人**"：
+#   键可以暂时不接线（保住用户的选择），但**不许**在界面上装成能用。
+#   规矩（本闸门强制）：清单里的键，UI 文案必须带「未接线」字样；反过来，不在清单里的键
+#   **必须真有消费方**。两边都查 ⇒ 既拦住"假开关"，也拦住"接线后忘了撤登记"。
+UNWIRED_CFG_KEYS = {
+    "send.uia_setvalue": "主发送链目前只有一条实现在跑（UIA 直进 + 回退粘贴），不由这里切换",
+    "scoring.online_scoring": "本机没有「调 LLM 打分」这条实现，评分全在本地算",
+}
+
+
+def t_cfg_wired_guard() -> None:
+    """自检：控制台暴露的配置键，**要么真有消费方，要么如实标注「未接线」**。
+
+    ⛔ 为什么要有这条闸门：一个"勾了没反应"的开关，比没有这个开关更坏——它替产品
+    **承诺了一个不存在的行为**（用户按它调了刹车/改了行为，实际什么都没发生）。
+    这类问题不会自己暴露：没有异常、没有日志、功能测试也不碰它。
+    唯一的机械化判据就是"**这个键有没有被真读过**"，所以这里按**全量口径**逐个核。
+
+    两个方向都查：
+      ① 清单外的键 ⇒ 必须在 `agent/`/`ui_qt/`/`scripts/` 的代码里被真读到；
+      ② 清单内的键 ⇒ UI 文案必须写明「未接线」，且**确实没有**消费方（防止接线后还挂着"未接线"）。
+    """
+    import inspect as _inspect # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+    import re as _re # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    _console = _o.path.join(_root, "agent", "console_html.py")
+    try:
+        _src = open(_console, encoding="utf-8", errors="ignore").read()
+    except OSError as _e:
+        ck("控制台页面可读（配置键闸门的前提）", False, "%s" % _e)
+        return
+
+    _keys = sorted({k for k in _re.findall(r'data-cfg="([^"]+)"', _src)
+                    # 排除 JS 模板串拼出来的假键（含引号/加号/空格的都不是配置键）
+                    if _re.match(r"^[A-Za-z_][\w.]*$", k)})
+    ck("控制台暴露的配置键可枚举（闸门要有分母）", len(_keys) > 200, "%d 个键" % len(_keys))
+
+    # 收集"真消费方"。三处必须是**非消费方**，否则分母全绿：
+    #   · `agent/config.py` —— 默认表里出现只说明"声明过"；
+    #   · `agent/console_html.py` —— 它就是 UI 自己；
+    #   · `*selftest*` —— 判据引用不算产品消费。
+    _pool = {}
+    for _sub in ("agent", "scripts"):
+        for _dp, _dn, _fns in _o.walk(_o.path.join(_root, _sub)):
+            _dn[:] = [d for d in _dn if d not in ("__pycache__", "assets", "logs", "data")]
+            for _fn in _fns:
+                if not _fn.endswith(".py") or "selftest" in _fn:
+                    continue
+                _p = _o.path.join(_dp, _fn)
+                if _p.endswith(_o.path.join("agent", "config.py")):
+                    continue # ⛔ 声明处不是消费方
+                try:
+                    _pool[_p] = open(_p, encoding="utf-8", errors="ignore").read()
+                except OSError:
+                    pass
+
+    def _quoted(_s, _name):
+        return ('"%s"' % _name) in _s or ("'%s'" % _name) in _s
+
+    def _consumed(_key):
+        """键 `a.b.c` 是否被**真读过**。两种形态都要认，否则会误报成假开关：
+        ① 字面量：`get("c")` / `["c"]`；
+        ② **拼出来的键名**：如 `system_prompt.module_enabled` 里 `key = "enable_" + mid`，
+           此时用"模块 id"（`scene_rules`）去找消费点 `_mod_on("scene_rules")`。
+        """
+        _t, _l = _key.split(".")[0], _key.split(".")[-1]
+        if _t == "ui":
+            return True # 界面行为：实现在页面/壳里（前端 JS / Qt），不属于"后端消费"这条判据
+        for _s in _pool.values():
+            if _t not in _s:
+                continue
+            if _quoted(_s, _l):
+                return True
+            if _l.startswith("enable_") and _quoted(_s, "enable_"):
+                if _quoted(_s, _l[len("enable_"):]):
+                    return True
+        return False
+
+    _ui_only = len([k for k in _keys if k.split(".")[0] == "ui"])
+    ck("界面行为类键（ui.*）单独计一档、不混进「后端有没有读」的分母",
+       _ui_only >= 1, "%d 个（豁免理由：实现在页面/壳里）" % _ui_only)
+
+    _fake, _missing_label = [], []
+    for _k in _keys:
+        _read = _consumed(_k)
+        if _k in UNWIRED_CFG_KEYS:
+            # ② 清单内的键：不许有消费方（真接线了就该从清单里撤掉），且文案要说明白
+            if _read:
+                _fake.append("%s（已接线，请从 UNWIRED_CFG_KEYS 撤登记）" % _k)
+            _seg = _src.find('data-cfg="%s"' % _k)
+            _win = _src[_seg:_seg + 420] if _seg >= 0 else ""
+            if "未接线" not in _win:
+                _missing_label.append(_k)
+        elif not _read:
+            _fake.append("%s（UI 有、后端不读 ⇒ 勾了没反应）" % _k)
+
+    ck("① 清单外的键都真有消费方（没有「勾了没反应」的假开关）",
+       not _fake, "；".join(_fake[:6])[:180])
+    ck("② 未接线清单里的键，界面文案都写明「未接线」（不装成能用）",
+       not _missing_label, "；".join(_missing_label)[:180])
+    ck("未接线清单本身不是空的（这条闸门还在真的守着东西）",
+       len(UNWIRED_CFG_KEYS) >= 1, "%d 个" % len(UNWIRED_CFG_KEYS))
+    # ③ 本轮接线的两个键必须有消费方（正面核验：接线不是靠"改文案"交差的）
+    from agent import scoring as _sc # noqa: PLC0415
+    from agent import sender as _sd # noqa: PLC0415
+    ck("「热度衰减」开关已真接线（_decay 读 scoring.heat_decay）",
+       "heat_decay" in _inspect.getsource(_sc._decay)
+       or "heat_decay" in _inspect.getsource(_sc._heat_decay_on), "")
+    ck("「每分钟限发」开关已真接线（限发器读 wechat.rate_limit_per_minute）",
+       "rate_limit_per_minute" in _inspect.getsource(_sd.SendQueue._check_rate), "")
+    from agent import prompt as _pr # noqa: PLC0415
+    ck("「种子库」开关已真接线（提示词按 scoring.seed_library 决定放不放内置种子）",
+       "seed_library" in _inspect.getsource(_pr._funny_reference), "")
+
+
+def t_delivery_ledger_guard() -> None:
+    """自检：**"已发送"记账必须在真的发出去之后**（不许谎报送达）。
+
+    ⛔ 为什么单独一条：会话里的 `sent` 台账不只给人看——它决定模型**要不要重试**，
+    也是"这条消息有没有回过"的唯一凭据。谎报一次的后果是**永久性的**：
+    模型以为发过了不再重试、用户那边什么都没有，而所有日志都写着"成功"。
+    以前的形态有两种，都不会自己暴露（不抛异常、功能测试也不碰）：
+      ① `_exec_gen_image` 逐张 catch 异常、最后**无条件**记账 + 回 `sent=True` ⇒ 全失败也算成功；
+      ② `_exec_gen_video` 忽略 `send_file_posted` 的 **(ok, 说明)** 返回值就记账。
+    判据要用**行为**验（走一遍那条链看台账），而不是只看源码里有没有某个词。
+    """
+    import inspect as _inspect # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+
+    _o.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from agent import image_gen as _ig # noqa: PLC0415
+    from agent import sender as _sd # noqa: PLC0415
+    from agent import tools as _tl # noqa: PLC0415
+
+    # ① sender.send_image 的失败契约必须是**抛异常**（`send_image` 之后那些"裸 append"才安全）
+    _src_si = _inspect.getsource(_sd.SendQueue.send_image)
+    ck("发图失败是 raise（不是返回 False）—— 记账点靠异常挡住",
+       "raise RuntimeError" in _src_si and "return {\"sent\": True}" in _src_si, "")
+
+    # ② 行为：生成图全部发送失败 ⇒ 必须报错，且**台账里不许出现 [生成图]**
+    _tmp = _tf.mkdtemp(prefix="ledger-gate-")
+    _p1 = _o.path.join(_tmp, "a.png")
+    _p2 = _o.path.join(_tmp, "b.png")
+    for _p in (_p1, _p2):
+        open(_p, "wb").write(b"x")
+
+    class _BoomSender:
+        def send_image(self, chat_key, path):
+            # `SendQueue.send_image` 的失败契约就是抛异常 ⇒ 替身照抄这个契约
+            raise RuntimeError("图片发送失败（判据替身）")
+
+    _ctx = {"sender": _BoomSender(), "chat_key": "group:x@y", "chat_id": "x@y", "session": {}}
+    _keep_gen = _ig.generate
+    try:
+        _ig.generate = lambda *a, **k: {"ok": True, "files": [_p1, _p2], "backend": "stub",
+                                        "why": "", "results": []}
+        _res = _tl._exec_gen_image(_ctx, {"request": "画个猫"})
+    finally:
+        _ig.generate = _keep_gen
+    _raw = _res[0] if isinstance(_res, tuple) else _res
+    _txt = str(_raw)
+    _recorded = [x for x in (_ctx["session"].get("sent") or []) if x.get("type") == "image"]
+    ck("生成图**一张都没发出去** ⇒ 如实报错（不回「已发送」）", "没发出去" in _txt, _txt[:120])
+    ck("生成图全失败 ⇒ 台账里**没有**[生成图]（谎报送达是最坏的一种记账）",
+       not _recorded, str(_recorded)[:100])
+
+    # ③ 对照组：发成功时**必须**记账（否则兜底补发会把同一件事再发一遍）
+    class _OkSender:
+        def send_image(self, chat_key, path):
+            return {"sent": True}
+
+    # ⚠️ 必须预建 `sent`：产品里 `session` 是**带键**进来的（见 `send_message` 那条链），
+    #    这里若给空 dict，`ctx["session"]["sent"].append` 会 KeyError 被内层 try/except 吞掉
+    #    ⇒ 正向对照会**假红**（我第一版就是这么红的一处，属于判据自己的坑）。
+    _ctx2 = {"sender": _OkSender(), "chat_key": "group:x@y", "chat_id": "x@y",
+             "session": {"sent": []}}
+    try:
+        _ig.generate = lambda *a, **k: {"ok": True, "files": [_p1], "backend": "stub",
+                                        "why": "", "results": []}
+        _tl._exec_gen_image(_ctx2, {"request": "画个猫"})
+    finally:
+        _ig.generate = _keep_gen
+    _rec2 = [x for x in (_ctx2["session"].get("sent") or []) if x.get("type") == "image"]
+    ck("生成图发成功 ⇒ 台账里**有**[生成图]（对照组，防把记账整个删掉）",
+       len(_rec2) == 1, str(_rec2)[:80])
+
+    # ④ 生成视频那条：源码形态锚定"按返回值判"，不看返回值就记账是错的
+    _src_gv = _inspect.getsource(_tl._exec_gen_video)
+    ck("生成视频按 send_file_posted 的返回值判成功（不是「没抛异常就算发出去」）",
+       "_sf_ok, _sf_msg = sender.send_file_posted" in _src_gv and "if not _sf_ok:" in _src_gv, "")
+
+
 def main() -> int:
     # ⭐ 测试隔离（audit-r2 N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -8954,7 +9150,7 @@ def main() -> int:
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
-                   t_gate_middle,
+                   t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard,
                    t_whale_roles, t_whale_assets, t_whale_usage):
             try:
                 fn()

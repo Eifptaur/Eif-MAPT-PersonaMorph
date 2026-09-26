@@ -124,6 +124,18 @@ ROUTES = {
     "/dsh-whale/audio.json": ("POST",),
     "/dsh-whale/bubble.json": ("POST",),
     "/dsh-whale/size.json": ("POST",),
+    # ⚠️ 下面 6 条是 `_handle_body_request` 里的**字面分支**，以前漏登记（判据 A1 抓出来的）。
+    #    这里只声明 POST —— 与上面 3 条同一口径：本表覆盖的是 `do_GET` / `_handle_body_request`
+    #    两条字面分派链；挂件那条 GET 链（`Handler._whale_get`，19 条）走的是
+    #    `path.startswith("/dsh-whale/")` 的**非字面分支**，由本文件的 `PATTERNS` 兜底登记，
+    #    不在这里逐条枚举（逐条枚举会与 PATTERNS 口径打架）。
+    "/dsh-whale/api-models.json": ("POST",),
+    "/dsh-whale/balance-adjustments.json": ("POST",),
+    "/dsh-whale/bubble-img-upload.json": ("POST",),
+    "/dsh-whale/role-delete.json": ("POST",),
+    "/dsh-whale/role-pin.json": ("POST",),
+    "/dsh-whale/roles.json": ("POST",),
+    "/dsh-whale/usage-settings.json": ("POST",),
     "/index.html": ("GET",),
 }
 

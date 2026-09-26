@@ -1126,19 +1126,26 @@ def _exec_gen_image(ctx, args):
         res = _ig.generate(str(ctx.get("chat_id") or ""), req)
         if not res.get("ok"):
             return _ok("这次没生成出图：%s（照实说明，不要假装生成过）" % res.get("why"))
-        sent = []
+        sent_ok, sent_bad = [], []
         for p in (res.get("files") or []):
             try:
                 ctx["sender"].send_image(ctx["chat_key"], p)
-                sent.append(_os.path.basename(p))
+                sent_ok.append(_os.path.basename(p))
             except Exception as e:
-                sent.append("%s(发送异常 %s)" % (_os.path.basename(p), type(e).__name__))
+                sent_bad.append("%s(发送异常 %s)" % (_os.path.basename(p), type(e).__name__))
+        # ⛔ 记账与回报都必须在**真发出去之后**：以前不管有没有发成功，都写一条「[生成图]」进
+        #    `session["sent"]` 并回 `sent=True` ⇒ 一张都没发出去时，会话记录与模型**都以为已发**
+        #    （模型不再重试、用户那边其实什么都没有）。"没发出去"必须说成没发出去。
+        if not sent_ok:
+            return _err("图生成好了、过滤也过了，但**一张都没发出去**：%s"
+                        "（不要假装发过；可稍后重试）" % "；".join(sent_bad[:3]))
         try:
             ctx["session"]["sent"].append({"type": "image", "text": "[生成图]"})
         except Exception:
             pass
-        return _ok({"sent": True, "files": sent, "backend": res.get("backend"),
-                    "note": "已生成并通过过滤链后发出（%d 张）。不要输出『已发送』类汇报。" % len(sent)})
+        return _ok({"sent": True, "files": sent_ok + sent_bad, "backend": res.get("backend"),
+                    "note": "已生成并通过过滤链后发出（%d 张%s）。不要输出『已发送』类汇报。"
+                            % (len(sent_ok), ("，另有 %d 张发送失败" % len(sent_bad)) if sent_bad else "")})
     except Exception as e:
         return _err("生图工具异常：%s" % type(e).__name__)
 
@@ -1717,14 +1724,26 @@ def _exec_gen_video(ctx, args):
                     continue
                 files = [p for p in (j.get("files") or []) if _os.path.isfile(p)]
                 if j.get("state") == "done" and files and sender is not None:
+                    _ok_n = 0
                     for p in files:
                         try:
-                            sender.send_file_posted(chat_key, p) # 投递档：不动鼠标、不打扰你（可能短暂置前约 1~3 秒后自动还回）
+                            # ⛔ `send_file_posted` 是**返回 (ok, 说明)**的，不是"没抛异常就算发出去"
+                            #   ⇒ 以前忽略返回值就记账，「[生成视频]」会在发送失败时照样写进会话
+                            #   （模型不再重试、用户其实没收到）。必须按返回值判。
+                            _sf_ok, _sf_msg = sender.send_file_posted(chat_key, p)
+                            if not _sf_ok:
+                                _lg.getLogger("persona_morph").warning(
+                                    "生成视频没发出去：%s（%s）", _os.path.basename(p), str(_sf_msg)[:100])
+                                continue
+                            _ok_n += 1
                             if isinstance(session, dict):
                                 session.setdefault("sent", []).append({"type": "video", "text": "[生成视频]"})
                         except Exception as e:
                             _lg.getLogger("persona_morph").warning(
                                 "生成视频发送失败：%s（%s）", _os.path.basename(p), type(e).__name__)
+                    if not _ok_n:
+                        _lg.getLogger("persona_morph").warning(
+                            "生成视频：%d 个文件都没发出去（不记账为已发送）", len(files))
                 else:
                     _lg.getLogger("persona_morph").warning(
                         "生成视频没成：%s", str(j.get("why") or "未知原因")[:120])

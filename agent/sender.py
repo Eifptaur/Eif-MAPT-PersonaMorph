@@ -87,6 +87,15 @@ class SendQueue:
         minute = [t for t in self.minute_times.get(chat_key, []) if now - t < 60]
         hour = [t for t in self.hour_times.get(chat_key, []) if now - t < 3600]
         max_min = max(1, int(cfg.get("max_per_minute") or 20))
+        # 「微信」段那个「每分钟限发」以前是**假开关**：控制台里有输入框，后端从来没读过它
+        # ⇒ 用户把它调小以为踩了刹车，实际完全没生效。这里并进来，两个入口**取更严的那个**
+        # （谁填得小谁生效）：只会更保守，不会把任何一侧的限制放开。填 0/空 = 该处不限。
+        try:
+            _wx_min = int((get_config().get("wechat") or {}).get("rate_limit_per_minute") or 0)
+        except Exception:  # noqa: BLE001 — 配置形状不对时不改变既有行为
+            _wx_min = 0
+        if _wx_min > 0:
+            max_min = min(max_min, _wx_min)
         max_hour = max(1, int(cfg.get("max_per_hour") or 500))
         if len(minute) >= max_min:
             raise RuntimeError("发送频率超限（每分钟最多 %d 条），请等一会再发" % max_min)

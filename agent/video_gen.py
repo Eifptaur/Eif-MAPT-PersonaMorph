@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -29,6 +30,8 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TIMEOUT = 300 # 视频比图慢得多，默认给 5 分钟
@@ -429,8 +432,12 @@ def _f_redline(path: str, meta: dict):
 
 def _f_classifier(path: str, meta: dict):
     """内容分类器：本项目**没有内置模型**（不引大依赖）。开着就说"没装分类器"，
-    把它记进结论但不因此拦截——**如实性优先于假装把关**。"""
-    return True, "本机没装内容分类器（只记录，不拦）"
+    记进结论但不因此拦截——**如实性优先于假装把关**。
+
+    ⚠️ "记录"这个承诺必须是**真的**：逐层结论由 `run_filters` 统一写进运行日志
+    （见那里）。否则这句就只是空头承诺——说明列表只在返回值里，成功那条路上没人看。
+    """
+    return True, "本机没装内容分类器 ⇒ 未参与判定（不拦；逐层结论见运行日志）"
 
 
 FILTERS = [("size", _f_size), ("duration", _f_duration), ("dup", _f_dup),
@@ -438,9 +445,15 @@ FILTERS = [("size", _f_size), ("duration", _f_duration), ("dup", _f_dup),
 
 
 def run_filters(path: str, meta: dict):
-    """按面板开关跑过滤链 ⇒ `(过没过, 说明列表)`。任一层判否 ⇒ 不过（fail-closed）。"""
+    """按面板开关跑过滤链 ⇒ `(过没过, 说明列表)`。任一层判否 ⇒ 不过（fail-closed）。
+
+    ⚠️ 每次跑链都把**逐层结论**写一条运行日志 —— 这是给面板上"只记录、不拦"那句话兜底的：
+    没有这条日志，"记录"就是空头承诺（说明列表只在返回值里，成功那条路上**没人看**）。
+    路径与返回形态保持不变（首层判否即短路，说明列表照旧含该层）。
+    """
     chain = dict(cfg().get("filter_chain") or {})
     notes = []
+    passed = True
     for name, fn in FILTERS:
         if chain.get(name) is False:
             notes.append("%s=关" % name)
@@ -448,11 +461,20 @@ def run_filters(path: str, meta: dict):
         try:
             okay, detail = fn(path, meta)
         except Exception as e:
-            return False, notes + ["%s=异常(%s)" % (name, type(e).__name__)]
+            notes.append("%s=异常(%s)" % (name, type(e).__name__))
+            passed = False
+            break
         notes.append("%s=%s" % (name, detail))
         if not okay:
-            return False, notes
-    return True, notes
+            passed = False
+            break
+    # 结论记账：过与不过都记（不过的时候这里也留一份，便于对照"到底哪层拦的"）
+    try:
+        log.info("视频过滤链[%s] %s：%s", "过" if passed else "不过",
+                 os.path.basename(str(path)), " / ".join(notes) or "(空)")
+    except Exception:  # noqa: BLE001 — 记日志失败不许影响过滤结论
+        pass
+    return passed, notes
 
 
 def candidate_backends():

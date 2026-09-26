@@ -1024,7 +1024,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">机器人跑在小号上、你用自己另一个号<b>私聊</b>它时，选这一档它才会应你——相当于借一个智能体进来跟自己聊天。<b>「谁都理」会给陌生人回消息</b>，不清楚后果就别选。</span></div></div>
       <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
-      <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"></div></div>
+      <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"><span class="hint">与「发送」页的「每分钟上限」<b>取更严的那个</b>（谁填得小谁生效）。留空＝这一处不限。</span></div></div>
       <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
       <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
       <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不激活、不动鼠标；只是窗口会重新出现）。**干完活不会再帮你收回去**——窗口留在桌面上（只压到后台），嫌乱请自己收。取消勾选＝最小化时如实停下</span></div>
@@ -1604,9 +1604,9 @@ th{color:var(--tx2);font-weight:500}
       <h2>社区与学习</h2>
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
       <div class="row"><label>评分引擎</label><input type="checkbox" data-cfg="scoring.enabled" checked><span class="hint">本地正反馈评分（零用量）；群友回应热烈→高效反应进入提示词参考</span></div>
-      <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考</span></div>
-      <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint">每次 reaction 后调 LLM 打分（费用量，默认关）</span></div>
-      <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权，防饱和</span></div>
+      <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考（默认开）。关掉 ⇒ 提示词里不再放这段种子；「本地高分反应」不归它管。</span></div>
+      <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint">⚠️ <b>当前未接线</b>：本机没有「调 LLM 打分」这条实现，勾上也不会真去打分（评分目前全在本地算）。留着是为了不弄丢你的选择。</span></div>
+      <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权、防饱和（默认开）。取消勾选 ⇒ 分数不再随时间衰减，老梗不降权。</span></div>
       <div class="row"><label>梗搜索</label><input type="checkbox" data-cfg="meme.enabled" checked><span class="hint">不懂群里的新梗时，机器人可联网查它的来龙去脉（只在真不懂时才查，默认开）</span></div>
       <div class="mid">
         <div class="row"><label>每次最多几条</label><input type="number" min="1" max="10" data-cfg="meme.max_results"><span class="hint">1~10 条，默认 5</span></div>
@@ -1982,7 +1982,7 @@ th{color:var(--tx2);font-weight:500}
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="video_gen.filter_chain.dup"> 重复</label>
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="video_gen.filter_chain.redline"> 红线（真人换脸这类）</label>
         <label class="hint"><input type="checkbox" data-cfg="video_gen.filter_chain.classifier"> 内容分类器</label>
-        <div class="hint">任一层判否 ⇒ 不发（fail-closed）；不过的产物当场删掉，不留在盘上。**内容分类器本机没装，开着只会记录、不拦**（不假装把关）。</div></div></div>
+        <div class="hint">任一层判否 ⇒ 不发（fail-closed）；不过的产物当场删掉，不留在盘上。内容分类器本机没装（不引大依赖）⇒ 开着也判不出，<b>逐层结论如实写进「运行日志」、不拦</b>（不假装把关）。</div></div></div>
       <div class="row"><label>当前状态</label><div class="grow"><span id="vgStat" class="hint">检测中…</span></div></div>
       <div class="btns">
         <button id="vgGuide" class="ghost">怎么接视频后端？红线是什么？</button>
@@ -2133,7 +2133,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint" style="margin-top:8px">引用规则：机器人上一条消息超过「对话冷却」秒（对话已冷场）时，以「引用概率」（默认 70%）自动引用对方最近的一句话，让"新开头"更像真人接话；模型显式指定引用时以模型为准。</div>
       <div class="row"><label>系统无障碍接口 直写输入</label><input type="checkbox" data-cfg="send.uia_setvalue" checked>
-        <span class="hint">勾选=用 系统无障碍接口 SetValue 后台直写输入框（不点输入框/不粘贴）；不勾=点输入框+粘贴（兼容部分微信版本）</span></div>
+        <span class="hint">⚠️ <b>当前未接线</b>：勾与不勾目前都不改变发送行为（主发送链走的是「UIA 直进、失败回退粘贴」那一套，不由这里切换）。留着是为了不弄丢你的选择，接上后这里会写清。</span></div>
       <div class="row"><label>允许真鼠标兜底</label><input type="checkbox" data-cfg="input.allow_real_fallback">
         <span class="hint">默认关：投递档确认不了目标会话时<b>宁可漏发、绝不发错</b>，全程不动你的鼠标。打开＝允许机器人<b>真实移动光标、点输入框、点发送</b>（会短暂占用你的鼠标）；只建议「投递档老失败、机器空闲可托管」的场景再开，会话识别正常时不需要它。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>

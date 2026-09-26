@@ -48,10 +48,25 @@ def _save(data: dict):
         pass
 
 
+def _heat_decay_on() -> bool:
+    """控制台「热度衰减」这个开关是否生效（`scoring.heat_decay`，默认开）。
+
+    ⛔ 这个开关以前是**假开关**：控制台里有勾选框、默认还是勾上的，但后端从来没读过它 ⇒
+    用户取消勾选后衰减照旧（"老梗降权、防饱和"关不掉）。这里把唯一实现点接上开关，
+    勾选框才算有承诺过的作用；读不到配置时按默认（开）走，不让配置读取问题改变原有行为。
+    """
+    try:
+        return bool(get_config().get("scoring", {}).get("heat_decay", True))
+    except Exception:  # noqa: BLE001 — 配置读不了时按原行为（开），不把功能意外关掉
+        return True
+
+
 def _decay(score: float, last_ts: float, now: float) -> float:
-    """热度衰减：分数随时间衰减向 0（老梗降权）。"""
+    """热度衰减：分数随时间衰减向 0（老梗降权）。**受 `scoring.heat_decay` 开关控制**。"""
     if HEAT_HALF_LIFE_MS <= 0:
         return score
+    if not _heat_decay_on():
+        return float(score)
     age = max(0, now - last_ts)
     return score * (0.5 ** (age / HEAT_HALF_LIFE_MS))
 

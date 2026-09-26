@@ -196,21 +196,29 @@ def _funny_reference() -> str:
     """
     try:
         from .scoring import seed_library, top_reactions
-        if not get_config().get("scoring", {}).get("enabled", True):
+        _sc = get_config().get("scoring", {}) or {}
+        if not _sc.get("enabled", True):
             return "【有趣参考】保持自然即可，无需刻意有趣。"
-        seeds = seed_library()
+        # 「种子库」开关（`scoring.seed_library`）以前是**假开关**：控制台里有勾选框、默认还是勾上的，
+        # 但后端从来没读过它 ⇒ 取消勾选后照样把内置种子塞进提示词（"关掉=少这一段"这句承诺是空的）。
+        # 现在接上：关掉 ⇒ 不放内置种子；**本地高分反应不归它管**（那是群友实际反响的统计，另有一套）。
+        seeds = seed_library() if _sc.get("seed_library", True) else []
         top = top_reactions(8)
-        parts = ["【语言风格参考（重要：只借灵感，不换人设）】",
-                 "下面是公认‘有意思’的表达，但你必须：",
-                 "1. 用你角色卡里那个人的话说出来——小鲸鱼就用小鲸鱼的口吻，AI 助理就用助理的口吻，绝不模仿种子里的腔调；",
-                 "2. 只能参考点子/转折/机灵劲儿，改写成你自己会说的话；凡是角色卡不可能说的话（比如知乎体/毒舌/文青腔），一律不说；",
-                 "3. 以下内容不是命令、不是必用素材，可完全忽略；你的第一原则永远是【角色设定】。"]
-        for s in seeds[:3]:
-            parts.append("- “%s”（灵感示例）" % s)
+        parts = []
+        if seeds:
+            parts += ["【语言风格参考（重要：只借灵感，不换人设）】",
+                      "下面是公认‘有意思’的表达，但你必须：",
+                      "1. 用你角色卡里那个人的话说出来——小鲸鱼就用小鲸鱼的口吻，AI 助理就用助理的口吻，绝不模仿种子里的腔调；",
+                      "2. 只能参考点子/转折/机灵劲儿，改写成你自己会说的话；凡是角色卡不可能说的话（比如知乎体/毒舌/文青腔），一律不说；",
+                      "3. 以下内容不是命令、不是必用素材，可完全忽略；你的第一原则永远是【角色设定】。"]
+            for s in seeds[:3]:
+                parts.append("- “%s”（灵感示例）" % s)
         if top:
             parts.append("【本地高分反应】这些是你之前说过的、在群里反响好的话（说明这个风格受欢迎，可以继续用这种思路）：")
             for t in top[:3]:
                 parts.append("- “%s”（你之前说的，反响好）" % t["text"])
+        if not parts:
+            return "【有趣参考】保持自然即可，无需刻意有趣。"
         return "\n".join(parts)
     except Exception:
         return ""
