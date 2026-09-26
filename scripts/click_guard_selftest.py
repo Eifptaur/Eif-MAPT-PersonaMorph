@@ -29,6 +29,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import wechat as W # noqa: E402
@@ -128,7 +130,7 @@ ok("没有新窗 ⇒ 不给『点偏』这种误判", ad5.dumps == [] and ad5.cl
 
 print("── E. tooltip 级小窗不算（源码级：两条边都 <200px 直接跳过）──")
 _SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg = _SRC[_SRC.index("def _wx_toplevel_windows("):]
+_seg = _srcslice.from_func(_SRC, "_wx_toplevel_windows")
 _seg = _seg[:_seg.index("\n    def ", 10)]
 ok("小窗过滤在", "< 200 and (int(y1) - int(y0)) < 200" in _seg, _seg[:0])
 ok("注释写明为什么（悬停提示也是 Qt 顶层窗）", "tooltip" in _seg)
@@ -143,8 +145,8 @@ ok("八处点击都带了可对账的 tag（缺：%s）" % (_missing or "无"), 
 ok("`_click_posted` 调用点 ≥ 8", _SRC.count("self._click_posted(") >= 8,
    str(_SRC.count("self._click_posted(")))
 ok("关窗走安全咽喉点（绝不关微信主窗）",
-   ("winops.close(" in _SRC[_SRC.index("def _close_stray_window("):][:900]
-    or "_win_close(" in _SRC[_SRC.index("def _close_stray_window("):][:900]))
+   ("winops.close(" in _srcslice.from_func(_SRC, "_close_stray_window")[:900]
+    or "_win_close(" in _srcslice.from_func(_SRC, "_close_stray_window")[:900]))
 
 print("── G. 防回归：不许把『证据复用』这类加速器偷偷加回来 ──")
 ok("没有会话证据记账/复用机器（`_proof_fresh`）", "_proof_fresh" not in _SRC)

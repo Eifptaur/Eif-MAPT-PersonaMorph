@@ -16,6 +16,8 @@ import tempfile
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 os.chdir(ROOT)
 
 from agent import click_pref as CP # noqa: E402
@@ -132,7 +134,7 @@ ok("记录条数有上限（防文件长胖）", len(CP.stats().get("keys") or {
 
 print("── F. 接线：只改顺序、不改授权（源码断言）──")
 SRC = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
-BODY = SRC.split("def _click_visible_session(")[1].split("\n    def ")[0]
+BODY = _srcslice.from_func(SRC, "_click_visible_session").split("\n    def ")[0]
 ok("会话行点击接了偏好（order_named）", "order_named(" in BODY and "click_pref" in BODY)
 ok("成功/失败都回写（record_ok / record_fail）", "record_ok(" in BODY and "record_fail(" in BODY)
 ok("**复核仍在**（授权不交给偏好）",

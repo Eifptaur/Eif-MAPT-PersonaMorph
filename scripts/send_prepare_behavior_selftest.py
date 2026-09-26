@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 #   NameError 被 `except: pass` 静默吞掉）⇒ 一次都没生效。现在收口到 `scripts\_iso14.py` 一处，
 #   并且**先 import 再打桩**。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _srcslice
 import _iso14 # noqa: E402
 _iso14.wechat()
 
@@ -647,19 +648,19 @@ finally:
 print("── B9. 静态网：每条**经过 `_send_with_foreground`** 的链都有放回；`send_text` 的三道早退也罩住 ──")
 _SRC_W_B = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "agent", "wechat.py"), encoding="utf-8").read()
-_SEG_SWF_B = _SRC_W_B.split("def _send_with_foreground(")[1].split("\n    def ", 1)[0]
+_SEG_SWF_B = _srcslice.from_func(_SRC_W_B, "_send_with_foreground").split("\n    def ", 1)[0]
 ok("B9a `_send_with_foreground` 的 finally 里放回（一处覆盖所有走它的链）",
    "finally:" in _SEG_SWF_B and "_minimize_back_if_needed(" in _SEG_SWF_B)
 for _fn_b, _lab_b in (("send_text_at", "`send_text_at`（@某人）"), ("send_image", "`send_image`（发图）")):
-    _seg_b = _SRC_W_B.split("def %s(" % _fn_b)[1].split("\n    def ", 1)[0]
+    _seg_b = _srcslice.from_func(_SRC_W_B, _fn_b).split("\n    def ", 1)[0]
     ok("B9b %s 确实经过 `_send_with_foreground`（⇒ B9a 的放回覆盖到它）" % _lab_b,
        "self._send_with_foreground(" in _seg_b)
-_SEG_ST_B = _SRC_W_B.split("def send_text(")[1].split("\n    def ", 2)[0]
+_SEG_ST_B = _srcslice.from_func(_SRC_W_B, "send_text").split("\n    def ", 2)[0]
 ok("B9c `send_text` 的三道 `try` 前早退（停机/版本门/去重）也各补了放回（`finally` 罩不到它们）"
    "—— 三处 + `finally` 那一句 = 4 次",
    _SEG_ST_B.count('_minimize_back_if_needed("投递文本链收尾（含早退）")') >= 4,
    "出现 %d 次" % _SEG_ST_B.count('_minimize_back_if_needed("投递文本链收尾（含早退）")'))
-_SEG_GG_B = _SRC_W_B.split("def _get_gui(")[1].split("\n    def ", 1)[0]
+_SEG_GG_B = _srcslice.from_func(_SRC_W_B, "_get_gui").split("\n    def ", 1)[0]
 ok("B9d `_get_gui` 自愈的两条出口（构造成功 / 构造失败）都有放回",
    _SEG_GG_B.count("_minimize_back_if_needed(") >= 2,
    "出现 %d 次" % _SEG_GG_B.count("_minimize_back_if_needed("))

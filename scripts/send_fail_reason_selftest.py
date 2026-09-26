@@ -23,6 +23,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import tools as T # noqa: E402
@@ -114,7 +116,7 @@ ok("空消息 ⇒ 错误", bool(r4.get("is_error")), str(r4)[:80])
 
 print("── E. 源码级：原因透传与日志两处都在（防以后有人又把它简化成「只报条数」）──")
 _src = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
-_seg = _src[_src.index("def _exec_send_message("):]
+_seg = _srcslice.from_func(_src, "_exec_send_message")
 _seg = _seg[:_seg.index("def _exec_get_recent(")]
 ok("返回值里带 failed 明细", '"failed": _why' in _seg, _seg[:0])
 ok("逐条原因拼进 note", '_f["error"]' in _seg)

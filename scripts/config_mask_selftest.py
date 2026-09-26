@@ -29,6 +29,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -137,7 +139,7 @@ def main():
            "for path, kind in CRED_FIELDS" in _src and "_mask_path(cfg, path, kind)" in _src, "")
         ok("D3 _protect_secrets 遍历**同一张**表",
            "for path, _kind in CRED_FIELDS" in _src and "_restore_path(new_cfg, old, path)" in _src, "")
-        _masked_src = _src[_src.index("def masked_config"):]
+        _masked_src = _srcslice.from_func(_src, "masked_config")
         _masked_src = _masked_src[:_masked_src.index("def _safe_join")]
         ok("D4 掩码侧不再残留「手写枚举」的痕迹（table 驱动 + URL 专门脱敏都在）",
            "_mask_path" in _masked_src and "mask_url_credential" in _src, "")

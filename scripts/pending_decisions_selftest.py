@@ -17,6 +17,8 @@ import tempfile
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 os.chdir(ROOT)
 
 from agent import pending_decisions as PD # noqa: E402
@@ -144,7 +146,7 @@ try:
        "def decide(" in G and "note_decision" in G and "allow_session" in G)
     M = open(os.path.join(ROOT, "agent", "version_matrix.py"), encoding="utf-8").read()
     ok("能力矩阵有写回/读取表态的入口", "def note_decision(" in M and "def decisions(" in M)
-    _seg = M.split("def note_decision(")[1].split("\ndef ")[0] # 只看这一个函数体
+    _seg = _srcslice.from_func(M, "note_decision").split("\ndef ")[0] # 只看这一个函数体
     ok("写回用的是原子写（复用 save）", "save(data, path)" in _seg, "%d 字节" % len(_seg))
     print("\n通过 %d / 失败 %d" % (PASS, FAIL))
 finally:

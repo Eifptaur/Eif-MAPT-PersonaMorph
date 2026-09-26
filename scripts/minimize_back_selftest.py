@@ -27,6 +27,7 @@ except Exception: # noqa: BLE001
     pass
 
 import _srcmatch as _sm # noqa: E402
+import _srcslice
 from agent import wechat as W # noqa: E402
 
 PASS, FAIL = [0], [0]
@@ -67,7 +68,7 @@ ok("A9 反向锚：**旧规则**（只看「在不在前台」）在这两格会
 
 print("== B. 接线与三道安全线 ==")
 _SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_MIN = _SRC.split("def _minimize_back_if_needed(")[1][:3200]
+_MIN = _srcslice.from_func(_SRC, "_minimize_back_if_needed")[:3200]
 _MIN_CODE = "\n".join(l.split("#")[0] for l in _MIN.splitlines())
 ok("B1 链尾真的用了这个策略（不是写了没人调）",
    _sm.has(_MIN_CODE, "_put_back_decision(") and _sm.has(_MIN_CODE, "_user_idle_seconds()"))
@@ -87,7 +88,7 @@ ok("B5 ⚡2026-09-24 不再需要「收回原位后还前台」——压底层�
 ok("B6 门槛与 `_restore_fg_until` 同一口径（1.2 秒常量只定义一处）",
    _SRC.find("PUT_BACK_IDLE_S = 1.2") >= 0 and _sm.has(_MIN_CODE, "PUT_BACK_IDLE_S")
    or _sm.has(_MIN_CODE, "_put_back_decision("))
-_RF = _SRC.split("def _restore_fg_until(")[1][:2600]
+_RF = _srcslice.from_func(_SRC, "_restore_fg_until")[:2600]
 ok("B7 `_restore_fg_until` 不再把「微信自己」当「用户窗口」还（否则会假报 ✅）",
    _sm.has(_RF, "_fg_stash_ok()"))
 

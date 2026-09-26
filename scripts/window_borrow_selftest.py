@@ -28,6 +28,7 @@ from agent import config as CFG # noqa: E402
 # ⛔ 隔离：本判据里有**打桩不来**的几段（真 `touch()` / 真看门线程归还）⇒ 产品
 #   `data\window_borrow.json` 会被建出来又删掉（净变化 0，只有持续采样才看得见）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _srcslice
 import _iso14 # noqa: E402
 _iso14.window_borrow()
 
@@ -156,7 +157,7 @@ CFG.get_config = _orig_cfg
 
 print("\n[五] 接线（机械看守：谁该调它、谁不该绕过它）")
 _wx = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg = _wx[_wx.index("def _limit_wechat_window"):]
+_seg = _srcslice.from_func(_wx, "_limit_wechat_window")
 _seg = _seg[:_seg.index("def _install_ui_patches")]
 ok("wechat._limit_wechat_window 改窗口前会 note_original", "note_original(" in _seg)
 ok("wechat._limit_wechat_window 改完会 note_forced（归还时用来判断是不是我们钉的）",
@@ -262,7 +263,7 @@ with WB._lock:
 WB._persist() # 顺手把真目录里的记录也清掉（自检不留下影响）
 WB._persist_path = _orig_pp
 _tools = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
-_tseg = _tools[_tools.index("def execute_tool"):]
+_tseg = _srcslice.from_func(_tools, "execute_tool")
 ok("工具分发点（execute_tool）结尾会还窗口 —— 机器人持续活动也不会长期钉住",
    "window_borrow" in _tseg and "restore(" in _tseg)
 

@@ -23,6 +23,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent.wechat import WeChatAdapter # noqa: E402
@@ -124,7 +126,7 @@ ok("读库抛异常 ⇒ 不崩、按未命中", _adapter_raising()._text_landed_
 
 print("── G. 源码级接线：命中就停手 + 只在回读失败时问 ──")
 _SRC = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg = _SRC[_SRC.index("def send_text_posted("):]
+_seg = _srcslice.from_func(_SRC, "send_text_posted")
 _seg = _seg[:_seg.index("def send_image_posted(")]
 ok("开枪循环里有发错会话自检", "_text_landed_in_other_chat(text, chat_id)" in _seg)
 _i_loop = _seg.index("for _i in range(1, 4):")

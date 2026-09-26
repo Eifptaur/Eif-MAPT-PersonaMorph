@@ -19,6 +19,8 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 os.chdir(ROOT)
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -139,7 +141,7 @@ except Exception as e:
 # ── C 静态接线 ───────────────────────────────────────────────────────────
 print("[C] 静态接线：函数写了必须真的被调用（防「写了没人用」）")
 ck("C1 身份闸在「库里没有可比对内容」那一档调了纯屏幕档",
-   "self._screen_only_identity(chat_id, gui=gui, name=name)" in SRC.split("def chat_identity_ok(")[1][:12000])
+   "self._screen_only_identity(chat_id, gui=gui, name=name)" in _srcslice.from_func(SRC, "chat_identity_ok")[:12000])
 ck("C2 昵称兜底那支用的也是同一个回声窗（不再写死 30 秒）",
    "self._echo_window()" in SRC and "< 30 for" not in SRC)
 ck("C3 台账记的是 `_is_self_echo` 的真结果（可复盘「为什么判成自己」）",
@@ -151,7 +153,7 @@ ck("C5 发图：DB 回读看不见时用**屏幕兜底确认**（输入框清空
 
 # ── D 发图链：右键「粘贴」+ 进框自检 + 三枪提交────
 print("[D] 发图链：右键「粘贴」进框（不用投递组合键）、进框才打枪、提交三枪")
-_SI = SRC.split("def send_image_posted(")[1]
+_SI = _srcslice.from_func(SRC, "send_image_posted")
 _SI = _SI[:_SI.index("def _file_panel_point_live(")]
 ck("D1 粘贴前先投递聚焦输入栏 —— 落点是**现算**的输入框上半部分（`_input_top_band`），"
    "量不到 / 掉进工具栏带就不开枪（2026-09-18 改口径：按比例猜点会落到引用条甚至 ✕ 上）",
@@ -175,7 +177,7 @@ ck("D7 成功回执写明「第几枪打出去的」（可复盘是哪一枪生�
 ck("D8 未生效时如实说「文字可能还留在输入框里」（与发文字同口径）",
    "文字可能还留在输入框里" in _SI)
 # D9~D11 颜色自检本身（`_input_has_content` 必须存在、必须用屏幕实拍、量不出时按有内容放行）
-_HC = SRC.split("def _input_has_content(")[1][:2200]
+_HC = _srcslice.from_func(SRC, "_input_has_content")[:2200]
 # 只查**代码**，不查文档字符串（注释里提 `capture_image` 是解释"为什么不用它"，不算违规）
 _HC_CODE = _HC.split('"""', 2)[2] if _HC.count('"""') >= 2 else _HC
 ck("D9 进框自检用**屏幕实拍**（ImageGrab），不用会返回缓存帧的 capture_image",
@@ -187,7 +189,7 @@ ck("D11 自检量不出来时按「有内容」放行（前置自检不许把发
 
 # ── E 身份复核：双档互证不许被"活动行时间读不出"翻案──
 print("[E] 身份复核：内容 × 会话头标题带 双档命中 ⇒ 直接放行")
-_IDN = SRC.split("def chat_identity_ok(")[1][:16000]
+_IDN = _srcslice.from_func(SRC, "chat_identity_ok")[:16000]
 _PM_SRC = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 ck("E1 内容命中后先问会话头标题带，命中就放行",
    "self._screen_only_identity(chat_id, gui=gui, name=name)" in _IDN
@@ -200,12 +202,12 @@ ck("E3 相对导入修掉：人性化行为决策改走绝对导入（脚本跑�
 
 # ── F 回声表要在**开枪那一刻**就写──────────
 print("[F] 回声表：开枪前就记（否则回读那几秒会被监听器读成「别人的话」⇒ 回自己）")
-_SI2 = SRC.split("def send_text_posted(")[1]
+_SI2 = _srcslice.from_func(SRC, "send_text_posted")
 _SI2 = _SI2[:_SI2.index("def send_image_posted(")]
 ck("F1 发文字：`_mark_sent(text)` 排在**第一枪之前**（不是等 DB 回读成功之后才记）",
    "_mark_sent(text)" in _SI2
    and _SI2.find("self._mark_sent(text)") < _SI2.find("for _i in range(1, 4)"))
-_SI3 = SRC.split("def send_image_posted(")[1]
+_SI3 = _srcslice.from_func(SRC, "send_image_posted")
 _SI3 = _SI3[:_SI3.index("def _file_panel_point_live(")]
 ck("F2 发图：`_mark_sent(\"[图片]\")` 排在**枪之前**",
    'self._mark_sent("[图片]")' in _SI3
@@ -277,7 +279,7 @@ except Exception as e:
 
 print("\n[H] 弱档指纹不许单独授权发送（用户 2026-09-18：用 OCR 这种，读一读就不匹配，对的会发错）")
 try:
-    _SEG = SRC.split("def send_text_posted(")[1]
+    _SEG = _srcslice.from_func(SRC, "send_text_posted")
     _SEG = _SEG[: _SEG.index("def send_image_posted(")]
     ck("H1 指纹（`_ch.check`）ok 时，还要再要一档**有区分力**的证据（`chat_is_open`）",
        'if _st["status"] == "ok":' in _SEG

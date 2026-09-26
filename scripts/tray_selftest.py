@@ -17,6 +17,8 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 os.chdir(ROOT)
 
 REAL = "--real" in sys.argv
@@ -60,7 +62,7 @@ ok("跳过时 ok=True（不是错误，是「按要求没做」）", r0.get("ok"
 ok("全程没有把 ready 拉起来（没建消息窗）", T.status().get("ready") is False)
 
 print("── C. 接线：开不出控制台才走托盘 ──")
-seg = GSRC.split("def _run():")[1].split("def pending(")[0]
+seg = _srcslice.from_func(GSRC, "_run").split("def pending(")[0]
 ok("弹窗失败 ⇒ 托盘兜底", "if not rep.get(\"ok\")" in seg and "tray.notify" in seg)
 ok("托盘失败不影响开单（包在 try 里只记日志）", "except Exception as _te" in seg)
 ok("带着单子的标题与原因去出气泡", 'item.get("title")' in seg and 'item.get("reason")' in seg)

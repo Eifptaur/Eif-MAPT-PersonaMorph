@@ -17,6 +17,8 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 
 from agent import wechat as W # noqa: E402
 from agent import input_backend as ib # noqa: E402

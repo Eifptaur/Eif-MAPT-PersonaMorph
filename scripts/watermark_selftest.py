@@ -21,6 +21,7 @@ except Exception:
 
 from agent import listener_watermark as lw # noqa: E402
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import _srcslice
 
 PASS, FAIL = [], []
 
@@ -339,7 +340,7 @@ def main():
     ok("⑥ 坏档留证失败 ⇒ flush 拒写也**计入 fail_count**（与真失败同一口径）",
        _wr.flush() is False and _wr.fail_count == 1 and "拒绝覆盖" in _wr.last_error)
     # 源码锚：三条接入路径只有 _adopt_wc 是唯一收口 ⇒ 它必须做全三件（释放旧句柄 / 切账号维 / 看返回值）
-    _seg_adopt = _pm[_pm.index("def _adopt_wc(_wc_new"):]
+    _seg_adopt = _srcslice.from_func(_pm, "_adopt_wc")
     _seg_adopt = _seg_adopt[:_seg_adopt.index("while not orch.stopped")]
     ok("⑦ `_adopt_wc` 释放旧 adapter（含旧账号解密缓存）",
        _sm.has(_pm, "_release_adapter(_wc_old)") and _sm.has(_pm, "_clear_decrypted_cache"))

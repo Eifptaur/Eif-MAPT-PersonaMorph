@@ -18,6 +18,8 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -104,12 +106,12 @@ def main():
 
         # ── ⑤ 静态：不许再出现"吞掉所有异常后返回空壳"的老写法 ──
         _src = open(os.path.join(ROOT, "agent", "store.py"), encoding="utf-8").read()
-        _body = _src[_src.find("def _load_chat("):]
+        _body = _srcslice.from_func(_src, "_load_chat")
         _body = _body[:_body.find("def _save_chat(")]
         ok("⑤ `_load_chat` 里有 `_loadFailed`（读不动 ⇒ 上层拒写）", "_loadFailed" in _body)
         ok("⑤ `_load_chat` 里有隔离动作（`corrupt-`）与 `os.replace`", "corrupt-" in _body and "os.replace(" in _body)
         ok("⑤ `_save_chat` 见到 `_loadFailed` 就**直接返回、不写盘**",
-           "_loadFailed" in _src[_src.find("def _save_chat("):][:600])
+           "_loadFailed" in _srcslice.from_func(_src, "_save_chat")[:600])
         # ⑤ 可执行反向锚：上面两条只 grep 源码文本 —— 分支被写死（`if False:`）时
         # 文本还在、判据照样绿。这里真调一次带 `_loadFailed` 的 `_save_chat`，断言**一个文件都不写**。
         _fd = tempfile.mkdtemp(prefix="pm_store_failwrite_")

@@ -22,6 +22,7 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import _srcslice
 
 from PIL import Image, ImageDraw # noqa: E402
 from agent import chat_ocr as CO # noqa: E402
@@ -215,7 +216,7 @@ print("⑧ 切会话·搜索路线**不许把微信留在前台**（时间线实
 # 后果不止"打扰"：紧接着 `send_file_posted` 的 `_stash_fg()` 会把**被顶到前面的微信**当成"用户的窗口"，
 # 于是后面"还前台"还了个微信（既有实测：投递完前台停在微信）。⇒ 进去 stash、出去一律还。
 _w_src2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg_s = _w_src2[_w_src2.index("def open_chat_by_search"):]
+_seg_s = _srcslice.from_func(_w_src2, "open_chat_by_search")
 _seg_s = _seg_s[:_seg_s.find("\n    def ", 10)]
 ok("进去先 stash 前台（在点搜索入口之前）",
    "_stash_fg()" in _seg_s and _seg_s.index("_stash_fg()") < _seg_s.index("_click_posted("))
@@ -265,7 +266,7 @@ except Exception as _e10:
 
 print("⑪ 搜索框路线的结果也要走浮层")
 _w3 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg_box = _w3[_w3.index("def open_chat_by_search"):]
+_seg_box = _srcslice.from_func(_w3, "open_chat_by_search")
 _seg_box = _seg_box[:_seg_box.find("\n    def ", 10)]
 ok("box 路线里也调 _find_search_popover（先按浮层试）", "_find_search_popover(main)" in _seg_box)
 ok("浮层里用 find_popover_row 找目标行", _sm.has(_seg_box, "find_popover_row(_pop[2], name)"))
@@ -397,7 +398,7 @@ ok("帧内量到的笑脸落点 ≈ (374,918)，且**没被输入框边框线带
 ok("空帧 ⇒ None（fail-closed，不猜点）", CO.toolbar_first_icon(Image.new("RGB", (947, 972), (255, 255, 255)),
                                                               pane_left=331) is None)
 _w14 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg_btn = _w14[_w14.index("def _emoji_btn_pos"):]
+_seg_btn = _srcslice.from_func(_w14, "_emoji_btn_pos")
 _seg_btn = _seg_btn[:_seg_btn.find("\n    def ", 10)]
 ok("_emoji_btn_pos **先现量**、比例法只当兜底",
    "toolbar_first_icon" in _seg_btn
@@ -407,7 +408,7 @@ print("⑮ 收藏表情：媒体消息（气泡没有可读文本）必须走几
 ok("message_menu 有 media/want_lid 形参", _sm.has(_w14, "media: bool = False, want_lid=None"))
 ok("collect_emoji_native 透传 media=True/want_lid", "media=True, want_lid=local_id" in _w14)
 ok("媒体占位文本表存在（[表情]/[动画表情]/[图片]…）", "_MEDIA_PLACEHOLDERS" in _w14)
-_seg_ml = _w14[_w14.index("def _media_bubble_locate"):]
+_seg_ml = _srcslice.from_func(_w14, "_media_bubble_locate")
 _seg_ml = _seg_ml[:_seg_ml.find("\n    def ", 10)]
 ok("① 先核 DB：目标必须**就是最新那一条**（否则拒）", "目标不是最新一条" in _seg_ml)
 ok("② 只认**尺寸一致**的头像方块（实测表情图内部会被报成 36×35 的假方块）",

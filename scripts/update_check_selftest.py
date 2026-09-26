@@ -15,6 +15,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # ⚠️ 更新源现在**只认 http(s) + 官方域**；本地清单文件必须显式开这个
 #   **测试专用**开关（生产路径不设它 —— 见 `update_check.allow_local_update()`）。
@@ -498,7 +500,7 @@ finally:
     UC._state_path = _keep_sp
 ok(isinstance(_why, str) and bool(_why), "写失败 ⇒ 返回**人话原因**（不是 None / 空串）", _why)
 _ucsrc3 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
-_frag = _ucsrc3[_ucsrc3.find("def _write_state("):_ucsrc3.find("def current_version(")]
+_frag = _srcslice.func_src(_ucsrc3, "_write_state")
 ok("except Exception:\n        pass" not in _frag,
    "反例锚：`_write_state` 里不再有 `except: pass`（老写法 ⇒ 返回 None ⇒ 上面那条必红）", _frag[-100:])
 ok('out["stateSaved"]' in _ucsrc3 and "stateSaveError" in _ucsrc3,

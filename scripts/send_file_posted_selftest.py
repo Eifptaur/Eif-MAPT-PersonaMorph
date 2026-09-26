@@ -18,6 +18,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import _srcslice
 
 from agent.wechat import WeChatAdapter # noqa: E402
 
@@ -273,7 +274,7 @@ try:
        _n_len3 <= 4 and _ratio3 < 0.5, "%d 字 / %.3f" % (_n_len3, _ratio3))
     ok("空针 ⇒ (0, 0.0, '')，不抛异常", _co3.best_partial(_pane, "")[:2] == (0, 0.0))
     _wxsrc = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-    _segid = _wxsrc[_wxsrc.index("def chat_identity_ok"):_wxsrc.index("def _last_time_hhmm")]
+    _segid = _srcslice.func_src(_wxsrc, "chat_identity_ok")
     ok("闸门失败信息里会带观测量（聊天区字数 + 每条针的最好匹配）",
        "观测：聊天区读到" in _segid and "best_partial" in _segid)
     _probe3 = open(os.path.join(_ROOT, "scripts", "identity_probe.py"), encoding="utf-8").read()
@@ -299,7 +300,7 @@ try:
        _co4.low_entropy("202609") is True and _co4.low_entropy("群相r10") is False)
     ok("太短的针（<8 字归一化）一律不放行", _co4.content_match(_pane4, "绿底行") is False)
     _wxsrc4 = open(os.path.join(_ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-    _segid4 = _wxsrc4[_wxsrc4.index("def chat_identity_ok"):_wxsrc4.index("def _last_time_hhmm")]
+    _segid4 = _srcslice.func_src(_wxsrc4, "chat_identity_ok")
     ok("短指纹档也加了两道下界（低熵不算 + <4 不算）",
        "low_entropy(nn)" in _segid4 and _sm.has(_segid4, "len(nn) >= 4"))
 
@@ -338,10 +339,10 @@ ok("有『打开对话框之前记下前台』的实现（_stash_fg）",
 ok("有『还回前台』的实现（且拒绝还给对话框/死窗口）",
    _sm.has(_wxsrc5, "def _restore_fg") and "SetForegroundWindow" in _wxsrc5
    and '#32770' in _wxsrc5 and "IsWindow" in _wxsrc5)
-_seg_send = _wxsrc5[_wxsrc5.index("def send_file_posted"):]
+_seg_send = _srcslice.from_func(_wxsrc5, "send_file_posted")
 ok("产品发文件路径：**点 📁 之前**就 stash 前台",
    "_stash_fg()" in _seg_send and _seg_send.index("_stash_fg()") < _seg_send.index("backend.click(main_hwnd, pt)"))
-_seg_close = _wxsrc5[_wxsrc5.index("def _close_file_dialog"):_wxsrc5.index("def wx_version_for_gate")]
+_seg_close = _srcslice.func_src(_wxsrc5, "_close_file_dialog")
 ok("单框关闭路径：关完会还前台", "_restore_fg(" in _seg_close)
 ok("批量清理路径也还前台（残留框挡屏时同样会顶前台）",
    _seg_close.count("_restore_fg(") >= 2, "命中 %d 处" % _seg_close.count("_restore_fg("))
@@ -409,7 +410,7 @@ ok("有开关实现：默认关 + 环境变量可强制关（实现收口在 gua
 _cfgN = open(os.path.join(_ROOT, "agent", "config.py"), encoding="utf-8").read()
 ok("config 默认值＝False，并把事故写在注释里",
    _sm.has(_cfgN, '"allow_real_fallback": False') and _sm.has(_cfgN, "动了 16 秒光标"))
-_segS = _segN[_segN.index("def send_text("):]
+_segS = _srcslice.from_func(_segN, "send_text")
 _segS = _segS[:_segS.find("\n    def ", 10)] # 只在 `send_text` 这一个函数体里比顺序
 ok("这道闸压在**真实路径之前**（同一函数内的顺序）",
    _sm.has(_segS, "if not self._real_fallback_allowed():")

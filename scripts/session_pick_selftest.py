@@ -17,6 +17,7 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcmatch`
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import _srcslice
 
 PASS = 0
 FAIL = 0
@@ -176,7 +177,7 @@ ok("主路（列表·免搜索）不再把会话行那一枪投给渲染子窗",
    and _sm.has(_src, "self._click_posted(backend, _tgt, pt,"))
 ok("补枪走 tgt_click（第二枪自动换窗）", "tgt_click" in _src)
 ok("两枪之间强制 >1.2s（否则 Qt 判双击 ⇒ 会话被拖成浮动窗/直接关掉）",
-   "time.sleep(1.35)" in _src.split("def _click_visible_session(")[1].split("\n    def ")[0])
+   "time.sleep(1.35)" in _srcslice.from_func(_src, "_click_visible_session").split("\n    def ")[0])
 ok("聊天区内容变化也当切换证据", "_co.pane_text(" in _src and "聊天区内容已变化" in _src)
 
 print("── D2. 会话行点击目标：主窗优先、渲染子窗兜底（脱机**功能**判据，不只看源码）──")
@@ -465,7 +466,7 @@ ok("放宽的只是草稿标记形态（名字行是别的名字仍然否）",
 _co_src = open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
 _w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("find_row_info 支持 want_time（按时间定位）",
-   "want_time" in _co_src.split("def find_row_info(")[1][:220])
+   "want_time" in _srcslice.from_func(_co_src, "find_row_info")[:220])
 ok("时间是从整行文本 full 里找的（只看 name 永远找不到时间）",
    'r.get("full")' in _co_src and _sm.has(_co_src, "row_time_match(_blob, want)"))
 ok("时间命中但名字明显是别的会话 ⇒ 不算（宁可不点）",
@@ -699,7 +700,7 @@ except Exception as _e4:
 
 print("── L5. 第四条独立证据：会话头标题带 OCR──")
 _w5 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_seg5 = _w5[_w5.index("def chat_is_open"):]
+_seg5 = _srcslice.from_func(_w5, "chat_is_open")
 _seg5 = _seg5[:_seg5.find("\n    def ", 10)]
 ok("chat_is_open 接了标题带 OCR 这一档（源码）",
    "header_text(" in _seg5 and _sm.has(_seg5, "matches_strict(_tt, want")

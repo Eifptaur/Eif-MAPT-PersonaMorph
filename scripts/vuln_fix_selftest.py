@@ -29,6 +29,8 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -865,7 +867,7 @@ else:
     # ⛔ 原来扫的是**整个文件**
     #   有没有 os.replace —— 而 local_guard 里别处（别的文件的原子写）本来就用它 ⇒ 口径过宽。
     #   原本该判的是"**口令文件首建**"那一段，所以只切 `_new_token_file` 的函数体来判。
-    _ntf = _lg_src[_lg_src.find("def _new_token_file("):]
+    _ntf = _srcslice.from_func(_lg_src, "_new_token_file")
     _ntf = _ntf[:_ntf.find("\ndef ", 10)]
     # ⚠️ 判据只看**代码**：docstring/注释里写着"原来是先写临时文件再 os.replace"（解释历史），
     #    不剥掉就会把这段解释当成实现 ⇒ 假红（同 `poke_locate_selftest.code_of` 的教训）。

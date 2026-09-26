@@ -16,6 +16,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -100,14 +102,14 @@ def main():
     ok("① GET 侧（do_GET 与路由表里的方法）确实在读 `data`（说明这条判据扫的是真现场，不是空转）", _n >= 3, "读了 %d 次" % _n)
     ok("② `do_GET` 里第一次读 `data` 之前**必须先赋值**（否则 NameError 被 except 吞成 ok:false）",
        _a is not None and _l is not None and _a < _l, "赋值 L%s / 首读 L%s" % (_a, _l))
-    _seg = src[src.find("def do_GET(self):"):]
+    _seg = _srcslice.from_func(src, "do_GET")
     _seg = _seg[:_seg.find("def do_POST(self):")]
     ok("③ `data` 来自**查询串**（GET 没有请求体；`?dir=…&allow_online=1` 这类调用照样能用）",
        "parse_qs(parsed.query)" in _seg)
     ok("④ 开关真值走 `_truthy`（`bool(\"false\")` 是 True ⇒ 会反向打开开关）—— 2026-09-22 跟着搬过去的方法找",
        "def _truthy(" in src and "_truthy(data.get(" in src)
     ok("④ `_truthy` 把 \"false\"/\"0\"/\"off\"/\"no\"/空串都判假",
-       all(k in src[src.find("def _truthy("):][:600] for k in ('"false"', '"0"', '"off"', '"no"', '""')))
+       all(k in _srcslice.from_func(src, "_truthy")[:600] for k in ('"false"', '"0"', '"off"', '"no"', '""')))
     # ⛔ 真值表**只能有一处实现** —— webui 这层只多"保留 None"
     ok("④ 真值表是**一处实现**（`_truthy` 转发到 `config.as_bool`，不各写一套）",
        "from .config import as_bool" in src and "return as_bool(v)" in src)

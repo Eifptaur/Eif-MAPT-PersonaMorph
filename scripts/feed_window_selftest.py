@@ -29,6 +29,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 from agent import feed_window as FW # noqa: E402
 from agent import store as ST # noqa: E402
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import _srcslice
 
 PASS, FAIL = [], []
 
@@ -240,7 +241,7 @@ try:
 
     print("── D. 源码形态兜底：wake 里不再「整批标读」 ──")
     _wake_src = open(os.path.join(HERE, "persona_morph.py"), encoding="utf-8").read()
-    _wake = _wake_src.split("def wake(self, chat_key: str):")[1].split("\n    def ", 2)[0]
+    _wake = _srcslice.from_func(_wake_src, "wake").split("\n    def ", 2)[0]
     ok("D1 wake 里调了 `feed_window.pick_feed`", "pick_feed(" in _wake)
     ok("D2 wake 里用 `mark_read`（点名标读），不再用 `mark_all_read`/`drain_unread` 整批标读",
        "mark_read(" in _wake and "mark_all_read(" not in _wake and "drain_unread(" not in _wake)

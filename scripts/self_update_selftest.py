@@ -33,6 +33,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE) # 同目录的 `_srcmatch`
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import update_apply as UA # noqa: E402
@@ -390,7 +391,7 @@ try:
     _web = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
     _con = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
     _uc = open(os.path.join(ROOT, "agent", "update_check.py"), encoding="utf-8").read()
-    _post_seg = _web[_web.index("def do_POST(self):"):]
+    _post_seg = _srcslice.from_func(_web, "do_POST")
     ok('/api/update_apply' in _post_seg and 'update_apply as _ua' in _post_seg,
        "POST /api/update_apply 在 do_POST 段里（不在 GET）")
     ok('_st["job"] = _ua.job()' in _web, "GET /api/update 带出作业进度（控制台才轮询得到）")

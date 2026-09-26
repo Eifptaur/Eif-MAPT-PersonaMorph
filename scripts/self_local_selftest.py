@@ -29,6 +29,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import wechat as W # noqa: E402
@@ -177,9 +179,9 @@ ok("文件类判据仍在（type='文件/链接/卡片'）",
 
 print("── J. 源码级接线：判定位置与三个登记点 + 记账是安全入口（防以后有人改错位置/改坏条件）──")
 _SRC = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
-_impl = _SRC[_SRC.index("def _normalize_impl("):]
+_impl = _srcslice.from_func(_SRC, "_normalize_impl")
 _impl = _impl[:_impl.index("def _note_ledger(")] if "def _note_ledger(" in _impl else _impl
-_impl = _SRC[_SRC.index("def _normalize_impl("):]
+_impl = _srcslice.from_func(_SRC, "_normalize_impl")
 _impl = _impl[:_impl.index("\n    def ", 10)]
 _i_recall = _impl.index("撤回事件")
 _i_selflocal = _impl.index("self.is_self_local(chat_id, local_id, create_time)")
@@ -191,7 +193,7 @@ ok("判定为 None 就 return（跳过这条消息）",
 ok("判据异常时**按未命中继续**（不许因为判自己崩掉监听）",
    "自我行号判定异常（按未命中继续）" in _impl)
 
-_seg = _SRC[_SRC.index("def send_text_posted("):]
+_seg = _srcslice.from_func(_SRC, "send_text_posted")
 _seg = _seg[:_seg.index("def send_image_posted(")]
 # ⛔ 原判据钉的是"**只有一处** `_self_local_note`，
 #   且在『内容与本次一致』那句之后"。现在这一版**多了一处**登记（快路径超时后的复核：确认最近几行里
@@ -216,13 +218,13 @@ while True:
 ok("发文字：内容不一致那条『宽松成功』分支**不登记**（没有「没核对就登记」的调用点）",
    not _orphan, "可疑位置 %s" % _orphan[:3])
 
-_seg2 = _SRC[_SRC.index("def send_image_posted("):]
+_seg2 = _srcslice.from_func(_SRC, "send_image_posted")
 _seg2 = _seg2[:_seg2.index("def send_file_posted(")]
 ok("发图：登记被 `_looks_like_img_msg` 挡着",
    "if self._looks_like_img_msg(top):" in _seg2
    and _seg2.count("_self_local_note") == 1)
 
-_seg3 = _SRC[_SRC.index("def send_file_posted("):]
+_seg3 = _srcslice.from_func(_SRC, "send_file_posted")
 _seg3 = _seg3[:_seg3.index("\n    def ", 10)]
 ok("发文件：登记被 `_looks_like_file_msg` 挡着",
    "if self._looks_like_file_msg(top):" in _seg3

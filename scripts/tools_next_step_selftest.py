@@ -30,6 +30,7 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcmatch as _sm # noqa: E402  空白容忍的源码断言（脆断言只许降不许升）
+import _srcslice
 
 PASS = 0
 FAIL = 0
@@ -51,7 +52,7 @@ from agent import user_tools as UT # noqa: E402
 
 HTML = CH.HTML
 _SRC = io.open(os.path.join(ROOT, "agent", "user_tools.py"), encoding="utf-8").read()
-_SEG = _SRC[_SRC.find("def snapshot("):]
+_SEG = _srcslice.from_func(_SRC, "snapshot")
 
 print("── A. 展示字段：能过、进快照、坏格式会拒 ──")
 _base = {"name": "demo_tool", "description": "判据里临时造的工具", "method": "GET",
@@ -206,7 +207,7 @@ finally:
     shutil.rmtree(_tmp3, ignore_errors=True)
 
 _src = io.open(os.path.join(ROOT, "agent", "user_tools.py"), encoding="utf-8").read()
-_seg_imp = _src[_src.find("def import_text("):_src.find("def _next_step(")]
+_seg_imp = _srcslice.func_src(_src, "import_text")
 ok("导入只写 JSON：不执行代码、不下载、不碰 data/",
    not any(k in _seg_imp for k in ("exec(", "eval(", "subprocess", "urlopen", "urllib.request.urlopen", "shutil.copy")))
 ok("导入走原子写（persist.atomic_write_json），不自己造 .tmp",

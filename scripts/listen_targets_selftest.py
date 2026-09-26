@@ -22,6 +22,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -182,7 +184,7 @@ def main():
     ok("G2b `WebUI.__init__` 必须**真的收** `refresh_targets_fn`（否则后端 TypeError、控制台起不来）",
        _sig_ok)
     # G3：归因一致性 —— `_collect_targets` 里也要传真因给 describe（不只启动那一次）
-    _ct = _pm_txt.split("def _collect_targets(")[1][:2600]
+    _ct = _srcslice.from_func(_pm_txt, "_collect_targets")[:2600]
     ok("G3 晚接入/配置保存这条路上，`describe(read_failed=…)` 也带**真因**",
        "read_failed=_read_failed" in _ct and "groups_read_error" in _ct)
     # G4：向导的重试按钮带 `?refresh=1`（原来是假重试：走内存缓存）

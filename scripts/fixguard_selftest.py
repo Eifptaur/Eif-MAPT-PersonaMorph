@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts")) # `_srcmatch` 在 scripts 里�
 os.chdir(ROOT)
 
 import _srcmatch as _SM # noqa: E402
+import _srcslice
 from agent import chat_header as CH # noqa: E402
 from agent import chat_ocr as CO # noqa: E402
 from agent import sender as SD # noqa: E402
@@ -170,7 +171,7 @@ if _bn_node is not None:
     ok("绿底带在**别的行** ⇒ band=None 且 measurable=True（补枪是允许的，没在被保护的行上）",
        _band_far is None and _meas_far is True, "%r/%r" % (_band_far, _meas_far))
     # 接线与顺序：调用方必须在**补一枪之前**拦下来，而且文案要如实说"不再补枪"
-    _seg = _w_src.split("def _click_visible_session(")[1].split("\n    def ", 1)[0]
+    _seg = _srcslice.from_func(_w_src, "_click_visible_session").split("\n    def ", 1)[0]
     _i_guard, _i_sleep = _seg.find("if not _meas:"), _seg.find("time.sleep(1.35)")
     ok("调用方在 sleep(1.35)（＝补枪前等待）**之前**就 fail-closed 返回",
        _i_guard != -1 and _i_sleep != -1 and _i_guard < _i_sleep, "guard@%d sleep@%d" % (_i_guard, _i_sleep))

@@ -19,6 +19,8 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 os.chdir(ROOT)
 
 from agent.wechat import WeChatAdapter, Verdict, V_OK, V_UNVERIFIED, V_NOT_SENT # noqa: E402
@@ -108,7 +110,7 @@ ok("能读但当前无消息 ⇒ 判可用（不误报）", alive is True, why[:
 print("── C. 源码层：三个发送入口都必须先问 db_alive ──")
 SRC = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("存在 V_UNVERIFIED 分支（文本）", SRC.count("return V_UNVERIFIED") >= 3, "共 %d 处" % SRC.count("return V_UNVERIFIED"))
-_SV = SRC[SRC.index("def send_text_posted("):]
+_SV = _srcslice.from_func(SRC, "send_text_posted")
 _SV = _SV[:_SV.index("def send_image_posted(")]
 _ALIVE = _SV.find("_alive, _why_alive = self.db_alive(chat_id)")
 _u = _SV.find("return V_UNVERIFIED")
@@ -116,7 +118,7 @@ _n = _SV.find("return V_NOT_SENT")
 ok("文本链路：回读失败时先 db_alive，再决定 未证实/失败",
    0 <= _ALIVE < _u and 0 <= _ALIVE < _n,
    "db_alive@%d 未证实@%d 失败@%d" % (_ALIVE, _u, _n))
-_SV2 = SRC[SRC.index("def send_image_posted("):]
+_SV2 = _srcslice.from_func(SRC, "send_image_posted")
 _SV2 = _SV2[:_SV2.index("def _file_panel_point_live(")]
 ok("发图链路同上（回读失败时先 db_alive）",
    "_alive2, _why_alive2 = self.db_alive(chat_id)" in _SV2

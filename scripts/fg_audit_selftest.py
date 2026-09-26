@@ -31,6 +31,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 FG_CALLS = {
@@ -136,7 +138,7 @@ _scan_hint = [
     h for h in hits if h["rel"].endswith("wechat.py") and h["fn"] == "_moments_focus"]
 ok("`_moments_focus` 这条路径已被扫到且过闸", bool(_scan_hint) and all(h["gated"] for h in _scan_hint),
    str(_scan_hint[:2]))
-_seg = _W[_W.index("def _moments_focus("):]
+_seg = _srcslice.from_func(_W, "_moments_focus")
 _seg = _seg[:_seg.index("\n    def ", 10)]
 ok("`_moments_focus` 里读了唯一真源 `ui_adapt.fg_allowed()`", "fg_allowed()" in _seg)
 ok("闸不过时**只枚举不激活**并留日志", "不激活" in _seg and "log.info" in _seg)

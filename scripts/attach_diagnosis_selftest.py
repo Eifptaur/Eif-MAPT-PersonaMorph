@@ -21,6 +21,8 @@ import types
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcslice
 
 from agent import wechat as W # noqa: E402
 
@@ -177,7 +179,7 @@ ok("未知/空诊断 ⇒ 兜底「原因未知」", W.attach_short_reason(None) 
 
 print("── J. 诊断必须**只读**：函数体里不许出现输入/窗口 API ──")
 _w = _src(os.path.join("agent", "wechat.py"))
-_seg = _w[_w.index("def attach_diagnosis("):]
+_seg = _srcslice.from_func(_w, "attach_diagnosis")
 _seg = _seg[:_seg.index("# 卡点的**短标签**")]
 _banned = [n for n in ("mouse_event", "SetCursorPos", "SendInput", "MoveWindow",
                        "SetForegroundWindow", "PostMessage", "SendMessage",
