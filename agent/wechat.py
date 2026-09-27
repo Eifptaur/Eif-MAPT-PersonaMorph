@@ -9157,16 +9157,23 @@ class WeChatAdapter:
           ③ 再在方块里挑离该行最近的那个；最近距离 >90px 就放弃（怕拍到别人）；
           ④ 全不成立 ⇒ **None**。**绝不退回公式猜点**——。
         """
-        def _fail(why):
+        def _fail(why, rollable: bool = True):
+            """记下失败原因。`rollable`＝「回最新／往上翻页还能救吗」。
+
+            没有文本锚点、这一帧一个头像方块都没检测到、抓不到画面 —— 这类失败**翻页也配不上**，
+            上层据此不动用户的视口；只有「有锚点、但该行不在视口」才值得滚动重找。
+            """
             self._poke_locate_why = why
+            self._poke_locate_rollable = bool(rollable)
             return None
 
         self._poke_locate_why = ""
+        self._poke_locate_rollable = True
         try:
             from . import chat_header as _ch
             img = _ch.grab_render(gui)
             if img is None:
-                return _fail("抓不到微信画面（PrintWindow 失败）⇒ 量不到头像，不猜点")
+                return _fail("抓不到微信画面（PrintWindow 失败）⇒ 量不到头像，不猜点", rollable=False)
             iw, ih = img.size
             rw = int(getattr(gui, "render_w", 0) or 0) or iw
             # 🔴 连续两枪"找不到 TA 的消息行"，一查发现整屏 OCR 行的 x 全在 600+）：
@@ -9190,7 +9197,8 @@ class WeChatAdapter:
                 side = [b for b in blocks if (b[0] + b[2]) // 2 <= mid]
             if not side:
                 return _fail("这一帧没检测到%s的头像方块（整帧共 %d 个）⇒ 不猜点"
-                             % ("右侧（自己）" if self_side else "左侧（对方）", len(blocks)))
+                             % ("右侧（自己）" if self_side else "左侧（对方）", len(blocks)),
+                             rollable=False)
 
             got = None
             # ② **帧内 OCR**：在"已经抓到的那一帧"上找目标的消息行。
@@ -9230,11 +9238,12 @@ class WeChatAdapter:
                     crop = (int(pane_left), int(top), int(rw), int(bottom))
                     from . import chat_ocr as _co
                     if _co.blocked():
-                        return _fail("OCR 暂时不可用（%s）⇒ 量不到，不猜点" % _co.blocked())
+                        return _fail("OCR 暂时不可用（%s）⇒ 量不到，不猜点" % _co.blocked(),
+                                     rollable=False)
                     for t, x, y, w, h in _co.recognize(img.crop(crop)):
                         items.append((t, crop[0] + x, crop[1] + y, w, h))
                 except Exception as e:
-                    return _fail("读取可见消息行失败：%s" % e)
+                    return _fail("读取可见消息行失败：%s" % e, rollable=False)
                 # ⚠️ 过筛阈值为什么是 w≥6 / h≥8：
                 #   库的 `ScreenOCR.recognize` 返回的 (w,h) 是 **`line.words[0]`（第一个词）**
                 #   的框（`wechatauto/guia.py`：`r = line.words[0].bounding_rect`），**不是整行**。
@@ -9250,6 +9259,11 @@ class WeChatAdapter:
                 _raw = list(db_text) if isinstance(db_text, (list, tuple)) else (
                     [db_text] if db_text else [])
                 _needles = [n for n in (self._norm_ocr(x)[:120] for x in _raw) if n]
+                if not _needles:
+                    # 认人**只认"文本真的对上"**（命中框只能由配上的行产生）⇒ 库/调用方一个锚点都没给时，
+                    # 视口里翻到哪一页都配不上人。标 `rollable=False`，上层不滚动。
+                    return _fail("没有可比对的文本：取不到「%s」的最近消息（缺锚点 ⇒ 翻页也认不出人）"
+                                 % target_name, rollable=False)
                 _bb, _bsc = None, 0.0
                 for t, x, y, w, h in items:
                     tn = self._norm_ocr(t)
@@ -9277,24 +9291,24 @@ class WeChatAdapter:
                 if d < _dist:
                     _pick, _dist = b, d
             if _pick is None:
-                return _fail("没有可用的头像方块")
+                return _fail("没有可用的头像方块", rollable=False)
             if _dist > 90:
                 return _fail("离「%s」的消息行最近的头像方块也在 %dpx 外（>90）⇒ "
                              "不敢点（怕拍到别人）" % (target_name, _dist))
             got = ((_pick[0] + _pick[2]) // 2, (_pick[1] + _pick[3]) // 2, 0.8)
 
             if got is None:
-                return _fail("定位不到「%s」的头像" % target_name)
+                return _fail("定位不到「%s」的头像" % target_name, rollable=False)
             ax, ay, score = got
             # ④ 归属校验：落点必须在某个检测到的方块内缩 4px 内
             _hit = next((b for b in side
                          if b[0] + 4 <= ax <= b[2] - 4 and b[1] + 4 <= ay <= b[3] - 4), None)
             if _hit is None:
-                return _fail("落点 (%d,%d) 不在任何头像方块内 ⇒ 不点" % (ax, ay))
+                return _fail("落点 (%d,%d) 不在任何头像方块内 ⇒ 不点" % (ax, ay), rollable=False)
             self._poke_block = _hit # 供右键重试用：候选点必须仍落在这个方块内
             return int(ax), int(ay), float(score)
         except Exception as e:
-            return _fail("定位异常：%s" % e)
+            return _fail("定位异常：%s" % e, rollable=False)
 
     def send_poke(self, chat_id: str, target_name: str, target_id: str = "", dbg: list | None = None):
         """拍一拍某位成员（串行锁内执行）：右键**头像方块**（运行时检测）→ 菜单选「拍一拍」。
@@ -9376,6 +9390,13 @@ class WeChatAdapter:
             db_text = self._target_recent_texts(chat_id, target_id) if target_id else []
             _d("4) 目标最近消息（数据库后 60 条内匹配）：%r" % (db_text[:40] or "(未找到，用空文本)"))
             located = self._send_poke_locate(gui, target_name, db_text)
+            # ⛔ **滚动重找也救不回来的失败 ⇒ 一点都不动用户的视口**。
+            #    没有文本锚点 / 这一帧一个头像方块都没检测到 / 抓不到画面 —— 这几种再找也认不出人，
+            #    原来照样"先滚到最新、再往上翻两页"，白折腾还把用户的聊天区滚走。
+            if not located and not bool(getattr(self, "_poke_locate_rollable", True)):
+                _why = getattr(self, "_poke_locate_why", "") or "未找到「%s」的头像位置" % target_name
+                _d("5) ✘ 定位失败（这类失败滚动重找也没用 ⇒ 不动视口）：%s" % _why)
+                return False, "定位不到「%s」的头像：%s" % (target_name, _why)
             # 🔴 （现场两次回拍失败后）：**先滚到最新再找一遍**。
             #   `_send_poke_locate` 的 OCR 路径**只在当前视口里找、且只保留左侧（对方）的行**，
             #   `items` 一空就直接 `return None`；而 `scroll` 参数只喂给 UIA 那一支（我们环境 UIA 本就不通）
@@ -9880,7 +9901,10 @@ class WeChatAdapter:
                 except Exception:
                     pass
                 self._scroll_to_bottom(gui)
-                return False, "右键菜单里没找到「引用」（已按头像/气泡起点多次尝试；目标可能是自己最近发的消息或不在可见区——让对方说句话再试）"
+                _lw = (getattr(self, "_poke_locate_why", "") or "").strip()
+                return False, ("右键菜单里没找到「引用」（已按头像/气泡起点多次尝试；目标可能是自己最近发的消息或"
+                               "不在可见区——让对方说句话再试）"
+                               + ("。定位环节：%s" % _lw if _lw else ""))
             time.sleep(0.5)
             # 优先 UIA 直进输入框（粘贴+回车+读回验证），不依赖像素探测——
             # 引用模式下输入框探测（全宽白区+分界线）常失败，这正是「引用发送失败」的根因

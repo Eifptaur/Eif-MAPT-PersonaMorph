@@ -157,6 +157,12 @@ def main():
        "detect_pane_left(img)" in (b_loc or ""))
     ok("⑥ 左右分界＝**会话区中点**（用整幅中点会把别人的行判成自己的 ⇒ 定位失败）",
        "(int(pane_left) + int(rw)) // 2" in (b_loc or ""))
+    ok("⑥ 失败带「滚动重找有没有用」标记（无锚点/没检测到方块/抓不到画面/落点越界 ⇒ 不动视口）",
+       "_poke_locate_rollable" in (b_loc or "")
+       and (b_loc or "").count("rollable=False") >= 6,
+       (b_loc or "").count("rollable=False"))
+    ok("⑥ 拍一拍链只对「滚了可能有救」的失败才滚动（滚也没用的直接如实失败）",
+       "_poke_locate_rollable" in (b_send or ""))
 
     # ⑦ 端到端离线回归：桩掉"抓帧"与"OCR"，跑**真的** `_send_poke_locate`
     #    桩数据＝本机真帧上实测到的 OCR 结果；坐标按**代码实际用的 crop** 反算（crop 一变也不会假红）
@@ -206,11 +212,25 @@ def main():
         # 负例：锚点一条都对不上 ⇒ 必须如实失败（**不许**取"最下面那条"猜人）
         loc2 = fake._send_poke_locate(_FakeGUI(), "某甲", ["绝不存在zzz", "也不存在yyy"], scroll=False)
         why2 = getattr(fake, "_poke_locate_why", "")
+        _rb2 = getattr(fake, "_poke_locate_rollable", None)
         ok("⑦ 负例：锚点对不上 ⇒ 不返回任何点（不猜是谁）", loc2 is None, loc2)
         ok("⑦ 负例：失败原因写明「不敢猜是谁」", "不敢猜是谁" in (why2 or ""), why2[:60])
-        # 负例：没有任何锚点（库里取不到 TA 的文本）⇒ 同样不许猜
+        # 负例：没有任何锚点（库里取不到 TA 的文本）⇒ 同样不许猜，而且**滚也没用**
         loc3 = fake._send_poke_locate(_FakeGUI(), "某甲", [], scroll=False)
+        _rb3 = getattr(fake, "_poke_locate_rollable", None)
         ok("⑦ 负例：没有锚点 ⇒ 不返回任何点", loc3 is None, loc3)
+        ok("⑦ 锚点对不上（可能只是不在视口）⇒ 标记「可滚动重找」", _rb2 is True, _rb2)
+        ok("⑦ 没有锚点 ⇒ 标记「滚动重找也没用」（上层不许动用户的视口）", _rb3 is False, _rb3)
+        # 负例：抓不到画面 ⇒ 同样"滚也没用"（换一页也拿不到帧）
+        _old_grab2 = _ch_mod.grab_render
+        _ch_mod.grab_render = lambda gui=None, render=None, tries=12: None
+        try:
+            loc5 = fake._send_poke_locate(_FakeGUI(), "某甲", ["@示例群 说话！"], scroll=False)
+            _rb5 = getattr(fake, "_poke_locate_rollable", None)
+        finally:
+            _ch_mod.grab_render = _old_grab2
+        ok("⑦ 负例：抓不到画面 ⇒ 不返回点、且标记不可滚动重找",
+           loc5 is None and _rb5 is False, (loc5, _rb5))
         # 负例：**只有系统提示**（居中、无头像）⇒ 不许拿它认人
         #   现场：`「某甲」拍拍「示例群」` 与锚点模糊相似度 0.593 > 0.5 ⇒ 曾被当成 E 的消息行
         _old_rec2 = _co_mod.recognize
