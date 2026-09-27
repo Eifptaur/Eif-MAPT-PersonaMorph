@@ -35,7 +35,7 @@
   "allow_click_hunting": false,
   "background_only": true,
   "scroll_list_fallback": false,
-  "emoji_send_mode": "auto",
+  "emoji_send_mode": "image",
   "owner_accounts": [],
   "owner_mode": "know",
   "private_chat": "owner_only",

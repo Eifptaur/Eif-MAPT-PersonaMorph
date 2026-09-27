@@ -1309,14 +1309,14 @@ def _exec_send_emoji(ctx, args):
     from agent import emoji_lib as _el
     # ⚡ **发表情方式**可选项：
     #   auto=先真表情面板、不通就发图片 · real=只用真表情（不走图片兜底）· image=只用图片（压根不开面板）
-    _mode = "auto"
+    _mode = "image"
     try:
         from .config import get_config
-        _mode = str(((get_config() or {}).get("wechat") or {}).get("emoji_send_mode") or "auto").lower()
+        _mode = str(((get_config() or {}).get("wechat") or {}).get("emoji_send_mode") or "image").lower()
     except Exception:
-        _mode = "auto"
+        _mode = "image"
     if _mode not in ("auto", "real", "image"):
-        _mode = "auto"
+        _mode = "image"
     name = str(args.get("name_or_id") or "").strip()
     emojis = ctx["wechat"].list_emojis()
     target = None
@@ -1369,9 +1369,9 @@ def _exec_send_emoji(ctx, args):
     # ── ② 退回：本地收藏夹发图（**后台档下不许动真鼠标**）──────────────────────────
     if target is not None and _mode == "real":
         # 「只用真表情」："他自己选"——那就不改发图片，如实说明并让他改设置
-        return _err("发表情方式选了「只用真表情」，而表情面板这次没发出去（%s）。"
+        return _err("发表情方式选了「路线 B（走微信表情面板）」，而面板这次没发出去（%s）。"
                     "想让它在这个群里也能发出去：把控制台「微信 → 发表情方式」改成"
-                    "「自动」或「只用图片」（后者发出去是图片、但全程不打扰你）。" % (_panel_why or "面板没成"))
+                    "「路线 A（当图片发）」—— 发出去是图片，但**全程后台、不打扰你**。" % (_panel_why or "面板没成"))
     if target is not None:
         try:
             from . import input_backend as _ib

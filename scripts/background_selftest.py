@@ -392,8 +392,8 @@ _SRC_TOOLS = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").
 _SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 _SRC_CONSOLE2 = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 _EX = io.open(os.path.join(ROOT, "config.example.json"), encoding="utf-8").read()
-ck("B22a 发表情方式＝可选项（config 默认 auto + 默认档说明三种取值）",
-   _sm.has(_SRC_CFG, '"emoji_send_mode": "auto"') and _sm.has(_EX, '"emoji_send_mode": "auto"'))
+ck("B22a 发表情方式＝可选项（config 默认 image＝路线 A：当图片发、全程后台）",
+   _sm.has(_SRC_CFG, '"emoji_send_mode": "image"') and _sm.has(_EX, '"emoji_send_mode": "image"'))
 ck("B22b 控制台有对应的下拉（三档：自动 / 只用真表情 / 只用图片）",
    'data-cfg="wechat.emoji_send_mode"' in _SRC_CONSOLE2
    and _SRC_CONSOLE2.count('value="auto"') >= 1 and 'value="real"' in _SRC_CONSOLE2
