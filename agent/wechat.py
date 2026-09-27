@@ -360,9 +360,13 @@ def _hold_loop(stop, main: int, wxpid: int, user: int, gap: float) -> None:
     import win32process as _wp
     while not stop.is_set():
         try:
-            if time.time() - float(_HOLD_LAST[0] or 0) > 45.0:
-                # ⛔ 兜底 TTL：链异常早退没走到链尾时，线程自己退出（绝不留下常驻线程）
-                log.debug("摁住微信：超过 45s 没有心跳 ⇒ 自动停")
+            if time.time() - float(_HOLD_LAST[0] or 0) > 10.0:
+                # ⛔ 兜底 TTL：链异常早退没走到链尾时，线程自己退出（绝不留下常驻线程）。
+                #   ⚠️ 原来写 **45s**（注释里还错写成 90s）—— 实测某条链漏配 `_hold_end` 时，
+                #   用户看到的就是「**一格都没走、窗口却一直闪**」：这个循环每 30ms 就把微信
+                #   压到底层（并还前台）一次。正常链只持续几秒 ⇒ 收到 **10s** 既够用，
+                #   万一再漏配对也只闪 ~10 秒。**改成 info 级**：这件事值得在日志里看得见。
+                log.info("摁住微信：超过 10s 没有心跳 ⇒ 自动停（多半是某条链漏了 _hold_end）")
                 return
             cur = int(u.GetForegroundWindow() or 0)
             if cur and int(_wp.GetWindowThreadProcessId(cur)[1]) == int(wxpid):

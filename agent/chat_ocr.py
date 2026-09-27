@@ -2556,7 +2556,31 @@ def loose_matches(a: str, b: str, thresh: float = 0.7, need: int = 3) -> bool:
             return False
         inter = len(A & B)
         union = len(A | B)
-        return inter >= max(1, int(need)) and (inter / float(union)) >= float(thresh)
+        if inter >= max(1, int(need)) and (inter / float(union)) >= float(thresh):
+            return True
+        # ⚡ **字母/数字前缀完全一致**也算同一个 —— 真机实测：`aaa偷啃使用者` 被 OCR 读成
+        #   `aaa前哺使主佳1`（**7 个中文只读对 1 个**）⇒ 字符集 Jaccard 只剩 0.18、连 need=3 都过不了
+        #   ⇒ 按键走格**明明走到目标那一格了**也认不出（现场：按 1 格后 hdr='aaa前哺使主佳1'，
+        #   `_header_match` 判 False ⇒ 继续走/失败退回搜索）。
+        #   而 OCR 对**字母数字**很准（`aaa` 三次都读对）⇒ 用"前缀一致 + 字符集规模接近"兜一层。
+        #   ⚠️ 兜得住的前提：最终"能不能发"另有强档闸（`matches_strict` + 内容级复核），
+        #      这条只用于**走格/找行时的确认**，与 `loose_matches` 原本的定位完全一致。
+        try:
+            def _alnum_pre(s: str) -> str:
+                out = []
+                for ch in str(s or "").lower():
+                    if ch.isalnum() and not ("\u4e00" <= ch <= "\u9fff"):
+                        out.append(ch)
+                    else:
+                        break
+                return "".join(out)
+
+            pa, pb = _alnum_pre(a), _alnum_pre(b)
+            if pa and pb and pa == pb and len(pa) >= 2 and abs(len(A) - len(B)) <= 3:
+                return True
+        except Exception:
+            pass
+        return False
     except Exception:
         return False
 
