@@ -889,22 +889,8 @@ class Shell(QWidget):
         self.updbar = UpdateBar(self.t)
         self.updbar.apply_state(getattr(self, "_upd_state", None))
         lay.addWidget(self.updbar)
-        # ⚡ 反馈提示条：web 侧一直有（`#noticeBar`：「遇到问题就点反馈…」），Qt 侧只有更新条、
-        #    没有这一条 —— 用户反馈「原本有个公告栏的，没有看到」。文案按用户描述的那条：
-        #    检测报告中心 → 出具报告 → 点反馈提交（兼容性信息自动带上，不用自己跑检查）。
-        try:
-            from PySide6.QtWidgets import QLabel as _QLNotice
-            self.fbNotice = _QLNotice(
-                "遇到问题：在「检测报告中心」找到对应的问题 → 出具检测报告 → 再点「反馈」提交。"
-                "提交时它会自动带上这台机器的兼容性信息（系统 / 缩放 / 微信版本 / 最近失败），不用你另外跑检查。")
-            self.fbNotice.setObjectName("fbNotice")
-            self.fbNotice.setWordWrap(True)
-            self.fbNotice.setStyleSheet(
-                "padding:6px 10px;border:1px dashed rgba(140,180,230,.45);border-radius:8px;"
-                "color:rgba(226,238,255,.92);font-size:12px;")
-            lay.addWidget(self.fbNotice)
-        except Exception:
-            pass
+        # ⚡ 常驻公告**不在这里** —— 顶栏横向空间不足，长句会被挤成「每行一两个字」。
+        #    已移到**内容区顶部**（`_build_notice`，与 web 侧 `#noticeBar` 同一落点）。
 
         # ── 余额徽章（web balance-badge :703 + loadBalance :3208-3221 + 30s 轮询 :7419）──
         #    显示模式（照实/隐藏/改数字）存 config 的 ui.balance_*，只改显示不动真实余额。
@@ -1202,6 +1188,9 @@ class Shell(QWidget):
         真机 3-5s 卡顿真因）改**惰性构建**：启动只建 "bot" 主面板，
         其余 sec 记入 _lazy，首次点击导航（_go）时现场构建 —— 页面切换
         本身 13-24ms 从来不卡，卡的是把没看过的面板也提前建了。
+
+        常驻公告挂在**页栈之上**（不是页栈里）：web 侧 `#noticeBar` 是 `<main>`
+        的第一个孩子、在全部 `<section>` 之外 ⇒ 切页也不跟着换，Qt 侧同构。
         """
         from PySide6.QtWidgets import QStackedWidget # noqa: PLC0415
 
@@ -1209,7 +1198,112 @@ class Shell(QWidget):
         self._page_of: dict[str, int] = {"bot": 0}
         self._lazy: set[str] = set(BATCH_SECS) - {"bot"} # 未建 sec 记账，首访现场建
         self.stack.addWidget(self._wrap_scroll(self._build_bot_panel()))
-        return self.stack
+
+        wrap = QWidget()
+        wl = QVBoxLayout(wrap)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(0)
+        notice = self._build_notice()
+        if notice is not None:
+            wl.addWidget(notice, 0)
+        wl.addWidget(self.stack, 1)
+        return wrap
+
+    # ── 内容区顶部常驻公告（web 侧 `#noticeBar`，index.html:961-969 / :729-734）──
+    # 三条口径都从 web 真值搬过来，不自己发明：
+    #   ① 落点是**内容区顶部**（顶栏塞不下，会挤成「每行一两个字」）；
+    #   ② 版式**不用圆角胶囊**（那套用烂了）⇒ 左侧强调色条 + 近直角，
+    #      层次靠色条与标题色，不靠描边与圆角；
+    #   ③ 三颗按钮：去反馈 / 本次不显示 / 不再显示 —— 后两颗是**两种记忆范围**
+    #      （本次运行内 vs 永久），web 侧对应 sessionStorage 与 localStorage，
+    #      Qt 侧对应「实例标志」与 QSettings。
+    def _notice_dismissed(self) -> bool:
+        """公告是否已被「本次不显示」或「不再显示」关掉（web :876-877 的判定等价）。"""
+        if getattr(self, "_notice_off_session", False):
+            return True
+        try:
+            from PySide6.QtCore import QSettings # noqa: PLC0415
+
+            return bool(QSettings("WXAgent", "persona-morph-ui").value(
+                "notice_off", False, type=bool))
+        except Exception: # noqa: BLE001
+            return False
+
+    def _build_notice(self) -> QWidget | None:
+        """建常驻公告条；已关闭则返回 None（调用点据此不入版式）。"""
+        if self._notice_dismissed():
+            return None
+        acc = self.t.q("blue")
+
+        holder = QWidget()
+        hl0 = QVBoxLayout(holder)
+        # 左/右 28 = 与页面正文同一条左边线（`_build_bot_panel` 用的 28），
+        # 上下 18 收窄 —— 公告是「页头上方的一条」，不该比页面标题还高。
+        hl0.setContentsMargins(28, 18, 28, 0)
+        hl0.setSpacing(0)
+
+        bar = QFrame()
+        bar.setObjectName("fbNotice")
+        hl = QHBoxLayout(bar)
+        hl.setContentsMargins(15, 12, 14, 12)
+        hl.setSpacing(10)
+        # 背景沿水平方向从强调色淡出到全透明（web `linear-gradient(90deg, .10 → .02 55% →透明)`），
+        # 半径 2px = 近直角；左缘 3px 实色条是唯一的强调边。
+        bar.setStyleSheet(
+            "QFrame#fbNotice{"
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {rgba(acc, 26).name(QColor.NameFormat.HexArgb)},"
+            f"stop:0.55 {rgba(acc, 6).name(QColor.NameFormat.HexArgb)},"
+            f"stop:1 {rgba(acc, 0).name(QColor.NameFormat.HexArgb)});"
+            f"border-left:3px solid {acc.name()};border-radius:2px;}}"
+        )
+
+        body = QLabel(
+            f"<b style='color:{acc.name()}'>遇到问题？</b>&nbsp;"
+            "去「检测报告中心」找到对应的问题 → 出具检测报告 → 点「反馈」提交。"
+            "这台机器的兼容性信息（系统 / 缩放 / 微信版本 / 最近失败）它会自己带上，"
+            "不用你另跑检查。")
+        body.setObjectName("fbNoticeText")
+        body.setWordWrap(True)
+        body.setFont(qfont(self.t, 12.5))
+        body.setStyleSheet(f"color:{self.t.tx};background:transparent;")
+        hl.addWidget(body, 1)
+
+        def _dismiss(remember: bool) -> None:
+            """关掉这条：remember=True 走永久（QSettings），False 只在本次运行内。"""
+            if remember:
+                try:
+                    from PySide6.QtCore import QSettings # noqa: PLC0415
+
+                    QSettings("WXAgent", "persona-morph-ui").setValue("notice_off", True)
+                except Exception: # noqa: BLE001
+                    pass
+            else:
+                self._notice_off_session = True
+            bar.setParent(None) # 先摘出父子树，再回收（只 deleteLater 的话下帧还在画）
+            bar.deleteLater()
+            holder.hide() # 版式项仍在槽位里，hide 后布局按空项处理、不占高度
+
+        b_go = Btn("去反馈", self.t, "ghost")
+        b_go.setObjectName("fbNoticeGo")
+        b_go.clicked.connect(lambda: self._go("feedback", "反馈"))
+        hl.addWidget(b_go, 0)
+
+        b_once = Btn("本次不显示", self.t, "ghost")
+        b_once.setObjectName("fbNoticeOnce")
+        b_once.setToolTip("这次打开控制台期间不再显示；下次打开还会出现")
+        b_once.clicked.connect(lambda: _dismiss(False))
+        hl.addWidget(b_once, 0)
+
+        b_never = Btn("不再显示", self.t, "ghost")
+        b_never.setObjectName("fbNoticeNever")
+        b_never.setToolTip("以后都不再显示")
+        b_never.clicked.connect(lambda: _dismiss(True))
+        hl.addWidget(b_never, 0)
+
+        self.fbNotice = bar
+        hl0.addWidget(bar)
+        return holder
 
     def _ensure_page(self, sec: str) -> None:
         """ J：sec 页面惰性构建 —— 首次导航到才建（一次构建永久复用）。"""
