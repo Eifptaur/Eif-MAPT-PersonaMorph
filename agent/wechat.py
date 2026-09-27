@@ -734,6 +734,12 @@ def _draft_cleanup_note(adapter, backend, main: int, gui, r, dirty_before: bool,
     return "；残留清理：%s" % _cwhy
 
 
+#: 「限位」**同一设定只应用一次**（进程级）：把「按配置量到的目标尺寸」记在这里，
+#: 之后重复取 GUI 就不再改窗口；配置改了（`ui.lock_window_w/h` 变了，或关掉限位再打开）
+#: 才会重新应用一次。原实现**每次取 GUI 都重设** ⇒ 用户手动调过的尺寸被反复覆盖。
+_LOCK_APPLIED = {}
+
+
 def _commit_three_shots(adapter, backend, main: int, send_pt, tag: str = "") -> list:
     """把输入框里的草稿**提交出去**：回车优先的三枪（1 回车 / 2 点「发送」/ 3 回车兜底）。
 
@@ -3151,10 +3157,16 @@ class WeChatAdapter:
         ⇒ 现在按开关走：**只有 `ui.lock_window_pos=True` 才限位**（**用户把它改成默认开**：
         「你在后台都不在意这个，而且也能防止点错」；关掉＝一行都不碰用户的窗口，尺寸不合就靠紧跟其后的
         `calibrate_layout(save=True)` 按当前尺寸重新校准）。限位时仍是"借 → 空闲自动还"（见 `agent/window_borrow.py`）。
+
+        **同一设定只应用一次**：量到的目标尺寸与上次相同就不再改窗口（启动时记一次，之后就保持这个设定）；
+        改了 `ui.lock_window_w/h`、或关掉限位再打开，才会重新应用一次。
         """
         try:
             from .config import get_config as _gc
             if (_gc().get("ui") or {}).get("lock_window_pos", False) is not True:
+                # 关掉限位 ⇒ 忘掉上次的设定：用户再把它打开时，按那时的配置重新量一次、
+                # 重新应用一次（否则「关了→自己调窗口→再开」这一段会被"只应用一次"挡住）。
+                _LOCK_APPLIED.pop("key", None)
                 return # 默认：不动用户的窗口（读不到配置也按"不动"处理）
         except Exception:
             return
@@ -3179,7 +3191,15 @@ class WeChatAdapter:
             if sw < 1366:
                 tw = min(tw, int(sw * 0.82))
             th = min(th, max(820, sh - 100))
+            # ⚠️ `touch()` 必须留在下面「同一设定只应用一次」的早退**之前**：它是「借用 → 空闲归还」
+            #    的活动信号（`window_borrow._watch` 空闲 `IDLE_S` 秒就 `restore()`）。要是被早退吞掉，
+            #    我们钉的那一版会在无人操作一分钟后被还原成**改之前**的尺寸 —— 用户看到的就是窗口自己变大。
             _wb.touch()
+            # ⚡ **同一设定只应用一次**：量到的目标尺寸没变就直接返回，不再重复改窗口。
+            _lk = (int(tw), int(th))
+            if _LOCK_APPLIED.get("key") == _lk:
+                return
+            _LOCK_APPLIED["key"] = _lk
             # 用户投诉「为什么老是把我的窗口改得那么大」⇒ 加档位：默认**只缩不放**。
             #   off         ＝完全不碰
             #   shrink_only ＝只在当前窗口**大于**标定尺寸时缩到标定；用户调小的窗口**不动**

@@ -175,6 +175,7 @@ def main():
         # 。修后＝只改几何、绝不激活。
         import ctypes as _ct
         from agent.wechat import WeChatAdapter
+        from agent import wechat as _wxm
 
         calls = []
 
@@ -234,16 +235,57 @@ def main():
                 pass
 
         _old_windll, _old_rect = _ct.windll, _ct.wintypes.RECT
-        cfg_mod.get_config = lambda: {"ui": {"lock_window_pos": True},
-                                      "wechat": {"limit_window": "shrink_only"}}
+        _cfg_now = {"ui": {"lock_window_pos": True}, "wechat": {"limit_window": "shrink_only"}}
+        cfg_mod.get_config = lambda: _cfg_now
         ad = WeChatAdapter.__new__(WeChatAdapter) # 不跑 __init__（它会连微信库）
         ad.cfg = cfg_mod.get_config()
-        _ct.windll = _FakeWinDll()
-        _ct.wintypes.RECT = _make_rect
+
+        # 观测「活动信号」`touch()`：它是「借用 → 空闲归还」的续命信号，**不许被早退吞掉**
+        # （吞掉 ⇒ 我们钉过的那一版会在无人操作一分钟（`window_borrow.IDLE_S`）后被 `restore()`
+        #   还原成**改之前**的尺寸 —— 用户看到的就是"窗口自己变大"）。
+        from agent import window_borrow as _wbm
+        _touches = []
+        _old_touch = _wbm.touch
+        _wbm.touch = lambda: _touches.append(True)
+
+        def _limit_once():
+            """跑一次限位：清空观测、装好 ctypes 替身（`byref()` 只认真 ctypes 结构）。"""
+            del calls[:]
+            _ct.windll = _FakeWinDll()
+            _ct.wintypes.RECT = _make_rect
+            try:
+                ad._limit_wechat_window(_G())
+            finally:
+                _ct.windll, _ct.wintypes.RECT = _old_windll, _old_rect
+
+        def _sp_n():
+            return len([c for c in calls if c[0] == "SetWindowPos"])
+
         try:
-            ad._limit_wechat_window(_G())
+            _wxm._LOCK_APPLIED.clear()
+            _limit_once() # 首次：按配置量一次并应用
+            _n1, _t1 = _sp_n(), len(_touches)
+            _limit_once() # 同一设定第二次：**不许再动窗口**
+            _n2, _t2 = _sp_n(), len(_touches)
+            _cfg_now["ui"]["lock_window_w"] = 905 # 用户在前端把宽改了 ⇒ 必须重新应用
+            _limit_once()
+            _n3 = _sp_n()
+            _cfg_now["ui"]["lock_window_pos"] = False # 关掉限位 ⇒ 一行都不许碰窗口
+            _limit_once()
+            _n4 = _sp_n()
+            _cfg_now["ui"]["lock_window_pos"] = True # 再打开 ⇒ 按那时的配置重新应用一次
+            _limit_once()
+            _n5 = _sp_n()
         finally:
-            _ct.windll, _ct.wintypes.RECT = _old_windll, _old_rect
+            _wbm.touch = _old_touch
+
+        ok("⑨ 限位首次应用一次（SetWindowPos 恰好一次）", _n1 == 1, _n1)
+        ok("⑨ 同一设定再取 GUI **不再动窗口**（第二次 SetWindowPos 为 0）", _n2 == 0, _n2)
+        ok("⑨ 用户改了 `ui.lock_window_w` ⇒ 重新应用一次", _n3 == 1, _n3)
+        ok("⑨ 关掉限位 ⇒ 一次都不碰窗口", _n4 == 0, _n4)
+        ok("⑨ 关掉再打开 ⇒ 按新配置重新应用一次", _n5 == 1, _n5)
+        ok("⑨ 活动信号 `touch()` 即使早退也照发（不许被吞）",
+           _t1 == 1 and _t2 == 2, (_t1, _t2))
 
         kinds = [c[0] for c in calls]
         ok("⑨ 限位不再调 `MoveWindow`（它会激活顶层窗）", "MoveWindow" not in kinds, calls)
