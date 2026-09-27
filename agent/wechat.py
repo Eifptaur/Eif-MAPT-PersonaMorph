@@ -7495,7 +7495,9 @@ class WeChatAdapter:
     def collect_emoji(self, chat_id: str, local_id: int) -> str | None:
         """收藏一条消息到本地收藏夹 data/emojis/（返回路径；失败 None）。
 
-        动画表情(47) → UIA 精确定位截图；图片(3) → 原图下载（更清晰）；
+        动画表情(47) → **离线解密原文件**（`emoticon.sticker_image(animated=True)`：
+        微信自研 HEVC 动图转成**真动图**落盘，动效不丢）；图片(3) → 原图下载（更清晰）；
+        拿不到解密用的 key / 文件不在本地 ⇒ 才回退 UIA 截图（诚实降级）。
         返回值统一为收藏夹内文件路径，供 send_emoji/list_emojis 使用。
         """
         try:
@@ -7522,12 +7524,16 @@ class WeChatAdapter:
             # ⭐ 动画表情**优先离线解出原图**（`agent/emoticon.py`，AES-128-CBC 解本机
             #   表情文件）——老实现只会 UIA 截图（存下来是"聊天区截图"，发出去是图片还会抢鼠标）。
             #   拿不到 key / 文件不在本地才回退截图（诚实降级，不静默）。
+            #   ⚡ `animated=True`：收藏夹要的是**那个会动的表情**。微信的动画表情多数是自研
+            #   `wxgf`（HEVC 动图）⇒ 默认口径只解首帧静态图；这里要它能动。
             if lt == 47:
                 try:
                     from . import emoticon as _emo
-                    _p = _emo.sticker_image(self._db, chat_id, int(local_id))
+                    _p = _emo.sticker_image(self._db, chat_id, int(local_id), animated=True)
                     if _p and os.path.exists(_p):
-                        log.info("收藏表情：离线解出原图 %s", os.path.basename(_p))
+                        log.info("收藏表情：离线解出%s %s",
+                                 "动图" if _emo.is_animated_file(_p) else "静态图",
+                                 os.path.basename(_p))
                         return _p
                 except Exception as _e:
                     log.info("收藏表情：离线解密不可用（%s）⇒ 回退截图", str(_e)[:60])

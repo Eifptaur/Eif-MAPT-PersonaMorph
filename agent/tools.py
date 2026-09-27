@@ -1391,6 +1391,15 @@ def _exec_send_emoji(ctx, args):
         # ⚡ **优先走投递「粘贴图片」通道** ——
         #   剪贴板放图（CF_DIB）→ 输入框右键「粘贴」→ 回车，**不需要表情面板**，所以能和"摁住微信"共存。
         #   实测（演示群，离线解密出的表情图）：7.2s、**微信占前台 0.05s**、DB 回读 local_id=18 type=图片。
+        #   ⛔ 代价是**结构性的**：CF_DIB 是一张位图 ⇒ 动图也只能发首帧。收藏夹里若存的是会动的
+        #   （`emoticon.to_animated` 的产物），就必须如实告诉用户"对方看到的是静的"，并指出要发
+        #   会动的该走哪条路 —— 不能让他以为动图发出去了（回执里说清，别靠他自己发现）。
+        _anim = False
+        try:
+            from . import emoticon as _emo_an
+            _anim = _emo_an.is_animated_file(target["path"])
+        except Exception: # noqa: BLE001
+            _anim = False
         _ok_img, _why_img = False, "未尝试"
         try:
             _ok_img, _why_img = ctx["wechat"].send_image_posted(str(ctx.get("chat_id") or ""), target["path"])
@@ -1400,10 +1409,15 @@ def _exec_send_emoji(ctx, args):
             log.info("投递粘贴发图没成（%s）⇒ 退回原来的真鼠标发图", str(_why_img)[:70])
             ctx["sender"].send_image(ctx["chat_key"], target["path"])
         ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
+        _note = ("面板这条路走不通，已用**投递粘贴图片**发出（对方看到的是图片）；"
+                 "要发真表情请先把表情收进微信表情库。" if _ok_img else
+                 "已发送本地收藏夹里的图片（它是图片不是微信表情）。")
+        if _anim:
+            _note += ("⚠️ 这张是**动图**，而图片通道走剪贴板位图 ⇒ 对方收到的是**静态首帧**；"
+                      "要发出会动的，把「发表情方式」改成「路线 B（走微信表情面板）」"
+                      "（代价是那一下会占前台）。")
         return _ok({"sent": True, "via": ("posted_paste" if _ok_img else "local_image"),
-                    "note": ("面板这条路走不通，已用**投递粘贴图片**发出（对方看到的是图片）；"
-                             "要发真表情请先把表情收进微信表情库。" if _ok_img else
-                             "已发送本地收藏夹里的图片（它是图片不是微信表情）。")})
+                    "note": _note})
     # 本地收藏夹无匹配 → 微信真实表情面板兜底（面板格序号仅对纯本地收藏序列有效）
     try:
         # 🔴 两条都要带 chat_id —— 开面板前先确认"当前会话＝目标会话"（投递优先），

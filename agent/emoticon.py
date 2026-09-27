@@ -10,8 +10,14 @@
        或 `cache/<月>/Emoticon/<前2位>/<md5>`
     3. 解密：**AES-128-CBC，key = IV = md5(f"{seed}{wxid}EMOTICON") 的十六进制解码前 16 字节**，PKCS7
     4. 明文首字节即魔数：`GIF8` / `\\x89PNG` / `\\xff\\xd8\\xff`（直出）或 `wxgf`（微信自研 HEVC 动图，
-       取首帧转 JPG）
+       交给 ffmpeg 可解出**全部帧** ⇒ 转成真动图 GIF；给视觉接口看的静态图仍走首帧）
     `seed`＝微信进程内存里的账号级常量（8~12 位十进制）；`wxid`＝数据目录名去掉尾部 `_xxxx`。
+
+⚠️ 动图这件事的两条口径（真机实测：本机 140 个表情文件里 **100 个是 `wxgf`**，
+   收藏目录 `Persist` 33 个**全是 wxgf** ⇒ "只拿到首帧"是这条链的常态，不是个例）：
+   · `to_viewable` ⇒ **首帧静态图**（视觉接口多数不吃 GIF）；
+   · `to_animated` ⇒ **真动图**（`wxgf` → GIF，实测 556x540/25fps 的源转出 30 帧）；
+   `sticker_image(animated=True)` 走后者，收藏夹用它。
 
 ⚠️ 边界与纪律：①全程**只读**（读进程内存取 seed、读表情文件、解密），不写微信任何东西；
 ②seed/key **落盘缓存**（`data/emoticon_key.json`）并用本地任一表情文件**首块校验**再复用，
@@ -353,27 +359,21 @@ def _wxgf_first_frame_makers() -> list:
             return None
 
     def _ffmpeg(data):
-        import shutil
+        import os as _os
         import subprocess
         import tempfile
-        exe = shutil.which("ffmpeg")
-        if not exe:
-            try:
-                import imageio_ffmpeg
-                exe = imageio_ffmpeg.get_ffmpeg_exe()
-            except Exception:
-                exe = None
+        exe = ffmpeg_exe()
         if not exe:
             return None
         with tempfile.TemporaryDirectory() as td:
-            src = os.path.join(td, "a.hevc")
-            dst = os.path.join(td, "a.jpg")
+            src = _os.path.join(td, "a.hevc")
+            dst = _os.path.join(td, "a.jpg")
             with open(src, "wb") as fh:
                 fh.write(data)
             r = subprocess.run([exe, "-y", "-loglevel", "error", "-f", "hevc", "-i", src,
                                 "-frames:v", "1", dst], capture_output=True,
                                creationflags=_NO_WINDOW)
-            if r.returncode == 0 and os.path.exists(dst):
+            if r.returncode == 0 and _os.path.exists(dst):
                 with open(dst, "rb") as fh:
                     return fh.read()
         return None
@@ -383,9 +383,113 @@ def _wxgf_first_frame_makers() -> list:
     return out
 
 
+# ── 动图：**保留动效**的那一条（收藏夹/发送用）──────────────────────────────
+def ffmpeg_exe() -> str:
+    """ffmpeg 可执行文件：PATH 优先，其次产品运行时自带的 `imageio-ffmpeg`。都没有给 `''`。
+
+    为什么够用：产品自带的那个（实测 7.1）**带 libx265**，HEVC 编解码都能干
+    ⇒ 不必麻烦用户另外装 ffmpeg。
+    """
+    import shutil
+    try:
+        got = shutil.which("ffmpeg")
+    except Exception:
+        got = None
+    if got:
+        return str(got)
+    try:
+        import imageio_ffmpeg
+        return str(imageio_ffmpeg.get_ffmpeg_exe() or "")
+    except Exception as e: # noqa: BLE001
+        # 记录后给空串：调用方据此退回"静态首帧"，不是静默失败
+        log.debug("没有可用的 ffmpeg（PATH 与产品自带的都取不到）：%s", e)
+        return ""
+
+
+def wxgf_stream(plain: bytes) -> bytes:
+    """`wxgf` 容器里那段 HEVC 裸流（annex-b：从第一个起始码 `00 00 00 01` 起）。"""
+    i = plain.find(b"\x00\x00\x00\x01")
+    return plain[i:] if i > 0 else plain
+
+
+def wxgf_to_gif(plain: bytes, out_path: str, fps: int = 15, max_px: int = 240) -> str:
+    """`wxgf`（微信自研 HEVC 动图）→ **真动图 GIF**；任一环不成立返回 `''`。
+
+    为什么做得到：`wxgf` 里装的是一段**标准 HEVC**（真机实测 556x540 / 25fps），
+    交给 ffmpeg 解码就能拿到**全部帧**；过去只取首帧是"给视觉接口看"的口径，
+    并不是这条链的上限。fps 收到 15 只是压体积（表情本身多为 10~25fps），
+    两遍调色板（`palettegen` + `paletteuse`）避免 GIF 256 色抖动。
+    """
+    exe = ffmpeg_exe()
+    if not exe or not plain:
+        return ""
+    import subprocess
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory(prefix="wxgf-") as td:
+            src = os.path.join(td, "a.hevc")
+            with open(src, "wb") as fh:
+                fh.write(wxgf_stream(plain))
+            vf = ("fps=%d,scale=min(%d\\,iw):-2:flags=lanczos,split[a][b];"
+                  "[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer"
+                  % (int(fps), int(max_px)))
+            r = subprocess.run([exe, "-y", "-hide_banner", "-loglevel", "error",
+                                "-f", "hevc", "-i", src, "-vf", vf, "-loop", "0", out_path],
+                               capture_output=True, creationflags=_NO_WINDOW, timeout=45)
+            if r.returncode != 0 or not os.path.exists(out_path):
+                log.debug("wxgf 转动图没成（rc=%s）：%s", r.returncode,
+                          (r.stderr or b"").decode("utf-8", "replace")[:160])
+                return ""
+        return out_path if os.path.getsize(out_path) > 0 else ""
+    except Exception as e: # noqa: BLE001
+        log.debug("wxgf 转动图异常：%s", e)
+        return ""
+
+
+def is_animated_file(path: str) -> bool:
+    """这个文件**真的会动**吗（容器帧数 > 1）。读不动一律 False（不倒过来猜）。"""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return bool(getattr(im, "is_animated", False)) and int(getattr(im, "n_frames", 1)) > 1
+    except Exception as e: # noqa: BLE001
+        log.debug("判动图失败（%s）：%s", os.path.basename(str(path or "")), e)
+        return False
+
+
+def to_animated(plain: bytes, out_dir: str, stem: str) -> str:
+    """解密后的明文 → **尽量保留动效**的本地文件（收藏夹/发送用）。认不出给 `''`。
+
+    与 `to_viewable` 的分工写清楚：那一条服务"视觉接口能看的图"（动图只给首帧，
+    多数视觉接口不吃 GIF）；这一条服务"收藏夹里存的是不是那个会动的表情"。
+    """
+    kind = sniff(plain)
+    if not kind:
+        return ""
+    os.makedirs(out_dir, exist_ok=True)
+    if kind in ("gif", "png", "jpg"):
+        p = os.path.join(out_dir, "%s.%s" % (stem, kind))
+        with open(p, "wb") as fh:
+            fh.write(plain)
+        return p
+    # wxgf：先试转真动图；转不成才退回静态首帧（诚实降级，不假装它是动的）
+    p = os.path.join(out_dir, "%s.gif" % stem)
+    got = wxgf_to_gif(plain, p)
+    if got:
+        return got
+    log.info("表情是微信自研动图，但转动图这一环没成 ⇒ 退回静态首帧")
+    return to_viewable(plain, out_dir, stem)
+
+
 # ── 对外的两个入口 ─────────────────────────────────────────────────────────
-def sticker_image(db, chat_id: str, local_id, out_dir: str = "", allow_scan: bool = True) -> str:
-    """一条「动画表情」消息 → **视觉能看的图片路径**；任何一环不成立都返回 `''`（调用方退回截图）。"""
+def sticker_image(db, chat_id: str, local_id, out_dir: str = "", allow_scan: bool = True,
+                  animated: bool = False) -> str:
+    """一条「动画表情」消息 → 本地图片路径；任何一环不成立都返回 `''`（调用方退回截图）。
+
+    两条口径按用途分（这是本函数唯一的开关）：
+      · `animated=False`（默认）→ `to_viewable`：**首帧静态图**，给视觉接口看；
+      · `animated=True` → `to_animated`：**尽量保住动效**（wxgf 转真动图 GIF），收藏夹用。
+    """
     md5 = md5_of_message(db, chat_id, local_id)
     if not md5:
         return ""
@@ -407,4 +511,6 @@ def sticker_image(db, chat_id: str, local_id, out_dir: str = "", allow_scan: boo
     #   原来落在 `media/emoji` ⇒ 解出来的表情**根本不出现在控制台收藏夹里**
     #   （真机实测：`data/emojis` 空、`media/emoji` 有 6 张 ⇒ 前端一张都看不到）。
     out_dir = out_dir or os.path.join(ROOT, "data", "emojis")
+    if animated:
+        return to_animated(plain, out_dir, md5)
     return to_viewable(plain, out_dir, md5)

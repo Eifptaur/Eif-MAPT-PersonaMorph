@@ -140,5 +140,73 @@ _E = io.open(os.path.join(ROOT, "agent", "emoticon.py"), encoding="utf-8").read(
 ok("模块头写明只读边界（不写微信任何东西）", "只读" in _E and "不写微信任何东西" in _E)
 ok("算法出处写明（开源项目 + MIT）", "Wechat-Emoticon-Parser" in _E and "MIT" in _E)
 
+print("── G. 动图：`wxgf` → 真动图 GIF；GIF 不再被降成首帧 ──")
+import subprocess # noqa: E402
+
+from PIL import Image as _Img # noqa: E402
+
+
+def _nf(p): # noqa: ANN001, ANN202
+    with _Img.open(p) as im:
+        return int(getattr(im, "n_frames", 1))
+
+
+_g = os.path.join(tmp, "a.gif")
+# ⚠️ 四帧必须**肉眼可分**：内容一样的帧会被 PIL 合并成单帧，分母守卫就白设了。
+_fr = [_Img.new("RGB", (32, 32), color=c) for c in
+       ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0))]
+_fr[0].save(_g, save_all=True, append_images=_fr[1:], duration=120, loop=0)
+ok("分母守卫：合成的 GIF 本身就是 4 帧（不然下面两条会因单帧全绿）", _nf(_g) == 4, str(_nf(_g)))
+_plain_gif = io.open(_g, "rb").read()
+_an = em.to_animated(_plain_gif, out, "gif_an")
+ok("to_animated：GIF 原样落盘且**仍是动图**（收藏夹要的是会动的那个）",
+   _an.endswith(".gif") and _nf(_an) == 4, "%s 帧=%s" % (_an, _nf(_an) if _an else "-"))
+ok("is_animated_file 认得出动图", em.is_animated_file(_an) is True)
+ok("is_animated_file 对静态图判 False（不把静的说成动的）",
+   em.is_animated_file(em.to_viewable(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32, out, "st")) is False)
+_v = em.to_viewable(_plain_gif, out, "gif_vis")
+ok("to_viewable 仍按老口径给**首帧静态图**（视觉接口多数不吃 GIF）",
+   _v.endswith("_first.png") and _nf(_v) == 1, _v)
+
+_exe = em.ffmpeg_exe()
+ok("ffmpeg 找得到（PATH 优先，其次产品自带的 imageio-ffmpeg）", bool(_exe), _exe)
+ok("垃圾输入 ⇒ wxgf_to_gif 返回空串（不倒出半个文件）",
+   em.wxgf_to_gif(b"wxgf\x00\x01\x02", os.path.join(tmp, "bad.gif")) == "")
+ok("wxgf_stream 从第一个起始码切起（前面是容器头）",
+   em.wxgf_stream(b"wxgf\x10\x00AAAA\x00\x00\x00\x01rest") == b"\x00\x00\x00\x01rest")
+
+if _exe:
+    # 自造样本：用 ffmpeg 自己编一段 5 帧 HEVC 当"wxgf 的内容"——
+    # 这样这条判据**不依赖用户本机的表情文件**，也不碰他的微信数据。
+    _hevc = os.path.join(tmp, "s.hevc")
+    _r = subprocess.run([_exe, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                         "-i", "testsrc=size=64x64:rate=10:duration=0.5",
+                         "-c:v", "libx265", "-f", "hevc", _hevc], capture_output=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if _r.returncode == 0 and os.path.exists(_hevc):
+        _fake = b"wxgf" + b"\x00" * 12 + io.open(_hevc, "rb").read()
+        _got = em.wxgf_to_gif(_fake, os.path.join(tmp, "w.gif"))
+        ok("wxgf（HEVC 裸流）→ GIF 拿到**多帧**：这是「能解成动图」的核心证据",
+           bool(_got) and _nf(_got) >= 3, "%s 帧=%s" % (_got, _nf(_got) if _got else "-"))
+    else:
+        print("  · 本机 ffmpeg 编不出 HEVC 样本（rc=%s）⇒ 「自造样本转码」这一条本次不计分"
+              % _r.returncode)
+
+print("── H. 动图不许被发送前的压缩毁掉 ──")
+from agent import img_compress as _ic # noqa: E402
+
+_big = os.path.join(tmp, "big.gif")
+_bg = [_Img.new("RGB", (2000, 2000), color=(i * 40, 0, 0)) for i in range(3)]
+_bg[0].save(_big, save_all=True, append_images=_bg[1:], duration=100, loop=0)
+_p, _note = _ic.compress_if_needed(_big, out_dir=os.path.join(tmp, "cmp"))
+ok("超尺寸的动图**原样发**（压缩链会抽首帧 ⇒ 动效就没了），且回执说明原因",
+   _p == _big and "动图" in _note, _note)
+
+print("── I. 接线：收藏走 animated、回执如实说静态首帧 ──")
+ok("collect_emoji 走 sticker_image(animated=True)",
+   _W.count("sticker_image(self._db, chat_id, int(local_id), animated=True)") == 1)
+ok("工具层回执写明「图片通道只能发静态首帧」并指向路线 B",
+   _T.count("静态首帧") >= 1 and _T.count("is_animated_file(") == 1)
+
 print("\n==== 表情离线解密判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
