@@ -9074,13 +9074,21 @@ class WeChatAdapter:
             rgb = img.convert("RGB")
             px = rgb.load()
             W, H = rgb.size
+            _lib_pl = int(getattr(gui, "right_pane_left", 0) or 0)
             pane_left = 0
             try:
                 pane_left = int(_ch.detect_pane_left(img)) or 0
             except Exception:
                 pane_left = 0
             if not pane_left:
-                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
+                pane_left = _lib_pl
+            elif _lib_pl and _lib_pl < pane_left:
+                # ⛔ 两头取**更小**的那个：扫描范围「宁大勿小」——
+                #   头像列紧贴会话区左沿，左沿一旦估大了（真机实测过 507 vs 真实 345），
+                #   头像整块就被扫不到 ⇒ 报"左侧一个头像方块都没有" ⇒ 拍不上。
+                #   多扫进来的东西（会话列表等）由下游的落点闸 + 归属校验兜着。
+                #   （真机实测：用户把会话栏拉宽后真实左沿到过 507，而库值仍是 239 ⇒ 取小才安全。）
+                pane_left = _lib_pl
             blocks = self._avatar_blocks(img, pane_left)
             if not blocks:
                 return None, None, "这一帧没检测到头像方块 ⇒ 量不到，不猜点"
@@ -9186,17 +9194,38 @@ class WeChatAdapter:
             #   **pane_left 必须现量**——库值 `right_pane_left` 会过期（本机实测 262 vs 真值 331），
             #   而 `gui.detect_pane_left()` 在 WeChatGUI 上**根本不存在**（AttributeError，一直静默走库值）。
             #   ⇒ 改用**我们自己**的帧内检测 `chat_header.detect_pane_left(img)`；量不到才退回库值。
-            pane_left = 0
+            _lib_pl = int(getattr(gui, "right_pane_left", 0) or 0)
+            _det = 0
             try:
-                pane_left = int(_ch.detect_pane_left(img)) or 0
+                _det = int(_ch.detect_pane_left(img)) or 0
             except Exception:
-                pane_left = 0
-            if not pane_left:
-                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
-            # 左右分界＝**会话区中点**（不是整幅中点）：别人的消息在会话区左半、自己的在右半。
-            #   用整幅中点（rw//2）在"会话区很宽"时会把**别人的行**判成自己的 ⇒ 过滤带空 ⇒ 定位失败。
-            mid = (int(pane_left) + int(rw)) // 2 if pane_left else int(rw) // 2
-            blocks = self._avatar_blocks(img, pane_left)
+                _det = 0
+            # 两个用途、两种要求，**必须分开**（真机三次不同窗口形状踩出来的）：
+            #   · `pane_left`（准确值）：算左右分界、排除会话列表用；
+            #   · `_scan_lo`（宁小勿大）：交给 `_avatar_blocks` 当扫描起点 —— 头像列紧贴会话区左沿，
+            #     左沿一旦估大（实测 507 vs 真实 345），头像整块落在扫描区外 ⇒ 一个左侧方块都测不到。
+            #   ⛔ 曾经把两者合成一个"取更小"的值 ⇒ 扫描够了，但中点被拉偏
+            #     （真机实测：窗口拉宽后对方头像 x=890 被判成"右侧"）。
+            pane_left = _det or _lib_pl
+            _scan_lo = min(pane_left, _lib_pl) if _lib_pl else pane_left
+            blocks = self._avatar_blocks(img, _scan_lo)
+            # 左右分界：**优先用方块自己的 x 分布**——左右两组头像之间最大的那个间隙取中点。
+            #   比"猜会话区左沿"稳得多：真机三次不同窗口形状（对方头像 x = 386 / 533 / 890）都判对。
+            #   只有一簇（例如视口里只有自己发的）或间隙不够大时，才回退"会话区中点"。
+            mid = 0
+            _xs = sorted((b[0] + b[2]) // 2 for b in blocks
+                         if (b[0] + b[2]) // 2 >= int(rw * 0.12))
+            if len(_xs) >= 2:
+                _gap, _at = 0, 0
+                for _i in range(1, len(_xs)):
+                    _d = _xs[_i] - _xs[_i - 1]
+                    if _d > _gap:
+                        _gap, _at = _d, _i
+                if _gap >= 120:
+                    mid = (_xs[_at - 1] + _xs[_at]) // 2
+            if not mid:
+                # 回退＝会话区中点（别人的消息在会话区左半、自己的在右半）。
+                mid = (int(pane_left) + int(rw)) // 2 if pane_left else int(rw) // 2
             if self_side:
                 side = [b for b in blocks if (b[0] + b[2]) // 2 > mid]
             else:
@@ -9711,13 +9740,21 @@ class WeChatAdapter:
             if img is None:
                 return {"ok": False, "detail": "抓不到微信画面（PrintWindow 失败）⇒ 量不到头像，不猜点"}
             rw = int(getattr(gui, "render_w", 0) or 0) or img.size[0]
+            _lib_pl = int(getattr(gui, "right_pane_left", 0) or 0)
             pane_left = 0
             try:
                 pane_left = int(_ch.detect_pane_left(img)) or 0
             except Exception:
                 pane_left = 0
             if not pane_left:
-                pane_left = int(getattr(gui, "right_pane_left", 0) or 0)
+                pane_left = _lib_pl
+            elif _lib_pl and _lib_pl < pane_left:
+                # ⛔ 两头取**更小**的那个：扫描范围「宁大勿小」——
+                #   头像列紧贴会话区左沿，左沿一旦估大了（真机实测过 507 vs 真实 345），
+                #   头像整块就被扫不到 ⇒ 报"左侧一个头像方块都没有" ⇒ 拍不上。
+                #   多扫进来的东西（会话列表等）由下游的落点闸 + 归属校验兜着。
+                #   （真机实测：用户把会话栏拉宽后真实左沿到过 507，而库值仍是 239 ⇒ 取小才安全。）
+                pane_left = _lib_pl
             blocks = self._avatar_blocks(img, pane_left)
             mid = (int(pane_left) + int(rw)) // 2 if pane_left else int(rw) // 2
             side = [b for b in blocks if (b[0] + b[2]) // 2 <= mid]
