@@ -261,6 +261,10 @@ def main():
         def _sp_n():
             return len([c for c in calls if c[0] == "SetWindowPos"])
 
+        # ⚠️ 本段要**真跑** `_limit_wechat_window`（只把 ctypes 换成替身）⇒ 临时撤掉"判据环境不许
+        #    碰窗口"那道闸（套件跑时 `run_all_selftests` 会设 `PM_NO_WINDOW_TOUCH`，不撤就全早退、
+        #    五条断言全变成"没动过窗口"的假通过）。
+        _nwt = os.environ.pop("PM_NO_WINDOW_TOUCH", None)
         try:
             _wxm._LOCK_APPLIED.clear()
             _limit_once() # 首次：按配置量一次并应用
@@ -278,6 +282,8 @@ def main():
             _n5 = _sp_n()
         finally:
             _wbm.touch = _old_touch
+            if _nwt is not None:
+                os.environ["PM_NO_WINDOW_TOUCH"] = _nwt
 
         ok("⑨ 限位首次应用一次（SetWindowPos 恰好一次）", _n1 == 1, _n1)
         ok("⑨ 同一设定再取 GUI **不再动窗口**（第二次 SetWindowPos 为 0）", _n2 == 0, _n2)

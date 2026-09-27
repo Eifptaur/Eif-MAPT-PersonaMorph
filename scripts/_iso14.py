@@ -136,9 +136,23 @@ def model_routes_stats() -> bool:
     return _run("model_routes_stats", _do)
 
 
+def no_window_touch() -> bool:
+    """判据/探针**一律不许碰用户的微信窗口**（设 `PM_NO_WINDOW_TOUCH=1`，**子进程继承**）。
+
+    ⚠️ 这不是洁癖，是实测出来的：`first_boot_smoke_selftest` 会 `Popen` 起**真产品主程序**跑副本，
+    主程序构造 GUI 后必走 `wechat._limit_wechat_window()` ⇒ 把用户正在用的微信钉到标定尺寸，
+    退出时 `window_borrow` 再归还 ⇒ 用户看到的就是「跑一轮全量，窗口先变成一个尺寸、再变回原来那个大的」。
+    环境变量是唯一能**穿透子进程**的闸（模块级打桩穿不过去）。
+    """
+    def _do():
+        os.environ["PM_NO_WINDOW_TOUCH"] = "1"
+    return _run("no_window_touch", _do)
+
+
 def all_() -> str:
     """把上面全部打上（各自独立成败，失败记进 `MISSED`）。返回隔离目录。"""
     MISSED.clear()
+    no_window_touch()
     logs()
     control()
     wechat()

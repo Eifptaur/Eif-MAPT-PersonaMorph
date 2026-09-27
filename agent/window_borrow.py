@@ -210,6 +210,14 @@ def touch() -> None:
             _state["last_touch"] = time.time()
 
 
+def _touch_allowed() -> bool:
+    """能不能动**真**窗口：判据/探针环境一律不动（`PM_NO_WINDOW_TOUCH=1`，子进程继承）。
+
+    `_test_api` 是替身时不受影响 —— 判据要拿替身测真实的借还逻辑，那本来就碰不到真窗口。
+    """
+    return (_test_api is not None) or (not os.environ.get("PM_NO_WINDOW_TOUCH"))
+
+
 def restore(reason: str = "idle") -> bool:
     """归还。返回是否真的处理了一次借用（含「按规矩不还」的情况）。"""
     with _lock:
@@ -218,7 +226,11 @@ def restore(reason: str = "idle") -> bool:
         hwnd, orig, forced = int(_state["hwnd"]), _state["rect"], _state["forced"]
     skipped = ""
     try:
-        if not orig:
+        if not _touch_allowed():
+            # 判据/探针环境：只把状态清干净，**绝不对真窗口发 SetWindowPos**。
+            #   否则跑一轮全量就会"钉一次、再还一次"，用户看到窗口先变成一个尺寸、再变回原来那个大的。
+            skipped = "判据/探针环境：只清状态，不动真窗口"
+        elif not orig:
             skipped = "没有原始 rect"
         else:
             u = _api()

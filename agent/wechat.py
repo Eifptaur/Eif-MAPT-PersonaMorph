@@ -3161,6 +3161,12 @@ class WeChatAdapter:
         **同一设定只应用一次**：量到的目标尺寸与上次相同就不再改窗口（启动时记一次，之后就保持这个设定）；
         改了 `ui.lock_window_w/h`、或关掉限位再打开，才会重新应用一次。
         """
+        # ⛔ **判据/探针环境一律不碰用户的窗口**（`PM_NO_WINDOW_TOUCH=1`，全量跑分器与 `_iso14`
+        #    都会设、**子进程继承**）。这条不是洁癖：`first_boot_smoke` 会起真产品主程序跑副本，
+        #    主程序构造 GUI 后就走这里 ⇒ 把用户正开着的微信钉到标定尺寸、退出时再归还，
+        #    用户看到的就是"跑一轮全量，窗口先变成一个尺寸、再变回原来那个大的"。
+        if os.environ.get("PM_NO_WINDOW_TOUCH"):
+            return
         try:
             from .config import get_config as _gc
             if (_gc().get("ui") or {}).get("lock_window_pos", False) is not True:

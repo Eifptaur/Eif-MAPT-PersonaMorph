@@ -92,6 +92,87 @@ def newest_zip():
     return max(cands, key=os.path.getmtime) if cands else None
 
 
+# ── 保护好用户的微信窗口 ──────────────────────────────────────────────
+# 本判据起的是**别人打的包**（`pack_online.py` 的产物），包里可能是**旧代码**：
+# 实测 `群相-在线包-20260927.zip` 里的 `_limit_wechat_window` 还是写死
+# `tw = 1160 if sw >= 1366 else int(sw*0.82)` —— 所以它一起来就把用户正开着的微信窗口
+# 改成 1160×900（用户看到的就是"跑一轮全量，窗口先变一个尺寸、再变回原来那个大的"）。
+# 源码侧已改成按配置、且判据环境带 `PM_NO_WINDOW_TOUCH` 闸，但**旧包不受那份源码管**
+# ⇒ 这里做一道与包版本无关的兜底：跑前记 rect，跑完原样还回去。
+
+def _wechat_main_hwnd() -> int:
+    """认准用户的微信主窗（按**进程名**认，不写死窗口类名——4.x 换过）。
+
+    取可见顶层窗里面积最大的那个，再用 tasklist 核对它属于 `Weixin.exe` / `WeChat.exe`。
+    """
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    try:
+        u.SetProcessDPIAware()
+    except Exception:
+        pass
+    found = []
+    _PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def _cb(h, _l):
+        try:
+            if not u.IsWindowVisible(h):
+                return True
+            pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            r = wintypes.RECT()
+            u.GetWindowRect(h, ctypes.byref(r))
+            w, hh = int(r.right - r.left), int(r.bottom - r.top)
+            if w > 400 and hh > 300:
+                found.append((w * hh, int(h), int(pid.value)))
+        except Exception:
+            pass
+        return True
+
+    try:
+        u.EnumWindows(_PROC(_cb), 0)
+    except Exception:
+        return 0
+    for _area, hwnd, pid in sorted(found, reverse=True)[:8]:
+        try:
+            r = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"],
+                               capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
+            nm = (r.stdout or "").lower()
+            if "weixin.exe" in nm or "wechat.exe" in nm:
+                return hwnd
+        except Exception:
+            continue
+    return 0
+
+
+def _win_rect(hwnd: int):
+    import ctypes
+    from ctypes import wintypes
+    if not hwnd:
+        return None
+    try:
+        r = wintypes.RECT()
+        if not ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(r)):
+            return None
+        return (int(r.left), int(r.top), int(r.right - r.left), int(r.bottom - r.top))
+    except Exception:
+        return None
+
+
+def _win_restore(hwnd: int, rect) -> bool:
+    """把窗口放回 rect（SWP_NOZORDER|SWP_NOACTIVATE：只改几何，不置前、不改 Z 序）。"""
+    import ctypes
+    if not hwnd or not rect:
+        return False
+    try:
+        return bool(ctypes.windll.user32.SetWindowPos(
+            int(hwnd), 0, int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]),
+            0x0004 | 0x0010))
+    except Exception:
+        return False
+
+
 def main():
     zp = newest_zip()
     if not zp:
@@ -128,6 +209,10 @@ def main():
                 "WX_AGENT_CONFIG": os.path.join(inner, "config.json")})
     logf = os.path.join(root, "boot.log")
     fh = io.open(logf, "wb")
+    _wxh = _wechat_main_hwnd()
+    _wx0 = _win_rect(_wxh) if _wxh else None
+    if _wx0:
+        print("  微信窗口跑前 rect = %s（跑完原样还原）" % (_wx0,))
     proc = subprocess.Popen([py, os.path.join("scripts", "persona_morph.py"), "--foreground"],
                             cwd=inner, env=env, stdout=fh, stderr=subprocess.STDOUT,
                             creationflags=NO_WINDOW)
@@ -239,6 +324,13 @@ def main():
                not left and not wait_to,
                "残留 pid：%s%s" % ("、".join(sorted(left)[:4]),
                                    "（且 taskkill 后 15s 未退出）" if wait_to else ""))
+        # ⛔ 与包版本无关的兜底：把用户的微信窗口原样还回去（旧包里的限位会把它改成 1160×900）
+        if _wx0:
+            _now = _win_rect(_wxh)
+            if _now != _wx0:
+                print("  ⚠️ 跑期间用户微信窗口被改：%s → %s" % (_wx0, _now))
+            if _win_restore(_wxh, _wx0):
+                print("  已把微信窗口原样还原：%s" % (_wx0,))
     # ⛔ 副本要**自己清掉**：解出来的是整包（≈500MB），每跑一次留一个 = 资源泄漏。
     #    需要留档复盘时设 `PM_SMOKE_KEEP=1`。
     if os.environ.get("PM_SMOKE_KEEP") == "1":

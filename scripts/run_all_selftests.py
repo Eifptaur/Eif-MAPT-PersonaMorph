@@ -209,8 +209,14 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
                                #   `PM_JUDGE_NO_PROC=1` ⇒ "真起进程 / 真开端口"那几段（watchdog 的
                                #   E 段、whale/console_chrome/voice_models 的真起 WebUI 段）自动
                                #   跳过并打一行 SKIP；**手动单跑不加它，动态段照旧真起真收**。
+                               # ⛔ `PM_NO_WINDOW_TOUCH=1`：判据（及其子进程）**一律不许碰用户的
+                               #   微信窗口**。`first_boot_smoke` 会起真产品主程序跑副本，主程序构造
+                               #   GUI 后就调 `_limit_wechat_window()` ⇒ 把用户正开着的微信钉到标定
+                               #   尺寸、退出时再归还 = 用户看到的"跑一轮全量，窗口先变个尺寸、又变回
+                               #   原来那个大的"。这个标记**会被子进程继承**，一层就挡住。
                                env={**os.environ, "PYTHONIOENCODING": "utf-8",
-                                    "PM_JUDGE_NO_PROC": "1", "PYTHONUNBUFFERED": "1"})
+                                    "PM_JUDGE_NO_PROC": "1", "PM_NO_WINDOW_TOUCH": "1",
+                                    "PYTHONUNBUFFERED": "1"})
             out = (r.stdout or b"").decode("utf-8", "replace") + \
                   (r.stderr or b"").decode("utf-8", "replace")
             rc = r.returncode

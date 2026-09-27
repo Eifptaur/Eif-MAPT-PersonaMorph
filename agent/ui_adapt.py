@@ -678,6 +678,14 @@ def harden_gui_class(cls=None) -> bool:
         cls._pm_fg_hardened_class = True
     except Exception:
         pass
+    # ⛔ 几何补丁**也必须在构造之前装**：`WeChatGUI.__init__` 里那条 `calibrate_layout()` 在
+    #    「允许前台」档下会真执行（闸放行），而它会把窗口尺寸一起重设 ⇒ 没这一层就没人还原。
+    #    原来它只在 `replica_adapter.ensure_compat_patches()` 里装 ⇒ 晚于构造，构造期那一次漏掉，
+    #    实测（`first_boot_smoke` 起真产品主程序，窗口 1875×1472 → 1160×900 且**没还原**）。
+    try:
+        patch_no_window_geometry(cls)
+    except Exception:
+        pass
     return True
 
 
@@ -1033,7 +1041,7 @@ def self_test(gui=None, point=None) -> dict:
     return result
 
 
-def patch_no_window_geometry() -> bool:
+def patch_no_window_geometry(cls=None) -> bool:
     """**不许驱动库改微信窗口几何** —— "窗口老是自己变大"的最终根因就在这里。
 
     实测（隔离变量）：**只构造 `wechatauto.guia.WeChatGUI()`**、完全不碰 agent 侧，窗口照样被改；
@@ -1043,14 +1051,19 @@ def patch_no_window_geometry() -> bool:
     做法：把 `calibrate_layout` 包一层 —— 调用前记下窗口 rect，调用后**原样还原**。
     它照样可以校准自己的坐标基准，但**不许动窗口**（尺寸与位置都归用户/配置管）。
     幂等、永不抛（打补丁不该成为新的崩溃源）。
+
+    `cls` 不给就用库里那个真类；`harden_gui_class()` 会拿着**它要上闸的那个类**复用本函数，
+    好让几何补丁也赶在**构造之前**装上（`__init__` 里就会调一次 `calibrate_layout`）。
     """
     try:
         import win32con as _wc
         import win32gui as _wg
-        from wechatauto import guia as _g
-        if getattr(_g.WeChatGUI, "_pm_geometry_locked", False):
+        if cls is None:
+            from wechatauto import guia as _g
+            cls = _g.WeChatGUI
+        if getattr(cls, "_pm_geometry_locked", False):
             return True
-        _orig = _g.WeChatGUI.calibrate_layout
+        _orig = cls.calibrate_layout
 
         def _wrapped(self, *a, **k):
             hwnd = int(getattr(self, "main_hwnd", 0) or 0)
@@ -1072,8 +1085,8 @@ def patch_no_window_geometry() -> bool:
                     pass
             return out
 
-        _g.WeChatGUI.calibrate_layout = _wrapped
-        _g.WeChatGUI._pm_geometry_locked = True
+        cls.calibrate_layout = _wrapped
+        cls._pm_geometry_locked = True
         return True
     except Exception:
         return False
