@@ -509,11 +509,34 @@ def _control_halt() -> str:
 #   ⇒ 本实现只认画面证据，量不到就返回 None，调用方**不许猜**。
 
 
+def _row_is_input_box(px, y: int, x0: int, W: int) -> bool:
+    """这一行像不像**输入框内部**：行均值够亮 **且** 深色像素占比低。
+
+    ⛔ 为什么不再要求"逐像素都近白（`min≥241`）"：真机实测（同一台机在 943×868 与 1853×1461
+       两种窗口形状下都跑过）—— 输入框那一带必然混着 159/220 的浅灰像素（占位文字、圆角描边、
+       「发送」按钮、贴进来的缩略图），逐像素门槛**一个候选偏移都过不了** ⇒ 表现就是
+       「量不到输入框 ⇒ 发图/发表情直接拒发」。换成**行均值 + 深色占比**之后实测能干净地分开：
+       输入框内部行（均值 ≈245、深色占比 ≤6%）对 工具栏图标行 / 消息气泡（深色占比明显更高）。
+    """
+    tot = dark = 0
+    s = 0
+    for x in range(x0, W, 2):
+        m = min(px[x, y][:3])
+        s += m
+        tot += 1
+        if m < 200:
+            dark += 1
+    if tot <= 0:
+        return False
+    return (s / float(tot)) >= 232.0 and (dark / float(tot)) <= 0.12
+
+
 def _probe_input_box_frame(gui, img=None):
     """从**窗口自身画面**（PrintWindow 优先，被别的窗口盖住也能量）量输入框矩形（渲染相对）。
 
-    做法与库里同款（底部找"全宽近白"行 → 沿中心列上下扩到边界 → 顶上 1~4px 浅灰分界线佐证），
-    只去掉那条把本机排除掉的门槛（≥150px）。量不到返回 None。
+    口径（真机实测两轮定的）：底部找**"像输入框内部"的行**（见 `_row_is_input_box`：
+    行均值够亮 + 深色占比低）→ 以该行为锚，沿同一判据上下扩到边界 → 高度 ≥60px 才算数。
+    量不到返回 None（**不猜落点**）。
     `img`＝现成的渲染区帧（同一轮里已经抓过就传进来，省一次抓帧）；不给就自己抓。
     """
     if img is None:
@@ -530,32 +553,27 @@ def _probe_input_box_frame(gui, img=None):
         x0 = int(getattr(gui, "right_pane_left", 0) or 0)
         if x0 <= 0 or x0 > W * 0.6:
             x0 = int(W * 0.22)
-        cx = min(W - 1, (x0 + W) // 2)
-        for off in (150, 120, 200, 100, 250, 90, 300):
-            y = int(H) - off
+        # 候选锚点：先试几个常见高度（输入框一般落在底部 150~300px 那一带），
+        # 都不中就从底部往上扫（窗口形状千变万化，写死偏移必然有形状量不到）。
+        cands = [int(H) - off for off in (150, 120, 200, 100, 250, 90, 300)]
+        cands += list(range(int(H) - 70, int(H * 0.5), -10))
+        for y in cands:
             if y <= H * 0.45 or y >= H - 2:
                 continue
-            tot = white = 0
-            for x in range(x0, W, 2):
-                r, g, b = px[x, y][:3]
-                tot += 1
-                if min(r, g, b) >= 241:
-                    white += 1
-            if tot <= 0 or white / tot < 0.8:
-                continue # 这一行不在输入框里（消息区/工具栏/状态条）
+            if not _row_is_input_box(px, y, x0, W):
+                continue
             top = y
-            while top > 1 and min(px[cx, top - 1][:3]) >= 241:
+            while top > 1 and _row_is_input_box(px, top - 1, x0, W):
                 top -= 1
             bot = y
-            while bot < H - 2 and min(px[cx, bot + 1][:3]) >= 241:
+            while bot < H - 2 and _row_is_input_box(px, bot + 1, x0, W):
                 bot += 1
             if bot - top < 60: # 太薄：不像输入框
                 continue
-            d, g2 = 0, top - 1 # 顶上应是 1~4px 的浅灰分界线（佐证）
-            while g2 >= 0 and min(px[cx, g2][:3]) < 241:
-                d += 1
-                g2 -= 1
-            if not (1 <= d <= 6):
+            # 安全线：输入框一定贴着窗口底部（下面只有一条几十像素的状态/工具栏带）。
+            # 没有这条时，若某个窗口形状下输入框整带都不满足判据，一路向上扫就会把
+            # **消息区**（也是亮底、深色少）当成输入框 ⇒ 落点跑到聊天记录里去了。
+            if bot < H * 0.85:
                 continue
             return (x0, top, W, bot)
     except Exception:

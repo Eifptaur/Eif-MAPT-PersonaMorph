@@ -993,6 +993,37 @@ try:
        _ok_box and _ok_top, "box=%s band=%s pt=%s" % (_box, _band, _pt))
     ck("B26f 行为：拿不到窗口自身画面时**返回 None（不猜）**",
        _band_none is None and _pt_none is None)
+    # B26g：真机上输入框那一带**必然混着浅灰与深色像素**（占位文字 / 圆角描边 /「发送」按钮 /
+    #   底部那排图标——它们在输入框**里面**）。用户把窗口改成 943×868 之后，
+    #   "逐像素 min≥241"那条判据一个候选偏移都过不了 ⇒ 表现就是"量不到输入框 ⇒ 发图直接拒发"。
+    _img2 = _Im.new("RGB", (1193, 891), (255, 255, 255))
+    for _x in range(262, 640, 4):                    # 消息区里一团深色气泡（在输入框**上面**）
+        for _y in range(600, 660):
+            _img2.putpixel((_x, _y), (40, 40, 40))
+    for _x in range(0, 1193):                        # 输入框顶上那条浅灰分界线
+        _img2.putpixel((_x, 691), (200, 200, 200))
+    for _y in range(692, 828):                       # 输入框：亮底 + 夹着浅灰（描边/圆角）
+        for _x in range(0, 1193, 7):
+            _img2.putpixel((_x, _y), (220, 220, 220))
+    for _x in range(262, 380, 3):                    # 占位文字（一小段，更深）
+        for _y in range(770, 790):
+            _img2.putpixel((_x, _y), (159, 159, 159))
+    for _x in range(0, 1193, 26):                    # 底部那排图标（在输入框**里面**）
+        for _y in range(802, 822):
+            _img2.putpixel((_x, _y), (60, 60, 60))
+    _chm.capture_image = lambda gui=None, render=None: _img2
+    try:
+        _box2 = _wk._probe_input_box_frame(_FakeGui())
+    except Exception as _e2:
+        _box2 = None
+    finally:
+        _chm.capture_image = _saved_cap
+    ck("B26g 输入框里混着浅灰像素与深色图标时**照样能量到框**（旧判据 min≥241 一个偏移都过不了）",
+       bool(_box2) and abs(_box2[1] - 692) <= 3 and _box2[3] >= 800, "box=%s" % (_box2,))
+    ck("B26g 反向锚：消息区那团深色气泡**没有**被并进输入框（框顶不许跑到它里面）",
+       bool(_box2) and _box2[1] >= 690, "box=%s" % (_box2,))
+    ck("B26g 分母守卫：那张合成帧里**确实**存在 <241 的像素（否则上一条测的是空的）",
+       any(min(_img2.getpixel((_x, 780))[:3]) < 241 for _x in range(262, 380, 3)))
 except Exception as _e:
     ck("B26e/f 行为级检查跑不起来", False, str(_e)[:120])
 
