@@ -7435,9 +7435,24 @@ class WeChatAdapter:
         返回值统一为收藏夹内文件路径，供 send_emoji/list_emojis 使用。
         """
         try:
-            row = self._db.get_message_row(chat_id, int(local_id))
+            # ⛔ **会话键形态**：`get_message_row` 只认**裸 id**（`5847…@chatroom`），而调用方常传
+            #   `group:<wxid>` ⇒ 直接查**永远查不到**、0 秒返回 None。
+            #   真机实测（同一条 `local_id=55`）：带前缀 ⇒ None；裸 id ⇒ `local_type=47`（动画表情）。
+            #   `_db_messages` 内部本来就是两种形态都试 —— 这里跟同一口径，且后续几步也用归一后的形态。
+            _dck = str(chat_id or "")
+            if ":" in _dck:
+                _dck = _dck.split(":", 1)[1]
+            row = None
+            for _ck_try in (_dck, chat_id):
+                try:
+                    row = self._db.get_message_row(_ck_try, int(local_id))
+                except Exception:
+                    row = None
+                if row:
+                    break
             if not row:
                 return None
+            chat_id = _dck # ⚠️ 后面几步（离线解密 / 下载原图 / 截图）都要用**能查到的那一形态**
             lt = (row.get("local_type") or 0) & 0xFF
             os.makedirs(self.EMOJI_DIR, exist_ok=True)
             # ⭐ 动画表情**优先离线解出原图**（`agent/emoticon.py`，AES-128-CBC 解本机
