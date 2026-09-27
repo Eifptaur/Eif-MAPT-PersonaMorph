@@ -1,13 +1,13 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.22.5",
-    "sha256": "563f5ef6f6885fd840e2e6e376234811c7f4865381bb4f97e9e9a7a7d4e2e8c1",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.63/persona-morph-v2.1.63.zip",
-    "build": "b1542db8877c",
-    "size": 12108183,
-    "files": 338,
-    "expires": "2026-10-22T12:10:52Z"
+    "version": "2026.9.27.1",
+    "sha256": "4835c1f27fddfcd089697e57302e33db69490802124e65720a93491405a3c773",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.64/persona-morph-v2.1.64.zip",
+    "build": "c4d937cc1d41",
+    "size": 68544395,
+    "files": 389,
+    "expires": "2026-10-27T13:57:14Z"
   },
   "dlc": [
     {
@@ -36,13 +36,16 @@
     }
   ],
   "announce": {
-    "version": "2026.9.22.5",
+    "version": "2026.9.27.1",
     "notes": [
-      "新增「预设信息」：按会话设定背景信息，可设截止日期、到期自动舍弃、只在该会话相关时注入"
+      "新增原生桌面控制台：27 个面板全部内置且按钮逐个接通，原网页版仍可手动打开",
+      "新增右下角小鲸鱼挂件；动图表情发出去不再是静止图",
+      "新增「含依赖」快速包：首次启动零下载（依赖步 8 分 28 秒 → 41.7 秒）",
+      "修复重复回复、认不对群名、窗口尺寸被改、挂件点不动、切会话走不到目标格等 15 项"
     ],
     "forceBase": false,
-    "minBase": "2026.9.22.5"
+    "minBase": "2026.9.27.1"
   },
-  "builtAt": "2026-09-22T12:10:52Z",
-  "updatedAt": 1790079052224
+  "builtAt": "2026-09-27T13:57:14Z",
+  "updatedAt": 1790517434899
 }
