@@ -130,6 +130,11 @@ class WhaleWidget(QWidget):
         # 页面是否回报「鲸鱼本体渲染出来了」—— 与 _load_failed 互斥推进：
         # boot ok=True 会浇灭 watchdog，False 则直接转降级。
         self._boot_ok = False
+        # 页面**回过话没有**（回 ok=True 或 ok=False 都算）。与 `_boot_ok` 必须分开：
+        # 看门狗超时要能分清「页面根本一次话都没回」（多半是页内脚本没跑起来）与
+        # 「页面回话说鲸鱼没画出来」（页面活着、本体没渲染）——两种病的排查方向不同，
+        # 不能说成同一句。
+        self._boot_seen = False
         # 可命中区（页面报告的矩形，CSS 像素 = Qt 逻辑像素）。空 = 页面还没报，
         # 由 `_veil_rects()` 退化成「本体所在的那块方形」。
         self._veil: list = []
@@ -671,9 +676,20 @@ class WhaleWidget(QWidget):
         并继续后台轮询——鲸鱼本体一旦渲染出来（慢启动可能远超 6 秒），
         页面会再发 boot(True)，卡片自动切回鲸鱼。藏掉宿主页 = 把"迟到的
         鲸鱼"也一起藏掉（实测慢启动超 6 秒会被永久藏掉）。
+
+        ⛔ boot=True 必须**连失败态一起清**：`paintEvent` 的放行条件是
+        `not _load_failed and _boot_ok`，而 `_load_failed` 还有别的置位方
+        （看门狗超时、`navigate_to_string` 返回失败——注解里写明后者并不代表
+        页面真没加载成）。只置 `_boot_ok` 的话，迟到的鲸鱼照样被挡在降级卡
+        后面，用户看到的是"暂不可用、请重启控制台"——而它其实已经好了。
+        页面亲自确认"本体渲染出来了"就是"现在真的能用"的最高证据，
+        失败态到此为止。
         """
+        self._boot_seen = True
         if ok:
             self._boot_ok = True
+            self._load_failed = False
+            self._err = ""
         else:
             self._boot_ok = False
         _diag("页面启动结论：ok=%s" % ok)
@@ -685,16 +701,26 @@ class WhaleWidget(QWidget):
         注入脚本本身可能没跑起来（极端情况）⇒ 永远等不到 boot 消息。8 秒后
         仍无结论且无其他失败标记 ⇒ 按启动失败降级。宁可达观检查三遍再动手，
         也不能让用户守着一只看不见的空窗。
+
+        ⛔ 两种病两句文案：页面**回过话**（说鲸鱼没画出来）与页面**一次都没回话**
+        的成因完全不同（前者是本体渲染不出来，后者多半是页内脚本没跑起来），
+        都报"未收到启动回报"会把排查方向带偏 —— 这正是「挂件看不到」被反复
+        误判的一个来源。诊断日志同样分两路记。
         """
         try:
             if self._boot_ok or self._load_failed:
                 return
             if self._host is None or not self._host.ok:
                 return
-            self._err = "挂件页面无响应（未收到启动回报，请重启控制台重试）"
+            if self._boot_seen:
+                self._err = "挂件页面已加载，但鲸鱼没有画出来（请重启控制台重试）"
+                _why = "页面回过话、结论是「本体没出现」"
+            else:
+                self._err = "挂件页面无响应（未收到启动回报，请重启控制台重试）"
+                _why = "页面 70 秒内一次话都没回（页内脚本可能没跑起来）"
             self._load_failed = True
-            _diag("看门狗超时：70 秒未收到页面启动回报（窗口几何=(%d,%d)%dx%d）"
-                  % (self.x(), self.y(), self.width(), self.height()))
+            _diag("看门狗超时：%s（窗口几何=(%d,%d)%dx%d）"
+                  % (_why, self.x(), self.y(), self.width(), self.height()))
             self._keep_draggable()
             self.update()
         except RuntimeError:

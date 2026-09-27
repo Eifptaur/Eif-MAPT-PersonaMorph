@@ -8153,9 +8153,10 @@ def t_color_token_guard() -> None:
        and '"boot"' in _inspect.getsource(WhaleHostWebView._on_web_message), "")
 
     _om = _inspect.getsource(WhaleWidget._on_pageboot)
-    ck("boot=false ⇒ 不藏宿主页（页内提示卡 + 后台续等，迟到的鲸鱼能切回）",
-       "_load_failed" not in _om and "_keep_draggable" not in _om
-       and "_boot_ok = False" in _om, "")
+    ck("boot=false ⇒ 不藏宿主页（页内提示卡 + 后台续等，不碰 _keep_draggable）",
+       "_keep_draggable" not in _om and "_boot_ok = False" in _om, "")
+    ck("boot=true ⇒ 连失败态一起清（只置 _boot_ok 会让迟到的鲸鱼被降级卡永久挡住）",
+       "_boot_ok = True" in _om and "_load_failed = False" in _om, "")
 
     _wd = _inspect.getsource(WhaleWidget._boot_watchdog)
     ck("watchdog 是单次兜底（boot 已成功或已失败则直接退出，不重复降级）",
@@ -8191,6 +8192,124 @@ def t_color_token_guard() -> None:
        _init.split("WhaleWidget(self.t)")[1][:20], "")
 
     host.close()
+
+
+def t_g25_whale_boot() -> None:
+    """挂件启动回报：三态文案 + 「迟到的鲸鱼能切回」（真跑状态机，不看源码形状）。
+
+    现场症状就是那句话本身：「挂件页面无响应（未收到启动回报，请重启控制台重试）」，
+    它由 70 秒看门狗写下，而当时可能发生两种完全不同的事：
+      · 页面**回过话**、结论是「本体没画出来」（页面活着、鲸鱼没渲染）—— 却被说成
+        "没收到回报"，排查方向直接被带偏；
+      · 页面**一次话都没回**（页内脚本没跑起来）。
+    另外失败态一旦置位就再也解不开：`paintEvent` 的放行条件是
+    `not _load_failed and _boot_ok`，而 `_on_pageboot(True)` 原来只置 `_boot_ok`
+    ⇒ 页面事后确认渲染出来了，界面仍停在降级卡上，用户只能重启控制台。
+
+    这里驱动 `_on_pageboot` / `_boot_watchdog`，并**数渲染像素**判断卡还在不在。
+    """
+    import os as _os # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
+    from PySide6.QtCore import QPoint # noqa: PLC0415
+    from PySide6.QtGui import QImage # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication # noqa: PLC0415
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    import whale_widget as _ww # noqa: PLC0415
+
+    app = QApplication.instance() or QApplication([])
+    t = THEMES["whale"]
+
+    class _FakeHost:
+        """替身宿主：本判据只验状态机与画面，宿主调用一律收下不作声。"""
+
+        ok = True
+        error = ""
+
+        def close(self): # noqa: ANN201
+            pass
+
+        def hide(self): # noqa: ANN201
+            pass
+
+        def resize(self, *a, **k): # noqa: ANN002, ANN003, ANN201
+            pass
+
+        def notify_moved(self): # noqa: ANN201
+            pass
+
+        def execute_script(self, *a, **k): # noqa: ANN002, ANN003, ANN201
+            return True
+
+        def send_mouse(self, *a, **k): # noqa: ANN002, ANN003, ANN201
+            pass
+
+    def _ink(w): # noqa: ANN001, ANN202
+        """这张卡上"看得见的像素"数量（0 = 完全透明 ⇒ 交给页面画）。"""
+        im = QImage(w.width(), w.height(), QImage.Format.Format_ARGB32)
+        im.fill(0)
+        w.render(im, QPoint(0, 0))
+        n = 0
+        for y in range(0, im.height(), 3):
+            for x in range(0, im.width(), 3):
+                if ((im.pixel(x, y) >> 24) & 0xFF) > 8:
+                    n += 1
+        return n
+
+    def _new(): # noqa: ANN202
+        w = _ww.WhaleWidget(t)
+        w._boot_webview = lambda *a, **k: None # 不上屏 ⇒ 不建 WebView2
+        w._host = _FakeHost()
+        return w
+
+    keep: list = []
+    try:
+        w1 = _new()
+        keep.append(w1)
+        ck("① 初始三态：没回话、没确认、没失败；界面上画的是兜底卡（不是全透明）",
+           w1._boot_seen is False and w1._boot_ok is False and w1._load_failed is False
+           and _ink(w1) > 50, "墨迹像素=%d" % _ink(w1))
+
+        w1._on_pageboot(False)
+        ck("② 页面回话「本体还没出现」⇒ 不置失败态、卡照旧显示（页内提示卡 + 后台续等）",
+           w1._boot_seen is True and w1._boot_ok is False and w1._load_failed is False
+           and _ink(w1) > 50, "")
+
+        w1._boot_watchdog() # 页面回过话、鲸鱼始终没画出来
+        ck("③ 看门狗在「回过话但没画出来」时说的是这件事，而不是「没收到回报」",
+           w1._load_failed is True and "没有画出来" in w1._err
+           and "未收到启动回报" not in w1._err, w1._err)
+
+        w1._on_pageboot(True) # 迟到的鲸鱼
+        ck("④ 迟到的鲸鱼真能切回：失败态与错误文案一起清掉、放行给页面（墨迹归零）",
+           w1._boot_ok is True and w1._load_failed is False and w1._err == ""
+           and _ink(w1) == 0, "err=%r 墨迹像素=%d" % (w1._err, _ink(w1)))
+
+        w2 = _new()
+        keep.append(w2)
+        w2._boot_watchdog() # 页面一次话都没回
+        ck("⑤ 「一次话都没回」是另一句文案（两种病分得开，不混成一句）",
+           w2._load_failed is True and "未收到启动回报" in w2._err
+           and w2._err != w1._err, w2._err)
+
+        w3 = _new()
+        keep.append(w3)
+        w3._on_pageboot(True)
+        w3._boot_watchdog()
+        ck("⑥ 页面已确认渲染出来之后，看门狗不再动手（不重复降级、不覆盖状态）",
+           w3._boot_ok is True and w3._load_failed is False and w3._err == "", w3._err)
+    finally:
+        for _w in keep:
+            try:
+                _w.close()
+                _w.deleteLater()
+            except Exception: # noqa: BLE001
+                pass
+        app.processEvents()
 
 
 def _host_of(page):  # noqa: ANN001
@@ -10281,7 +10400,7 @@ def main() -> int:
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_g23_fbnotice,
-                   t_g24_fbnotice_dismiss, t_ocr_fuzzy,
+                   t_g24_fbnotice_dismiss, t_g25_whale_boot, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
