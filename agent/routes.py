@@ -127,6 +127,7 @@ ROUTES = {
     "/api/voice/test": ("GET",),
     "/api/voice/vc-probe": ("GET",),
     "/api/voice/preview": ("GET",),
+    "/api/voice/vc-models": ("GET",),
     "/api/watermark/reset": ("POST",),
     "/api/wechat-groups": ("GET", "POST"),
     "/api/wechat/dir": ("GET", "POST"),
@@ -469,6 +470,9 @@ HANDLERS = {
     },
     "/api/voice/test": {
         "GET": "_rapi_voice_test",
+    },
+    "/api/voice/vc-models": {
+        "GET": "_rapi_voice_vc_models",
     },
     "/api/voice/preview": {
         "GET": "_rapi_voice_preview",

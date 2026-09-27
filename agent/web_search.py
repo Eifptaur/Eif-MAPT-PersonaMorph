@@ -69,6 +69,9 @@ def _decode_html(s: str) -> str:
 
 
 def bing_search(query: str, search_url: str | None = None) -> dict:
+    _ok_net, _why_net = _net_allowed()
+    if not _ok_net:
+        return None, _why_net
     cfg = get_config().get("web_search", {})
     url = search_url or cfg.get("search_url") or "https://cn.bing.com/search"
     max_results = max(1, min(10, int(cfg.get("max_results") or 6)))
@@ -357,3 +360,19 @@ def _custom_search(query: str, provider_id: str) -> dict:
     if not results:
         raise RuntimeError("自定义搜索没有返回可识别的结果")
     return {"query": query, "results": results}
+
+def _net_allowed() -> tuple:
+    """出网闸（与在线生图/生视频**同一套口径** `online_allowed`，放在各自的配置段里）。
+
+    原来搜索这条**完全没有闸**（一开就出网）⇒ 与"允许出网"只有一处可控的口径不一致。
+    这里默认 True ＝不改变现有行为；关掉 `web_search.online_allowed` 就真的不联网。
+    返回 (是否允许, 说明)；开关读不出来时**放行**（不因为读配置失败把搜索打死）。
+    """
+    try:
+        from .config import get_config
+        _c = get_config().get("web_search") or {}
+        if _c.get("online_allowed", True) is False:
+            return False, "联网搜索被「允许出网」开关关掉了（web_search.online_allowed = false）"
+    except Exception:
+        pass
+    return True, ""

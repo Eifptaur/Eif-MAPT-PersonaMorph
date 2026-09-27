@@ -137,6 +137,8 @@ DEFAULT_CONFIG = {
     },
     # ── 联网搜索（保留 qq-agent 的完整实现）────────────────────────────
     "web_search": {
+        "online_allowed": True, # 出网总闸（与生图/生视频同一套口径）：关掉就**不联网**
+                                  # ⚠️ 默认 True ＝保持搜索现有行为；想统一收紧就在这里关
         "enabled": True,
         "provider": "bing", # 默认 DeepSeek 优先；显式选第三方才用该引擎（zhipu/bocha/baidu/metaso/custom）
         "google_first": True, # DeepSeek 不可用时，免费搜索 Google 优先（再回退 Bing）

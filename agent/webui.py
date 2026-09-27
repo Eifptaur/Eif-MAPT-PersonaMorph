@@ -1422,6 +1422,19 @@ def _make_handler(parent):
             except Exception as _e2:
                 self._json({"ok": False, "error": str(_e2)}, 500)
 
+        def _rapi_voice_vc_models(self, path, data, parsed, method):
+            """尽力列出**变声端点上的模型/索引**（RVC 系）：拿到就列出来，拿不到就如实说"手填"。
+
+            为什么要它：RVC 必须指定 .pth 模型 + .index 索引，而用户很难知道那台机器上有哪些文件；
+            这里能读到就省掉手抄。不同部署的入口不一样 ⇒ 由 `list_vc_models` 逐个试。
+            """
+            try:
+                from . import voice_models as _vm
+                _q = parse_qs(parsed.query)
+                self._json(dict({"ok": True}, **_vm.list_vc_models((_q.get("url") or [""])[0])))
+            except Exception as _e:
+                self._json({"ok": False, "error": str(_e)}, 500)
+
         def _rapi_voice_preview(self, path, data, parsed, method):
             """**试听**：合成一小段直接回给前端播放（不落盘、不发微信）⇒ 用户当场听到当前音色。
 

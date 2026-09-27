@@ -692,3 +692,48 @@ def _make_raw(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT
     except Exception as e:
         return None, "写文件失败：%s" % str(e)[:60], {}
     return out, "", {"voice": "custom-http", "fmt": ext, "bytes": len(audio), "note": CAPABILITY_NOTE}
+
+def list_vc_models(url: str = "", timeout: int = 6, cfg: dict | None = None) -> dict:
+    """尽力**列出变声端点上的模型/索引**（RVC 系）：`{"ok":…, "models":[…], "indexes":[…], "why":…}`。
+
+    ⚠️ RVC 的部署形态至少三种（Gradio 内置 /run/…、社区扩展 /api/v1/models、以及只暴露 /infer 的），
+    所以这里**逐个试常见入口**，拿到什么算什么；都不支持就如实说「该端点不支持列模型，请在变声参数里手填」，
+    绝不假装列出。**只读、不建连接池**，失败一律不抛。
+    """
+    c = dict(cfg or _cfg())
+    base = (url or vc_url(c)).strip().rstrip("/")
+    out = {"ok": False, "models": [], "indexes": [], "why": "", "tried": []}
+    if not base:
+        out["why"] = "没填变声服务地址"
+        return out
+    try:
+        _harden_redirects()
+        import urllib.request as _u
+        for path in ("/api/v1/models", "/models", "/api/models", "/list_models"):
+            u = base + path
+            out["tried"].append(path)
+            try:
+                with _u.urlopen(_u.Request(u, headers={"Accept": "application/json"}), timeout=timeout) as r:
+                    raw = _read_capped(r, "模型列表")
+                obj = json.loads(raw.decode("utf-8", "ignore"))
+                names = []
+                for k in ("models", "data", "items", "files"):
+                    val = obj.get(k) if isinstance(obj, dict) else None
+                    if isinstance(val, list):
+                        for it in val:
+                            nm = it if isinstance(it, str) else str((it or {}).get("name") or (it or {}).get("path") or "")
+                            if nm:
+                                names.append(nm)
+                if names:
+                    out["ok"] = True
+                    out["models"] = sorted({n for n in names if n.lower().endswith(".pth")} or set(names))
+                    out["indexes"] = sorted({n for n in names if n.lower().endswith(".index")})
+                    out["why"] = "来自 %s" % path
+                    return out
+            except Exception as _e:
+                continue
+        out["why"] = ("这个端点不支持列模型（试过 %s）⇒ 请在「变声参数」里手填 model_name / index_path"
+                      % "、".join(out["tried"]))
+    except Exception as e:
+        out["why"] = "探测失败：%s" % str(e)[:80]
+    return out

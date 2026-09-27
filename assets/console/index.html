@@ -728,7 +728,7 @@ th{color:var(--tx2);font-weight:500}
 </div>
 <style>
 .updbar{display:flex;align-items:center;gap:10px;margin:0 18px 10px;padding:9px 14px;border-radius:10px;
-  background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px}
+  background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px;clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px);-webkit-clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px)}
 .updbar.warn{border-color:#8a7a3a}
 .updbar .sp{flex:1}
 /* 消息要点一长，按钮会被压到"一个字一行"（直播实拍过的丑样子）。
@@ -1806,6 +1806,24 @@ th{color:var(--tx2);font-weight:500}
           }).catch(function(e){ out.textContent = '试听失败：' + e; });
         };
       })();
+      </script>
+      <script>
+      (function(){
+        var b = document.getElementById('vcModels');
+        if (!b) return;
+        b.onclick = function(){
+          var u = (document.querySelector('input[data-cfg="voice_reply.vc_url"]') || {}).value || '';
+          var out = document.getElementById('vcProbeOut');
+          if (out) out.textContent = '正在列模型…';
+          fetch('/api/voice/vc-models?url=' + encodeURIComponent(u)).then(function(r){ return r.json(); }).then(function(j){
+            if (!j || !j.ok) { if (out) out.textContent = '列不出来：' + ((j && (j.why || j.error)) || '未知'); return; }
+            var t = '模型 ' + (j.models || []).length + ' 个、索引 ' + (j.indexes || []).length + ' 个';
+            if ((j.models || []).length) t += '：' + j.models.slice(0, 6).join('、');
+            t += (j.why ? '（' + j.why + '）' : '');
+            if (out) out.textContent = t;
+          }).catch(function(e){ if (out) out.textContent = '列不出来：' + e; });
+        };
+      })();
       </script></div>
       <div class="row"><label>本地服务地址</label><div class="grow"><input type="text" data-cfg="voice_reply.http_url" placeholder="如 http://127.0.0.1:9880/tts">
         <div class="btns" style="margin-top:6px"><button id="ttsProbe" class="ghost" type="button">连通测试</button><span class="hint" id="ttsProbeOut"></span></div>
@@ -1836,7 +1854,7 @@ th{color:var(--tx2);font-weight:500}
       })();
       </script>
       <div class="row"><label>变声服务</label><div class="grow"><input type="text" data-cfg="voice_reply.vc_url" placeholder="如 http://127.0.0.1:7897/infer（留空＝不变声）">
-        <div class="btns" style="margin-top:6px"><button id="vcProbe" class="ghost" type="button">变声连通测试</button><span class="hint" id="vcProbeOut"></span></div>
+        <div class="btns" style="margin-top:6px"><button id="vcProbe" class="ghost" type="button">变声连通测试</button><button id="vcModels" class="ghost" type="button" style="margin-left:6px">列出模型</button><span class="hint" id="vcProbeOut"></span></div>
         <span class="hint">这也是**你自己电脑上跑的服务**（RVC 自带的 <code>api.py</code>，默认 <code>http://127.0.0.1:7897/infer</code>），不是网页版。这是**第二段**：先合成出人声，再送去<b>变声</b>成你要的音色。<b>RVC 是「音频→音频」</b>——必须指定 <b>.pth 音色模型</b> 和 <b>.index 检索索引</b>（还要 pitch / index_rate / f0_method 这些参数），所以这里除了地址，还要在下面的「变声参数」里把模型与参数写全；不同的 RVC 部署暴露的入口不一样（Gradio 的 <code>/run/convert_audio</code>、社区扩展的 <code>/api/v1/convert</code>），字段名要照对方来。<br><b>GPT-SoVITS 不是「填个地址就够」</b>：它是「文字 + <b>参考音频</b> → 音频」，它的 <code>/tts</code> 必须带 <code>ref_audio_path</code>（参考音频，而且是<b>服务器本地路径</b>）、<code>prompt_text</code>（参考音频对应的文字）、<code>prompt_lang</code>。本产品目前没有这几个字段 ⇒ 它要接在<b>上面那个「本地服务地址」（合成段）</b>，并且需要新增「参考音频路径 / 参考文本 / 语言」三项配置才能真的用起来。</span></div></div>
       <div class="row"><label>变声方式</label><div class="grow"><select data-cfg="voice_reply.vc_mode">
         <option value="multipart">表单上传音频文件（RVC 系常见）</option>
