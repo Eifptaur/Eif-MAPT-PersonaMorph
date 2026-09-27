@@ -4449,11 +4449,26 @@ class WeChatAdapter:
     _KEYS_WALK_BUDGET = 12
 
     def _header_now(self, gui) -> str:
-        """当前会话头文本（**自己抓帧 + 自己 OCR**）。
+        """当前会话名（**优先走「会话列表的绿底高亮行」**，它读得出）。
 
-        ⛔ 不借 `chat_is_open` 的说明文本：它只在**命中**时才把 OCR 结果写进 why，失败时写的是空串
-        。
+        ⛔ 原来这里只裁**聊天区标题栏**做 OCR —— 真机实测那一条基本读不出
+        （同一帧里：会话列表那一行读得出 `aaa偷啃使，，`、`HistoryandDeve`，标题栏只读出 `'E'`）
+        ⇒ `_header_now` 恒返回空 ⇒ **按键走格一枪不按**、切会话三条路全失败
+        ⇒ 表现就是用户说的"窗口疯狂闪、但发不出信息"。
+        ⇒ 现在先走 `chat_ocr.current_chat_name` 的**绿底高亮行**口径（它实读稳定，三次连测一致），
+          标题栏那条留作兜底。
         """
+        try:
+            from . import chat_ocr as _co
+            _cur = ""
+            try:
+                _cur, _why = _co.current_chat_name(gui=gui)
+            except Exception:
+                _cur = ""
+            if _cur:
+                return _cur
+        except Exception:
+            pass
         try:
             from . import chat_header as _ch
             from . import chat_ocr as _co
