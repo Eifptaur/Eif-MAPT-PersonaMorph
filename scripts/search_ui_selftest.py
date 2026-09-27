@@ -185,7 +185,12 @@ ok("退回抓屏只作最后手段（PrintWindow 优先）",
 w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("open_chat_by_search 用 find_search_entry（两套 UI 都走这条路）", "find_search_entry" in w_src)
 ok("图标形态下先确认搜索框展开再打字", "不往下打字" in w_src)
-ok("打字投主窗（键盘），点图标投渲染子窗（鼠标）", _sm.has(w_src, "backend.send_text(main, name)"))
+# ⛔ 这条原来是「打字投**主窗**」——那正是缺陷：主窗里是**聊天输入框**，搜索词打进去按回车就发错群
+#    （实测现场：群名「aaa偷啃使用者」躺在聊天输入框里）。契约改成"打字一律投**搜索浮层**"。
+_w_code = "\n".join(l for l in w_src.split("\n") if not l.strip().startswith("#"))
+ok("打字投**搜索浮层**（键盘）、点图标投渲染子窗（鼠标）；**绝不许投主窗**（那里是聊天输入框）",
+   _sm.has(w_src, "backend.send_text(int(_pop0[0]), name)")
+   and not _sm.has(_w_code, "backend.send_text(main, name)"))
 
 print("⑦ 图标候选块里挑搜索入口：**形状判据**")
 # 既有故障现场（原样搬来当回归）：
@@ -370,7 +375,8 @@ print("⑬ 「搜了两遍」的根因不许回归（2026-09-18 现场：第一�
 #   ⇒ 根因＝**只认内容级复核**（浮层还盖着聊天区，读不到内容），强档证据（会话头）就在旁边却没用。
 _w13 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 _icon_seg = _w13[_w13.index('if variant == "icon":'):]
-_icon_seg = _icon_seg[:_icon_seg.index("# —— box 形态")]
+# ⛔ 右边界用**代码**，别用注释（原来锚在一句 `# —— box 形态` 上 ⇒ 注释一改就假红）。
+_icon_seg = _icon_seg[:_icon_seg.index("self._clear_search_input(backend, int(_pop0[0]))")]
 ok("图标路线：**先看强档证据**（chat_is_open），再谈内容级复核",
    "chat_is_open(chat_id, gui=gui, name=name)" in _icon_seg
    and _icon_seg.index("chat_is_open(chat_id, gui=gui, name=name)") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
@@ -417,6 +423,23 @@ ok("③ 落点自检：算出来的点必须不是背景色", "与背景同色" 
 ok("④ 失败时如实说「没点右键」，不许假装点过", "没点右键，绝不乱点" in _w14)
 _t15 = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 ok("工具侧把 local_id 传下去（媒体消息必须给）", 'local_id=media[0]["local_id"]' in _t15)
+
+print("\n── ⛔ 切会话：搜索词**绝不许打进主窗**（主窗里是聊天输入框）──")
+# 实测现场：搜索框没弹出来时，老写法 `send_text(main, name)` 把**群名**打进了聊天输入框，
+# 用户按一下回车就把群名发进当前那个群（用户手动删掉才没发出去）。这是"宁可漏发，绝不发错"那条底线。
+_seg_s = _srcslice.func_src(
+    open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read(), "open_chat_by_search")
+# ⛔ **先剥注释再找调用**：本函数里就有一句注释引用了旧写法 `send_text(main, name)`（讲为什么要删它）
+#    ⇒ 不剥注释会把"讲这条规矩的地方"判成违规（本项目的老坑，见 `judge_hygiene` 那条纪律）。
+_seg_s_code = "\n".join(l for l in _seg_s.split("\n") if not l.strip().startswith("#"))
+ok("① 搜索词不许往**主窗**打字（`send_text(main, name)` 已删，只看代码不看注释）",
+   "send_text(main, name)" not in _seg_s_code and "send_text(int(main), name)" not in _seg_s_code)
+ok("② 没找到搜索浮层时**fail-closed**：如实说明并拒切会话（不盲打字）",
+   "没找到搜索浮层" in _seg_s and "不往主窗打字" in _seg_s)
+ok("③ 往浮层打字前**必须确定性清空搜索框**（否则查询词会累积）",
+   "_clear_search_input(backend, int(_pop0[0]))" in _seg_s)
+ok("④ 给用户的下一步动作写清楚（点开目标会话 / 打开扫列表回退）",
+   "先把目标会话在微信里点开" in _seg_s and "扫会话列表" in _seg_s)
 
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

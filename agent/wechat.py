@@ -5172,16 +5172,25 @@ class WeChatAdapter:
                                % (name, row.get("why"), (row["x"], row["y"]), idn_why,
                                   ("｜现场已存 %s" % _d) if _d else "") +
                                ("｜浮层已关掉" if _closed else "｜浮层**没关掉**"))
-            # —— box 形态（另一台机 / 老 UI：搜索框直接摆着）：点它 → 主窗打字 → 结果行在主窗里找
+            # —— 点开搜索入口，再**只许往"搜索浮层"打字，绝不往主窗打字** ⛔
             self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
                                  "搜索入口", allow_new=True)[0]
-            time.sleep(0.25) # 0.45 → 0.25
-            # ⛔ 这条路线以前**完全不清空**搜索框 —— 上一次留下的字会跟这次拼在一起
-            #   （网友现场「KCKCKC」「测试测试测试」就是这么来的）。打字前一律先确定性清空。
-            self._clear_search_input(backend, int(main))
-            ok_t, why_t = backend.send_text(main, name)
+            time.sleep(0.25)
+            #   为什么删掉原来那条"主窗打字 → 结果行在主窗里找"：
+            #   **主窗里有聊天输入框** —— 搜索框没弹出来（或没聚焦）时 `send_text(main, name)`
+            #   会把**搜索词（群名）打进聊天输入框**，用户按一下回车就把群名**发进当前那个群**
+            #   （实测现场：群名「aaa偷啃使用者」躺在聊天输入框里，用户手动删掉才没发出去）。
+            #   这是"宁可漏发，绝不发错"这条底线上的事 ⇒ **没找到搜索浮层就不打字**（fail-closed）。
+            _pop0 = self._find_search_popover(main)
+            if not _pop0:
+                return False, ("点了搜索入口，但**没找到搜索浮层/搜索框** ⇒ 不往主窗打字"
+                               "（主窗里是聊天输入框，打进去按回车会发错群）。"
+                               "请先把目标会话在微信里点开，或在控制台「微信」面板打开"
+                               "「搜索失败时扫会话列表」。")
+            self._clear_search_input(backend, int(_pop0[0])) # 打字前确定性清空**搜索框**
+            ok_t, why_t = backend.send_text(int(_pop0[0]), name)
             if not ok_t:
-                return False, "搜索框打字失败：%s" % why_t
+                return False, "搜索浮层打字失败：%s" % why_t
             # ⚠️ 搜索框形态的**结果往往也是独立浮层**
             #    （对面实测：`_find_search_popover` 命中 hwnd 1836290 / rect (154,98,614,921) / 460×823、
             #    画面含「搜索网络结果」，`find_popover_row` 一次命中；而那台走"主窗里找结果行"**3 次全没认出**）。
