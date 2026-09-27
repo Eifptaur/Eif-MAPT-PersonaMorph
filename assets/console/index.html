@@ -1784,7 +1784,29 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">这 8 个都是中文的在线音色：晓晓、晓伊（女声），云希、云健、云扬、云夏（男声），小北（东北）、小妮（陕西）。挑一个顺耳的就行，换一个听感就换一个人。</span></div></div>
       <div class="row" id="sapiVoiceRow"><label>音色（系统）</label><div class="grow"><select data-cfg="voice_reply.voice" id="ttsVoice">
         <option value="">自动（优先中文声音）</option></select>
-        <span class="hint">选项来自本机**实测**可用的系统合成声音；只在「本机系统声音」这一档生效。</span></div></div>
+        <span class="hint">选项来自本机**实测**可用的系统合成声音；只在「本机系统声音」这一档生效。</span></div>
+      <div class="row"><label>试听</label><div class="grow">
+        <button id="voicePreview" class="ghost" type="button">试听当前音色</button>
+        <audio id="voicePreviewAudio" controls style="height:28px;vertical-align:middle;margin-left:8px;max-width:260px"></audio>
+        <span class="hint" id="voicePreviewOut">点一下就能听到"当前设置"合成出来的一段话（不发微信、不落盘）——改完音色/参考音频先在这里听，不用真发一条出去试。</span>
+      </div></div>
+      <script>
+      (function(){
+        var b = document.getElementById('voicePreview');
+        if (!b) return;
+        b.onclick = function(){
+          var out = document.getElementById('voicePreviewOut');
+          out.textContent = '正在合成…';
+          fetch('/api/voice/preview').then(function(r){ return r.json(); }).then(function(j){
+            if (!j || !j.ok) { out.textContent = '合成失败：' + ((j && (j.why || j.error)) || '未知'); return; }
+            var a = document.getElementById('voicePreviewAudio');
+            a.src = 'data:' + j.mime + ';base64,' + j.b64;
+            a.play();
+            out.textContent = '已合成 ' + (j.bytes || 0) + ' 字节' + (j.voice ? '（' + j.voice + '）' : '');
+          }).catch(function(e){ out.textContent = '试听失败：' + e; });
+        };
+      })();
+      </script></div>
       <div class="row"><label>本地服务地址</label><div class="grow"><input type="text" data-cfg="voice_reply.http_url" placeholder="如 http://127.0.0.1:9880/tts">
         <div class="btns" style="margin-top:6px"><button id="ttsProbe" class="ghost" type="button">连通测试</button><span class="hint" id="ttsProbeOut"></span></div>
         <span class="hint"><b>这是你自己电脑上跑起来的服务，不是网页、也不是我们帮你托管</b>：像 <b>GPT-SoVITS</b>（文字→音频，可克隆音色）这类本地模型，用它自带的 <code>api.py</code> 起一个本机服务（默认 <code>http://127.0.0.1:9880/tts</code>），模型文件放在它自己的目录里加载；这里填它的地址即可。<b>不填＝用上面「本机系统声音」那一档</b>（系统自带、零配置）。回音频字节（audio/wav）直接用；回配置格式就在下面填字段名。</span></div></div>

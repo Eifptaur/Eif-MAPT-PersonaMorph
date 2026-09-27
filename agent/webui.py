@@ -1422,6 +1422,31 @@ def _make_handler(parent):
             except Exception as _e2:
                 self._json({"ok": False, "error": str(_e2)}, 500)
 
+        def _rapi_voice_preview(self, path, data, parsed, method):
+            """**试听**：合成一小段直接回给前端播放（不落盘、不发微信）⇒ 用户当场听到当前音色。
+
+            为什么要它：音色 / 参考音频这些配置，原来只能靠"发一条出去再听"来验，太绕；
+            控制台里点一下就能听，才知道自己选的音色到底是什么样。合不出来就如实回错误。
+            """
+            try:
+                import base64 as _b64
+                from . import voice_models as _vm
+                _q = parse_qs(parsed.query)
+                _t = ((_q.get("text") or [""])[0] or "这是一条试听，用来确认当前音色。").strip()[:80]
+                _p, _why, _info = _vm.make(_t)
+                if not _p:
+                    self._json({"ok": False, "why": _why or "合成失败"}, 500)
+                    return
+                with open(_p, "rb") as _f:
+                    _raw = _f.read()
+                _mime = "audio/mpeg" if str(_p).lower().endswith(".mp3") else "audio/wav"
+                self._json({"ok": True, "mime": _mime,
+                            "b64": _b64.b64encode(_raw).decode("ascii"),
+                            "voice": str((_info or {}).get("voice") or ""),
+                            "bytes": len(_raw)})
+            except Exception as _e:
+                self._json({"ok": False, "error": str(_e)}, 500)
+
         def _rapi_voice_vc_probe(self, path, data, parsed, method):
             # 原 do_GET:961
             try:
