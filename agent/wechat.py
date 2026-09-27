@@ -3757,7 +3757,7 @@ class WeChatAdapter:
             return "文件传输助手"
         return self.group_name(chat_id)
 
-    def current_chat_name(self, gui=None):
+    def current_chat_name(self, gui=None, img=None):
         """只读：OCR 判"当前打开的会话是谁"，返回 (名字, 依据)。读不到就返回 ("", 原因)。
 
         判据＝会话列表的**绿底高亮行**（实测微信 4.1.15.8 色值 (81,167,116)）+ 该行名字的 OCR。
@@ -3766,7 +3766,8 @@ class WeChatAdapter:
         """
         try:
             from . import chat_ocr as _co
-            return _co.current_chat_name(gui=gui or self._get_gui())
+            # ⚡ `img`＝调用方**已经抓好的那一帧**（`chat_is_open` 一轮里各档共用，省掉重复抓帧）。
+            return _co.current_chat_name(img=img, gui=gui or self._get_gui())
         except Exception as e:
             return "", "OCR 判当前会话异常：%s" % e
 
