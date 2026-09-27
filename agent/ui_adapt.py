@@ -564,8 +564,15 @@ def _force_geometry(gui) -> None:
             _sh = int(_user32.GetSystemMetrics(1))
         except Exception:
             _sw, _sh = 1920, 1080
-        _w = min(int(1250 * _scale), int(_sw * 0.92))
-        _h = min(int(1100 * _scale), int(_sh * 0.92))
+        # ⛔ 读配置（`ui.lock_window_w/h`）。原来写死 1250×1100×DPI ⇒ 每次限位都把窗口摆成
+        #    "贼大、屏幕中间"（用户连报三次）。实测：只改 `wechat._limit_wechat_window` 没用，
+        #    因为**这一处才是真正在改窗口的那个**。
+        try:
+            _uic = (__import__("agent.config", fromlist=["get_config"]).get_config().get("ui") or {})
+            _w = min(int(_uic.get("lock_window_w") or 1113), int(_sw * 0.92))
+            _h = min(int(_uic.get("lock_window_h") or 909), int(_sh * 0.92))
+        except Exception:
+            _w, _h = min(1113, int(_sw * 0.92)), min(909, int(_sh * 0.92))
         _x = min(int(120 * _scale), max(10, _sw - _w - 40))
         _y = min(int(80 * _scale), max(10, _sh - _h - 60))
         # SWP_NOZORDER | SWP_NOACTIVATE：挪位置但**不打扰你（可能短暂置前约 1~3 秒后自动还回）、不改 Z 序**
@@ -771,7 +778,11 @@ def prepare_screen(gui) -> bool:
                     _user32.SetWindowPos(hwnd, 0, 90, 90, 0, 0, 0x0001 | 0x0020 | 0x0040)
                     time.sleep(0.6)
                     gui._update_render_rect()
-                elif (r.right - r.left) < 1500 or (r.bottom - r.top) < 1000:
+                # 已停用（原来在这里「恢复标准尺寸」）：阈值写死 1500x1000，而用户把窗口调成
+                # 977x976 时每次都命中它 => 被恢复成 1250x1100xDPI（实测 1875x1472）并摆到
+                # (90,90) —— 这就是「我调小它就变大、还跑到那个位置」的真凶。尺寸现在由限位
+                # （ui.lock_window_w/h）统一管，这里不再插手。
+                elif False and ((r.right - r.left) < 1500 or (r.bottom - r.top) < 1000):
                     # 窗口被缩得很小（物理像素判定，兼容高 DPI：1.8x 屏 1250 逻辑=2250 物理）
                     # → 按 DPI 恢复标准尺寸（逻辑 1250×1100 → 物理换算）
                     try:
