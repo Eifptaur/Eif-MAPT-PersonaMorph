@@ -734,8 +734,16 @@ def prepare_screen(gui) -> bool:
                         _sh = int(_user32.GetSystemMetrics(1))
                     except Exception:
                         _sw, _sh = 1920, 1080
-                    _tw = min(int(1250 * _scale), int(_sw * 0.92))
-                    _th = min(int(1100 * _scale), int(_sh * 0.92))
+                    # ⛔ 原来这里写死 1250×1100（再乘 DPI 缩放）⇒ 每次限位都把用户的窗口摆成
+                    #    "贼大、屏幕中间"（用户反馈的正是这个）；而且与 `wechat._limit_wechat_window`
+                    #    是**两套口径**。⇒ 统一读同一份配置 `ui.lock_window_w/h`。
+                    _ui_cfg = (cfg.get("ui") or {}) if isinstance(cfg, dict) else {}
+                    try:
+                        _tw, _th = int(_ui_cfg.get("lock_window_w") or 1113), int(_ui_cfg.get("lock_window_h") or 909)
+                    except Exception:
+                        _tw, _th = 1113, 909
+                    _tw = min(_tw, int(_sw * 0.92))
+                    _th = min(_th, int(_sh * 0.92))
                     _tx = min(int(120 * _scale), max(10, _sw - _tw - 40))
                     _ty = min(int(80 * _scale), max(10, _sh - _th - 60))
                     r = wintypes.RECT()
