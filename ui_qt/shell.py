@@ -63,7 +63,7 @@ from cursor_fx import WhaleCursor # noqa: E402
 from heal import Health, Probe, plan_for, probe_backend # noqa: E402
 from ocean import OceanWaves, paint_backdrop # noqa: E402
 from panels_qt import BATCH_SECS, build_panel # noqa: E402
-from stylekit_qt import THEMES, Tokens, apply_font_to_app, pill, qfont, resolve_family, rgba # noqa: E402
+from stylekit_qt import THEMES, Tokens, apply_font_to_app, pill, qfont, resolve_family, rgba, surface_bg # noqa: E402
 from widgets import ( # noqa: E402
     Badge,
     Btn,
@@ -759,7 +759,7 @@ class Shell(QWidget):
             # 全局 QSS 的 QWidget{background:transparent} 会把弹窗打成透明 —— 菜单自带上底
             t = self.t
             menu.setStyleSheet(
-                f"QMenu{{background:{t.card};color:{t.tx};border:1px solid {t.bd};border-radius:10px;}}"
+                f"QMenu{{background:{surface_bg(t)};color:{t.tx};border:1px solid {t.bd};border-radius:10px;}}"
                 f"QMenu::item{{padding:7px 22px;}}"
                 f"QMenu::item:selected{{background:{t.blue_soft};}}"
             )

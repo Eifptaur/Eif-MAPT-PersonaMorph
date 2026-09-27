@@ -57,7 +57,7 @@ from async_ui import (
     widget_alive as _qt_alive,
 )
 from confirm import ConfirmDialog
-from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors
+from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors, surface_bg
 from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2, row_label
 
 HERE = Path(__file__).resolve().parent
@@ -2742,7 +2742,7 @@ def persona_panel(t: Tokens) -> QWidget:
         outer.setContentsMargins(0, 0, 0, 0)
         shell = QFrame()
         shell.setObjectName("PAddCard")
-        shell.setStyleSheet(f"#PAddCard{{background:{t.card};border:1px solid {t.bd};"
+        shell.setStyleSheet(f"#PAddCard{{background:{surface_bg(t)};border:1px solid {t.bd};"
                             f"border-radius:{t.radius_card + 2}px;}}")
         outer.addWidget(shell)
         box = QVBoxLayout(shell)
@@ -5604,10 +5604,9 @@ def _card_dialog(t: Tokens, btn, title: str, width: int = 640):
     outer.setContentsMargins(0, 0, 0, 0)
     card = QFrame()
     card.setObjectName("C8CardDlg")
-    # ⛔ 玻璃主题下 t.card 是（近）全透明 —— 弹窗浮在正文上会和下面的字叠成一团
-    #   。弹窗必须有实色底：
-    #   玻璃主题给深海底实色 #0E2136（confirm.py 同款口径），普通主题照旧 t.card。
-    _card_bg = "#0E2136" if getattr(t, "glass", False) else t.card
+    # 玻璃主题下 `t.card` 是（近）全透明 ⇒ 弹窗浮在正文上会和下面的字叠成一团。
+    # 底色一律走 stylekit_qt.surface_bg（浮层实心这一口径的**唯一实现点**）。
+    _card_bg = surface_bg(t)
     card.setStyleSheet(
         f"#C8CardDlg{{background:{_card_bg};border:1px solid {t.bd};"
         f"border-radius:{t.radius_card + 2}px;}}")
@@ -6291,7 +6290,7 @@ def _show_text_window(t: Tokens, parent, title: str, text: str) -> None:
     shell = QFrame()
     shell.setObjectName("TextWindowShell")
     shell.setStyleSheet(
-        f"#TextWindowShell{{background:{t.card};border:1px solid {t.bd};"
+        f"#TextWindowShell{{background:{surface_bg(t)};border:1px solid {t.bd};"
         f"border-radius:{t.radius_card + 2}px;}}"
     )
     outer.addWidget(shell)

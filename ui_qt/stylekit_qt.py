@@ -554,6 +554,26 @@ def ensure_fonts() -> tuple[str, str, str]:
     return _DISPLAY_FAMILY, _BODY_FAMILY, _EMOJI_FAMILY
 
 
+#: 浮层（弹窗 / 菜单 / 盖在正文之上的卡片）的**实心底色**（玻璃主题用）。
+#:
+#: 为什么要有这个函数：玻璃主题（whale）下 `t.card` 是 `rgba(10,27,46,0.66)` —— **34% 透**。
+#: 页面内的卡片透出来是设计（底下是海面）；但**浮在正文之上的浮层**透出来，就是把下面的字
+#: 叠进弹窗里，观感就是「发虚、看不清」（用户实测截图：引导弹窗半透 + 字发虚）。
+#: ⇒ 浮层的底色必须**实心**：玻璃主题固定用海底实色 `#0E2136`，其余主题照旧 `t.card`。
+#: ⚠️ 这个口径**只此一处**：`confirm._apply_shell` 与 `panels_custom` 的一处各自手抄过同一句话，
+#:    结果 `onboarding` 那份漏抄了 —— 浮层就它一个还透着。所以收敛到这里，别再手抄。
+_SURFACE_SOLID_GLASS = "#0E2136"
+
+
+def surface_bg(t: Tokens) -> str:
+    """**浮层**底色：玻璃主题给实色（`#0E2136`），其余主题照旧 `t.card`。
+
+    判据是"这块底**盖在别的内容之上**吗"：盖着就要实心（弹窗、菜单、下拉列表、浮层卡片）；
+    页面里平铺的卡片不算，那些照旧用 `t.card`（玻璃是设计）。
+    """
+    return _SURFACE_SOLID_GLASS if getattr(t, "glass", False) else t.card
+
+
 def qfont(t: Tokens, size: float, weight: int = 400, extra_spacing: float | None = None,
           display: bool = False) -> QFont:
     """造一个字体。Qt 的 QFont 不认 10.5 这类半点字号（会取整），这里显式保留。
@@ -564,7 +584,9 @@ def qfont(t: Tokens, size: float, weight: int = 400, extra_spacing: float | None
     """
     if not _FONTS_READY:
         ensure_fonts() # 没注册过就试一次；app 未建时优雅返回空，走回退
-    primary = (_DISPLAY_FAMILY if display else _BODY_FAMILY) or t.font_family
+    # 标题字体**取不到时退到正文字体**（同为中文字形），而不是直接掉到主题的 generic
+    # family —— 少一个字体文件不该让标题换一副面孔。标题字体存在时行为与原来完全一致。
+    primary = ((_DISPLAY_FAMILY or _BODY_FAMILY) if display else _BODY_FAMILY) or t.font_family
     chain = [x for x in (primary, _EMOJI_FAMILY, t.font_family) if x]
     f = QFont()
     f.setFamilies(chain or [t.font_family])

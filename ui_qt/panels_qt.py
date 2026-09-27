@@ -38,7 +38,7 @@ import config_io
 import panels_custom
 import sec_meta
 from async_ui import run_async
-from stylekit_qt import Tokens, pill, qfont, rgba
+from stylekit_qt import Tokens, pill, qfont, rgba, surface_bg
 from widgets import Badge, Btn, Card, Field, Switch, desc, h2
 
 # 本批要建面板的 26 个 sec（27 减去机器人=主面板），顺序照 web 文档序
@@ -553,7 +553,7 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     card = QFrame()
     card.setObjectName("GpCard")
     card.setStyleSheet(
-        f"#GpCard{{background:{t.card};border:1px solid {t.bd};"
+        f"#GpCard{{background:{surface_bg(t)};border:1px solid {t.bd};"
         f"border-radius:{t.radius_card + 2}px;}}")
     outer.addWidget(card)
 

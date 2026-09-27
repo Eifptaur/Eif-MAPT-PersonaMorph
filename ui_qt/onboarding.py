@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 import config_io
-from stylekit_qt import Tokens, qfont, rgba
+from stylekit_qt import Tokens, qfont, rgba, surface_bg
 from widgets import Btn, DraggableDialog, desc, h2
 
 # 进程内只弹一次（web `_onboardOnce` 的 Qt 等价）
@@ -94,7 +94,7 @@ class _Wizard(DraggableDialog, QDialog):
         card = QWidget()
         card.setObjectName("C8OnboardCard")
         card.setStyleSheet(
-            f"#C8OnboardCard{{background:{t.card};border:1px solid {t.bd};"
+            f"#C8OnboardCard{{background:{surface_bg(t)};border:1px solid {t.bd};"
             f"border-radius:{t.radius_card + 2}px;}}")
         outer.addWidget(card)
         self.v = QVBoxLayout(card)

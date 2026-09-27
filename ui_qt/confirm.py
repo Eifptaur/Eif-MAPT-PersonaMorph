@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stylekit_qt import Tokens, qfont, rgba
+from stylekit_qt import Tokens, qfont, rgba, surface_bg
 from widgets import Btn, DraggableDialog
 
 
@@ -222,18 +222,14 @@ class ConfirmDialog(DraggableDialog, QDialog):
     # ------------------------------------------------------------ 外观
 
     def _apply_shell(self, f: QFrame) -> None:
+        # 底色统一走 stylekit_qt.surface_bg —— 浮层实心这一口径只留一个实现点，
+        # 别在这里再手抄一遍（此前手抄散了两份，`onboarding` 就漏了）。
         t = self.t
         f.setObjectName("Shell")
-        if t.glass:
-            f.setStyleSheet(
-                f"#Shell{{background:#0E2136;border:1px solid {t.bd};"
-                f"border-radius:{t.radius_card + 2}px;}}"
-            )
-        else:
-            f.setStyleSheet(
-                f"#Shell{{background:{t.card};border:1px solid {t.bd};"
-                f"border-radius:{t.radius_card + 2}px;}}"
-            )
+        f.setStyleSheet(
+            f"#Shell{{background:{surface_bg(t)};border:1px solid {t.bd};"
+            f"border-radius:{t.radius_card + 2}px;}}"
+        )
 
     def _center_on(self, parent: QWidget) -> None:
         self.adjustSize()

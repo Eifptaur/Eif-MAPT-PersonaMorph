@@ -1960,9 +1960,14 @@ def t_hotfix2() -> None:
         ck("群勾选弹窗主题化：每群一行自绘 Switch，且预开态匹配白名单词（子串宽容匹配）",
            len(sws) == 2 and on == [False, True], f"switches={len(sws)} on={on}")
         cards = [f for f in dlg.findChildren(QFrame) if f.objectName() == "GpCard"]
-        ck("群勾选弹窗主题化：卡片壳用主题 token（t.card/bd/radius，confirm.py 同款语言）",
-           bool(cards) and THEMES["whale"].card in cards[0].styleSheet(),
-           str(bool(cards)))
+        # ⚠️ 这条原来断言「styleSheet 里含 whale 主题的 `t.card`」—— 而 whale 的 card 是
+        #    `rgba(10,27,46,0.66)`（**34% 透**）⇒ 那条断言**把缺陷写成了期望**（弹窗透着、字发虚）。
+        #    现口径＝「浮层底色必须实心」：正向断 `surface_bg` 的实色值，反向锚住"那个半透值不许再出现"。
+        from stylekit_qt import THEMES as _TH, surface_bg as _sb # noqa: PLC0415
+        _gpss = cards[0].styleSheet() if cards else ""
+        ck("群勾选弹窗主题化：卡片壳走 surface_bg（浮层实色底，confirm.py 同款口径）",
+           bool(cards) and _sb(_TH["whale"]) in _gpss and _TH["whale"].card not in _gpss,
+           "卡片=%d 实色=%s 半透=%s" % (len(cards), _sb(_TH["whale"]), _TH["whale"].card))
 
 
 def t_catmgr() -> None:
@@ -9400,6 +9405,64 @@ DEV_DIR_KNOWERS = {
 }
 
 
+#: 浮层（**盖在别的内容之上**的面）的选择器 → 它在哪、为什么算浮层。
+#: 底色**必须**走 `stylekit_qt.surface_bg`（玻璃主题给实色 `#0E2136`，其余主题 `t.card`）。
+#: 为什么要有这条闸门：玻璃主题下 `t.card` 是 `rgba(10,27,46,0.66)`（**34% 透**），浮层直接拿它
+#: 当底，就会把下面的字叠进弹窗里 —— 观感就是「半透 + 字发虚」。此前 `confirm._apply_shell` 修过、
+#: `onboarding` 那份漏了（用户实测截的就是引导弹窗）。**手抄散了口径才会漏**，所以这里逐个点名。
+SURFACE_BG_SELECTORS = [
+    ("ui_qt/confirm.py", "#Shell", "confirm 系弹窗卡片（ConfirmDialog / InfoDialog / ChoiceDialog）"),
+    ("ui_qt/onboarding.py", "#C8OnboardCard", "五步引导向导卡片"),
+    ("ui_qt/panels_qt.py", "#GpCard", "群勾选弹窗卡片"),
+    ("ui_qt/panels_custom.py", "#PAddCard", "面板「加一条」弹窗卡片"),
+    ("ui_qt/panels_custom.py", "#C8CardDlg", "面板通用卡片弹窗"),
+    ("ui_qt/panels_custom.py", "#TextWindowShell", "长文本查看窗卡片"),
+    ("ui_qt/shell.py", "QMenu", "右键 / 下拉菜单（直接盖在正文上）"),
+]
+
+
+def t_surface_bg_guard() -> None:
+    """闸门：浮层底色走**唯一实现点** `surface_bg` —— 玻璃主题下浮层必须是实心。
+
+    判据两条：
+      ① 上面每个浮层选择器，它的 `background:` 取值**不许是裸 `t.card`**（必须是 `surface_bg(t)`
+         或由 `surface_bg(t)` 赋值的变量）；
+      ② 分母守卫：真的扫到了这些选择器（扫不到就成了空集假绿 —— 那正是这条闸门要防的形态）。
+    """
+    import os as _o # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    _found = 0
+    _bad = []
+    _cache = {}
+    for rel, sel, why in SURFACE_BG_SELECTORS:
+        p = _o.path.join(_root, rel.replace("/", _o.sep))
+        if p not in _cache:
+            try:
+                _cache[p] = open(p, encoding="utf-8").read()
+            except OSError:
+                _cache[p] = ""
+        src = _cache[p]
+        if not src:
+            _bad.append("%s 读不到" % rel)
+            continue
+        if "surface_bg" not in src:
+            _bad.append("%s 没引用 surface_bg" % rel)
+        # ⚠️ 用**纯字符串定位**而不是正则：选择器里全是花括号，正则要先转义再拼，
+        #    极易写成 `re.escape(sel) + "{..."` 这种双重转义（实测就栽在这上面）。
+        #    开窗写法固定是 `<选择器>{{background:{表达式};`，取到那一对花括号里的东西就行。
+        key = sel + "{{background:{"
+        idx = src.find(key)
+        if idx < 0:
+            continue # 该文件里这条选择器换了写法；下面第二条"分母守卫"会兜住"一条都没扫到"
+        _found += 1
+        expr = src[idx + len(key):].split("}", 1)[0].strip()
+        if expr in ("t.card", ""):
+            _bad.append("%s 的 %s 底色是裸 t.card（%s）" % (rel, sel, why))
+    ck("① 浮层底色都走 surface_bg（玻璃主题下实心）", not _bad, "；".join(_bad)[:180])
+    ck("② 分母守卫：真的扫到了这些浮层选择器", _found >= 6, "扫到 %d 条" % _found)
+
+
 def t_dev_dir_guard() -> None:
     """自检：**产品代码不许把本地草稿目录当路径用**（用户机器上不存在它）。
 
@@ -10556,6 +10619,7 @@ def main() -> int:
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
+                   t_surface_bg_guard,
                    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
                    t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
                    t_inject_surface_guard, t_foreground_borrow_guard,
