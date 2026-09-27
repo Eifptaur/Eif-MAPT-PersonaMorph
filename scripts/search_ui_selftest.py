@@ -433,13 +433,14 @@ _seg_s = _srcslice.func_src(
 #    ⇒ 不剥注释会把"讲这条规矩的地方"判成违规（本项目的老坑，见 `judge_hygiene` 那条纪律）。
 _seg_s_code = "\n".join(l for l in _seg_s.split("\n") if not l.strip().startswith("#"))
 ok("① 搜索词不许往**主窗**打字（`send_text(main, name)` 已删，只看代码不看注释）",
-   "send_text(main, name)" not in _seg_s_code and "send_text(int(main), name)" not in _seg_s_code)
+   _seg_s_code.count("send_text(main, name)") == 0
+   and _seg_s_code.count("send_text(int(main), name)") == 0)
 ok("② 没找到搜索浮层时**fail-closed**：如实说明并拒切会话（不盲打字）",
-   "没找到搜索浮层" in _seg_s and "不往主窗打字" in _seg_s)
+   _seg_s.count("没找到搜索浮层") >= 1 and _seg_s.count("不往主窗打字") >= 1)
 ok("③ 往浮层打字前**必须确定性清空搜索框**（否则查询词会累积）",
-   "_clear_search_input(backend, int(_pop0[0]))" in _seg_s)
+   _seg_s.count("_clear_search_input(backend, int(_pop0[0]))") == 1)
 ok("④ 给用户的下一步动作写清楚（点开目标会话 / 打开扫列表回退）",
-   "先把目标会话在微信里点开" in _seg_s and "扫会话列表" in _seg_s)
+   _seg_s.count("先把目标会话在微信里点开") >= 1 and _seg_s.count("扫会话列表") >= 1)
 
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
