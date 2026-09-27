@@ -3171,9 +3171,9 @@ class WeChatAdapter:
             # 目标尺寸：**从配置读**（`ui.lock_window_size`），没配才用默认。
             # ⛔ 原来写死 1160×900 ⇒ 用户每次启动都发现自己调小的窗口被改大（"一启动窗口就变"）。
             #    现在以配置值为准；小屏仍按比例收缩，高度不低于 820（微信侧栏图标全显的下限）。
-            _ls = (_gc().get("ui") or {}).get("lock_window_size") or [1113, 909]
+            _ui = _gc().get("ui") or {}
             try:
-                tw, th = int(_ls[0]), int(_ls[1])
+                tw, th = int(_ui.get("lock_window_w") or 1113), int(_ui.get("lock_window_h") or 909)
             except Exception:
                 tw, th = 1113, 909
             if sw < 1366:
