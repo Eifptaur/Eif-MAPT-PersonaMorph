@@ -49,6 +49,7 @@ EXCLUDE = (
     "whale-widget/assets/minecraft-exp-orb.wav",
     "whale-widget/assets/task-end-a.wav",
     "scripts/pack_online.py", # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
+    "scripts/fetch_wheels.py", # 取离线轮子的开发工具（同族：只在出"快速包"时用），不进包
     "persona-morph-manifest.json", # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
     "offline/", # 离线运行时与 wheel（在线包不需要）
     "_scratch/", "报告/", "wechatauto_logs/", "data/", "runtime/", "logs/",
@@ -135,8 +136,29 @@ def main():
     except Exception:
         pass
     check_only = "--check" in sys.argv
+    # ⚡ 「快速包」：把离线依赖（`offline/wheels` 的轮子 + `offline/python` 的运行时 zip）一起打进去。
+    #    首启就不必联网装依赖（实测：联网装依赖 8 分 28 秒 → 本地装 ≈30 秒；见 fetch_wheels.py 文件头）。
+    #    代价＝包体积多约 120~250MB；**默认仍是"在线包"**（小、首启联网拉）。
+    with_wheels = "--with-wheels" in sys.argv
+    global EXCLUDE # noqa: PLW0603
+    if with_wheels:
+        EXCLUDE = tuple(e for e in EXCLUDE if e != "offline/") # 放行 offline/（下面只收 wheels 与 python zip）
     files = [f for f in tracked() if not excluded(f)]
-    print(f"跟踪 {len(tracked())} 个文件 → 进包候选 {len(files)} 个")
+    if with_wheels:
+        # ⛔ `tracked()` 只认 `git ls-files`，而 `offline/` 下的轮子是**构建产物、没入库**
+        #    ⇒ 必须显式扫目录补进来（只补这两类，别的仍然不收）。
+        extra = []
+        for sub in ("wheels", "python"):
+            base = os.path.join(ROOT, "offline", sub)
+            for dp, dn, fns in os.walk(base):
+                dn[:] = [d for d in dn if d != "__pycache__"]
+                for f in fns:
+                    if sub == "python" and not f.lower().endswith(".zip"):
+                        continue # 只发运行时 zip，不发解压出来的树
+                    extra.append(os.path.relpath(os.path.join(dp, f), ROOT).replace("\\", "/"))
+        files = sorted(set(files) | set(extra))
+    print(f"跟踪 {len(tracked())} 个文件 → 进包候选 {len(files)} 个"
+          + ("（含离线依赖）" if with_wheels else ""))
 
     fatal_total, warn_total = 0, 0
     for rel in files:
@@ -172,7 +194,7 @@ def main():
         return 3
 
     stamp = datetime.now().strftime("%Y%m%d")
-    out = os.path.join(OUT_DIR, f"{PKG_PREFIX}{stamp}.zip")
+    out = os.path.join(OUT_DIR, f"{PKG_PREFIX}{stamp}{'-含依赖' if with_wheels else ''}.zip")
     # ⚡ **打包前把内容指纹写进 `agent/version.py`**（清单里带 `base.build`，
     #   用户侧才能在"同一个版本号换了包"时看出来）。指纹只跟"进包的那些文件"有关，且算
     #   `agent/version.py` 时会先抹掉 BUILD 行 ⇒ 不会自指。开发树里 BUILD 留空，只有出包才写。
@@ -200,9 +222,13 @@ def main():
     with zipfile.ZipFile(out) as _z:
         names = _z.namelist()
     rel_names = [n[len(ZIP_TOP) + 1:] for n in names if n.startswith(ZIP_TOP + "/")]
-    BAD_STATE = _re.compile(r"(^|/)(data|logs|offline|runtime|_scratch|报告|wechatauto_logs)/"
-                            r"|(^|/)config\.json$|(^|/)config\.json\."
-                            r"|\.(db|sqlite3?|jsonl|log|zst|zstd)$", _re.I)
+    BAD_STATE = _re.compile(
+        # ⚡ `--with-wheels`（快速包）时 `offline/wheels` 与 `offline/python/*.zip` 是**故意带上的素材**
+        #   （不是运行期数据）⇒ 这条闸门里把 `offline` 拿掉，别的（data/logs/runtime/配置/库/日志）照旧禁。
+        (r"(^|/)(data|logs|runtime|_scratch|报告|wechatauto_logs)/" if with_wheels
+         else r"(^|/)(data|logs|offline|runtime|_scratch|报告|wechatauto_logs)/")
+        + r"|(^|/)config\.json$|(^|/)config\.json\."
+        r"|\.(db|sqlite3?|jsonl|log|zst|zstd)$", _re.I)
     bad_state = sorted(n for n in rel_names if BAD_STATE.search(n))
     # 只看**绝对**路径（带盘符）—— `collect_report.py` 里那个 `C:/Users/<名>` 是脱敏器自己的正则、
     # 是它的工作内容，不该按"泄漏"算。

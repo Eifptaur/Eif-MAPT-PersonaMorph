@@ -650,6 +650,20 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
         else:
             return False, "找不到本程序的 Python 环境，界面组件装不上。请重新安装本程序。"
 
+    # ⚡ 「快速包」（`--with-wheels` 出的那个）快路径：包内 `offline/wheels` 已带 PySide6 轮子
+    #    ⇒ 直接本地装，**零下载、不碰网络**。同机实测：联网分块下载+装 ≈113s，本地装 ≈20s。
+    #    没有这个目录（普通在线包）时一行都不影响，照旧走下面的测速+分块下载。
+    _lw = os.path.join(str(ROOT), "offline", "wheels")
+    if os.path.isdir(_lw):
+        _hit = [f for f in sorted(os.listdir(_lw))
+                if f.lower().startswith("pyside6_essentials-") or f.lower().startswith("pyside6-essentials-")]
+        if _hit:
+            _log("info", "用包内离线轮子安装界面组件（不联网）…")
+            _ok_l, _tail_l = _pip_install_local(python_exe, os.path.join(_lw, _hit[0]))
+            if _ok_l and pyside6_installed():
+                return True, "ok"
+            _log("warning", "包内离线轮子没装成（%s）⇒ 改用联网通路" % (_tail_l or "")[-120:])
+
     # 已装但版本不符 ⇒ 讲清楚「更新」而不是「下载」（老用户升级路径的对白）
     had_old = importlib.util.find_spec("PySide6") is not None
     _log("info", ("版本不符，正在更新" if had_old else "首次启动，正在下载")
