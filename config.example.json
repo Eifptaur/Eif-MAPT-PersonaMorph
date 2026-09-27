@@ -50,6 +50,7 @@
   "custom_rules": ""
  },
  "web_search": {
+ "online_allowed": true,
   "enabled": true,
   "provider": "bing",
   "google_first": true,
