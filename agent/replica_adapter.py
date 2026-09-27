@@ -90,6 +90,11 @@ def original_decrypt_page():
 def ensure_compat_patches() -> str:
     """进程内**一次**装好兼容性补丁（读库之前调；幂等、永不抛）。"""
     if not _PATCHED["done"]:
+        try: # 顺带把"驱动库不许改窗口几何"也装上（同一处入口，进程内一次）
+            from . import ui_adapt as _ua
+            _ua.patch_no_window_geometry()
+        except Exception:
+            pass
         try:
             _PATCHED["how"] = fix_page1_plaintext_header()
         except Exception as _e: # noqa: BLE001

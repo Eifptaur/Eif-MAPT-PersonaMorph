@@ -1031,3 +1031,49 @@ def self_test(gui=None, point=None) -> dict:
     except Exception as e:
         result["error"] = str(e)
     return result
+
+
+def patch_no_window_geometry() -> bool:
+    """**不许驱动库改微信窗口几何** —— "窗口老是自己变大"的最终根因就在这里。
+
+    实测（隔离变量）：**只构造 `wechatauto.guia.WeChatGUI()`**、完全不碰 agent 侧，窗口照样被改；
+    驱动库自己的日志是「布局配置与当前窗口尺寸差异过大，忽略并重新校准（校准=947 vs 当前=636）」
+    ⇒ 它的布局校准认为"基准与实际差太多"就**连窗口尺寸一起重设**。
+
+    做法：把 `calibrate_layout` 包一层 —— 调用前记下窗口 rect，调用后**原样还原**。
+    它照样可以校准自己的坐标基准，但**不许动窗口**（尺寸与位置都归用户/配置管）。
+    幂等、永不抛（打补丁不该成为新的崩溃源）。
+    """
+    try:
+        import win32con as _wc
+        import win32gui as _wg
+        from wechatauto import guia as _g
+        if getattr(_g.WeChatGUI, "_pm_geometry_locked", False):
+            return True
+        _orig = _g.WeChatGUI.calibrate_layout
+
+        def _wrapped(self, *a, **k):
+            hwnd = int(getattr(self, "main_hwnd", 0) or 0)
+            r0 = None
+            try:
+                r0 = _wg.GetWindowRect(hwnd) if hwnd else None
+            except Exception:
+                r0 = None
+            out = _orig(self, *a, **k)
+            if hwnd and r0:
+                try:
+                    r1 = _wg.GetWindowRect(hwnd)
+                    if r1 != r0:
+                        _wg.SetWindowPos(int(hwnd), 0, int(r0[0]), int(r0[1]),
+                                         int(r0[2] - r0[0]), int(r0[3] - r0[1]),
+                                         _wc.SWP_NOACTIVATE | _wc.SWP_NOZORDER)
+                        log.info("窗口几何补丁：驱动库校准把窗口从 %s 改成 %s ⇒ 已还原（不打扰用户）", r0, r1)
+                except Exception:
+                    pass
+            return out
+
+        _g.WeChatGUI.calibrate_layout = _wrapped
+        _g.WeChatGUI._pm_geometry_locked = True
+        return True
+    except Exception:
+        return False
