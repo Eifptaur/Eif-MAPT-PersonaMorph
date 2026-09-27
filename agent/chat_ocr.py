@@ -1695,7 +1695,8 @@ def _band_bg(img, y0: int, y1: int, x0: int, x1: int):
                 c = px[xx, yy][:3]
                 cnt[c] = cnt.get(c, 0) + 1
         return max(cnt.items(), key=lambda kv: kv[1])[0] if cnt else None
-    except Exception:
+    except Exception as e: # noqa: BLE001
+        log.debug("量高亮带背景色失败：%s", e)
         return None
 
 

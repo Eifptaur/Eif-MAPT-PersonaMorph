@@ -6092,7 +6092,22 @@ class WeChatAdapter:
             except Exception as _e:
                 log.info("发图·投递聚焦输入栏失败（继续尝试粘贴）：%s", _e)
 
-            ok_cb, why_cb = _cb.set_image(local_path)
+            # ⚡ **动图走"文件"通道**（真机实测）：把 `.gif` 当**文件**放剪贴板（CF_HDROP）再右键「粘贴」，
+            #   微信会把它收成**动画表情**发出（DB 回读 `local_type=47`）—— 动效**保住了**，
+            #   而且与位图那条一样是全程后台（不需要面板、不需要真鼠标）。
+            #   而位图通道（CF_DIB）结构上只有一张图 ⇒ 动图发出去必然退化成静态首帧。
+            #   ⇒ 只有"这个文件真的会动"时才换通道；静态图继续走位图（那条已验证多年）。
+            _anim = False
+            try:
+                from . import emoticon as _emo
+                _anim = _emo.is_animated_file(local_path)
+            except Exception as _e: # noqa: BLE001
+                log.info("发图·判动图失败（按静态处理）：%s", str(_e)[:60])
+            if _anim:
+                ok_cb, why_cb = _cb.set_files([local_path])
+                log.info("发图·动图走文件通道（CF_HDROP，微信会按动画表情收）")
+            else:
+                ok_cb, why_cb = _cb.set_image(local_path)
             if not ok_cb:
                 return False, "放剪贴板失败：%s" % why_cb
             # 🔴 换通路（现场实测把老路判死）：**不再用投递 Ctrl+V** ——
@@ -6189,8 +6204,11 @@ class WeChatAdapter:
                             if self._looks_like_img_msg(top):
                                 _self_local_note(self, chat_id, top.get("local_id"),
                                                      top.get("create_time"))
-                            return V_OK, ("投递发图成功（第 %d 枪 %s · DB 回读 local_id=%s type=%s）"
-                                          % (_i, _lbl, top.get("local_id"),
+                            return V_OK, ("投递发图成功（第 %d 枪 %s · %s · DB 回读 local_id=%s type=%s）"
+                                          % (_i, _lbl,
+                                             "**文件通道**（动图 ⇒ 对方收到的是会动的表情）" if _anim
+                                             else "位图通道",
+                                             top.get("local_id"),
                                              top.get("type_name") or top.get("type")))
                 if time.time() >= _deadline:
                     break
@@ -6312,11 +6330,18 @@ class WeChatAdapter:
 
     @staticmethod
     def _looks_like_img_msg(row) -> bool:
-        """DB 回读的行是不是"图片类"消息（本机实测图片消息 type='图片'）。"""
+        """DB 回读的行是不是"我们刚发出去的那种"消息（**图片 与 动画表情 都算**）。
+
+        ⚡ 动图现在走**文件通道**发（把 .gif 当文件放剪贴板），微信会把它收成**动画表情**
+        （真机 DB 回读 `local_type=47`）⇒ 原来只认"图片"的话，这条**不会被登记成自己发的**
+        ⇒ 机器人会去回自己刚发的表情（漏回反过来那一头）。
+        """
         if not row:
             return False
         t = str(row.get("type_name") or row.get("type") or "")
-        return ("图片" in t) or ("image" in t.lower())
+        low = t.lower()
+        return (("图片" in t) or ("image" in low)
+                or ("动画表情" in t) or ("表情" in t) or ("emoticon" in low))
 
     @staticmethod
     def _sent_file_log_path() -> str:

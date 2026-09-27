@@ -202,11 +202,16 @@ _p, _note = _ic.compress_if_needed(_big, out_dir=os.path.join(tmp, "cmp"))
 ok("超尺寸的动图**原样发**（压缩链会抽首帧 ⇒ 动效就没了），且回执说明原因",
    _p == _big and "动图" in _note, _note)
 
-print("── I. 接线：收藏走 animated、回执如实说静态首帧 ──")
+print("── I. 接线：收藏走 animated；发送侧**动图走文件通道**（真机：微信按动画表情收）──")
 ok("collect_emoji 走 sticker_image(animated=True)",
    _W.count("sticker_image(self._db, chat_id, int(local_id), animated=True)") == 1)
-ok("工具层回执写明「图片通道只能发静态首帧」并指向路线 B",
-   _T.count("静态首帧") >= 1 and _T.count("is_animated_file(") == 1)
+ok("send_image_posted：动图改放**文件**(CF_HDROP)、静态图仍放位图（两条都在，各一处）",
+   _W.count("_cb.set_files([local_path])") == 1 and _W.count("_cb.set_image(local_path)") == 1
+   and _W.count("_emo.is_animated_file(local_path)") == 1)
+ok("回执写明这条走的是文件通道、对方收到会动的表情",
+   _T.count("文件通道") >= 1 and _T.count("会动的表情") >= 1)
+ok("自己发的动画表情也要登记成「自己发的」（否则机器人会回自己刚发的表情）",
+   _W.count("动画表情") >= 1 and _W.count("emoticon") >= 1)
 
 print("\n==== 表情离线解密判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

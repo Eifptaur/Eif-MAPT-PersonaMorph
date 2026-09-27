@@ -175,7 +175,7 @@ ck("D6 提交是**三枪**且**回车优先**（回车那枪排在点「发送�
    "_shots = (" in _SI and "_deadline" in _SI
    and _SI.find("backend.keys(main, [ib.VK_RETURN])") < _SI.find('_click_posted(backend, main, send_pt'))
 ck("D7 成功回执写明「第几枪打出去的」（可复盘是哪一枪生效）",
-   "第 %d 枪 %s · DB 回读" in _SI)
+   "第 %d 枪 %s" in _SI and "DB 回读" in _SI)
 ck("D8 未生效时**交代输入框残留的去向**（撤掉了 / 没撤掉就让人手动清 —— 不许只说「未生效」）",
    _srcmatch.has(_SI, "_draft_cleanup_note(self, backend, main, gui, r") and "_clr_note" in _SI)
 ck("D8b 粘贴**前**先记基线（用户自己框里的东西不许撤）",
