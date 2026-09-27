@@ -798,6 +798,8 @@ def prepare_screen(gui) -> bool:
                     _r3 = wintypes.RECT()
                     _user32.GetWindowRect(hwnd, ctypes.byref(_r3))
                     _user32.ShowWindow(hwnd, 9)
+                    log.info("限位(794 处)：读到 lock_window_w/h=%s/%s ⇒ 设成 %sx%s",
+                             _uic3.get("lock_window_w"), _uic3.get("lock_window_h"), _w3, _h3)
                     _user32.SetWindowPos(hwnd, 0, int(_r3.left), int(_r3.top), _w3, _h3,
                                          0x0001 | 0x0020 | 0x0040)
                     time.sleep(0.6)
