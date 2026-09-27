@@ -275,8 +275,26 @@ def run(script, alive=(True, "读得到（假库）"), mode="measured", ink=None
     W._minimize_back_if_needed = lambda tag: None
     W._input_top_band = ((lambda gui, band_px=20: (None, None)) if mode == "nobody"
                          else (lambda gui, band_px=20: (scn.ibox, scn.focus_pt)))
-    W._probe_input_box_frame = lambda gui: scn.ibox
-    W._input_ink = (lambda gui, box, strip=80: ink) if ink is not None else (lambda gui, box, strip=80: 12)
+    W._probe_input_box_frame = lambda gui, img=None: scn.ibox
+    # ⛔ 桩要带 `img=`（清残留那条链会把现成帧传进来复用；签名不匹配 ⇒ TypeError 被吞 ⇒ 判据全乱）。
+    # 口径：`ink` 指定了就恒定；没指定＝"框里先有残留，清一次就干净"（否则清理会一路按满上限）。
+    _ink_seen = {"n": 0}
+
+    def _ink_stub(gui, box, strip=80, img=None):
+        """按**链走到哪一步**给墨迹：一开始"有残留" → 清过残留后"空" → 打完字"有字"（阳性对照）。
+
+        不能只按调用次数递减 —— 打字后的**阳性对照**也走这个桩，恒定 0 会被判成"字没进框"⇒整条链失败。
+        """
+        _ink_seen["n"] += 1
+        if ink is not None:
+            return ink
+        if any(c[0] == "send_text" for c in scn.calls):
+            return 12
+        if any(c[0] == "keys" and c[1] == (0x08,) for c in scn.calls):
+            return 0
+        return 12
+
+    W._input_ink = _ink_stub
     try:
         res, why = W.WeChatAdapter.send_text_posted(
             stub, scn.text, chat_id="filehelper", wait_s=15.0)
@@ -306,10 +324,15 @@ ok("顺序＝click(聚焦) → [清残留] → send_text(打字) → 回车(开�
    bool(_names) and _names[0] == "click" and _i_tx > 0 and -1 < _i_tx < _i_ent,
    "%s  打字@%d 回车@%d" % (str(_names[:6]), _i_tx, _i_ent))
 # ⛔ 打字前那一步是**故意加的**：上一轮所有枪都落空时字会留在输入框里，不清就会与新字串成一条发出去。
-ok("有残留 ⇒ 先清空（Ctrl+A + Backspace）再打字",
+ok("有残留 ⇒ 先清空（投递 End + 退格）再打字",
    [c[0] for c in _c1.calls[:3]] == ["click", "keys", "keys"]
-   and _c1.calls[1][1] == (0x11, 0x41) and _c1.calls[2][1] == (0x08,),
+   and _c1.calls[1][1] == (0x23,) and _c1.calls[2][1] == (0x08,),
    str(_c1.calls[:3]))
+ok("清空**不用 Ctrl+A**：投递档下组合键退化成字面字母 a（全选没发生、反而多打进一个字符）",
+   not any(c[0] == "keys" and c[1] == (0x11, 0x41) for c in _c1.calls),
+   str([c for c in _c1.calls if c[0] == "keys"][:3]))
+_n_back = sum(1 for c in _c1.calls if c[0] == "keys" and c[1] == (0x08,))
+ok("清空是**闭环**的：复探到空就收手（不是一路按满上限）", _n_back == 10, "退格 %d 次" % _n_back)
 ok("聚焦点＝**现算出来的**输入框上半部分（不是按比例猜）",
    _c1.calls[0][1] == _c1.focus_pt, "%s vs %s" % (_c1.calls[0][1], _c1.focus_pt))
 ok("聚焦落点**必须在工具栏带（0.92·h）之上**",
@@ -323,7 +346,7 @@ _rA, _wA, _cA = run(_s1, mode="nobody")
 ok("量不到 ⇒ 不下聚焦那一枪（随后打字 + 回车照走）",
    all(c[0] != "click" for c in _cA.calls)
    and [c[0] for c in _cA.calls
-        if not (c[0] == "keys" and c[1] in ((0x11, 0x41), (0x08,)))] == ["send_text", "keys"],
+        if not (c[0] == "keys" and c[1] in ((0x23,), (0x08,)))] == ["send_text", "keys"],
    str([c[0] for c in _cA.calls]))
 ok("仍然判成功（靠打字 + 回车，DB 回读照跑）", _rA == W.V_OK, "%r" % (str(_rA),))
 
@@ -332,7 +355,7 @@ _rB, _wB, _cB = run(_s1, mode="toolbar")
 ok("落点在工具栏带 ⇒ 同样不下这一枪（随后打字 + 回车照走）",
    all(c[0] != "click" for c in _cB.calls)
    and [c[0] for c in _cB.calls
-        if not (c[0] == "keys" and c[1] in ((0x11, 0x41), (0x08,)))] == ["send_text", "keys"],
+        if not (c[0] == "keys" and c[1] in ((0x23,), (0x08,)))] == ["send_text", "keys"],
    str([c[0] for c in _cB.calls]))
 
 print("── A4. 阳性对照：打完字输入框上沿带深色点 = 0 ⇒ 如实判失败，不许再猜点补一枪 ──")
@@ -343,7 +366,7 @@ ok("文案点明「输入框没吃到字」+「不许按比例猜点」",
 ok("失败后**没有**再补一枪（枪序只有 click + send_text）",
    [c[0] for c in _cC.calls] == ["click", "send_text"], str([c[0] for c in _cC.calls]))
 ok("没残留就不清（ink=0 时不存在那张清空键）",
-   not any(c[0] == "keys" and c[1] in ((0x11, 0x41), (0x08,)) for c in _cC.calls),
+   not any(c[0] == "keys" and c[1] in ((0x23,), (0x08,)) for c in _cC.calls),
    str([c[0] for c in _cC.calls]))
 
 print("── B. 第一枪（回车）就成功：判成功、且**不许**再多打枪 ──")

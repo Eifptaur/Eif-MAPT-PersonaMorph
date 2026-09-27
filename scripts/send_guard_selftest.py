@@ -20,6 +20,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
+import _srcmatch
 import _srcslice
 os.chdir(ROOT)
 try:
@@ -174,8 +175,10 @@ ck("D6 提交是**三枪**且**回车优先**（回车那枪排在点「发送�
    and _SI.find("backend.keys(main, [ib.VK_RETURN])") < _SI.find('_click_posted(backend, main, send_pt'))
 ck("D7 成功回执写明「第几枪打出去的」（可复盘是哪一枪生效）",
    "第 %d 枪 %s · DB 回读" in _SI)
-ck("D8 未生效时如实说「文字可能还留在输入框里」（与发文字同口径）",
-   "文字可能还留在输入框里" in _SI)
+ck("D8 未生效时**交代输入框残留的去向**（撤掉了 / 没撤掉就让人手动清 —— 不许只说「未生效」）",
+   _srcmatch.has(_SI, "_draft_cleanup_note(self, backend, main, gui, r") and "_clr_note" in _SI)
+ck("D8b 粘贴**前**先记基线（用户自己框里的东西不许撤）",
+   _srcmatch.has(_SI, "_pre_st, _pre_why = _composer_state(self, gui, r)"))
 # D9~D11 颜色自检本身（`_input_has_content` 必须存在、必须用屏幕实拍、量不出时按有内容放行）
 _HC = _srcslice.from_func(SRC, "_input_has_content")[:2200]
 # 只查**代码**，不查文档字符串（注释里提 `capture_image` 是解释"为什么不用它"，不算违规）

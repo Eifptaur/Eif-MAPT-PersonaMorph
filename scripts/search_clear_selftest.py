@@ -63,8 +63,10 @@ def _bad_clear(body):
         bad.append("没有确定性清空（缺 _clear_search_input/_clear_search_windows）")
     if '"\\b" * 8' in t:
         bad.append("还在用固定 8 个退格当清空（猜数、不验证）")
-    if "VK_CONTROL" not in t and "0x11" not in t:
-        bad.append("清空没有走 Ctrl+A 全选（长度无关的确定性做法）")
+    if "VK_CONTROL" in t or "0x11" in t or "0x41" in t:
+        bad.append("还在用 Ctrl+A 全选 —— 投递档下它退化成**字面字母 a**（全选没发生，反而多打进一个字符）")
+    if "0x24" not in t or "0x2E" not in t:
+        bad.append("清空没走 Home + Delete（投递档下既不碰修饰键、又不会把搜索浮层关掉的那条）")
     return bad
 
 
@@ -90,8 +92,11 @@ def main():
     b_clr = code_of(src, "_clear_search_input")
     b_clrw = code_of(src, "_clear_search_windows")
     ok("③ 切到了两个新方法体", bool(b_clr) and bool(b_clrw))
-    ok("③ `_clear_search_input` 走 Ctrl+A 全选 + 删除（长度无关）",
-       ("VK_CONTROL" in b_clr or "0x11" in b_clr) and "0x41" in b_clr and "0x08" in b_clr, b_clr[:0])
+    ok("③ `_clear_search_input` 走 Home + Delete（**不用修饰键**：投递档下 Ctrl+A 会退化成字面字母 a）",
+       "0x24" in b_clr and "0x2E" in b_clr and "VK_CONTROL" not in b_clr and "0x11" not in b_clr
+       and "0x41" not in b_clr, b_clr[:0])
+    ok("③ 也不退回「退格」删（搜索浮层里空框按退格会**直接退出搜索**）",
+       "0x08" not in b_clr, b_clr[:0])
     ok("③ `_clear_search_windows` 只动搜索窗（不碰微信主窗）",
        "_search_window_hwnds" in b_clrw and "send_text(main" not in b_clrw)
 
@@ -113,7 +118,7 @@ def main():
            '            time.sleep(0.3)\n'
            '            ok_t, why_t = backend.send_text(int(pop_hwnd), name)\n')
     bad = _bad_clear(OLD)
-    ok("⑥ 负例：老实现（固定 8 退格、无 Ctrl+A、无收尾）被同一判据判不合格",
+    ok("⑥ 负例：老实现（固定 8 退格、没走 Home+Delete、无收尾）被同一判据判不合格",
        len(bad) >= 3, bad)
     ok("⑥ 正例：现在的清空实现本身合格", not _bad_clear(b_clr + b_clrw), _bad_clear(b_clr + b_clrw))
 

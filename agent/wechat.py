@@ -505,17 +505,19 @@ def _control_halt() -> str:
 #   ⇒ 本实现只认画面证据，量不到就返回 None，调用方**不许猜**。
 
 
-def _probe_input_box_frame(gui):
+def _probe_input_box_frame(gui, img=None):
     """从**窗口自身画面**（PrintWindow 优先，被别的窗口盖住也能量）量输入框矩形（渲染相对）。
 
     做法与库里同款（底部找"全宽近白"行 → 沿中心列上下扩到边界 → 顶上 1~4px 浅灰分界线佐证），
     只去掉那条把本机排除掉的门槛（≥150px）。量不到返回 None。
+    `img`＝现成的渲染区帧（同一轮里已经抓过就传进来，省一次抓帧）；不给就自己抓。
     """
-    try:
-        from . import chat_header as _ch
-        img = _ch.capture_image(gui=gui)
-    except Exception:
-        img = None
+    if img is None:
+        try:
+            from . import chat_header as _ch
+            img = _ch.capture_image(gui=gui)
+        except Exception:
+            img = None
     if img is None:
         return None
     try:
@@ -577,14 +579,16 @@ def _input_top_band(gui, band_px: int = 20):
     return band, pt
 
 
-def _input_ink(gui, box, strip: int = 80) -> int:
+def _input_ink(gui, box, strip: int = 80, img=None) -> int:
     """输入框**上沿条带**里的深色点数 —— 阳性对照用（字到底进没进框）。拿不到帧返回 -1。
 
     空输入框只有浅灰占位符（min(RGB)≈200），所以阈值取 <150 不会把占位符算进去。
+    `img`＝现成的渲染区帧（同一轮里已经抓过就传进来，省一次抓帧）；不给就自己抓。
     """
     try:
-        from . import chat_header as _ch
-        img = _ch.capture_image(gui=gui)
+        if img is None:
+            from . import chat_header as _ch
+            img = _ch.capture_image(gui=gui)
         if img is None:
             return -1
         x0, top, x1, bot = box
@@ -594,6 +598,141 @@ def _input_ink(gui, box, strip: int = 80) -> int:
                    if min(px[x, y][:3]) < 150)
     except Exception:
         return -1
+
+
+def _composer_state(adapter, gui, r, img=None) -> tuple:
+    """输入框当前状态 ⇒ `("has" | "empty" | "unknown", 说明)`。
+
+    两路证据合看，**谁硬信谁**：
+      · `_probe_input_box_frame` ＋ `_input_ink`：走 PrintWindow，**别的窗口压在上面也能量**，
+        取的是输入框上沿条带的深色点 ⇒ >0 就是"有字 / 有附件卡片"；
+      · `adapter._input_has_content`：走屏幕实拍看「发送」按钮是灰是绿（空框灰 / 有内容绿），
+        语义最贴，但**被遮挡时会读到别的窗口** ⇒ 只在 PrintWindow 那路拿不到帧时兜底。
+    两路都拿不到 ⇒ `unknown`；调用方**不许**把 unknown 当 empty —— 那会让人以为已经清干净、
+    而残留其实还挂在框里（下一轮回车就被发出去）。
+    """
+    box = None
+    try:
+        box = _probe_input_box_frame(gui, img=img)
+    except Exception:
+        box = None
+    if box:
+        try:
+            ink = _input_ink(gui, box, img=img)
+        except Exception:
+            ink = -1
+        if ink > 0:
+            return "has", "PrintWindow 实测输入框上沿条带 %d 个深色点" % ink
+        if ink == 0:
+            return "empty", "PrintWindow 实测输入框上沿条带 0 个深色点"
+    try:
+        has, why = adapter._input_has_content(gui, r)
+    except Exception as e:
+        return "unknown", ("两路判据都不可用（PrintWindow 量不到输入框、按钮颜色判据异常：%s）"
+                           % str(e)[:60])
+    return ("has" if has else "empty"), "按钮颜色判据：%s" % why
+
+
+def _composer_card_points(gui) -> list:
+    """输入框里**附件卡片**的候选落点（屏幕坐标）—— 只给"清残留"那条路用。
+
+    附件（图片缩略图 / 文件卡）**贴着输入框左上角起排**，所以候选都落在框内左上那一小片区域；
+    按本机实测量级取几档（缩略图约 100px 见方、文件卡更扁），**先试卡片右上角一带**
+    （实测"点卡片 → 按 Delete"是投递档下唯一能撤掉卡片的手法），再试卡片中带兜底。
+    ⚠️ 这是**候选集、不是唯一真值**：调用方每试一档都要复探输入框，全试完仍不干净就如实报失败，
+    绝不假装清过。量不到输入框 ⇒ 返回 `[]`（调用方随之跳过这一步，不许按比例猜点）。
+    """
+    box = _probe_input_box_frame(gui)
+    if not box:
+        return []
+    x0, top, _x1, _bot = box
+    ox = int(getattr(gui, "origin_x", 0) or 0)
+    oy = int(getattr(gui, "origin_y", 0) or 0)
+    pattern = [(64, 8), (96, 8), (128, 8), (64, 16), (96, 16), (40, 34), (76, 34)]
+    return [(ox + x0 + dx, oy + top + dy) for (dx, dy) in pattern]
+
+
+def _clear_composer_posted(adapter, backend, main: int, gui, r, tag: str = "清空输入框",
+                           max_back: int = 60, probe_every: int = 10) -> tuple:
+    """投递档下把输入框清空（正文 ＋ 附件卡片）⇒ `(ok, 说明)`；`ok=False` 只表示"**没**清干净"。
+
+    ⛔ 为什么不能再用 `Ctrl+A` 全选删除：投递的消息**不携带修饰键状态**（只有真键盘走硬件输入队列
+    才会设置它），微信收到 `A` 时回头问系统"Ctrl 按住没"，永远答"没按" ⇒ 组合键**退化成字面字母 `a`**：
+    全选没发生，反而往框里又打进一个字符（越清越脏）。⇒ 这里只用**不需要修饰键**的按键：
+      ① `End` 把光标顶到文末（正文与附件都在它左边）→ 逐个 `Backspace`，**闭环**：
+         每 `probe_every` 步复探一次输入框，探到空就停（不猜"该按几下"）；
+      ② 到上限仍有内容 ⇒ 再试附件卡片那条：候选落点依次「点一下 → `Delete`」，每档复探；
+      ③ 仍不干净 ⇒ 返回 False 并把实探结果写进说明，**交人工**（绝不假装清过）。
+    ⚠️ "要不要清"由调用方判断 —— 例：粘贴/挂文件**之前**框里本来就有用户自己的内容时不许清
+    （分不清哪些是我们的，清掉会连他写的字一起删）。
+    """
+    _VK_END, _VK_BACK, _VK_DEL = 0x23, 0x08, 0x2E
+    try:
+        backend.keys(main, [_VK_END], hold_ms=10) # 光标到文末
+    except Exception as e:
+        log.info("%s：投递 End 失败（继续尝试退格）：%s", tag, e)
+    time.sleep(0.12)
+    steps = 0
+    while steps < max(1, int(max_back)):
+        try:
+            backend.keys(main, [_VK_BACK], hold_ms=10)
+        except Exception as e:
+            log.info("%s：投递退格失败（停手）：%s", tag, e)
+            break
+        steps += 1
+        time.sleep(0.02)
+        if steps % max(1, int(probe_every)) == 0:
+            st, _why = _composer_state(adapter, gui, r)
+            if st == "empty":
+                return True, "%s：已清空（End + %d 次退格，第 %d 次复探为空）" % (tag, steps, steps)
+    st, why = _composer_state(adapter, gui, r)
+    if st == "empty":
+        return True, "%s：已清空（End + %d 次退格）" % (tag, steps)
+    if st == "unknown":
+        return False, ("%s：投了 End + %d 次退格，但**输入框两路都量不到**（%s）⇒ 没法确认清干净没有，"
+                       "请人工看一眼那个会话" % (tag, steps, why))
+    cand = _composer_card_points(gui)
+    for idx, pt in enumerate(cand, 1):
+        try:
+            _cok, _cwhy = adapter._click_posted(backend, main, pt, "%s·点附件卡片" % tag)
+        except Exception as e:
+            _cok, _cwhy = False, str(e)
+        if not _cok:
+            log.info("%s：第 %d 档卡片落点 %s 没点上（%s）", tag, idx, pt, str(_cwhy)[:60])
+            continue
+        time.sleep(0.25)
+        try:
+            backend.keys(main, [_VK_DEL], hold_ms=10)
+        except Exception as e:
+            log.info("%s：投递 Delete 失败：%s", tag, e)
+        time.sleep(0.25)
+        st2, why2 = _composer_state(adapter, gui, r)
+        if st2 == "empty":
+            return True, "%s：已清空（End + %d 次退格 + 点卡片第 %d 档后 Delete）" % (tag, steps, idx)
+        why = why2
+    return False, ("❗%s：退格 %d 次 + 试了 %d 档卡片落点，输入框里**仍探到内容**（%s）—— "
+                   "我**没能**替你撤掉它，请到微信那个会话里手动清一下"
+                   "（不然下一轮回车会把残留一起发出去）" % (tag, steps, len(cand), why))
+
+
+def _draft_cleanup_note(adapter, backend, main: int, gui, r, dirty_before: bool, pre_why: str,
+                        what: str = "草稿", tag: str = "") -> str:
+    """发送链**失败收尾**：输入框里还挂着刚落进去的东西 ⇒ 撤掉；返回一句可贴进回执的说明。
+
+    为什么必须做：调用方拿到失败会重试，而草稿留在框里时，用户**随手一回车**就把上一轮的
+    图片/文件发出去了（收信人看到一条重复的、或者没头没尾的内容）。返回空串＝框里没东西、无需处置。
+    ⚠️ 粘贴/挂文件**之前**框里就有内容（`dirty_before`）时**不动手**：分不清哪些是我们的，
+    清掉会把用户自己打的字、挂的文件一起删 ⇒ 只如实提示"请人工撤掉"。
+    """
+    st, why = _composer_state(adapter, gui, r)
+    if st != "has":
+        return ""
+    if dirty_before:
+        return ("；⚠️ 输入框里**原本就有你的内容**（%s），我**没有**自动清（怕误删你自己的东西）—— "
+                "请人工把刚粘/挂进去的%s撤掉" % (pre_why, what))
+    _cok, _cwhy = _clear_composer_posted(adapter, backend, main, gui, r,
+                                         tag=tag or ("发%s失败清残留" % what))
+    return "；残留清理：%s" % _cwhy
 
 
 def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
@@ -4112,28 +4251,27 @@ class WeChatAdapter:
             return False
 
     @staticmethod
-    def _clear_search_input(backend, hwnd) -> bool:
-        """**确定性清空**搜索框：Ctrl+A 全选 → Backspace 删。
+    def _clear_search_input(backend, hwnd, max_del: int = 40) -> bool:
+        """**清空搜索框**（投递档）：`Home` 顶到最左 → 逐个 `Delete`（右删）。
 
-        为什么不数退格：固定退格数是个猜数，
-        框里字多一个就清不干净 ⇒ 查询词**累积**（「KC」→「KCKC」→「KCKCKC」）⇒ 结果行匹配不上
-        ⇒ 切会话永远失败 ⇒ 回复一条都发不出去。全选之后删，与框里有多少字无关。
-        失败时退回"多发几个退格"（空框时无害）；返回是否发出了清空动作。
+        ⛔ 不能用 `Ctrl+A` 全选：投递的消息**不携带修饰键状态**，微信收到 `A` 时回头问系统
+        "Ctrl 按住没"永远答"没按" ⇒ 组合键**退化成字面字母 `a`** —— 全选没发生，反而往查询词里
+        又加一个字符（"越清越长"的一条来源）。
+        ⛔ 也**不用 `Backspace`**：微信搜索浮层里输入框为空时按退格会**退出搜索**（浮层直接关掉），
+        而这条清空动作常常恰好发生在"框本来就是空的、只是没匹配到目标行"的时候 ⇒ 退格会顺手把
+        整条切会话链打掉。`Delete`（右删）在空框上是无操作，正是要这个性质。
+        ⚠️ "空框 Delete 无操作、且能逐字删掉查询词"这条**待现场复核**：若实际不成立，表现是
+        "查询词清不干净/累积"（切会话失败），**不会**误发消息 —— 结果行匹配那道闸仍然兜着。
+        返回是否发出了清空动作（不保证清干净：查询词是我们自己打的群名，长度由 `max_del` 兜）。
         """
         try:
-            from . import input_backend as _ib
-            backend.keys(int(hwnd), (_ib.VK_CONTROL, 0x41)) # Ctrl+A
+            backend.keys(int(hwnd), (0x24,), hold_ms=5) # Home：光标到最左
             time.sleep(0.08)
-            backend.keys(int(hwnd), (0x08,)) # Backspace
-            time.sleep(0.12)
+            for _ in range(max(1, int(max_del))):
+                backend.keys(int(hwnd), (0x2E,), hold_ms=5) # Delete：删光标右侧
             return True
         except Exception:
-            try:
-                backend.send_text(int(hwnd), "\b" * 24) # 兜底：多退格（空框时无害）
-                time.sleep(0.12)
-                return True
-            except Exception:
-                return False
+            return False
 
     def _clear_search_windows(self, gui=None) -> int:
         """把屏幕上**搜索窗里的查询词**清干净（返回清了几个）。只动搜索窗，绝不碰微信主窗。
@@ -5083,12 +5221,12 @@ class WeChatAdapter:
                     shot_size = pimg.size
                     row = _co.find_popover_row(pimg, name)
                 if not row:
-                    # ⛔ （网友 v0919 追加反馈 ②③ 的真根因）：清空**不许再「盲发 8 个退格」**
-                    #   ——那是个猜数、而且**不验证**：框里超过 8 个字就清不干净 ⇒ 下一次的查询词是
-                    #   「旧词＋新词」⇒ 越滚越长（现场：框里是「KCKCKC」，微信搜索历史里堆着
-                    #   「测试测试」「测试测试测试」「KC测试测试」一条比一条长）⇒ 结果行永远匹配不上
-                    #   ⇒ 切会话永远失败 ⇒ **每条回复都发不出去**（表现＝「聊一会儿就不回话了」）。
-                    #   ⇒ 改成**确定性清空**（Ctrl+A 全选 → Backspace 删，与框里有多少字无关）。
+                    # ⛔ 清空**不许再「盲发 8 个退格」**——那是个猜数、而且**不验证**：框里超过 8 个字
+                    #   就清不干净 ⇒ 下一次的查询词是「旧词＋新词」⇒ 越滚越长（现场：框里是「KCKCKC」，
+                    #   微信搜索历史里堆着「测试测试」「测试测试测试」「KC测试测试」一条比一条长）
+                    #   ⇒ 结果行永远匹配不上 ⇒ 切会话永远失败 ⇒ **每条回复都发不出去**。
+                    #   ⇒ 改走 `_clear_search_input`（Home + Delete×N：不用修饰键，也不用退格 ——
+                    #     退格在空框上会退出搜索，而这里"框本来就是空的"是常事）。
                     self._clear_search_input(backend, int(pop_hwnd))
                     ok_t, why_t = backend.send_text(int(pop_hwnd), name)
                     if not ok_t:
@@ -5583,19 +5721,18 @@ class WeChatAdapter:
             #    （实测 `'hello'` → `'hellohello'`）。上一条消息若所有枪都落空，字就留在
             #    框里，下一轮直接续写在后面 —— 收信人看到的是两条消息粘成一条（发错内容）。
             #    量不到帧（-1/None）时**不动手**：宁可维持旧行为，也不按比例猜位置乱按键。
-            _box0 = _probe_input_box_frame(gui)
-            if _box0:
-                _ink0 = _input_ink(gui, _box0)
-                if _ink0 > 0:
-                    log.info("输入框有残留（上沿条带深色点 %d）⇒ 先清空再打字（否则两轮会串成一条）",
-                             _ink0)
-                    try:
-                        backend.keys(main, (ib.VK_CONTROL, 0x41)) # Ctrl+A 全选
-                        time.sleep(0.08)
-                        backend.keys(main, (0x08,)) # Backspace 删（固定退格数是猜数，全选后删不猜）
-                        time.sleep(0.12)
-                    except Exception as _e:
-                        log.warning("清空输入框失败（继续打字，但可能串字）：%s", _e)
+            # ⛔ 清空手法**不能用 `Ctrl+A`**：投递的消息不带修饰键状态，微信收到 `A` 时问系统
+            #    "Ctrl 按住没"永远答"没按" ⇒ 组合键退化成**字面字母 `a`**（全选没发生，反而往框里
+            #    又打进一个字符，越清越脏）⇒ 统一走 `_clear_composer_posted`（End + 退格，闭环复探）。
+            _st0, _why0 = _composer_state(self, gui, r)
+            if _st0 == "has":
+                log.info("输入框有残留（%s）⇒ 先清空再打字（否则两轮会串成一条）", _why0)
+                _cok0, _cwhy0 = _clear_composer_posted(self, backend, main, gui, r,
+                                                       tag="打字前清残留")
+                if not _cok0:
+                    # ⚠️ 清不干净**不阻塞打字**：串字（收信人看到两条粘成一条）比"整条发不出去"轻，
+                    #    而且这里若直接返回失败，残留会一直卡在框里、下一轮照样串 ⇒ 只如实记账。
+                    log.warning("%s（继续打字，但可能与残留串成一条）", _cwhy0)
             ok, why = backend.send_text(main, text)
             if not ok:
                 return False, "投递打字失败：%s" % why
@@ -5777,6 +5914,9 @@ class WeChatAdapter:
 
             base = _rows()
             base_id = int(base[0].get("local_id") or 0) if base else 0
+            # ⚠️ 粘贴**之前**先探一次输入框：用户可能正自己在框里打字/挂着东西 —— 那种情况下
+            #    "发送失败就撤掉"会误删他写的东西 ⇒ 记下来，失败收尾只提示、不动手（见 `_draft_cleanup_note`）。
+            _pre_st, _pre_why = _composer_state(self, gui, r)
 
             # ⛔ **粘贴前先投递聚焦输入栏**（与发文字同一条教训，见 :2708 的 `_FOCUS_Y` 注释）。
             #   粘贴 = "给**当前焦点**发 Ctrl+V"，焦点不在输入框时（刚切完会话 / 刚清空聊天记录 /
@@ -5904,14 +6044,18 @@ class WeChatAdapter:
                 return V_OK, ("投递发图：**输入框已清空**（%s）⇒ 按屏幕证据判已发出"
                               "（DB 回读没等到新行；打了 %d 枪 %s）"
                               % (_still_why, len(_fired), "→".join(_fired) if _fired else "0"))
+            # ⚠️ 走到这里 ＝ 图**还挂在输入框里**（发送没落地）⇒ 必须把它撤掉：留着的话用户
+            #    随手一回车就把这张图发出去了（收信人看到一条没头没尾的图）。
+            _clr_note = _draft_cleanup_note(self, backend, main, gui, r,
+                                            _pre_st == "has", _pre_why, what="这张图")
             _alive2, _why_alive2 = self.db_alive(chat_id)
             if not _alive2:
-                return V_UNVERIFIED, ("已投递粘贴并打了 %d 枪%s，但**判据不可用**、无法证实：%s"
-                                      % (len(_fired), ("（%s）" % "→".join(_fired)) if _fired else "", _why_alive2))
-            return V_NOT_SENT, ("已投递粘贴并打了 %d 枪%s，但 %ds 内 DB 没等到新行（发图未生效；"
-                                "文字可能还留在输入框里）"
+                return V_UNVERIFIED, ("已投递粘贴并打了 %d 枪%s，但**判据不可用**、无法证实：%s%s"
+                                      % (len(_fired), ("（%s）" % "→".join(_fired)) if _fired else "",
+                                         _why_alive2, _clr_note))
+            return V_NOT_SENT, ("已投递粘贴并打了 %d 枪%s，但 %ds 内 DB 没等到新行（发图未生效）%s"
                                 % (len(_fired), ("（%s）" % "→".join(_fired)) if _fired else "",
-                                   int(wait_s)))
+                                   int(wait_s), _clr_note))
         except Exception as e:
             return False, "投递发图异常：%s" % e
 
@@ -6175,6 +6319,11 @@ class WeChatAdapter:
 
             base = _rows()
             base_id = int(base[0].get("local_id") or 0) if base else 0
+            # ⚠️ 开对话框**之前**先探一次输入框（用户可能正自己在框里挂着东西 ⇒ 失败时不许撤他的东西）；
+            #    `_clr` ＝ 失败收尾统一的"撤草稿"入口（见 `_draft_cleanup_note`）。
+            _pre_st, _pre_why = _composer_state(self, gui, r)
+            _clr = lambda tag: _draft_cleanup_note(self, backend, main_hwnd, gui, r, _pre_st == "has", # noqa: E731
+                                                   _pre_why, what="这份文件", tag=tag)
 
             # ② 打开系统文件对话框
             _stale = _close_stale_file_dialogs()
@@ -6348,12 +6497,12 @@ class WeChatAdapter:
                                 pass
                             return V_OK, "投递发文件成功（DB 回读 local_id=%s type=%s）" % (
                                 top.get("local_id"), top.get("type_name") or top.get("type"))
-                        return V_NOT_SENT, "发出了新消息但不是文件类（local_id=%s type=%s）" % (
-                            top.get("local_id"), top.get("type_name") or top.get("type"))
+                        return V_NOT_SENT, "发出了新消息但不是文件类（local_id=%s type=%s）%s" % (
+                            top.get("local_id"), top.get("type_name") or top.get("type"), _clr("发文件·内容不符"))
             _alive3, _why_alive3 = self.db_alive(chat_id)
             if not _alive3:
-                return V_UNVERIFIED, ("已走完对话框与发送，但**判据不可用**、无法证实：%s" % _why_alive3)
-            return V_NOT_SENT, "已走完对话框与发送，但 %ds 内 DB 没等到新行（发文件未生效）" % int(wait_s)
+                return V_UNVERIFIED, ("已走完对话框与发送，但**判据不可用**、无法证实：%s%s" % (_why_alive3, _clr("发文件·未确认")))
+            return V_NOT_SENT, ("已走完对话框与发送，但 %ds 内 DB 没等到新行（发文件未生效）%s" % (int(wait_s), _clr("发文件·未生效")))
         except Exception as e:
             # ⚠️ 外层异常也会**留下「选择文件」模态框**（实测：UIA 抛 COM 错时不一定落在内层 try 里，
             # 一次真实发送失败后框就留在屏幕上挡住了微信）⇒ 这里再兜一次。
