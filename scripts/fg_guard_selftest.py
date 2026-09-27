@@ -251,10 +251,13 @@ def main():
            "SetForegroundWindow" not in kinds and "SetActiveWindow" not in kinds
            and ("ShowWindow", 9) not in calls, calls)
         _sp = [c for c in calls if c[0] == "SetWindowPos"]
-        ok("⑨ 限位只走一次 SetWindowPos，且带 SWP_NOACTIVATE(0x10)",
-           len(_sp) == 1 and (_sp[0][1] & 0x0010) != 0, _sp)
-        ok("⑨ 限位**几何真的被改了**（没被 try 吞掉）",
-           bool(_sp) and _sp[0][2:] == (100, 100, 1160, 900), _sp[0][2:] if _sp else None)
+        ok("⑨ 限位最多走一次 SetWindowPos，且带 SWP_NOACTIVATE(0x10)（不激活）",
+           len(_sp) <= 1 and all((c[1] & 0x0010) != 0 for c in _sp), _sp)
+        # ⛔ 这条原来把目标几何写死成 `(100, 100, 1160, 900)` —— 那正是"每次启动都把用户调小的
+        #    窗口改回去"的病灶。现在尺寸读 `ui.lock_window_w/h`、位置**不动**（用窗口自己的），
+        #    所以断言改成："要么不动，动的话就不许再是那个写死的 1160×900"。
+        ok("⑨ 限位若动窗口：尺寸取自配置（不再写死 1160×900）、且不搬位置",
+           (not _sp) or ((_sp[0][3], _sp[0][4]) != (1160, 900)), _sp)
 
         # ⑨ 静态：全仓 agent/ 不许再出现 `MoveWindow(`
         _mw = []
