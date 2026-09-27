@@ -165,9 +165,10 @@ ck("D2 粘贴改走**右键 → 「粘贴」菜单项**（投递组合键在微�
    '_right_click_menu_posted(gui, _RX, _RY, "粘贴"' in _SI)
 ck("D3 发图链里**再也不许出现投递 Ctrl+V**（它只会把字母 v 敲进输入框）",
    "VK_CONTROL" not in _SI and "keys(child" not in _SI)
-ck("D4 粘贴后先做**发送按钮颜色自检**，没进框就一枪都不打",
-   "_input_has_content(gui, r)" in _SI
-   and _SI.find("_input_has_content(gui, r)") < _SI.find("_shots = ("))
+ck("D4 粘贴后先做**进框自检**，没进框就一枪都不打；判据走 **PrintWindow 那一侧**"
+   "（屏幕实拍被遮挡时会读到别人家的像素 ⇒ 图明明进了框却判『没进框』）",
+   _srcmatch.has(_SI, "_st, _st_why = _composer_state(self, gui, r)")
+   and _SI.find("_st, _st_why = _composer_state(self, gui, r)") < _SI.find("_shots = ("))
 ck("D5 图片**只粘贴一次**（内容留在输入框，多打几枪不会重复发送）",
    _SI.count("_cb.set_image(") == 1 and _SI.count('"粘贴"') == 1)
 ck("D6 提交是**三枪**且**回车优先**（回车那枪排在点「发送」之前）",

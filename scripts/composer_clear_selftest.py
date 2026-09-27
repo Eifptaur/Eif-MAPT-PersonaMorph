@@ -216,8 +216,8 @@ ok("发图链：失败收尾撤草稿（图还挂在框里时）",
    _sm.count(_seg_img, "_clr_note") == 3, "引用 %d 次" % _sm.count(_seg_img, "_clr_note"))
 _seg_file = _ss.func_src(SRC, "send_file_posted")
 ok("发文件链：开对话框前记基线", _sm.has(_seg_file, "_pre_st, _pre_why = _composer_state(self, gui, r)"))
-ok("发文件链：三处失败返回都带上「撤草稿」",
-   _sm.count(_seg_file, "_clr(") == 3, "命中 %d 处" % _sm.count(_seg_file, "_clr("))
+ok("发文件链：每一条失败出口都带上「撤草稿」（含「文件没挂上」那条）",
+   _sm.count(_seg_file, "_clr(") == 4, "命中 %d 处" % _sm.count(_seg_file, "_clr("))
 _seg_search = _ss.func_src(SRC, "_clear_search_input")
 ok("搜索框清空：不再用 Ctrl+A", _sm.count(_seg_search, "0x41") == 0,
    "命中 %d 次" % _sm.count(_seg_search, "0x41"))
@@ -346,7 +346,7 @@ def _run_img(ink_seq):
     return res, why, be
 
 
-_rE, _wE, _bE = _run_img([0, 6, 0])
+_rE, _wE, _bE = _run_img([0, 6, 6, 6, 0])
 ok("端到端：发送没落地时判 not_sent", _rE == W.V_NOT_SENT, "%r" % (str(_rE),))
 ok("端到端：**真的去撤了草稿**（投递 End + 退格，不是只在文案里说）",
    any(c == ("keys", (0x23,)) for c in _bE.calls)
@@ -355,7 +355,7 @@ ok("端到端：撤草稿同样**不用 Ctrl+A**",
    not any(c == ("keys", (0x11, 0x41)) for c in _bE.calls), str(_bE.calls))
 ok("端到端：回执里写明残留已清", "残留清理" in _wE and "已清空" in _wE, _wE)
 
-_rE2, _wE2, _bE2 = _run_img([6, 6])
+_rE2, _wE2, _bE2 = _run_img([6, 6, 6, 6])
 ok("端到端：粘贴前框里**本来就有用户内容** ⇒ 不撤（只提示人工）",
    not any(c == ("keys", (0x08,)) for c in _bE2.calls), str(_bE2.calls))
 ok("端到端：提示里点名是哪张图、并说明为什么没动它",

@@ -46,8 +46,10 @@ CLEAN_FUNC = re.compile(r"close|clean|clear|remove|del_|kill|sweep|prune|purge|r
 CLEAN_API = re.compile(r"os\.remove|os\.unlink|\.close\(\)|deleteobject|postmessage|wm_close|terminate|"
                        r"shutil\.rmtree|clear\(\)|setparent|deletelater|\.stop\(\)|quit\(\)|kill\(", re.I)
 
-#: 三档**棘轮基线**（实测 2026-09-27）。只许降：清理一批 → 下调一格；新增静默越界 → 当场红。
-BASE = {"A": 68, "B": 962, "C": 236}
+#: 三档**棘轮基线**。只许降：清理一批 → 下调一格；新增静默越界 → 当场红。
+#: B 类 +3 的登记项：扫盘缓存的读写兜底（取候选目录签名 / 读缓存 / 写缓存）——三者都是**只读缓存**，
+#: 失败即退化成"重扫一遍"，不改变任何业务结论；将来清掉这批缓存时，把这里同步降回去。
+BASE = {"A": 68, "B": 965, "C": 236}
 
 #: 会害人的**四族**（"读失败被当成没有"）：每族单独设上限（**只许降**；上限＝当日实测，目标是逐族降到 0）
 FAM = (

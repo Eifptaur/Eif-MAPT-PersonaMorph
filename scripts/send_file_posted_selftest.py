@@ -88,7 +88,7 @@ ok("运行时：没有版本号的文件名不硬凑指纹（返回空，交给�
 ok("身份闸时间档做了时间归一化（列表读到的 1:35 与 DB 的 01:35 视为同一时刻）",
    _sm.has(SRC, "def _active_row_time_ok") and _sm.has(SRC, "self._norm_hhmm(_ht) != self._norm_hhmm(_lt)")
    and _sm.has(SRC, "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)")
-   and _sm.has(SRC, "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)"))
+   and _sm.has(SRC, "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui, img=_img0)"))
 ok("时间档第二道证据有「该时刻在会话列表里唯一」这一档（聊天区不渲染时间时也能认）",
    _sm.has(SRC, "_uniq = (_n == 1)") and _sm.has(SRC, "if _pane_hit or _uniq:"))
 

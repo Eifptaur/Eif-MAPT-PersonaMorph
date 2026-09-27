@@ -384,9 +384,9 @@ ck("B21d 对外文案写明「它会把你原来的窗口摁在最前 / 把微�
 
 # ── B22：**等一个"他没在打字"的空档**（
 #   就闪那么一下」）＋ 发表情方式做成可选项（他自己选真表情还是发图片，代价写进控制台）──
-ck("B22 空档等待放宽到秒级（切会话 8s / 发送 6s），不再是 1.6s 就硬上",
+ck("B22 发送前等一个输入空档（切会话 8s；发送那枪收紧到 2s —— 它只占 0.15s，用 6 秒去省这点打扰不值得）",
    _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=8.0, idle=0.9)")
-   and _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=6.0, idle=0.9)"))
+   and _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=2.0, idle=0.5)"))
 _SRC_TOOLS = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 _SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 _SRC_CONSOLE2 = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
@@ -611,7 +611,8 @@ ck("B24e 三枪都没打出去 ⇒ 如实报「三枪都没打出去」，不冒
 #   `chat_is_open("filehelper")` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
 #   会话"开了一道缝。⇒ 指纹档降级为弱档、默认不采信；标题带档提为首选（对面实测它有区分力：
 #   'OE' vs 'O文亻牛传输助手'，且 那一次 A1 命中的正是这一档）。
-_CIS = _srcslice.from_func(SRC_WECHAT, "chat_is_open")[:4600]
+# ⛔ 按**函数跨度**取整段，不做字符数截断：函数里多十几行注释/逻辑就会把后面的断言挤出窗口 ⇒ 假红。
+_CIS = _srcslice.from_func(SRC_WECHAT, "chat_is_open")
 ck("B20 会话头指纹档降级为弱档、默认不采信（只有 allow_weak 时才认）",
    "allow_weak" in _CIS and "弱档" in _CIS
    and "不足以确认当前会话，按**未确认**处理" in _CIS)

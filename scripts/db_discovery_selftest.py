@@ -138,7 +138,7 @@ try:
            _resid in (_p["hit"] or []) and bool((_p.get("why") or {}).get(_live))
            and ("42" in (_p.get("why") or {}).get(_live, "")), str(_p.get("why"))[:200])
         ok("F1c 证据明摆着 ⇒ 不许说「需要用户指定」", _p.get("ambiguous") is False, str(_p.get("ambiguous")))
-        _d, _s = W.resolve_db_dir("")
+        _d, _s = W.resolve_db_dir("", bust=True)
         ok("F1d 决策端就用新的那个（不再静默读 300 天前的残留）",
            os.path.normcase(str(_d)) == os.path.normcase(_live) and _s == "scanned", "%s / %s" % (_d, _s))
         # ⚠️ 单候选的"阳"对照在下面 F2b/F2c（**不写"恒真"的断言** —— 那正是"假绿"）
@@ -151,7 +151,7 @@ try:
             ok("F2b 单候选 ⇒ hit=[它]、ambiguous=False", (_p3["hit"] == [_only]) and not _p3["ambiguous"],
                str(_p3["hit"])[:120])
             ok("F2c 单候选 ⇒ resolve_db_dir 给出它 + scanned",
-               W.resolve_db_dir("") == (_only, "scanned"), str(W.resolve_db_dir("")))
+               W.resolve_db_dir("", bust=True) == (_only, "scanned"), str(W.resolve_db_dir("", bust=True)))
         finally:
             shutil.rmtree(TMP3, ignore_errors=True)
         # ③ 证据相近（同档身份 / 同档新鲜度 / 写入时刻相差 <1 小时 / .db 同一量级）⇒ 不自动选
@@ -163,7 +163,7 @@ try:
             _p4 = W._probe_db_dirs("")
             ok("F3 阴：两个候选证据相近 ⇒ 标 ambiguous（宁可让用户点一下）",
                _p4.get("ambiguous") is True and len(_p4["hit"]) == 2, str(_p4.get("ambiguous")))
-            _d4, _s4 = W.resolve_db_dir("")
+            _d4, _s4 = W.resolve_db_dir("", bust=True)
             ok("F3b 证据相近时**不自动选**：返回 (\"\", \"ambiguous\") 而不是 hit[0]",
                (_d4, _s4) == ("", "ambiguous"), "%r / %r" % (_d4, _s4))
             _dl, _sl = W.resolve_db_dir(str(_a))
@@ -207,6 +207,24 @@ try:
 finally:
     W._db_dir_candidates, W._fixed_drives = _orig_cands, _orig_drives
     shutil.rmtree(TMP, ignore_errors=True)
+
+print("── H. 扫盘结果**进程内缓存**（发送链每次开库都要候选表；不缓存 ⇒ 每条消息重扫十几秒）──")
+_cnt = {"n": 0}
+_orig_probe2 = W._probe_db_dirs
+_orig_cache = dict(W._RESOLVE_DB_CACHE)
+try:
+    W._probe_db_dirs = (lambda extra="": (_cnt.__setitem__("n", _cnt["n"] + 1), _orig_probe2(extra))[1])
+    W.resolve_db_dir("", bust=True) # 强制真扫一次
+    _after_bust = _cnt["n"]
+    W.resolve_db_dir("")
+    W.resolve_db_dir("")
+    ok("bust 那次真扫盘、随后两次命中缓存（不再扫盘）",
+       _after_bust == 1 and _cnt["n"] == 1, "扫盘次数 %d" % _cnt["n"])
+    ok("配置里填了目录 ⇒ 连扫盘都不走（来源=config，且不触发探盘）",
+       W.resolve_db_dir("D:\\x") == ("D:\\x", "config") and _cnt["n"] == 1, "扫盘次数 %d" % _cnt["n"])
+finally:
+    W._probe_db_dirs = _orig_probe2
+    W._RESOLVE_DB_CACHE.update(_orig_cache)
 
 print("\n==== 微信数据目录发现判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

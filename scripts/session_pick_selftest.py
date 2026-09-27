@@ -571,17 +571,26 @@ print("── I. 「当前开着的会话就是目标」的第三条独立证据
 #    ⇒ 闸门判否、后面每一步都在"没有正面证据"里打转。补第三档＝高亮行时间（屏幕）× DB。
 _ok3_hit = {"v": True}
 _ad4 = W.WeChatAdapter.__new__(W.WeChatAdapter)
-_ad4.current_chat_name = lambda gui=None: ("", "绿底带在 y=120~217 但那一行名字 OCR 读不出")
-_ad4._active_row_time_ok = lambda chat_id, pane="", gui=None: (True, "高亮行（y=168）时间 1:03 ＝目标最后一条消息时间")
+_ad4.current_chat_name = lambda gui=None, img=None: ("", "绿底带在 y=120~217 但那一行名字 OCR 读不出")
+_ad4._active_row_time_ok = lambda chat_id, pane="", gui=None, img=None: (True, "高亮行（y=168）时间 1:03 ＝目标最后一条消息时间")
 ok("第三档能独立撑起「就是它」（修复前这条是红的）",
    _ad4.chat_is_open("x", gui=None, name="E")[0] is True, str(_ad4.chat_is_open("x", gui=None, name="E")))
-_ad4._active_row_time_ok = lambda chat_id, pane="", gui=None: (False, "高亮行时间是 9:41 ≠ 1:03")
+_ad4._active_row_time_ok = lambda chat_id, pane="", gui=None, img=None: (False, "高亮行时间是 9:41 ≠ 1:03")
 ok("第三档给不出正面证据时仍判否（fail-closed）",
    _ad4.chat_is_open("x", gui=None, name="E")[0] is False)
 ok("源码断言：chat_is_open 接了第三档、且与 chat_identity_ok 同源",
-   _sm.has(_w_src, "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)")
+   _sm.has(_w_src, "_ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui, img=_img0)")
    and _sm.has(_w_src, "def _active_row_time_ok")
    and _sm.has(_w_src, "_ok_t, _why_t = self._active_row_time_ok(chat_id, pane=pane, gui=gui)"))
+_cio = _srcslice.func_src(_w_src, "chat_is_open")
+ok("第三档**排在名字档之前**（先问最便宜且区分力强的那一档；命中就省掉后面两次整帧 OCR）",
+   0 <= _cio.find("_ok3, _why3 = self._active_row_time_ok") < _cio.find("got, why = self.current_chat_name"),
+   "idx=%d/%d" % (_cio.find("_ok3, _why3 = self._active_row_time_ok"),
+                  _cio.find("got, why = self.current_chat_name")))
+ok("各档**共用同一帧**（原来每档各抓 2~3 张，一轮取帧十几张 ⇒ 直接变成实机响应时间）",
+   _sm.has(_cio, "_im4 = _img0 if _img0 is not None else")
+   and _sm.has(_cio, "_im5 = _img0 if _img0 is not None else")
+   and _sm.has(_cio, "self.current_chat_name(gui=gui, img=_img0)"))
 
 print("── J. 点前等列表停稳（投递滚轮是平滑滚动，惯性期间点击会点空）──")
 from agent import chat_header as CH # noqa: E402
@@ -710,7 +719,7 @@ try:
     from agent import chat_ocr as _co5
     from agent import wechat as _W5b
     _ad5 = _W5b.WeChatAdapter.__new__(_W5b.WeChatAdapter)
-    _ad5.current_chat_name = lambda gui=None: ("", "读不出")
+    _ad5.current_chat_name = lambda gui=None, img=None: ("", "读不出")
     _ad5.display_name = lambda cid: "某会话"
     _cap5, _ht5 = _co5.capture_best, _co5.header_text
     _co5.capture_best = lambda gui=None, frames=2: object()

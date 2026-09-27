@@ -306,7 +306,7 @@ try:
     _saved_cands = W._db_dir_candidates
     W._db_dir_candidates = lambda extra="": (([str(extra)] if str(extra or "").strip() else []) + [_hit5])
     try:
-        _dir5, _src5 = W.resolve_db_dir("")
+        _dir5, _src5 = W.resolve_db_dir("", bust=True)
         ok("配置没填、扫盘扫到 ⇒ 就用它（来源=scanned）",
            _dir5 == _hit5 and _src5 == "scanned", "%s / %s" % (_dir5, _src5))
         ok("探盘结果里带 hit（哪些候选真有 .db）",

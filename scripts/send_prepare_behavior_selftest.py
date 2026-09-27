@@ -128,7 +128,7 @@ class _Stub(object):
     def _idn_cache_invalidate(self, *a, **k):
         return None
 
-    def current_chat_name(self, gui=None):
+    def current_chat_name(self, gui=None, img=None):
         return ("", "stub：本夹具不读真实会话名")
 
     def display_name(self, cid):

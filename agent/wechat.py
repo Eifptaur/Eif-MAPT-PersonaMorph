@@ -3885,8 +3885,10 @@ class WeChatAdapter:
         except Exception:
             pass
         _hold_begin("快路径发送") # 摁住微信：让"输入那一跳"只占 0.15s 而不是 0.65s+
-        # ⚡ ⇒ 发送前也等一个输入空档
-        _wait_user_pause(max_s=6.0, idle=0.9)
+        # ⚡ 发送前也等一个输入空档。参数从 (6.0, 0.9) 收紧到 (2.0, 0.5)：
+        #    "等用户停手"最坏要 6 秒，而这一枪**只占 0.15s**（`_hold_begin` 已经摁住微信
+        #    不让它抢前台）⇒ 用 6 秒去省那 0.15s 的打扰不值得；2 秒上限 + 0.5 秒无输入即算空档。
+        _wait_user_pause(max_s=2.0, idle=0.5)
         ok_t, why_t = backend.send_text(int(main), text)
         if not ok_t:
             log.info("快路径投字没打出去（%s）⇒ 回退老链", str(why_t)[:60])
@@ -3905,7 +3907,9 @@ class WeChatAdapter:
         #   这个**会重复发消息**的真缺陷（本文件自述写库 ~1.6s、图片 30~60s ⇒ 2.6s 本来就在临界上）。
         deadline = time.time() + 6.5
         while time.time() < deadline:
-            time.sleep(0.3)
+            # 0.3 → 0.2：库一次读只要几十毫秒（本机实测 0.1s 量级）⇒ 采样密一点，落地就更早发现
+            # （成功路径上是"早 0.2s 收工"，判据不变：仍然只认 DB 回读）。
+            time.sleep(0.2)
             try:
                 rows = list(self._db_messages(chat_id, limit=3) or [])
             except Exception:
@@ -3940,7 +3944,14 @@ class WeChatAdapter:
     #        上一个事务的正面结论**立刻作废**。秒数（`_IDN_CACHE_TTL_S`）只当作**兜底上限**，
     #        防某个调用方忘了开事务时缓存长期挂着。
     #     d) **命中必须记账**：命中时 `log.info` 一行「命中 X 秒前的正面证据」，便于日后归因。
-    _IDN_CACHE_TTL_S = 4.0
+    #    ⚡ 4 秒 → 20 秒：这个秒数是**兜底上限**，但 4 秒**比它自己那次计算的耗时还短**
+    #       （一次 `chat_is_open` 要抓帧 + 3~4 次 OCR，实测 15~18 秒）⇒ 刚算出的正面结论
+    #       在同一个事务里再问就已过期 ⇒ 每一步都重算一遍 ⇒ 实机响应被拖到十几秒。
+    #       敢拉长到 20 秒的三条理由：① 任何**写动作**（点击/切窗）都会立刻
+    #       `_idn_cache_invalidate`，且事务 token 变化也会作废；② 真发出去之后靠 DB 回读复核
+    #       目标会话（发错会话 ⇒ 读不到 ⇒ 判失败 + 撤草稿）；③ 唯一盲区是"用户在这 20 秒内
+    #       手动切了微信里的会话"，那种情况同样会被 DB 回读暴露成失败，不会静默发错。
+    _IDN_CACHE_TTL_S = 20.0
 
     def _idn_txn_begin(self):
         """开一次发送事务：换 token ⇒ 上一事务的一切正面结论作废（约束 c 的主判据）。"""
@@ -4115,9 +4126,25 @@ class WeChatAdapter:
                 log.info("命中 %.1fs 前的会话身份正面证据（不重复取帧/OCR）：%s", self._IDN_CACHE_TTL_S, _hit[1][:70])
                 return _hit
         want = name or self.display_name(chat_id) or chat_id
+        # ⚡ **整轮只抓一次帧，各档共用**：原来每档各抓 2~3 帧（一轮下来取帧十几张），
+        #    而帧要几百毫秒、OCR 要 1~3 秒 ⇒ 重复抓帧直接变成实机响应时间（实测一次核对 15~18 秒）。
+        #    帧＝"同一时刻的窗口画面"，各档从它里面读各自要的区域 ⇒ 共用**不改变任何判据**。
+        try:
+            from . import chat_ocr as _co0
+            _img0 = _co0.capture_best(gui=gui or self._get_gui(), frames=2)
+        except Exception:
+            _img0 = None
+        # ③ **提前到最前**（高亮行时间 × DB：屏幕与库两个独立来源，强档）——
+        #    命中就省掉后面那两次整帧 OCR；不命中再原样走 ①②③′（档位与判据一字不改）。
+        try:
+            _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui, img=_img0)
+            if _ok3:
+                return self._idn_cache_put(_ck, (True, _why3))
+        except Exception:
+            pass
         # 撞名源＝DB 可信名 ∪ 屏幕上读到过的会话行名（strict/fuzzy 同源，说明见 _known_chat_names）
         _coll_names = self._known_chat_names()
-        got, why = self.current_chat_name(gui=gui)
+        got, why = self.current_chat_name(gui=gui, img=_img0)
         try:
             from . import chat_ocr as _co
             # ⛔ **授权档只许"完全相等"**（`matches` 是"互相包含"，
@@ -4133,7 +4160,7 @@ class WeChatAdapter:
         _tt = "" # 供 ③′ 模糊档兜底复用（档② 异常时保持空，_src3 退回只用 got）
         try:
             from . import chat_ocr as _co2
-            _im4 = _co2.capture_best(gui=gui or self._get_gui(), frames=2)
+            _im4 = _img0 if _img0 is not None else _co2.capture_best(gui=gui or self._get_gui(), frames=2)
             _tt = _co2.header_text(_im4) if _im4 is not None else ""
             # ⛔ 同上 —— 标题带这一档也是**授权档**，只许完全相等（不做包含）。
             if _tt and _co2.matches_strict(_tt, want, _coll_names):
@@ -4141,13 +4168,7 @@ class WeChatAdapter:
                               % (_tt[:16], want))))
         except Exception:
             pass
-        # ③ 高亮行时间 × DB（有区分力：那个时刻在会话列表里必须唯一）
-        try:
-            _ok3, _why3 = self._active_row_time_ok(chat_id, gui=gui)
-            if _ok3:
-                return self._idn_cache_put(_ck, (True, _why3))
-        except Exception:
-            pass
+        # ③ 高亮行时间 × DB —— **已提前到本函数开头**（命中即返回，省后面两次整帧 OCR）
         # ③′ **候选集模糊档**（strict 全档漏掉"读错一两个字"时的兜底，授权可用）：
         #    把会话列表其余可读名字当候选集，只认「与 OCR 读数唯一接近」的那一个——
         #    两个候选都接近 ⇒ 歧义不认（宁漏发不误发）。三条硬约束见
@@ -4157,7 +4178,7 @@ class WeChatAdapter:
             from . import chat_ocr as _co3
             _src3 = got or _tt
             if _src3:
-                _im5 = _co3.capture_best(gui=gui or self._get_gui(), frames=2)
+                _im5 = _img0 if _img0 is not None else _co3.capture_best(gui=gui or self._get_gui(), frames=2)
                 # ⛔ D1+ /r7：候选行排除**当前高亮行**自己的读数
                 #   （与判据 a 同源 ⇒「a≈no」自否决），绿底带量不到时按名字相似度兜底
                 #   剔除——细节见 chat_ocr.candidate_rows_excluding_active（两处共用，
@@ -5977,14 +5998,23 @@ class WeChatAdapter:
                 return False, ("发图失败：右键菜单里没点到「粘贴」（投递组合键在微信上不成立，"
                                "只剩这条后台通路；本次**没有打任何发送枪**）")
             time.sleep(1.4) # 等缩略图渲染进输入框
-            # 自检：图真的进输入框了吗？判据＝「发送」按钮的颜色（空框＝灰、有内容＝绿）。
-            # 为什么要它：只有"图确实进了框"才该打发送枪 —— 否则那几枪会把**空消息**或
-            # 框里原有的文字发出去（比"没发出去"更糟）。
-            _has, _has_why = self._input_has_content(gui, r)
-            if not _has:
+            # 自检：图真的进输入框了吗？为什么要它：只有"图确实进了框"才该打发送枪 ——
+            # 否则那几枪会把**空消息**或框里原有的文字发出去（比"没发出去"更糟）。
+            # ⛔ **判据必须用 PrintWindow 那一侧**（`_composer_state`）：原来的「发送按钮颜色」走屏幕实拍，
+            #    而微信被别的窗口遮挡时它会读到**别人家的像素**（实测：图其实已经粘进框了，它却读到
+            #    一片近白 ⇒ 判"没进框" ⇒ 一枪不打 ⇒ 发图永远失败）。PrintWindow 走窗口自身画面，
+            #    压在上面也能量。
+            _st, _st_why = _composer_state(self, gui, r)
+            if _st == "empty":
                 return V_NOT_SENT, ("右键「粘贴」之后输入框里没看到内容（%s）⇒ 不发，"
-                                    "也没打任何发送枪" % _has_why)
-            log.info("发图·粘贴自检通过：%s", _has_why)
+                                    "也没打任何发送枪" % _st_why)
+            if _st == "unknown":
+                # 两路都量不到（窗口最小化/纯色假帧）⇒ **乐观继续**：打了枪之后，
+                # 成败仍由 DB 回读定，而失败路径会把草稿撤掉（`_draft_cleanup_note`）——
+                # 比"因为量不到就不发"更符合"宁可漏发也别一直发不出去"的现场诉求。
+                log.info("发图·粘贴自检：两路都量不到输入框（%s）⇒ 乐观继续打枪（靠 DB 回读定成败）",
+                         _st_why)
+            log.info("发图·粘贴自检通过：%s", _st_why)
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
             # ⛔ **三枪**（与发文字同一口径，见 :2733 `_one_shot`）——
             #   老实现只点**一枪**「发送」然后干等 DB；那一枪没生效（伪激活后焦点/命中点有偏差）
@@ -6038,8 +6068,9 @@ class WeChatAdapter:
             #   判据：**发送按钮从绿变灰＝输入框已清空＝内容确实离手**（与进框自检同一把尺子，
             #   都走屏幕实拍）。它不依赖数据库，正好补上"清空过聊天记录的会话读不到新行"这个洞。
             #   ⚠️ 口径：这是**屏幕证据**，不是 DB 回读 —— 回执里必须把两种判据分别写清，不许混为一谈。
-            _still, _still_why = self._input_has_content(gui, r)
-            if not _still:
+            # ⛔ 同样改用 PrintWindow 那一侧：屏幕实拍被遮挡时会读到别人的像素（见上面进框自检那条）。
+            _st2, _still_why = _composer_state(self, gui, r)
+            if _st2 == "empty":
                 return V_OK, ("投递发图：**输入框已清空**（%s）⇒ 按屏幕证据判已发出"
                               "（DB 回读没等到新行；打了 %d 枪 %s）"
                               % (_still_why, len(_fired), "→".join(_fired) if _fired else "0"))
@@ -6280,13 +6311,9 @@ class WeChatAdapter:
                             "⇒ 按声明放行（判据原文：%s）", idn_why)
                 idn_why = "%s（已按调用方声明确认放行）" % idn_why
             if idn is None and not confirm_open:
-                # ⛔ （拍摄现场）：
-                #   清空过聊天记录的会话 ⇒ 内容级证据永远拿不到（`None`）⇒ 老写法**无条件拒绝发文件**
-                #   ⇒ 用户看着机器人把图下载好了却不发。而**名字档上面已经在 :3068 过了一遍**
-                #   （`ok_open`，含"绿底高亮行 + 名字"与"会话头标题带"两档强证据）——
-                #   名字档说"是它"、内容档说"没证据"，再拒发就是自相矛盾。
-                #   ⇒ 与**发文字**那条链的既有口径对齐（那边正是这么做的，见 :1841-1854）：名字档过了就放行，
-                #     但**必须记账留痕**（日志 + 返回值里带上判据原文），事后能问责。
+                # ⛔ 清空过聊天记录的会话拿不到内容级证据（`None`）⇒ 无条件拒发会让"库读不出来"变成
+                #    "永远发不出文件"；而**名字档**（`ok_open`：绿底高亮行 + 名字 / 会话头标题带）已经在上面
+                #    过了一遍 ⇒ 与发文字那条链同口径：名字档过了就放行，但**必须记账留痕**（日志 + 返回值带原文）。
                 if ok_open:
                     log.warning("发文件：拿不到内容级证据（%s），但**名字档已确认**（%s）⇒ 按名字档放行（记账）",
                                 str(idn_why)[:60], str(why_open)[:60])
@@ -6448,9 +6475,7 @@ class WeChatAdapter:
                     target.SendKeys("{Enter}")
                 except Exception as e2:
                     return False, "点「打开」失败：%s" % e2
-            # ⚠️ 顺序很重要：原来是"先 sleep 2.0 再看框关没关、最后才还前台"
-            #    ⇒ 用户的窗口要多丢**约 2 秒**前台。改成：**框一消失就立刻还**（`_wait_dialog_gone` 是
-            #    0.05s 轮询），实在没关（老版本要点一次回车）才走补回车那条路。
+            # ⚠️ 框一消失就立刻还前台（`_wait_dialog_gone` 是 0.05s 轮询），别让用户窗口白丢约 2 秒。
             if _wait_dialog_gone(int(hwnd), 4.0):
                 _restore_fg_until("对话框关闭后", timeout=2.5, keep=False)
                 time.sleep(0.6)
@@ -6462,6 +6487,12 @@ class WeChatAdapter:
                 _wait_dialog_gone(int(hwnd), 2.0)
                 _restore_fg_until("补回车后", timeout=2.5, keep=False)
                 time.sleep(0.4)
+
+            # ⚡ 文件没挂进输入框就**立刻**收手（否则后面那 90 秒轮询纯属白等）；判据走 PrintWindow 那一侧。
+            _fst, _fwhy2 = _composer_state(self, gui, r)
+            if _fst == "empty":
+                return V_NOT_SENT, ("文件没挂进输入框（%s）⇒ 没打发送枪、也不干等｜%s"
+                                    % (_fwhy2, _clr("发文件·没挂上")))
 
             # ④ 补一次「发送」（文件此时挂在输入框里当草稿）
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
@@ -7003,7 +7034,7 @@ class WeChatAdapter:
         except Exception as e:
             return None, "内容核对异常：%s" % type(e).__name__
 
-    def _active_row_time_ok(self, chat_id: str, pane: str = "", gui=None):
+    def _active_row_time_ok(self, chat_id: str, pane: str = "", gui=None, img=None):
         """**当前高亮行的时间** ＝ 目标会话最后一条消息的时间（**屏幕 × DB 两个独立来源**）。
 
         为什么单列成一条档：当前打开的那一行是**白字绿底**，名字 OCR 读不准
@@ -7025,7 +7056,9 @@ class WeChatAdapter:
             return False, ("同一分钟（%s）还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话，"
                            "改由名字/标题带那两档定论" % (_lt, "、".join(_rivals[:3])))
         try:
-            _himg = _co.capture_best(gui=gui or self._get_gui(), frames=2)
+            # ⚡ `img`＝调用方**已经抓好的那一帧**（同一轮身份核对里各档共用，见 `chat_is_open`）：
+            #    帧本身要几百毫秒，一份画面重复抓四遍会直接变成实机响应时间。
+            _himg = img if img is not None else _co.capture_best(gui=gui or self._get_gui(), frames=2)
             _ht, _hy = _co.highlight_time(_himg) if _himg is not None else ("", None)
         except Exception:
             _ht, _hy = "", None
@@ -11043,7 +11076,27 @@ def _probe_db_dirs(extra: str = "") -> dict:
             "deep": deep, "evidence": evs, "why": why, "ambiguous": ambiguous}
 
 
-def resolve_db_dir(explicit: str = "") -> tuple:
+#: 扫盘结果缓存：`(时刻, 结果)`。扫盘要遍历盘符 + 目录（本机实测约 15 秒），而 `db_open_tries`
+#  在**每次开库**时都要生成候选表 ⇒ 不缓存的话每条消息都要重扫一遍，发送链会被拖到十几秒。
+_RESOLVE_DB_CACHE = {"at": 0.0, "val": None, "sig": None}
+_RESOLVE_DB_TTL_S = 300.0
+
+
+def _resolve_db_sig() -> str:
+    """扫盘缓存的**签名**＝当前候选目录清单。
+
+    为什么要签名而不只看 TTL：判据会在**同一进程**里换掉候选目录夹具（验证"换库能被重新发现"），
+    只看 TTL 的话它会读到上一次夹具的结论（那个目录已被删）⇒ 判据假红。
+    候选清单是纯路径拼装（不扫盘），签名一变就重扫；产品运行期签名恒定 ⇒ 稳定命中缓存。
+    """
+    try:
+        return "|".join(str(x) for x in _db_dir_candidates(""))
+    except Exception as _e:
+        log.debug("候选目录清单取不到（签名按空处理，等于每次都重扫）：%s", _e)
+        return ""
+
+
+def resolve_db_dir(explicit: str = "", bust: bool = False) -> tuple:
     """**决定消息库用哪个目录**：配置里填的 → 扫盘探到的（含 .db 的**最优**候选）→ 空。
 
     为什么要有它：他的微信把聊天文件放在 `E:\\xwechat_files`
@@ -11053,9 +11106,32 @@ def resolve_db_dir(explicit: str = "") -> tuple:
 
     ⭐ 多个候选**证据相近**时返回 `("", "ambiguous")` —— 不静默选第一个（选错＝读几个月前的
     消息或**别人的账号**），把候选与证据写进日志，让用户在控制台「数据库目录」里点一个。
+    ⚡ **配置里填了就直接返回**（不扫盘）；只有要扫盘时才走缓存（`_RESOLVE_DB_TTL_S`）：
+    扫盘是纯只读、结果在一轮运行里不会变，而它的成本（十几秒）会直接落到发送链上。
+    要强制重扫（控制台「重新找库」）就传 `bust=True`。
     """
     if str(explicit or "").strip():
         return str(explicit).strip(), "config"
+    _sig = _resolve_db_sig()
+    try:
+        if (not bust) and (_RESOLVE_DB_CACHE["val"] is not None) and \
+                (_RESOLVE_DB_CACHE["sig"] == _sig) and \
+                (time.time() - float(_RESOLVE_DB_CACHE["at"] or 0) <= _RESOLVE_DB_TTL_S):
+            return _RESOLVE_DB_CACHE["val"]
+    except Exception:
+        pass
+    _out = _resolve_db_dir_scan()
+    try:
+        _RESOLVE_DB_CACHE["at"] = time.time()
+        _RESOLVE_DB_CACHE["val"] = _out
+        _RESOLVE_DB_CACHE["sig"] = _sig
+    except Exception as _e:
+        log.debug("扫盘缓存写不进去（不影响本次结果，只是下次还要重扫）：%s", _e)
+    return _out
+
+
+def _resolve_db_dir_scan() -> tuple:
+    """真正扫盘那一半（`resolve_db_dir` 在它外面套缓存）。只读盘，不碰库、不碰窗口。"""
     try:
         p = _probe_db_dirs("")
         _hits = p.get("hit") or []

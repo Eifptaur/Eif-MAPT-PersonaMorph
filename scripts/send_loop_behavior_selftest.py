@@ -185,7 +185,7 @@ class _Stub(object):
     def _idn_cache_invalidate(self, *a, **k):
         return None
 
-    def current_chat_name(self, gui=None):
+    def current_chat_name(self, gui=None, img=None):
         return ("", "stub：本夹具不读真实会话名")
 
     def display_name(self, cid):
@@ -194,7 +194,7 @@ class _Stub(object):
     def db_alive(self):
         return (True, "stub")
 
-    def _active_row_time_ok(self, chat_id, gui=None):
+    def _active_row_time_ok(self, chat_id, gui=None, img=None):
         return (False, "stub：时间档不参与")
 
     def _known_chat_names(self):
