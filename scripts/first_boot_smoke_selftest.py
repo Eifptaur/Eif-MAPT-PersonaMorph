@@ -137,9 +137,12 @@ def _wechat_main_hwnd() -> int:
         return 0
     for _area, hwnd, pid in sorted(found, reverse=True)[:8]:
         try:
+            # ⛔ `text=True` 在中文系统上会按 locale 解 `tasklist` 的 GBK 输出 ⇒ 抛 UnicodeDecodeError
+            #   ⇒ 异常文本再被 print 出去 ⇒ 父进程（run_all）也跟着解码失败 ⇒ **汇总行丢失 ⇒ 整条判红**
+            #   （实测：全量里 `first_boot` rc=0 / 13-0 却标 RED）。⇒ 固定 utf-8 + replace（进程名是 ASCII，不受影响）。
             r = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"],
-                               capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
-            nm = (r.stdout or "").lower()
+                               capture_output=True, timeout=15, creationflags=NO_WINDOW)
+            nm = (r.stdout or b"").decode("utf-8", "replace").lower()
             if "weixin.exe" in nm or "wechat.exe" in nm:
                 return hwnd
         except Exception as e:
