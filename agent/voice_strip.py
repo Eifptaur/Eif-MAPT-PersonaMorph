@@ -859,7 +859,12 @@ def _wait_voice(wechat, chat_id: str, before, timeout: float = 12.0) -> tuple:
     _db_err = "" # 读库失败原因：**读失败 ≠ 没发出去**，超时时必须分开说
     while time.time() - t0 < timeout:
         try:
-            rows = wechat._db.get_messages(chat_id, limit=20) or []
+            # ⛔ **不许用带前缀的 chat_key 直读库**：消息库按**裸 id** 索引（`group:xxx` 那种
+            #    永远读到 0 行）⇒ 会把**已经发出去的语音条**判成没发出去。走适配器那个
+            #    「两种键形态都试」的入口；适配器没有它时才退回直读（老桩）。
+            _getm = getattr(wechat, "_db_messages", None)
+            rows = ((_getm(chat_id, limit=20) if callable(_getm)
+                     else wechat._db.get_messages(chat_id, limit=20)) or [])
             _reads += 1
             for row in rows:
                 if str(row.get("type") or "") == "语音":
