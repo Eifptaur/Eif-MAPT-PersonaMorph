@@ -20,6 +20,10 @@ try:
 except Exception:
     pass
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
+_iso14.all_() # 判据不许写产品的 data/ 与 logs/
+
 import agent.config as cfgmod # noqa: E402
 from agent import prompt as pr # noqa: E402
 from agent import tier_control as tc # noqa: E402

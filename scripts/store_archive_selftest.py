@@ -20,6 +20,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
 import _srcslice
+import _iso14 # noqa: E402
+_iso14.all_() # 判据不许写产品的 data/ 与 logs/
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:

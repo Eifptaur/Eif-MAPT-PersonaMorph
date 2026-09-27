@@ -26,6 +26,9 @@ import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _iso14 # noqa: E402
+_iso14.all_() # 判据不许写产品的 data/ 与 logs/
 TEMP = os.environ.get("TEMP") or r"C:\Windows\Temp"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 PASS, FAIL, SKIP = [0], [0], [0]

@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
 import _srcslice
 import _iso14 # noqa: E402
-_iso14.wechat()
+_iso14.all_() # 台账 + 挪窗借用记录 + 开窗锁…全部指到临时区（只 wechat() 会让 data/window_borrow.json 被写）
 
 from agent import wechat as W # noqa: E402
 from agent import chat_header as ch # noqa: E402

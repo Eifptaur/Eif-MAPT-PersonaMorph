@@ -37,6 +37,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcslice
+import _iso14 # noqa: E402
+_iso14.all_() # 判据不许写产品的 data/ 与 logs/（本判据只扫源码，同样不给"我写了盘"的豁免）
 
 PASS, FAIL = [0], [0]
 

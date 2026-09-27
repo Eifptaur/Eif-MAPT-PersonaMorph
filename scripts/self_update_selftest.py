@@ -34,6 +34,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE) # 同目录的 `_srcmatch`
 import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 import _srcslice
+import _iso14 # noqa: E402
+_iso14.all_() # 判据不许写产品的 data/ 与 logs/（挪窗借用记录 / 台账 / 锁…全部指到临时区）
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import update_apply as UA # noqa: E402
