@@ -734,6 +734,29 @@ def _draft_cleanup_note(adapter, backend, main: int, gui, r, dirty_before: bool,
     return "；残留清理：%s" % _cwhy
 
 
+def _commit_three_shots(adapter, backend, main: int, send_pt, tag: str = "") -> list:
+    """把输入框里的草稿**提交出去**：回车优先的三枪（1 回车 / 2 点「发送」/ 3 回车兜底）。
+
+    三条链（发文字 / 发图 / 发文件）共用它，理由是实测出来的对称性：
+      · "只点一次「发送」按钮"**不可靠** —— 那一枪可能落到工具栏带上（`rh*0.945` 附近就是
+        😊/📁/✂ 那排图标），或伪激活之后命中点偏了；发文字与发图链早就因此改成"回车优先 + 多枪"。
+      · 发文件链原先**只点一次按钮** ⇒ 现象正是"文件挂进输入框了、枪也打了，但消息没出去"。
+    多枪**不会重复发**：草稿发出去之后输入框就空了，后面几枪等于空放。返回实际打出去的枪名。
+    """
+    from . import input_backend as _ib
+    acts = (("回车", lambda: backend.keys(int(main), [_ib.VK_RETURN])),
+            ("点「发送」", lambda: adapter._click_posted(backend, main, send_pt, "%s点「发送」" % tag)[0]),
+            ("回车（兜底）", lambda: backend.keys(int(main), [_ib.VK_RETURN])))
+    fired = []
+    for _i, (_lbl, _fn) in enumerate(acts, 1):
+        try:
+            _fn()
+            fired.append(_lbl)
+        except Exception as e:
+            log.info("%s第 %d 枪（%s）异常：%s", tag, _i, _lbl, e)
+    return fired
+
+
 def _restore_fg(hwnd: int = 0, note: str = "", keep: bool = False) -> None:
     """把前台还回"**打开对话框之前**那一个"（优先级：传入的 hwnd → `_FG_STASH` → 当前前台）。
 
@@ -5978,10 +6001,15 @@ class WeChatAdapter:
                                "（老实现按比例 0.87 点，引用长消息时会落到引用条甚至 ✕ 上）")
             _RX, _RY = _img_pt[0] - int(r[0]), _img_pt[1] - int(r[1])
             _paste_ok = False
-            try:
-                _paste_ok = bool(self._right_click_menu_posted(gui, _RX, _RY, "粘贴", delay=1.0))
-            except Exception as _e:
-                log.info("发图·右键「粘贴」异常：%s", _e)
+            for _pr in (1, 2): # 菜单项的 OCR 偶发读串（实测读到过"可以出现，但要温"这种）⇒ 再弹一次
+                try:
+                    _paste_ok = bool(self._right_click_menu_posted(gui, _RX, _RY, "粘贴", delay=1.0))
+                except Exception as _e:
+                    log.info("发图·右键「粘贴」异常（第 %d 次）：%s", _pr, _e)
+                if _paste_ok:
+                    break
+                log.info("发图·第 %d 次右键没点中「粘贴」⇒ 重试一次（菜单项 OCR 会偶发读串）", _pr)
+                time.sleep(0.6)
             if not _paste_ok:
                 # 菜单可能还开着 ⇒ 关掉它（别在用户屏幕上留一个浮层）
                 try:
@@ -6166,11 +6194,16 @@ class WeChatAdapter:
 
     @staticmethod
     def _looks_like_file_msg(row) -> bool:
-        """DB 回读的行是不是"文件类"消息（本机实测文件消息 type='文件/链接/卡片'）。"""
+        """DB 回读的行是不是"文件类"消息（本机实测文件消息 type='文件/链接/卡片'）。
+
+        ⚠️ **视频也要算**：微信 PC 发 mp4 落库时 `type_name='视频'`（实测）—— 漏了它，
+        发视频会"明明发出去了（群里看得见）却判成**没发出去**"，还要连累"失败即撤草稿"去删一条
+        已经发出去的草稿（撤不到什么，但回执与台账全错）。
+        """
         if not row:
             return False
         t = str(row.get("type_name") or row.get("type") or "")
-        return ("文件" in t) or ("链接" in t) or ("卡片" in t)
+        return ("文件" in t) or ("链接" in t) or ("卡片" in t) or ("视频" in t)
 
     @staticmethod
     def _looks_like_img_msg(row) -> bool:
@@ -6494,9 +6527,9 @@ class WeChatAdapter:
                 return V_NOT_SENT, ("文件没挂进输入框（%s）⇒ 没打发送枪、也不干等｜%s"
                                     % (_fwhy2, _clr("发文件·没挂上")))
 
-            # ④ 补一次「发送」（文件此时挂在输入框里当草稿）
+            # ④ 提交（文件此时挂在输入框里当草稿）：与发文字/发图**同一口径**——回车优先的三枪。
             send_pt = (int(r[0]) + int(rw * 0.932), int(r[1]) + int(rh * 0.945))
-            backend.click(main_hwnd, send_pt)
+            _fired = _commit_three_shots(self, backend, main_hwnd, send_pt, tag="发文件·")
 
             # ⑤ 只认 DB 回读
             deadline = time.time() + max(15.0, float(wait_s))

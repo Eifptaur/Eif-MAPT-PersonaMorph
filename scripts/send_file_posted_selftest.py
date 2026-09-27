@@ -50,6 +50,8 @@ ok("本机实测的 type 能认（文件/链接/卡片）", A._looks_like_file_m
 ok("type_name 优先", A._looks_like_file_msg({"type_name": "文件", "type": "49"}) is True)
 ok("文本不算", A._looks_like_file_msg({"type": "文本", "content": "aavv"}) is False)
 ok("图片不算", A._looks_like_file_msg({"type": "图片"}) is False)
+ok("**视频要算**（微信 PC 发 mp4 落库 type＝「视频」；漏了它会把「发出去了」判成「没发出去」）",
+   A._looks_like_file_msg({"type_name": "视频"}) is True and A._looks_like_file_msg({"type": "视频"}) is True)
 ok("空行不算", A._looks_like_file_msg(None) is False and A._looks_like_file_msg({}) is False)
 
 print("── C. 源码层：三处关键动作都在（且没有退回剪贴板老路）──")
@@ -64,7 +66,8 @@ seg = SRC[i:(_j if _j > 0 else i + 11000)] if i >= 0 else ""
 ok("会话闸在先，拿不到证据就 return False", "发文件要求目标会话已打开且被确认" in seg)
 ok("用 UIA 的 SetValue 写文件名", "GetValuePattern().SetValue" in seg)
 ok("点「打开」（或回车兜底）", "打开" in seg and "SendKeys(\"{Enter}\")" in seg)
-ok("最后投递点「发送」", "send_pt" in seg and _sm.has(seg, "backend.click(main_hwnd, send_pt)"))
+ok("提交与发文字/发图**同一口径**：回车优先的三枪（只点一次「发送」按钮实测不可靠 —— 那一枪会落到工具栏带上）",
+   "send_pt" in seg and _sm.has(seg, "_commit_three_shots(self, backend, main_hwnd, send_pt"))
 ok("只认 DB 回读判成功", "_looks_like_file_msg" in seg)
 ok("注释里写明剪贴板那条无效、别再试", "剪贴板那条" in seg and "别再往那条路上试" in seg)
 # 的"台账档"（当天实测：DB content 是压缩占位符 + 会话行 OCR 只剩 `[图片]` ⇒ 前几档全失效）：
