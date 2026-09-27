@@ -6242,7 +6242,7 @@ class WeChatAdapter:
             return True, ""
 
     @_idn_txn_scope
-    def send_file_posted(self, chat_id: str, local_path: str, wait_s: float = 90.0, allow_repeat: bool = False,
+    def send_file_posted(self, chat_id: str, local_path: str, wait_s: float = 45.0, allow_repeat: bool = False,
                          confirm_open: bool = False):
         """**消息驱动发文件**（全程不动鼠标；会短暂弹出「选择文件」对话框）。
 
@@ -6488,7 +6488,7 @@ class WeChatAdapter:
                 _restore_fg_until("补回车后", timeout=2.5, keep=False)
                 time.sleep(0.4)
 
-            # ⚡ 文件没挂进输入框就**立刻**收手（否则后面那 90 秒轮询纯属白等）；判据走 PrintWindow 那一侧。
+            # ⚡ 文件没挂进输入框就**立刻**收手（否则后面那段 `wait_s` 轮询纯属白等）；判据走 PrintWindow 那一侧。
             _fst, _fwhy2 = _composer_state(self, gui, r)
             if _fst == "empty":
                 return V_NOT_SENT, ("文件没挂进输入框（%s）⇒ 没打发送枪、也不干等｜%s"
