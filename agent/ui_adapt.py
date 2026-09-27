@@ -789,9 +789,16 @@ def prepare_screen(gui) -> bool:
                         _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
                     except Exception:
                         _scale = 1.25
+                    # ⛔ 这一处原来也按写死的 **1250×1100 ×DPI** 摆窗口（实测把用户的 977×976 顶成
+                    #    1466×1464 / 1875×1472），并把位置钉到 (90,90)。⇒ 尺寸读 `ui.lock_window_w/h`、
+                    #    位置用窗口自己的（不再搬）。这是"窗口老是自己变大"的最后一处。
+                    _uic3 = (__import__("agent.config", fromlist=["get_config"]).get_config().get("ui") or {})
+                    _w3 = int(_uic3.get("lock_window_w") or 1113)
+                    _h3 = int(_uic3.get("lock_window_h") or 909)
+                    _r3 = wintypes.RECT()
+                    _user32.GetWindowRect(hwnd, ctypes.byref(_r3))
                     _user32.ShowWindow(hwnd, 9)
-                    _user32.SetWindowPos(hwnd, 0, 90, 90,
-                                         int(1250 * _scale), int(1100 * _scale),
+                    _user32.SetWindowPos(hwnd, 0, int(_r3.left), int(_r3.top), _w3, _h3,
                                          0x0001 | 0x0020 | 0x0040)
                     time.sleep(0.6)
                     gui._update_render_rect()
