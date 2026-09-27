@@ -889,6 +889,22 @@ class Shell(QWidget):
         self.updbar = UpdateBar(self.t)
         self.updbar.apply_state(getattr(self, "_upd_state", None))
         lay.addWidget(self.updbar)
+        # ⚡ 反馈提示条：web 侧一直有（`#noticeBar`：「遇到问题就点反馈…」），Qt 侧只有更新条、
+        #    没有这一条 —— 用户反馈「原本有个公告栏的，没有看到」。文案按用户描述的那条：
+        #    检测报告中心 → 出具报告 → 点反馈提交（兼容性信息自动带上，不用自己跑检查）。
+        try:
+            from PySide6.QtWidgets import QLabel as _QLNotice
+            self.fbNotice = _QLNotice(
+                "遇到问题：在「检测报告中心」找到对应的问题 → 出具检测报告 → 再点「反馈」提交。"
+                "提交时它会自动带上这台机器的兼容性信息（系统 / 缩放 / 微信版本 / 最近失败），不用你另外跑检查。")
+            self.fbNotice.setObjectName("fbNotice")
+            self.fbNotice.setWordWrap(True)
+            self.fbNotice.setStyleSheet(
+                "padding:6px 10px;border:1px dashed rgba(140,180,230,.45);border-radius:8px;"
+                "color:rgba(226,238,255,.92);font-size:12px;")
+            lay.addWidget(self.fbNotice)
+        except Exception:
+            pass
 
         # ── 余额徽章（web balance-badge :703 + loadBalance :3208-3221 + 30s 轮询 :7419）──
         #    显示模式（照实/隐藏/改数字）存 config 的 ui.balance_*，只改显示不动真实余额。
