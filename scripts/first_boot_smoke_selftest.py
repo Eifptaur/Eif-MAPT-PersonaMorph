@@ -110,8 +110,8 @@ def _wechat_main_hwnd() -> int:
     u = ctypes.windll.user32
     try:
         u.SetProcessDPIAware()
-    except Exception:
-        pass
+    except Exception as e:
+        print("  SetProcessDPIAware 失败（不影响判断）：%s" % e)
     found = []
     _PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
@@ -126,13 +126,14 @@ def _wechat_main_hwnd() -> int:
             w, hh = int(r.right - r.left), int(r.bottom - r.top)
             if w > 400 and hh > 300:
                 found.append((w * hh, int(h), int(pid.value)))
-        except Exception:
-            pass
+        except Exception as e:
+            print("  枚举窗口跳过一项（不影响）：%s" % e)
         return True
 
     try:
         u.EnumWindows(_PROC(_cb), 0)
-    except Exception:
+    except Exception as e:
+        print("  取微信主窗失败（EnumWindows）：%s" % e)
         return 0
     for _area, hwnd, pid in sorted(found, reverse=True)[:8]:
         try:
@@ -141,7 +142,8 @@ def _wechat_main_hwnd() -> int:
             nm = (r.stdout or "").lower()
             if "weixin.exe" in nm or "wechat.exe" in nm:
                 return hwnd
-        except Exception:
+        except Exception as e:
+            print("  认微信进程失败（tasklist pid=%s）：%s" % (pid, e))
             continue
     return 0
 
@@ -156,7 +158,8 @@ def _win_rect(hwnd: int):
         if not ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(r)):
             return None
         return (int(r.left), int(r.top), int(r.right - r.left), int(r.bottom - r.top))
-    except Exception:
+    except Exception as e:
+        print("  量窗口矩形失败（hwnd=%s）：%s" % (hwnd, e))
         return None
 
 
@@ -169,7 +172,8 @@ def _win_restore(hwnd: int, rect) -> bool:
         return bool(ctypes.windll.user32.SetWindowPos(
             int(hwnd), 0, int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]),
             0x0004 | 0x0010))
-    except Exception:
+    except Exception as e:
+        print("  还原微信窗口失败（hwnd=%s）：%s" % (hwnd, e))
         return False
 
 

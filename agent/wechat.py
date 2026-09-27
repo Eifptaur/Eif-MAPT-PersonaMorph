@@ -10513,7 +10513,9 @@ class WeChatAdapter:
                     _rv = [sum(1 for _xx in range(_W) if abs(_p[_xx, _yy] - _bg) > 40)
                            for _yy in range(_H)]
                     return _centers(_cv), _centers(_rv)
-                except Exception:
+                except Exception as _ge:
+                    # 不静默：网格实测失败要留痕（否则"没检出"分不清是"面板没内容"还是"这里炸了"）
+                    log.info("表情链：面板网格实测失败（%s）⇒ 回退反推常量", _ge)
                     return [], []
 
             _gc, _gr = _panel_grid() # 实测列中心 / 行中心（面板图内坐标）

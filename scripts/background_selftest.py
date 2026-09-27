@@ -176,7 +176,8 @@ ck("B5z5 该传 chat_id 的调用点都传了（拍一拍/自检/引用/消息�
 _epo = _srcslice.from_func(SRC_WECHAT, "emoji_panel_open")[:3000]
 ck("B5z6 emoji_panel_open 不再无视切会话结果（确认不了就失败返回）",
    "不在未知会话上开表情面板" in _epo and _sm.has(SRC_WECHAT, "def emoji_panel_open(self, group_name: str = \"\", chat_id: str = \"\")"))
-_eps = _srcslice.from_func(SRC_WECHAT, "emoji_panel_send")[:7000]
+# ⛔ 同样不按字符数切（`[:7000]` 会把后面的 `latest_seq(chat_id)`/"库里没出现新行"切在外面 ⇒ 本轮又撞一次）
+_eps = _srcslice.from_func(SRC_WECHAT, "emoji_panel_send")
 ck("B5z7 emoji_panel_send **点完回读确认**（latest_seq 前后比对，确认不到就重试/如实失败）",
    "latest_seq(chat_id)" in _eps and "库里没出现新行" in _eps)
 # B5z9：**一律先点 ♡ 收藏标签**（不许再靠 `_emoji_bottom_bar` 猜"面板默认是收藏视图"），

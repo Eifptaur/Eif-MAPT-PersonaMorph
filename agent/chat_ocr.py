@@ -13,12 +13,15 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
 import time
 
 from . import chat_header as ch
+
+log = logging.getLogger("persona-morph")
 
 _norm_re = re.compile(r"[\s\u3000·,，.。．:：;；!！?？\"'“”‘’()（）\[\]【】<>《》\-—_/\\|]+")
 _count_re = re.compile(r"[（(]\s*\d+\s*[)）]\s*$")
@@ -2411,8 +2414,9 @@ def find_search_entry(img, left=None, zoom: int = 2):
                     "x": int((_bx2[0] + _bx2[2]) / 2), "y": int((_bx2[1] + _bx2[3]) / 2),
                     "why": "几何判据认出搜索框 %dx%d（放宽列范围兜底，不依赖会话区左沿估计）"
                            % (_bx2[2] - _bx2[0], _bx2[3] - _bx2[1])}
-    except Exception:
-        pass
+    except Exception as _e2:
+        # 不静默：放宽列范围这条兜底也要留痕（不然"没找到"分不清是"真没有"还是"这里炸了"）
+        log.debug("搜索入口兜底（放宽列范围）失败：%s", _e2)
     # ⓪ 第二道闸：帧**本身就是搜索窗画面**时，
     #    绝不许在它里面挑"搜索入口"（那帧里没有图标，只有搜索结果的文字碎片）。
     #    放在 box 两条之后：box 形态的帧里正常会读到「搜索」二字，不能被这条误杀。

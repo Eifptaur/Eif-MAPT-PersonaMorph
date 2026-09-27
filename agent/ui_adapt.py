@@ -684,8 +684,9 @@ def harden_gui_class(cls=None) -> bool:
     #    实测（`first_boot_smoke` 起真产品主程序，窗口 1875×1472 → 1160×900 且**没还原**）。
     try:
         patch_no_window_geometry(cls)
-    except Exception:
-        pass
+    except Exception as _e3:
+        # 不静默：几何补丁装不上要留痕（否则"窗口还会被驱动库改"没人知道为什么）
+        log.info("几何补丁（类闸内）装配失败：%s", _e3)
     return True
 
 
