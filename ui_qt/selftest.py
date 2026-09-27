@@ -2732,6 +2732,7 @@ def t_veradv() -> None:
     from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel) # noqa: PLC0415
 
     import config_io # noqa: PLC0415
+    import panels_custom # noqa: PLC0415
     import panels_qt # noqa: PLC0415
     from panels_custom import vermat_panel # noqa: PLC0415
     from stylekit_qt import THEMES # noqa: PLC0415
@@ -2925,32 +2926,51 @@ def t_veradv() -> None:
            any("/api/version/action" in c and "upgrade_adapter" in c for c in calls),
            str([c for c in calls if "version/action" in c]))
 
-        # ── 拍板入口的网页跳转（N6 锚：objectName 定位 + URL 形态）──
-        # 口径同 feedback 的「去网页加附件」：控制台 URL（token 在 query）原样
-        # + #sec-version 收尾；fragment 落在 query 前会让 token 困进 fragment
-        # ⇒ 401 / 锚跳转失效。点击会同时触发读台账（GET /api/status，异步回显）
-        # 与跳转 ⇒ 跳转断言后必须等台账回显落地完，再离开 vermat 段
-        # （否则它后落地会覆盖后续按钮的回显，污染其他断言）。
+        # ── 拍板入口：**Qt 原生四选一**（不再是"开浏览器去网页控制台拍板"）──
+        # 用户口径：网页能做的都得在 Qt 做。这里把 `ChoiceDialog` 的 exec 换掉，
+        # 断言"点它 ⇒ 弹的是原生四选一弹窗、且**没有**任何 openUrl"。
         from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
 
         _opened: list = []
         _orig_open = _QDS.openUrl
         _QDS.openUrl = staticmethod(lambda u: _opened.append(
             u.toString() if hasattr(u, "toString") else str(u)))
+        _pd_calls: list = []
+        _orig_pd = panels_custom._pd_decide_native
+        panels_custom._pd_decide_native = (
+            lambda tt, parent, note2, btn: _pd_calls.append(btn))
         try:
             bpd = vp.findChild(Btn, "tkPendingDecisions")
             ck("vermat「版本不匹配怎么办」按钮可按 objectName=tkPendingDecisions 定位",
                bpd is not None, "found=%s" % (bpd is not None))
             if bpd is not None:
                 _opened.clear()
+                _pd_calls.clear()
                 bpd.click()
-                _wait(lambda: bool(_opened))
-                ck("拍板入口点击 ⇒ openUrl 收到 <控制台URL>#sec-version（token 在 query、fragment 收尾）",
-                   _opened == ["http://127.0.0.1:%d/?token=tk#sec-version" % port],
-                   str(_opened))
+                _wait(lambda: bool(_pd_calls))
+                ck("拍板入口点击 ⇒ 走**原生四选一**入口（一次 openUrl 都没有；不再把人送去网页控制台）",
+                   bool(_pd_calls) and _opened == [],
+                   "原生调用=%d opened=%s" % (len(_pd_calls), _opened))
                 _wait(lambda: "有待拍板的事" in note_lb[0].text()) # 等异步回显落完再离场
         finally:
+            panels_custom._pd_decide_native = _orig_pd
             _QDS.openUrl = _orig_open
+
+        # ── 原生四选一弹窗本体：拿产品真正的四个选项建一次，点一颗看拿到的是不是那个 key ──
+        from agent import pending_decisions as _pdmod # noqa: PLC0415
+
+        from confirm import ChoiceDialog as _CD2 # noqa: PLC0415
+
+        _d2 = _CD2(t, None, "这件事要你拍板", ["微信 x × 适配层 y"], _pdmod.VERSION_OPTIONS)
+        ck("原生四选一带的是产品那四个选项（key 与台账逐字一致）",
+           _d2.choice_keys == [o["key"] for o in _pdmod.VERSION_OPTIONS], str(_d2.choice_keys))
+        _b0 = _d2.findChild(Btn, "choice_%s" % _pdmod.VERSION_OPTIONS[0]["key"])
+        if _b0 is not None:
+            _b0.click()
+        ck("点第一颗选项 ⇒ choice 就是那个 key（不是空值、也不是别的）",
+           _d2.choice == _pdmod.VERSION_OPTIONS[0]["key"], str(_d2.choice))
+        _d2.close()
+        _d2.deleteLater()
 
         # ── advanced 页：布局/标定/种子/学习 ──
         wrap_a = panels_qt.build_panel(t, "advanced")
@@ -3105,9 +3125,11 @@ def t_g5() -> None:
             "utImport", "utReload", "utBarProblems", "fsAdd", "wavefxApply",
             "utGuide", "utBarGuide", "ttsGuide", "igGuide", "vgGuide", "vsGuide",
             "irGuide", "fsGuide"}
-    ck("g5 注册表：19 个新 aid 全部接入（ACT_CUSTOM 33 键），wxRecheck 保持不接（web 死按钮如实 stub）",
-       need <= set(ACT_CUSTOM) and len(ACT_CUSTOM) == 33 and "wxRecheck" not in ACT_CUSTOM,
+    ck("g5 注册表：19 个新 aid 全部接入（ACT_CUSTOM 34 键：新增「更多（联系邮箱/提交记录）」），"
+       "wxRecheck 不进 ACT_CUSTOM（它在追加区已有原生实现，走 _AIDS_COVERED_ELSEWHERE 跳过）",
+       need <= set(ACT_CUSTOM) and len(ACT_CUSTOM) == 34 and "wxRecheck" not in ACT_CUSTOM,
        "ACT_CUSTOM=%d 缺=%s" % (len(ACT_CUSTOM), sorted(need - set(ACT_CUSTOM))))
+
     guides = _web_guides()
     ck("g5 GUIDES 运行时解析：9 键与 web 一致（tools 6 步 1 复制；voice 复制=pip install pilk）",
        set(guides) == {"tools", "voice", "tts", "image", "forward", "video", "imggen",
@@ -3962,7 +3984,7 @@ def t_g6() -> None:
                jumps == [("overview", panels_custom.sec_meta.get("overview").title)],
                str(jumps))
 
-        # ── json 页：新窗口查看配置 ──
+        # ── json 页：新窗口查看配置 → **原生窗口**（不再开浏览器看网页控制台）──
         if str(panels_custom.ROOT) not in sys.path:
             sys.path.insert(0, str(panels_custom.ROOT)) # json 页 import agent.config 需要产品根
         wrap_j = panels_qt.build_panel(t, "json")
@@ -3970,13 +3992,21 @@ def t_g6() -> None:
         jp.show()
         QApplication.processEvents()
         opened.clear()
-        b_raw = _btn_by_text(jp, "新窗口查看配置")
-        if b_raw is not None:
-            b_raw.click()
-            QApplication.processEvents()
-        ck("g6 新窗口查看配置：openUrl(join_url(current, /api/config))（web rawJsonBtn 等效）",
-           b_raw is not None and len(opened) == 1 and "/api/config" in opened[0],
-           "opened=%s" % opened)
+        _text_wins: list = []
+        _orig_tw = panels_custom._show_text_window
+        panels_custom._show_text_window = (
+            lambda tt, parent, title, text: _text_wins.append((title, text)))
+        try:
+            b_raw = _btn_by_text(jp, "新窗口查看配置")
+            if b_raw is not None:
+                b_raw.click()
+                QApplication.processEvents()
+        finally:
+            panels_custom._show_text_window = _orig_tw
+        ck("g6 新窗口查看配置：走**原生窗口**（弹文本框看 /api/config 正文），一次 openUrl 都没有",
+           b_raw is not None and len(_text_wins) == 1 and opened == []
+           and "配置" in str(_text_wins[0][0]),
+           "shown=%s opened=%s" % ([w[0] for w in _text_wins], opened))
     finally:
         QDesktopServices.openUrl = _orig_open
         config_io.write_patch = _orig_wpatch
@@ -10376,6 +10406,89 @@ def t_g24_fbnotice_dismiss() -> None:
         _qs.sync()
 
 
+def t_g26_web_parity_actions() -> None:
+    """网页控制台的动作按钮**一律要有 Qt 原生实现**（用户口径：网页能做的都得在 Qt 做）。
+
+    做法：把每个面板**真建出来**，收集所有渲染出来的动作按钮（`web_action` property），
+    逐个按 `_btn_group` 的**同一套分支判据**分类（ACT_CUSTOM / _ACT_API / codeCheck / 跳过集 /
+    无 id 的保存钮），断言"会掉进 `_btn_stub` 的 = 0"。
+
+    ⚠️ 为什么必须"渲染后"再看：静态解析网页 HTML 会把**Qt 面板压根不渲染的行**也算进来
+    （那些按钮在 Qt 里根本点不到，不算缺口）；反过来，混合行里漏出来的单颗按钮只有渲染后才看得见
+    —— 用户点中的正是那种。
+    """
+    import inspect as _inspect # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as _QA # noqa: PLC0415
+
+    import panels_custom as _pc # noqa: PLC0415
+    import panels_qt as _pq # noqa: PLC0415
+    from stylekit_qt import THEMES as _THEMES # noqa: PLC0415
+    from widgets import Btn as _Btn # noqa: PLC0415
+
+    app = _QA.instance() or _QA([])
+    t = _THEMES["whale"]
+    custom = set((getattr(_pc, "ACT_CUSTOM", {}) or {}).keys())
+    api = set((getattr(_pq, "_ACT_API", {}) or {}).keys())
+    skip = set(getattr(_pq, "_AIDS_COVERED_ELSEWHERE", set()) or set())
+    stub, total = [], 0
+    for sec in sorted(_pq.BATCH_SECS):
+        try:
+            page = _pq.build_panel(t, sec, on_save=None)
+        except Exception: # noqa: BLE001 — 建不起来的页由别的判据管，这里只管按钮归属
+            continue
+        for b in page.findChildren(_Btn):
+            prop = b.property("web_action")
+            if prop is None:
+                continue # 不是动作按钮（普通按钮 / 原生操作钮）
+            total += 1
+            aid = str(prop or "")
+            if aid in custom or aid in api or aid in skip or aid in ("codeCheck", "codeCheckDeps"):
+                continue
+            if not aid and str(b.text()).strip().startswith("保存"):
+                continue
+            stub.append((sec, aid, str(b.text())[:18]))
+        page.setParent(None)
+        page.deleteLater()
+        app.processEvents()
+    ck("① 分母守卫：真的渲染出了动作按钮（不然下面那条会因空集全绿）",
+       total >= 40, "渲染 %d 个" % total)
+    ck("② 渲染出来的动作按钮**没有一个**会掉进 `_btn_stub`（网页能做的都在 Qt 做了）",
+       not stub, "掉桩：%s" % (stub[:6],))
+    ck("③ 判据用的是运行时同一套分支（`_btn_group` 里那份跳过集，不是另抄一份）",
+       _inspect.getsource(_pq._btn_group).count("_AIDS_COVERED_ELSEWHERE") >= 1)
+    _stub_src = _inspect.getsource(_pq._btn_stub)
+    # ⚠️ 只查**代码**：文档字符串里「不许用系统 QMessageBox」是在解释为什么不用它，不算违规
+    #   （同 t_whale_guard 那条"只查代码、不查文档字符串"的口径）。
+    _stub_code = _stub_src.split(chr(34) * 3, 2)[2] if _stub_src.count(chr(34) * 3) >= 2 else _stub_src
+    ck("④ 那个桩的**代码里**不再用系统 QMessageBox、也不再叫用户「去网页控制台」",
+       _stub_code.count("QMessageBox") == 0 and _stub_code.count("网页控制台") == 0
+       and _stub_code.count("InfoDialog") >= 1, _stub_code[:60].replace("\n", " "))
+
+
+def t_g27_native_pieces() -> None:
+    """几个"以前只能去网页做"的动作，现在 Qt 原生有：原生提示卡 + 反馈页「更多」+ 三条真接后端。"""
+    import inspect as _inspect # noqa: PLC0415
+    from PySide6.QtWidgets import QDialog as _QD # noqa: PLC0415
+
+    import panels_qt as _pq # noqa: PLC0415
+    from confirm import InfoDialog # noqa: PLC0415
+
+    _pc = __import__("panels_custom")
+    _id_src = _inspect.getsource(InfoDialog)
+    _id_code = _id_src.split(chr(34) * 3, 2)[2] if _id_src.count(chr(34) * 3) >= 2 else _id_src
+    ck("① 原生提示卡 `InfoDialog` 在位，且**代码里**不含系统 QMessageBox",
+       issubclass(InfoDialog, _QD) and _id_code.count("QMessageBox") == 0)
+    ck("② 反馈页「更多（联系邮箱 / 提交记录）」有原生处理器（不再走桩）",
+       "fbAdvBtn" in (getattr(_pc, "ACT_CUSTOM", {}) or {}))
+    _pqs = _inspect.getsource(_pq)
+    ck("③ 「列出模型」「重读群列表」「两个接收端测试连通」都真接了后端",
+       min(_pqs.count(k) for k in ("vcModels", "refreshGroups",
+                                   "cloudTestPersona", "cloudTestBlocklist")) >= 1)
+    _ss = _inspect.getsource(_pc)
+    ck("④ 群里「请到网页控制台拍板」那种指路话术在 Qt 侧不再出现",
+       _ss.count("请到网页控制台") == 0)
+
+
 def main() -> int:
     # ⭐ 测试隔离（N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -10400,7 +10513,8 @@ def main() -> int:
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
                    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_g23_fbnotice,
-                   t_g24_fbnotice_dismiss, t_g25_whale_boot, t_ocr_fuzzy,
+                   t_g24_fbnotice_dismiss, t_g25_whale_boot, t_g26_web_parity_actions,
+                   t_g27_native_pieces, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,

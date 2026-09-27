@@ -657,9 +657,33 @@ def _open_export_dir_body() -> dict:
     return {"path": d or "exports"}
 
 
+def _vc_api(base: str):
+    """变声探针的 api 串：**点的时候现读** `voice_reply.vc_url`（web 同款先把界面值存下来再测）。
+
+    做成 callable 而不是构建期拼串：面板建好到用户点击之间，地址可能刚被改过/刚被自动保存。
+    """
+    from urllib.parse import quote # noqa: PLC0415
+
+    def _mk() -> str:
+        u = str(config_io.read_path("voice_reply.vc_url", "") or "").strip()
+        return base + "?url=" + quote(u, safe="")
+
+    return _mk
+
+
+def _cloud_body(which: str):
+    """上云「测试连通」的请求体：`{which, url}` —— url 取对应接收端的当前配置值。"""
+    def _mk() -> dict:
+        u = str(config_io.read_path("cloud.%s_url" % which, "") or "").strip()
+        return {"which": which, "url": u}
+
+    return _mk
+
+
 # ── 按钮动作分发器（web onclick 的 Qt 等价）──
 # aid → POST 端点。命中 = 真执行（后台线程 + 结果回显行内 note）；
 # 未命中 = 沿 _btn_stub 原型边界。web 62 个按钮按批次逐步接线进这张表。
+# ⚠️ api / body 都允许是 **callable**（点击时才取值）—— 例如变声探针要读界面上刚填的地址。
 _ACT_API: dict[str, tuple] = {
     "testApi": ("POST", "/api/test-api", {}), # web L2741/L5882：后端自测当前 api 配置
     "wmReset": ("POST", "/api/watermark/reset", {}), # web L2709：监听水位重对齐
@@ -675,6 +699,17 @@ _ACT_API: dict[str, tuple] = {
     "openSeedBtn": ("POST", "/api/open-path", {"path": "data/seed_library.json"}), # web L7676：资源管理器打开种子库
     "openExportDir": ("POST", "/api/open-path", _open_export_dir_body), # web L8000：打开导出目录（callable body 读当前配置）
     "fbFlush": ("POST", "/api/feedback/flush", {}), # web L7361：补发积压的反馈
+    # ── 群列表 / 反馈状态（web 全是 GET，这里逐条对齐）──
+    # ⛔ 微信重检（wxRecheck）与变声探测（vcProbe）**不进这张表**：它们在 `_AIDS_COVERED_ELSEWHERE`
+    #    里 —— 本页追加区已有原生实现，再补一条只会变成重复动作。
+    "pickGroups": ("GET", "/api/wechat-groups", {}), # web：读群列表（读不到时如实报原因）
+    "refreshGroups": ("GET", "/api/wechat-groups?refresh=1", {}), # web：**重读**群列表（新加群/改群名/换号后用）
+    "fbReload": ("GET", "/api/feedback", {}), # web fbLoad：刷新反馈状态与提交记录
+    # ── 变声服务：列出该服务上的模型（url 取界面上那个输入框的**当前值**）──
+    "vcModels": ("GET", _vc_api("/api/voice/vc-models"), {}),
+    # ── 上云预留：两个接收端各一颗「测试连通」（web `data-cloud-test`，无 id）──
+    "cloudTestPersona": ("POST", "/api/cloud/test", _cloud_body("persona")),
+    "cloudTestBlocklist": ("POST", "/api/cloud/test", _cloud_body("blocklist")),
 }
 
 
@@ -689,13 +724,16 @@ def _act_run(aid: str, note) -> None:
 
     def _work(bx: dict) -> None:
         try:
+            # ⚠️ api 与 body 都允许是 callable：**点击时才取值**（变声地址、云端接收端 url
+            #   这类"用户在界面上刚改过"的值，构建期拼串会钉死成旧值）。
+            _api = api() if callable(api) else api
             if method == "POST":
                 from agent_bridge import post_json # noqa: PLC0415
 
                 # body 允许是 callable（如 openExportDir：点击时才读当前配置拼路径）
-                bx["rsp"] = post_json(api, body() if callable(body) else body, timeout=90.0)
+                bx["rsp"] = post_json(_api, body() if callable(body) else body, timeout=90.0)
             else:
-                bx["rsp"] = config_io.get_json(api, timeout=60.0)
+                bx["rsp"] = config_io.get_json(_api, timeout=60.0)
         except Exception as e: # noqa: BLE001
             bx["err"] = str(e)
 
@@ -834,8 +872,8 @@ def _code_check_run(note, deps: bool) -> None:
 def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     """web `.row-btns` / 行内 `<button>` → 一串按钮（动作 id 挂 property 留取证）。
 
-    ⚠️ 原型边界：在 `_ACT_POST` 表里的动作**真接后端**（后台线程，
-    结果回显行内 note）；表外的仍走 `_btn_stub`（可见反馈 + tooltip，绝不静默无反应）。
+    优先级：`ACT_CUSTOM`（要读同页表单/带确认框）→ `codeCheck*` → `_ACT_API`（纯接口调用）
+    → `_btn_stub`（还没进桌面壳的动作，点它弹原生提示并记日志）。
     """
     box = QWidget()
     h = QHBoxLayout(box)
@@ -844,6 +882,14 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
     # 自定义动作（panels_custom.ACT_CUSTOM：要读同页表单/带确认框/多态回显的按钮）
     custom = getattr(panels_custom, "ACT_CUSTOM", {}) or {}
     for txt, aid in actions:
+        # ⛔ **逐颗跳过**两类"看起来是按钮、其实不该出现"的动作（`_row_redundant` 只在
+        #    整行都冗余时才跳过整行，混合行里这些会漏出来变成 stub 假按钮 —— 用户点中的正是它们）：
+        #    ① 行内「保存设置（…）」（无 id）：页尾已有原生保存，同一条落盘链；
+        #    ② aid 落在 `_AIDS_COVERED_ELSEWHERE`：本页**追加区/自定义卡**里已有原生实现。
+        if not aid and str(txt).strip().startswith("保存"):
+            continue
+        if str(aid) in _AIDS_COVERED_ELSEWHERE:
+            continue
         b = Btn(txt, t, role="ghost")
         b.setProperty("web_action", aid or "")
         if note is not None:
@@ -858,7 +904,9 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
             b.setToolTip("真接后端：/api/code-check（启动 → 轮询进度 → 逐项结果 + 建议）")
         elif note is not None and aid in _ACT_API:
             b.clicked.connect(lambda _=False, a=aid: _act_run(a, note))
-            b.setToolTip("真接后端：" + _ACT_API[aid][1])
+            _spec = _ACT_API[aid]
+            b.setToolTip("真接后端：" + (_spec[1] if isinstance(_spec[1], str)
+                                        else "点击时按界面上当前填的地址拼请求"))
         else:
             b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
             b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
@@ -867,17 +915,35 @@ def _btn_group(t: Tokens, actions: list[tuple[str, str]], note=None) -> QWidget:
 
 
 def _btn_stub(b) -> None:
-    """Qt 壳里 web 动作按钮的点击反馈（原型边界：不假跑 web JS）。
+    """还没进桌面壳的 web 动作按钮的点击反馈。
 
-    ⛔ 不再永久改按钮文字——连点几次会把「（web 侧动作）」叠成长串（用户截图实锤：
-    「用这个（web 侧动作）」）。改为弹一次说明框，说清动作 id 与去向；按钮原样保留。
+    ⛔ 两条纪律：
+      · **不许用系统 `QMessageBox`**（硬规矩第 1 条：0 系统 MessageBox）⇒ 走自绘 `InfoDialog`；
+      · **不许再叫人"去网页控制台"**（用户口径：网页能做的都得在 Qt 做）⇒ 如实说这条还没实现、
+        并把它记进日志，用户不需要做任何事（`root-probes/_r55` 那类清单一跑就能看到它还缺着）。
     """
-    from PySide6.QtWidgets import QMessageBox # noqa: PLC0415
-
     _aid = str(b.property("web_action") or "")
-    msg = ("动作 id：%s\n" % _aid if _aid else "") + \
-        "这个动作的原生实现还没进桌面壳，请到网页控制台操作（顶栏可「去网页」）。"
-    QMessageBox.information(b, "这个动作在网页控制台", msg)
+    _txt = b.text()
+    log_stub = "动作 id：%s\n" % _aid if _aid else ""
+    msg = (log_stub + "这条动作**桌面壳（Qt）还没实现**，点了不会有任何效果。"
+           "它已经记在缺口清单里，不用你去别处操作。")
+    try:
+        import logging # noqa: PLC0415
+
+        logging.getLogger("persona-morph").info(
+            "桌面壳缺动作：按钮=%r id=%r（用户点了，未执行）", _txt, _aid)
+    except Exception: # noqa: BLE001
+        pass
+    try:
+        from confirm import InfoDialog # noqa: PLC0415
+
+        t = getattr(b, "t", None)
+        dlg = InfoDialog(t, b.window(), "这个动作桌面壳还没实现", msg)
+        dlg.exec()
+    except Exception as _e: # noqa: BLE001
+        # 弹窗都建不起来时**不许静默**：把话说在按钮的 tooltip 上（用户悬停能看到）
+        b.setToolTip("桌面壳还没实现这个动作（%s）" % (_aid or _txt))
+        del _e
 
 
 _STATUS_ROWS: list = [] # 面板内 status 行注册表 [(_Weak)<label>, status_id]——跟随全局轮询刷新

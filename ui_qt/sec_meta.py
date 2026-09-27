@@ -455,7 +455,13 @@ def _sweep_orphan_btns(body: str, covered: list[tuple[int, int]]) -> list[list[t
 
 
 def _extract_btns(chunk: str) -> list[tuple[str, str]]:
-    """`<button>` → [(文案, 动作id)]；id 取 `id=`，退到 `data-act/action/id=`。"""
+    """`<button>` → [(文案, 动作id)]；id 取 `id=`，退到 `data-act/action/id=`，再退到 `data-cloud-test`。
+
+    ⚡ `data-cloud-test="persona|blocklist"` 那两颗「测试连通」**没有 id**（web 用
+    `querySelectorAll('[data-cloud-test]')` 批量挂事件）⇒ 不给它们造一个 id 的话，
+    Qt 侧只能掉进 `_btn_stub`。这里按 web 自己的取值拼一个稳定 id 出来
+    （`cloudTestPersona` / `cloudTestBlocklist`），由 `panels_qt._ACT_API` 接住。
+    """
     acts: list[tuple[str, str]] = []
     for bm in re.finditer(r"<button([^>]*)>(.*?)</button>", chunk, re.S):
         attrs, txt = bm.group(1), _clean(bm.group(2))
@@ -469,6 +475,10 @@ def _extract_btns(chunk: str) -> list[tuple[str, str]]:
             dam = re.search(r'data-(?:act|action|id)="([\w-]+)"', attrs)
             if dam:
                 aid = dam.group(1)
+            else:
+                ctm = re.search(r'data-cloud-test="([\w-]+)"', attrs)
+                if ctm:
+                    aid = "cloudTest" + ctm.group(1)[:1].upper() + ctm.group(1)[1:]
         acts.append((txt, aid))
     return acts
 

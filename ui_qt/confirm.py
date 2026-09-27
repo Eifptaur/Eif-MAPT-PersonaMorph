@@ -272,6 +272,176 @@ class ConfirmDialog(DraggableDialog, QDialog):
         super().keyPressEvent(e)
 
 
+class InfoDialog(DraggableDialog, QDialog):
+    """**单按钮原生提示** —— 替掉系统 `QMessageBox`（硬规矩第 1 条：0 系统 MessageBox）。
+
+    与 `ConfirmDialog` 同一套外壳与排版（自绘圆角卡 + 可拖动 + 居中于父窗），
+    区别只是"没有要不要"这一问：只有一颗「知道了」。
+    """
+
+    def __init__(self, t: Tokens, parent: QWidget, title: str, body: str,
+                 ok_label: str = "知道了"):
+        super().__init__(parent)
+        self.t = t
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        shell = QFrame()
+        self._apply_shell(shell)
+        outer.addWidget(shell)
+
+        box = QVBoxLayout(shell)
+        box.setContentsMargins(24, 22, 24, 18)
+        box.setSpacing(12)
+
+        tl = QLabel(title)
+        tl.setFont(qfont(t, 16, 600))
+        tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+        box.addWidget(tl)
+
+        bl = QLabel(_clean(body))
+        bl.setFont(qfont(t, t.body_size))
+        bl.setWordWrap(True)
+        # 同 `ConfirmDialog`：wordWrap 在自动尺寸下会被压扁 ⇒ 按字数估高，宁可多留一行
+        bl.setMinimumHeight(_wrap_h(_clean(body), t.body_size, 320))
+        bl.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        box.addWidget(bl)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 0)
+        row.addStretch(1)
+        self.btn_ok = Btn(ok_label, t, "primary")
+        self.btn_ok.clicked.connect(self.accept)
+        row.addWidget(self.btn_ok)
+        box.addLayout(row)
+
+        self._center_on(parent)
+        self.btn_ok.setFocus()
+
+    _apply_shell = ConfirmDialog._apply_shell
+    _center_on = ConfirmDialog._center_on
+
+    def showEvent(self, e): # noqa: N802
+        super().showEvent(e)
+        self.enable_drag()
+
+
+class ChoiceDialog(DraggableDialog, QDialog):
+    """多选一「拍板」弹窗（web `choiceBox` 的 Qt 版）—— 版本不匹配时的四选一就用它。
+
+    口径与 web 一致：每个选项一颗按钮（`label` 为主、`detail` 是小字说明），
+    底部一颗「先不决定」。选中把选项 `key` 放进 `self.choice`（空串＝没选/关掉）。
+
+    ⛔ 为什么值得单独做一个：这件事**以前只能去网页控制台做**（Qt 侧只给了一个"去网页"的入口）
+    —— 用户口径是"网页能做的都得在 Qt 做"，所以四选一必须落在原生弹窗里。
+    """
+
+    decided = Signal(str)
+
+    def __init__(
+        self,
+        t: Tokens,
+        parent: QWidget,
+        title: str,
+        lines: list[str],
+        options: list,
+        cancel_label: str = "先不决定",
+    ):
+        super().__init__(parent)
+        self.t = t
+        self.choice = ""
+        # 选项 key 清单（判据按它断言"弹出来的是台账里那几个选项"，不靠 OCR/文案）
+        self.choice_keys = [str(o.get("key")) for o in (options or [])
+                            if isinstance(o, dict) and str(o.get("key") or "")]
+
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        shell = QFrame()
+        self._apply_shell(shell)
+        outer.addWidget(shell)
+
+        box = QVBoxLayout(shell)
+        box.setContentsMargins(24, 22, 24, 18)
+        box.setSpacing(10)
+
+        tl = QLabel(_clean(title))
+        tl.setFont(qfont(t, 16, 600))
+        tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+        box.addWidget(tl)
+
+        for ln in (lines or []):
+            il = QLabel(_clean(str(ln)))
+            il.setFont(qfont(t, t.body_size))
+            il.setWordWrap(True)
+            il.setMinimumHeight(_wrap_h(_clean(str(ln)), t.body_size, 320))
+            il.setStyleSheet(f"color:{t.tx2};background:transparent;")
+            box.addWidget(il)
+
+        box.addSpacing(4)
+        for i, opt in enumerate(options or []):
+            try:
+                key = str(opt.get("key") or "")
+                label = str(opt.get("label") or key)
+                detail = str(opt.get("detail") or "")
+            except Exception: # noqa: BLE001
+                continue
+            if not key:
+                continue
+            b = Btn(label, t, "primary" if i == 0 else "ghost")
+            b.setObjectName("choice_%s" % key)
+            b.clicked.connect(lambda _=False, k=key: self._pick(k))
+            box.addWidget(b)
+            if detail:
+                dl = QLabel(_clean(detail))
+                dl.setFont(qfont(t, t.body_size - 1.5))
+                dl.setWordWrap(True)
+                dl.setMinimumHeight(_wrap_h(_clean(detail), t.body_size - 1.5, 330))
+                dl.setStyleSheet(f"color:{t.tx3};background:transparent;")
+                box.addWidget(dl)
+
+        box.addSpacing(2)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 0)
+        row.addStretch(1)
+        self.btn_cancel = Btn(cancel_label, t, "ghost")
+        self.btn_cancel.clicked.connect(self._cancel)
+        row.addWidget(self.btn_cancel)
+        box.addLayout(row)
+
+        self._center_on(parent)
+        self.btn_cancel.setFocus() # 默认焦点在"先不决定"：连按回车不会误拍板
+
+    _apply_shell = ConfirmDialog._apply_shell
+    _center_on = ConfirmDialog._center_on
+
+    def _pick(self, key: str) -> None:
+        self.choice = str(key)
+        self.decided.emit(self.choice)
+        self.accept()
+
+    def _cancel(self) -> None:
+        self.choice = ""
+        self.decided.emit("")
+        self.reject()
+
+    def keyPressEvent(self, e): # noqa: N802
+        if e.key() == Qt.Key.Key_Escape:
+            self._cancel()
+            return
+        super().keyPressEvent(e)
+
+    def showEvent(self, e): # noqa: N802
+        super().showEvent(e)
+        self.enable_drag()
+
+
 # ---------------------------------------------------------------- 自检
 
 

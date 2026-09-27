@@ -1930,14 +1930,24 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
     lay.addWidget(card)
 
     def _view_raw() -> None:
-        # web rawJsonBtn :5614 = window.open('/api/config'+token) —— 桌面等效 = 系统默认浏览器打开
-        from PySide6.QtCore import QUrl # noqa: PLC0415
-        from PySide6.QtGui import QDesktopServices # noqa: PLC0415
-        from addr import join_url # noqa: PLC0415
-        from agent_bridge import current_url # noqa: PLC0415
+        """web rawJsonBtn（`window.open('/api/config'+token)`）的 Qt 等价：**原生窗口**看后台生效配置。
 
-        QDesktopServices.openUrl(QUrl(join_url(current_url(), "/api/config")))
-        note.setText("已在浏览器打开后台当前生效的配置（/api/config）· " + time.strftime("%H:%M:%S"))
+        ⛔ 不再 `QDesktopServices.openUrl` —— 那会弹一个浏览器窗口去看网页控制台
+        （用户口径：网页能做的都得在 Qt 做）。这里把 `/api/config` 正文取回来放进原生文本框，
+        带「复制」；读不到就如实写读不到，不显示空框。
+        """
+        import json as _json # noqa: PLC0415
+
+        try:
+            r = config_io.get_json("/api/config", timeout=15.0)
+            txt = r if isinstance(r, str) else _json.dumps(r, ensure_ascii=False, indent=2)
+        except Exception as e: # noqa: BLE001
+            txt = "读不到后台当前生效的配置：%s" % str(e)[:100]
+        try:
+            _show_text_window(t, page, "后台当前生效的配置（/api/config）", txt)
+            note.setText("已在原生窗口打开后台当前生效的配置 · " + time.strftime("%H:%M:%S"))
+        except Exception as e: # noqa: BLE001
+            note.setText("打不开查看窗口：%s" % str(e)[:60])
 
     hooks = [_save, _load, lambda: _open_dir(cfg_path.parent), _view_raw]
     lay.addWidget(_btn_row(t, [("保存全部设置", "primary"), ("重新读取", "ghost"),
@@ -2118,26 +2128,17 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
             pd = r.get("pending_decisions") or {}
             item = pd.get("item")
             if item:
-                return ("有待拍板的事：%s——微信 %s × 适配层 %s（可到网页控制台按提示四选一）"
+                return ("有待拍板的事：%s——微信 %s × 适配层 %s（本页可直接拍板：点这颗按钮会弹四选一）"
                         % (item.get("title") or item.get("reason") or "版本适配",
                            item.get("wechat") or "?", item.get("adapter") or "?"))
             return "现在没有待拍板的事。"
 
         _post_action_raw(btn_pd, tk_note, _run, "读取待决台账…")
 
-    def _on_pd_web() -> None:
-        # 拍板四选一只在网页控制台有（Qt 只读展示）——给可点入口，不补一套四选一 UI
-        # ⚠️ fragment 不能交给 join_url 的 path 槽位（会拼成 /#sec-version?token=tk，
-        #   fragment 落在 query 前）：浏览器把 ?token 一并归入 fragment ⇒ GET / 请求
-        #   就不带 token（无 Cookie ⇒ 401；有 Cookie ⇒ 页面开了但锚名匹配不上
-        #   section id，跳转照样失效）。正确形态：控制台 URL（token 已在 query）
-        #   原样 + 直接追加 #fragment 收尾。
-        from PySide6.QtCore import QUrl # noqa: PLC0415
-        from PySide6.QtGui import QDesktopServices # noqa: PLC0415
-        from agent_bridge import current_url # noqa: PLC0415
-
-        QDesktopServices.openUrl(QUrl(str(current_url() or "").strip() + "#sec-version"))
-        tk_note.setText("已在浏览器打开网页控制台（四选一在那里拍）· " + time.strftime("%H:%M:%S"))
+    def _on_pd_decide() -> None:
+        # 待拍板 → 原生四选一（实现见模块级 `_pd_decide_native`；抽出去是为了不让本面板
+        # 越过结构闸门的函数长度阈值）
+        _pd_decide_native(t, btn_pd.window(), tk_note, btn_pd)
 
     def _on_heal() -> None:
         from agent_bridge import post_json # noqa: PLC0415
@@ -2160,7 +2161,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     btn_take.clicked.connect(_on_take)
     btn_forget.clicked.connect(_on_forget)
     btn_pd.clicked.connect(_on_pd)
-    btn_pd.clicked.connect(_on_pd_web) # 同一个按钮：读台账之外顺手给「去网页拍板」入口
+    btn_pd.clicked.connect(_on_pd_decide) # 同一个按钮：读台账之外顺手打开**原生**四选一拍板
     btn_heal.clicked.connect(_on_heal)
     btn_up.clicked.connect(_on_up)
 
@@ -6185,7 +6186,152 @@ def _act_ut_problems(btn, note) -> None:
     _c8_say(note, t, "问题清单在下方卡片里（已滚动到可见）", "ok")
 
 
+def _act_fb_adv(btn, note) -> None:
+    """web `fbAdvBtn`「更多（联系邮箱 / 提交记录）」的 Qt 等价 —— **原生卡片**，不折叠、不跳网页。
+
+    web 那颗按钮只是把 `#fbAdv` 区块**折叠展开**；Qt 侧没有那个折叠容器 ⇒ 直接把两项读出来给他看：
+    联系邮箱取本页那一行（web 也是提交时才读同一个输入框），提交记录取 `/api/feedback.recent`
+    （web fbLoad 用的同一字段）。读不到就如实说读不到，不编。
+    """
+    from confirm import InfoDialog # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    page = _c8_page_of(btn)
+    mail_w = _c8_find_row(page, lambda r: r.kind == "text" and r.label == "联系邮箱")
+    try:
+        contact = (mail_w.text() or "").strip() if mail_w is not None else ""
+    except Exception: # noqa: BLE001
+        contact = ""
+    rec, err = [], ""
+    try:
+        r = config_io.get_json("/api/feedback", timeout=15.0) or {}
+        if r.get("ok") is False:
+            err = str(r.get("error") or "读不到反馈状态")
+        rec = r.get("recent") or []
+    except Exception as e: # noqa: BLE001
+        err = str(e)
+    lines = ["联系邮箱：%s" % (contact or "（没填。填了会在下次提交时一起带上）")]
+    if err:
+        lines.append("提交记录：读不到（%s）" % err[:60])
+    elif rec:
+        lines.append("最近提交：")
+        for x in rec[:8]:
+            lines.append("· %s %s%s" % (x.get("at_h") or "", x.get("kind") or "",
+                                        "（已发）" if x.get("sent_h") else "（待发）"))
+    else:
+        lines.append("提交记录：还没有提交过反馈。")
+    try:
+        InfoDialog(t, btn.window(), "更多：联系邮箱 / 提交记录", "\n".join(lines)).exec()
+    except Exception: # noqa: BLE001
+        if note is not None and t is not None:
+            _c8_say(note, t, "打不开这张卡；最近提交见「重载状态」的结果", "warn")
+
+
+def _pd_decide_native(t: Tokens, parent, note, btn) -> None:
+    """待拍板 → **Qt 原生四选一**（web `choiceBox` 的等价物）。
+
+    口径与 web 完全一致：读 `/api/status` 的 `pending_decisions.item` → 弹选项
+    → POST `/api/decide` `{id, choice}`；没有待决项就如实说没有（不弹空框）。
+    ⛔ 以前这里是把人送去网页控制台 —— 用户口径：**网页能做的都得在 Qt 做**。
+    抽成模块级（不塞在面板构建函数里）是为了不让面板函数越过结构闸门的长度阈值。
+    """
+    from agent_bridge import post_json # noqa: PLC0415
+    from confirm import ChoiceDialog # noqa: PLC0415
+
+    try:
+        r = config_io.get_json("/api/status", timeout=15.0) or {}
+    except Exception as e: # noqa: BLE001
+        note.setText("读取待决台账失败：%s" % str(e)[:60])
+        return
+    pd = r.get("pending_decisions") if isinstance(r.get("pending_decisions"), dict) else {}
+    item = pd.get("item") if isinstance(pd.get("item"), dict) else None
+    if not item:
+        note.setText("现在没有待拍板的事 · " + time.strftime("%H:%M:%S"))
+        return
+    opts = [o for o in (item.get("options") or [])
+            if isinstance(o, dict) and str(o.get("key") or "")]
+    if not opts:
+        note.setText("这张单没带选项（旧版本写的单）⇒ 本页拍不了板，先按它的说明处理")
+        return
+    lines = ["微信 %s × 适配层 %s" % (item.get("wechat") or "?", item.get("adapter") or "?")]
+    if item.get("reason"):
+        lines.append(str(item.get("reason")))
+    dlg = ChoiceDialog(t, parent, str(item.get("title") or "这件事要你拍板"), lines, opts)
+    dlg.exec()
+    if not dlg.choice:
+        note.setText("这次没拍板（条目留着，下次还会问）· " + time.strftime("%H:%M:%S"))
+        return
+    note.setText("已拍板：%s，正在执行…" % dlg.choice)
+    try:
+        res = post_json("/api/decide", {"id": item.get("id"), "choice": dlg.choice},
+                        timeout=60.0) or {}
+        msg = str(res.get("message") or res.get("why") or res.get("error") or "已记录")
+    except Exception as e: # noqa: BLE001
+        msg = "提交失败：%s" % str(e)[:60]
+    note.setText("%s · %s" % (msg, time.strftime("%H:%M:%S")))
+
+
+def _show_text_window(t: Tokens, parent, title: str, text: str) -> None:
+    """原生「看一段长文本」窗口：自绘外壳 + 只读文本框 + 复制/关闭。
+
+    替掉"开浏览器看"那种做法（用户口径：网页能做的都得在 Qt 做）。
+    文本框用 panels_qt 那个 `_plain_area`（同一套主题与字体），不另造一份样式。
+    """
+    from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QFrame # noqa: PLC0415
+
+    import panels_qt as _pq # noqa: PLC0415
+
+    dlg = QDialog(parent)
+    dlg.setObjectName("textWindow")
+    dlg.setModal(True)
+    dlg.resize(760, 560)
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(14, 14, 14, 14)
+    shell = QFrame()
+    shell.setObjectName("TextWindowShell")
+    shell.setStyleSheet(
+        f"#TextWindowShell{{background:{t.card};border:1px solid {t.bd};"
+        f"border-radius:{t.radius_card + 2}px;}}"
+    )
+    outer.addWidget(shell)
+    box = QVBoxLayout(shell)
+    box.setContentsMargins(18, 16, 18, 14)
+    box.setSpacing(10)
+    tl = QLabel(title)
+    tl.setFont(qfont(t, 15, 600))
+    tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+    box.addWidget(tl)
+    area = _pq._plain_area(t, text, height=420)
+    try:
+        area.setReadOnly(True)
+    except Exception: # noqa: BLE001
+        pass
+    box.addWidget(area, 1)
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_copy = Btn("复制", t, "ghost")
+    b_close = Btn("关闭", t, "primary")
+
+    def _copy() -> None:
+        try:
+            from PySide6.QtWidgets import QApplication as _QA # noqa: PLC0415
+
+            _QA.clipboard().setText(text)
+            b_copy.setText("已复制")
+        except Exception: # noqa: BLE001
+            b_copy.setText("复制失败")
+
+    b_copy.clicked.connect(_copy)
+    b_close.clicked.connect(dlg.accept)
+    row.addWidget(b_copy)
+    row.addWidget(b_close)
+    box.addLayout(row)
+    dlg.exec()
+
+
 ACT_CUSTOM = {
+    "fbAdvBtn": (_act_fb_adv,
+                 "原生卡片：联系邮箱 + 最近提交（web 那颗只是折叠，这里直接摊开给你看）"),
     "fbSubmit": (_fb_submit,
                  "真接后端：/api/feedback/submit（校验内容/邮箱；被限流时不清空输入框）"),
     "uploadSeeds": (_upload_seeds,
