@@ -137,8 +137,13 @@ def _sticker_dirs(acct: str = "", db=None) -> list:
     acct = acct or account_dir(db)
     if not acct:
         return []
-    return [os.path.join(acct, "business", "emoticon", sub)
+    dirs = [os.path.join(acct, "business", "emoticon", sub)
             for sub in ("Persist", "Thumb", "PersistStore", "ThumbStore")]
+    # ⛔ 别漏**缓存目录**：**刚收到的**表情往往落在 `cache/<月份>/Emoticon/<p2>/<md5>`
+    #   （`find_sticker_file` 的第二条路就是它）。原来只列 `business/emoticon` ⇒
+    #   "按 mtime 找最新的那个"只会找到旧的（真机实测：群里刚发完表情，最新文件却是 09-18 的）。
+    dirs += sorted(glob.glob(os.path.join(acct, "cache", "*", "Emoticon")), reverse=True)
+    return dirs
 
 
 def find_sticker_file(md5: str, acct: str = "", db=None) -> str:
