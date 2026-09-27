@@ -4563,6 +4563,9 @@ class WeChatAdapter:
             _busy1 = self._busy_reason("按键走格", wait_s=10.0)
             if _busy1:
                 return False, "你在忙（%s）⇒ 不按键、不动窗" % _busy1
+            # ⛔ **`_hold_begin` 必须配 `_hold_end`（本函数每个出口都要）**：它会起一个
+            #   「每 30ms 把微信按回去」的看门线程（`_HoldDown.gap=0.03`）——漏了停摁就只能等
+            #   **90s 心跳 TTL**，用户看到的就是「一格都没走、窗口却一直闪」。
             _hold_begin("按键走格") # 摁住微信（实测：占前台 1.0~7.5s → 0.15s）
             # ⚡ ⇒
             #   空档等待从 1.6s 放宽到 8s（他在连按键盘时就等一个缝；等不到也照做，且全程摁住微信）。
@@ -4579,9 +4582,11 @@ class WeChatAdapter:
                     pass
                 _hdr0 = self._header_now(gui)
                 if _hdr0 and self._header_match(name, _hdr0):
+                    _hold_end()
                     return True, ("按键走格成功：↓ 1 格（读不到起始会话头，按一格后读到 %r）；"
                                   "零坐标、没开搜索窗" % _hdr0[:22])
             if not _hdr0:
+                _hold_end()
                 return False, "读不到会话头（窗口最小化/被遮挡？）⇒ 试按一格后仍读不到，不再按键"
             d = self._walk_dir(chat_id, _hdr0) or 1
             be = ib.MessageBackend(activate=True) # ⛔ 必须带伪激活（不带时微信不理投递的方向键）
@@ -4594,6 +4599,7 @@ class WeChatAdapter:
                 for _i in range(budget):
                     ok_k, _why_k = be.keys(main, [vk])
                     if not ok_k:
+                        _hold_end()
                         return False, "投递方向键失败：%s" % str(_why_k)[:60]
                     steps += 1
                     time.sleep(0.22)
@@ -4608,6 +4614,7 @@ class WeChatAdapter:
                         _restore_fg_until("按键走格（每 3 格还一次）", timeout=0.25, keep=False)
                     hdr = self._header_now(gui)
                     if hdr and self._header_match(name, hdr):
+                        _hold_end()
                         return True, ("按键走格成功：%s %d 格（会话头读到 %r）；零坐标、没开搜索窗"
                                       % ("↓" if vk == self._VK_DOWN else "↑", steps, hdr[:22]))
                     if _i == 0:
@@ -4615,8 +4622,10 @@ class WeChatAdapter:
                         if _d2 and _d2 != d: # 第一格就发现方向反了 ⇒ 立刻翻向
                             d = _d2
                             vk = self._VK_DOWN if d > 0 else self._VK_UP
+            _hold_end()
             return False, "按键走格 %d 格都没走到「%s」（每格都读过会话头确认）" % (steps, name)
         except Exception as e: # noqa: BLE001
+            _hold_end() # 异常出口也要停摁（否则那个 30ms 看门线程会一直把微信按回去 ⇒ 窗口一直闪）
             return False, "按键走格异常：%s" % str(e)[:90]
 
     def _busy_reason(self, tag: str, wait_s: float = 20.0) -> str:
