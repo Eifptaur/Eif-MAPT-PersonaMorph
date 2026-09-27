@@ -342,7 +342,12 @@ def make(text: str, cfg: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
 def status(cfg: dict | None = None) -> dict:
     """给控制台与工具用的**如实**状态（与 `tts.status()` 同形：ok / why / voices / engine）。"""
     c = cfg if isinstance(cfg, dict) else _cfg()
-    out = {"ok": False, "backend": backend(c), "http_url": http_url(c),
+    # ⛔ `backend` 与 `engine` 是**两个键**，而 `make()` 是按 `engine` 选通道的 ⇒ 只按 backend 报
+    #    会出现"控制台列出 8 个 edge 音色、实际发出去的却是系统声音"（实测：换音色合成结果
+    #    字节数一模一样）。⇒ **以真正生效的那个键为准**来报状态，界面显示与真实发声保持一致。
+    _eng = str(c.get("engine") or "").strip().lower()
+    _bk = _eng if _eng in ("edge", "sapi", "http") else backend(c)
+    out = {"ok": False, "backend": _bk, "http_url": http_url(c),
            "capability": CAPABILITY_NOTE, "voices": [], "engine": "sapi", "why": "",
            "vc_url": vc_url(c), "vc_mode": vc_boundary(c),
            "vc_capability": VC_CAPABILITY_NOTE}
