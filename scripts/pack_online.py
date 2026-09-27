@@ -34,6 +34,20 @@ PKG_PREFIX = "群相-在线包-"
 #    仓库里也没有别处硬编码过仓库目录名（打包器自己那条注释除外）。
 ZIP_TOP = "persona morph"
 
+# ⛔ 本机用户名**不许写死在源码里**：本仓库是公开的，写死等于把用户名一起公开出去
+#   （这条规则以前就是靠写死那两个字来扫别人，结果自己成了泄漏源）。改成运行时推导 ——
+#   Windows 取 `%USERNAME%`、其他平台取 `~` 的最后一段。取不到就返回空串，
+#   调用方用「永不匹配」的模式代替（空正则 `""` 会匹配一切，正好是反向的坑）。
+def me_name() -> str:
+    n = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+    if not n:
+        n = os.path.basename(os.path.expanduser("~")) or ""
+    return str(n).strip()
+
+
+#: 本机用户名（扫「家目录/用户名」这一类泄漏用）；取不到＝空串
+ME_NAME = me_name()
+
 # 不进包（相对仓库根的 posix 路径前缀 / 精确名）
 EXCLUDE = (
     "AGENTS.md", # 开发守则：含红线自述与既有口径：，不随包发
@@ -57,7 +71,7 @@ EXCLUDE = (
 
 # 扫描规则：(名字, 正则, 是否致命)
 SCAN = [
-    ("家目录/用户名", r"ptmou", True),
+    ("家目录/用户名", re.escape(ME_NAME) if ME_NAME else r"(?!)", True),
     ("Windows 绝对路径", r"[A-Za-z]:\\+Users\\+[^\\\s\"']+", True),
     ("POSIX 家目录", r"/(?:home|Users)/[A-Za-z0-9._-]+/", True),
     ("API 密钥", r"sk-[A-Za-z0-9_\-]{10,}", True),
@@ -232,7 +246,8 @@ def main():
     bad_state = sorted(n for n in rel_names if BAD_STATE.search(n))
     # 只看**绝对**路径（带盘符）—— `collect_report.py` 里那个 `C:/Users/<名>` 是脱敏器自己的正则、
     # 是它的工作内容，不该按"泄漏"算。
-    BAD_TRACE = _re.compile(r"ptmou|[A-Za-z]:[/\\]+Users[/\\][^/\\\s\"']+"
+    _me_pat = (_re.escape(ME_NAME) + "|") if ME_NAME else "" # 同上：本机用户名运行时推导，不写死
+    BAD_TRACE = _re.compile(_me_pat + r"[A-Za-z]:[/\\]+Users[/\\][^/\\\s\"']+"
                             r"|sk-[A-Za-z0-9_\-]{10,}|wxid_[A-Za-z0-9]{6,}", _re.I)
     # 只查文本类文件（二进制素材里出现这几个字节串不说明问题）
     bad_trace = []

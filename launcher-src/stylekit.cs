@@ -106,7 +106,7 @@ namespace WxLauncher
         //     | Sub   (108,122,145)| ** 4.35 : 1** | ❌ **不达标**（略低于 4.5） |
         //     | Muted (150,158,172)| ** 2.78 : 1** | ❌ 只够做占位/禁用 |
         //
-        //   ⇒ 两个后果（这两条正是用户说的"文字颜色还有优化空间"）：
+        //   ⇒ 两个后果（这两条正是观感问题的来源）：
         //     ① **正文无处可去**：不写 ForeColor 就继承窗体色；写 Ink 太重、写 Sub 又太轻且不达标
         //        ⇒ 实际代码里就出现了"有的正文是 Ink、有的是 Sub、有的是继承"的混用。
         //     ② Sub 差一点点不达标 ⇒ 长段落（口径说明、路径）读起来"发灰发虚"。
@@ -329,7 +329,7 @@ namespace WxLauncher
                 f.BackColor = Bg;
                 // 正文字号从 9.5 提到 TextScale.Body(10)。诊断 §2 原因 2 实测——
                 //   正文在六个窗体里是 10.5 / 9.5 / 9.5 **三套**（同一角色不同字号 ⇒ 像六个人做的）；
-                //   且在浅底上 9.5 + Regular 偏"淡"，正是用户说的"清晰度"那一层观感来源（C5）。
+                //   且在浅底上 9.5 + Regular 偏"淡"，是"清晰度"那一层观感的来源。
                 f.Font = Ui(TextScale.Body, FontStyle.Regular);
                 if (f.FormBorderStyle == FormBorderStyle.FixedDialog || f.FormBorderStyle == FormBorderStyle.Sizable)
                 {

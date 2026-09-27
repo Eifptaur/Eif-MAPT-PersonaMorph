@@ -52,7 +52,7 @@ SEED_RUNS = [{
     "adapter": "1.2.2.2",
     "when": "2026-09-13",
     "caps": {
-        "send_text": {"status": "ok", "evidence": "投递 WM_CHAR + 投递点发送按钮，DB 回读 3/3（send_postclick.py）"},
+        "send_text": {"status": "ok", "evidence": "投递 WM_CHAR + 投递点发送按钮，DB 回读 3/3"},
         "emoji_panel_open": {"status": "ok", "evidence": "投递点笑脸 → 新弹层窗 Qt51514QWindowToolSaveBits 771×771"},
         "emoji_send": {"status": "ok", "evidence": "投递点 ♡ → 收藏格 → DB 回读 type=动画表情（local_id 550→551）"},
         "moments_open": {"status": "ok", "evidence": "投递点侧栏 ◎（发现）→ 朋友圈行，主窗内嵌，像素差 0.437"},
@@ -65,7 +65,7 @@ SEED_RUNS = [{
         "image_send": {"status": "unknown", "evidence": "未测"},
         "poke_menu": {"status": "unknown", "evidence": "未测"},
         "minimized_send": {"status": "unknown", "evidence": "未测（最高目标的最严条件）"},
-        "uia_tree": {"status": "no", "evidence": "本版本 UIA 只有 2 个节点、mmui 命中 0（uia_probe 实测）"},
+        "uia_tree": {"status": "no", "evidence": "本版本 UIA 只有 2 个节点、mmui 命中 0（本机实测）"},
     },
 }]
 

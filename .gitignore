@@ -69,6 +69,11 @@ docs/人设来源台账.md
 AGENTS.md
 docs/设计-*.md
 
+# 开发回执与开发资料**整目录**不进仓库（2026-09-27 用户定：开发过程不对外公开）
+# 落点改到 dev-workspace/persona-morph/docs/（回执另归到 docs/回执归档/），产品仓库只留产品本体。
+# 与出包闸门 scripts/pack_online.py 的 EXCLUDE「docs/」同一口径 —— 仓库与包两边都不出现。
+docs/
+
 # ── 配置备份（含 API Key，绝不入库；我改配置时会留）──
 config.json.bak*
 *.bak-*

@@ -765,7 +765,7 @@ class WebUI:
         # ⛔ **上面那次写盘用的是
         #   `cfg.port`（配置端口），而真正 bind 的是 `port + offset`（`self.port`）** —— 配置端口被
         #   别的程序占用时 webui 会**静默顺延**到 3211/3212…，`logs/console.url` 里却还写着 3210
-        #   ⇒ 启动器照着它开窗 = 一屏 `ERR_CONNECTION_REFUSED`（=用户说的"打不开控制台"）。
+        #   ⇒ 启动器照着它开窗 = 一屏 `ERR_CONNECTION_REFUSED`（即"打不开控制台"）。
         #   ⇒ bind 成功之后**用真实端口重写一次**（第二份地址文件，覆盖前一份）。
         try:
             from .util import write_console_url

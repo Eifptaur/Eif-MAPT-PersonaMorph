@@ -47,7 +47,7 @@ def _win() -> dict:
             except Exception:
                 pass
         # ⚠️ `ProductName` 在 Win11 上仍是 "Windows 10"（微软没改这个值）⇒ 按 build 号纠正，
-        #    否则报告里会出现"用户说他明明是 Win11"这种对不上的噪音。
+        #    否则报告里会出现"系统名报 Win10、装的其实是 Win11"这种对不上的噪音。
         try:
             if int(str(rep["build"]).split(".")[0]) >= 22000:
                 rep["release"] = "Windows 11"

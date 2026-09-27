@@ -23,7 +23,7 @@
 """
 
 # 一定非得走前台的路径（会动光标 / 会真占前台）——后台档对这些一律「跳过并说明原因」，不偷偷用真鼠标。
-# 逐条实测（_scratch/fg_ops_probe.py，40ms 采样，明细 _scratch/fg_ops_*.json）：
+# 逐条实测（40ms 采样）：
 #   必须前台：朋友圈点赞 / 评论 / 发朋友圈 · 转发视频/文件（系统「选择文件」对话框那一下）· UI 标定 / 真鼠标兜底档（默认关）
 #   投递档的前台代价：取 GUI / 朋友圈投递滚动 / 表情面板投递打开 = 0 秒；发文字 ≈1 秒；
 #                   切会话 3~7 秒；切会话失败重试可达 ~15 秒；投递 ESC ≈1 秒——全部随后自动还回。
@@ -39,7 +39,7 @@ PATHS = [
         "key": "send_text", "label": "发送文字", "status": "posted_fallback",
         "detail": "会话头三态闸判 ok ⇒ 投递（WM_CHAR 打字 + 投递点「发送」按钮）；"
                   "判 mismatch / 没参照 ⇒ 退回真鼠标档，返回值里写明档位",
-        "evidence": "scripts/background_selftest.py · _scratch/send_postclick.py（3/3 落库、光标未动）",
+        "evidence": "scripts/background_selftest.py · 投递点「发送」按钮（3/3 落库、光标未动）",
     },
     {
         "key": "send_media", "label": "发送图片 / 文件", "status": "posted",
@@ -49,7 +49,7 @@ PATHS = [
     {
         "key": "sticker", "label": "发送收藏表情", "status": "posted",
         "detail": "投递点笑脸 → 收藏标签 → 收藏格（点完以数据库回读为准）",
-        "evidence": "_scratch/sticker_h_send.py（DB 回读命中、光标未动）",
+        "evidence": "投递点笑脸 → 收藏标签 → 收藏格（DB 回读命中、光标未动）",
     },
     {
         "key": "switch_chat", "label": "切换会话", "status": "posted",
@@ -68,7 +68,7 @@ PATHS = [
                   "（实测：切会话 + 发消息 + 切回三次动作，微信占前台各 **0.00 秒**，消息照样发出、DB 回读命中）。"
                   "**全程不动光标**",
         "evidence": "agent/wechat.py::_switch_by_keys / _click_visible_session / open_chat_by_search"
-                    "（都含还前台；实测脚本 _scratch/_probe_fg_by_window.py）· "
+                    "（都含还前台；按目标窗口实测前台占用）· "
                     "**你在全屏玩游戏/放演示时它不动窗**（判据同 Windows 通知系统；会等你，等不到就跳过并记日志）",
     },
     {
@@ -77,20 +77,20 @@ PATHS = [
                   "投递失败才退回真鼠标档（会动光标、可能短暂置前），消息里写明。"
                   "⚠️ 判据要抓画面 ⇒ **窗口须留在屏幕上**（被别的窗口盖住也行：优先 PrintWindow）；"
                   "微信被最小化时如实拒绝（判不了就不动手）",
-        "evidence": "_scratch/moments_*（发现页与信息流都能纯后台打开，光标与前台未变）· "
-                    "_scratch/后台能力-真机记录.md（最小化时如实拒绝的真机读数）",
+        "evidence": "投递实测（发现页与信息流都能纯后台打开，光标与前台未变）· "
+                    "最小化时如实拒绝的真机读数",
     },
     {
         "key": "moments_scroll", "label": "刷朋友圈", "status": "posted_fallback",
         "detail": "投递 WM_MOUSEWHEEL（多格 + 间隔）；滚后以主窗灰度差判「内容真动了」；"
                   "同样要求窗口留在屏幕上（最小化 ⇒ 如实拒绝）",
-        "evidence": "_scratch/moments_*（下滚 6 格差值 0.389、反向精确回位 0.000）",
+        "evidence": "投递滚轮实测（下滚 6 格差值 0.389、反向精确回位 0.000）",
     },
     {
         "key": "moments_publish", "label": "发朋友圈（纯文字）", "status": "real",
         "detail": "草稿投递可写进编辑窗，但**「发表」那一下尚未取得投递取证** ⇒ 不冒充后台："
                   "默认不点发表；开启「只走后台」时直接跳过",
-        "evidence": "_scratch/moments_k_draft.py（实验明确记「发表、取消一个都没按」）",
+        "evidence": "草稿投递实验（明确记「发表、取消一个都没按」）",
     },
     {
         "key": "moments_like_comment", "label": "朋友圈点赞 / 评论", "status": "real",
@@ -106,7 +106,7 @@ PATHS = [
                   "再投递点菜单项；2026-09-16 实测，全程不动光标（微信可能被短暂置前，实测约 1~2 秒，随后自动还回））。"
                   "投递不成时才按 `input.allow_real_fallback` 决定是否回真鼠标（**默认关**＝不回落）。",
         "evidence": "agent/wechat.py::_send_poke_inner → _right_click_menu（投递优先）· "
-                    "_scratch/rclick_avatar.py + rck_menu.py（含真实右键阳性对照）",
+                    "右键两个靶点各有真实右键阳性对照",
     },
     {
         "key": "quote", "label": "引用消息", "status": "posted_fallback",
@@ -114,7 +114,7 @@ PATHS = [
                   "投递不成按 `input.allow_real_fallback` 决定是否回真鼠标（默认关）。"
                   "⚠️ 定位那一步仍要窗口**能抓画面**（最小化时先无激活还原；投递档不再要求前台）。",
         "evidence": "agent/wechat.py::_reply_quote_inner → _right_click_menu · "
-                    "_scratch/rck_menu.py（投递点菜单项命中，剪贴板为证）",
+                    "投递点菜单项命中（剪贴板为证）",
     },
     {
         "key": "calibrate", "label": "UI 标定", "status": "real",

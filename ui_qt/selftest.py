@@ -984,7 +984,7 @@ def t_wheel_nod() -> None:
 
     # ③ cursor_fx 委托（源码级）：中键直接进滚轮模式不播转一圈；活水事件全程喂
     csrc = (HERE / "cursor_fx.py").read_text(encoding="utf-8")
-    ck("中键委托 WheelMode.toggle（裁决：不播转一圈）",
+    ck("中键委托 WheelMode.toggle（不播转一圈）",
        "w.toggle(int(ev.globalPosition().x())" in csrc
        and 'self._mode != "spin"' in csrc)
     ck("无 WheelMode 时中键回退旧 spin()（兜底保留）", "if self._spin():" in csrc)
@@ -1288,10 +1288,17 @@ def t_no_touch() -> None:
     ck("落位目录在产品根下（ui_qt）", HERE.name == "ui_qt" and (root / "agent").is_dir())
     ck("没有 import 产品的写接口（只读桥接）",
        "save_config" not in (HERE / "agent_bridge.py").read_text(encoding="utf-8"))
-    # offline/wheels 不许被污染 —— 打包是离线优先的
-    whl = root / "offline" / "wheels"
-    has_pyside = any("side" in p.name.lower() or "qt" in p.name.lower() for p in whl.glob("*.whl")) if whl.exists() else False
-    ck("PySide6 没被塞进 offline/wheels（不进打包）", not has_pyside)
+    # `offline/wheels` 里放 Qt 轮子是**有意**的 —— 「含依赖包」（`pack_online --with-wheels`）的快路径
+    #   就是读它（见 `qt_bootstrap.ensure_pyside6` 里那条 `offline/wheels` 分支），首启才不用联网。
+    #   要守的不变式因此改成：**`offline/` 默认整目录不进包，放行只能由 `--with-wheels` 触发**
+    #   （否则纯在线包会凭空多出 200MB+）。
+    # 旧断言「PySide6 没被塞进 offline/wheels」出自「含依赖包」之前的版本 —— 那时 PySide6 只走在线自举，
+    #   `offline/` 里本就不该有东西；该口径已作废，留着会把**新的正确设计**判红。
+    # 注：`pack_online.py` 自身不进包 ⇒ 包内跑本判据时读不到它，那种情形下这一条不适用。
+    _po_p = root / "scripts" / "pack_online.py"
+    _po = _po_p.read_text(encoding="utf-8") if _po_p.exists() else ""
+    ck("offline/ 默认不进包，只由 --with-wheels 放行（开发树核源码；包内无打包器时不适用）",
+       (not _po) or ('"offline/",' in _po and 'e != "offline/"' in _po))
 
 
 # ---------------------------------------------------------------- 6. 自举收口：32 位判别
@@ -9379,7 +9386,6 @@ def t_cfg_wired_guard() -> None:
 #   ⚠️ 注释/取证引用（`xxx.py` 这种出处标注）**不算问题**，出包闸门对它们只报非致命 warn。
 DEV_DIR_KNOWERS = {
     "agent/update_apply.py": "更新链的 NEVER_TOUCH 白名单：语义是「别碰它」，不是「用它」",
-    "agent/bg_status.py": "后台能力矩阵的**证据出处**字符串（内部诊断数据，控制台不显示 evidence 字段）",
     "agent/wechat.py": "注释里的取证出处",
     "agent/prompt.py": "注释里的取证出处",
     "agent/input_audit.py": "注释里的取证出处",
