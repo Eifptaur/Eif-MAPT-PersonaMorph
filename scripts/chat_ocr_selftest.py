@@ -89,5 +89,40 @@ d2.rectangle([pane_left, 0, W, H], fill=(255, 255, 255))
 name2, why2 = ocr.current_chat_name(plain)
 ck("无绿底行 ⇒ 返回空（fail-closed）", name2 == "", "name=%r why=%s" % (name2, why2))
 
+print("④ 高亮行取名的几何（名字行 | 预览行 | 时间戳 三者必须分开）")
+# 合成一条"真机那样"的高亮行，坐标沿用 ③ 的惯例（面板左沿 331）：
+#   列表左槽（整带高） | 头像块 | 名字行+右侧时间戳 | 预览行。
+# 判据只看几何（不看 OCR 结果）—— OCR 会随字体/缩放漂，而几何不该漂。
+_gimg = Image.new("RGB", (1139, 890), (237, 237, 239))
+_gd = ImageDraw.Draw(_gimg)
+_gd.rectangle([91, 300, 319, 356], fill=ocr.GREEN)        # 绿底高亮行（高 56）
+_gd.rectangle([0, 300, 58, 356], fill=(200, 200, 205))    # 列表左槽（整带高 ⇒ 背景块）
+_gd.rectangle([101, 305, 131, 345], fill=(90, 130, 200))  # 头像（方块，与文字列隔 20px）
+_gd.rectangle([151, 305, 241, 325], fill=(20, 20, 20))    # 名字行（左）
+_gd.rectangle([291, 305, 311, 325], fill=(20, 20, 20))    # 时间戳（名字行最右，隔 50px 空白）
+_gd.rectangle([151, 330, 269, 350], fill=(120, 120, 120)) # 预览行
+_gd.rectangle([331, 0, 1139, 890], fill=(255, 255, 255))  # 右侧聊天区（供面板左沿检测）
+_gleft = ocr.ch.pane_left_for(_gimg)
+ck("分母守卫：面板左沿在绿底行右侧（窗口宽的 26% 兜底也算）", 250 <= _gleft <= 360, "left=%s" % _gleft)
+_gy0, _gy1, _gtx0, _gtx1, _gbg = ocr._band_geo(_gimg, 328)
+ck("带上下沿测得（300..356）", abs(_gy0 - 300) <= 3 and abs(_gy1 - 356) <= 3, "y0=%s y1=%s" % (_gy0, _gy1))
+_blocks = ocr._band_col_blocks(_gimg, _gy0, _gy1, _gleft, _gbg)
+ck("原始列块里**确实**存在「整带高」的背景块（左槽，分母守卫）",
+   any(b[2] <= _gy0 + 2 and b[3] >= _gy1 - 3 for b in _blocks), "%s" % (_blocks,))
+ck("文字列排除左槽与时间戳（取最宽那段：名字行+预览行并起来最宽）",
+   146 <= _gtx0 <= 156 and 264 <= _gtx1 <= 274, "文字列=(%s,%s)" % (_gtx0, _gtx1))
+_box = ocr._band_name_box(_gimg, _gy0, _gy1, _gtx0, _gtx1, _gbg)
+ck("名字框落在**上半行**（框心在上半、没跑进预览行）",
+   bool(_box) and (_box[1] + _box[3]) / 2.0 < 328 and _box[1] <= 308, "%s" % (_box,))
+ck("名字框**不含时间戳**（x 上限在时间戳左侧）", bool(_box) and _box[2] < 291, "%s" % (_box,))
+ck("时间戳形状不许当名字（否则走格永远认不出目标）",
+   (not ocr._name_plausible("16:32")) and (not ocr._name_plausible("1609"))
+   and ocr._name_plausible("aaa偷啃使…"), "")
+# 走格那道宽容判据：修复前后的读数各验一次（反向锚）
+ck("宽容判据：修复后读到的 'aaa偷啃使' 能认过", ocr.loose_matches("aaa偷啃使用者", "aaa偷啃使"))
+ck("宽容判据：修复前那两种残读认不过（反向锚）",
+   (not ocr.loose_matches("aaa偷啃使用者", "L"))
+   and (not ocr.loose_matches("aaa偷啃使用者", "aal日月1551")), "")
+
 print("\n== 结论：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

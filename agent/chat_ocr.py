@@ -1674,38 +1674,262 @@ def green_row_ratio(img, y_abs: int, half: int = 6) -> float:
         return 0.0
 
 
-def _band_name(img, y_abs: int) -> str:
-    """绿底行（白字）的名字——读得出来就用，读不出给 ''（**不许**因此否定这一行的存在）。
+def _band_span(img, y_abs: int) -> tuple:
+    """`y_abs` 所在的那条绿底高亮带 `(y0, y1)`；找不到给 `(0, 0)`。"""
+    try:
+        for b in green_bands(img, min_ratio=0.30, min_h=24):
+            if int(b["y0"]) - 3 <= int(y_abs) <= int(b["y1"]) + 3:
+                return int(b["y0"]), int(b["y1"])
+    except Exception as e: # noqa: BLE001
+        log.debug("量绿底带失败：%s", e)
+    return (0, 0)
 
-    ⚠️ 高亮行是**白字绿底**，正读（深字浅底的那套）常常读不出（实测 E 那种单字母行给空串）⇒
-       正读拿不到就再来一次**反相**（浅字深底）——判据是"读得出来算赢"，读不出仍返回 ''，
-       上层（`chat_is_open`）还有会话头指纹那条独立证据。
+
+def _band_bg(img, y0: int, y1: int, x0: int, x1: int):
+    """高亮带的**背景色**：在指定的一小片里取众数（调用方要给"不会有字"的那一片）。"""
+    try:
+        px = img.convert("RGB").load()
+        cnt: dict = {}
+        for yy in range(y0 + 3, y1 - 3, 3):
+            for xx in range(max(0, int(x0)), max(1, int(x1)), 2):
+                c = px[xx, yy][:3]
+                cnt[c] = cnt.get(c, 0) + 1
+        return max(cnt.items(), key=lambda kv: kv[1])[0] if cnt else None
+    except Exception:
+        return None
+
+
+def _band_col_blocks(img, y0: int, y1: int, left: int, bg) -> list:
+    """带内**列块** `[(x0, x1, ytop, ybot), …]`：连续有墨迹的列并成一块。
+
+    头像与文字在这条带里的区别是**形状**：头像是又高又宽的方块（整行高的一大截），
+    文字只有一行那么高 ⇒ 靠"块高"就能把它们分开，不必依赖任何绝对像素位置。
+    """
+    out = []
+    try:
+        px = img.convert("RGB").load()
+
+        def ink(x, yy):
+            r, g, b = px[x, yy][:3]
+            return abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) >= 60
+
+        cur = None
+        for x in range(0, max(1, left)):
+            ys = [yy for yy in range(y0, y1) if ink(x, yy)]
+            if ys:
+                if cur is None:
+                    cur = [x, x, ys[0], ys[-1]]
+                else:
+                    cur[1] = x
+                    cur[2] = min(cur[2], ys[0])
+                    cur[3] = max(cur[3], ys[-1])
+            elif cur is not None:
+                out.append(tuple(cur))
+                cur = None
+        if cur is not None:
+            out.append(tuple(cur))
+    except Exception as e: # noqa: BLE001
+        log.debug("量带内列块失败：%s", e)
+    return out
+
+
+def _band_text_col(blocks: list, y0: int, y1: int, left: int) -> tuple:
+    """带内的**文字列** `(x0, x1)`：滤掉"背景/边框"块，相邻块并起来、取**最宽**那一列。
+
+    背景/边框的形状特征（真机实测）：**几乎整条带那么高**（列表左槽、分界线都是），
+    或者**上下两沿都贴着带边**（那是底纹/分隔，不是字）。头像与文字都是"矮块" ⇒ 自然留下；
+    取**最宽**那一列而不取最靠右：名字行最右是**时间戳**（实测只有 ~37px 宽），
+    而名字 + 预览两行并起来是带内最宽的一段。
+    """
+    keep = []
+    for (bx0, bx1, bt, bb) in blocks or []:
+        if (bb - bt) >= int((y1 - y0) * 0.9) or (bt <= y0 + 2 and bb >= y1 - 3):
+            continue
+        if (bx1 - bx0) >= int(left * 0.45):
+            continue
+        keep.append((bx0, bx1))
+    if not keep:
+        return (0, 0)
+    merged = [[keep[0][0], keep[0][1]]]
+    for bx0, bx1 in keep[1:]:
+        if bx0 - merged[-1][1] < 14:
+            merged[-1][1] = bx1
+        else:
+            merged.append([bx0, bx1])
+    best = max(merged, key=lambda m: m[1] - m[0])
+    return (int(best[0]), int(best[1]))
+
+
+def _band_geo(img, y_abs: int) -> tuple:
+    """高亮带 ⇒ `(y0, y1, tx0, tx1, bg)`：带的上下沿 + **文字列**左右沿 + 带背景色。
+
+    判据全是**相对形状**（块高/块宽 与带的尺寸比），不写死任何绝对像素位置 —— 用户会随时
+    改窗口大小（实测同一台机在 947 / 1449 / 1853 三种宽度下都跑过），写死位置必然错位。
+
+    ⛔ 为什么不再按"分界线左 235~95"裁一刀：真机帧实测那一刀落在头像与名字之间 ——
+       **名字被切掉开头、右侧时间戳被圈进来**，OCR 于是只返回半个字形的 `'L'`。
     """
     try:
-        # ⚡ **先试原图直读**（顺序很重要）：真机实测，绿底高亮行那一格**原图就能读出名字**
-        #   （`aaa偷啃使，，`）；而下面的"反相 + 二值化"反而把它读没了（同一帧只剩 `'C'`）。
-        #   原来第一步就是 `name_of_row`（它内部正是反相+二值化）⇒ **一上来就走最差的那条**，
-        #   于是"当前会话是谁"永远读不出 ⇒ 所有需要确认会话的链（切会话/发图前置/拍一拍）全卡住。
+        w, h = img.size
+        left = ch.pane_left_for(img) or int(w * ch.PANE_LEFT_REL)
+        y0, y1 = _band_span(img, y_abs)
+        if not y1 or y1 - y0 < 12:
+            return (0, 0, 0, 0, None)
+        # 取背景的那一小片：贴着分界线左侧（时间戳右边那一小段空白），不会有字
+        bg = _band_bg(img, y0, y1, left - 46, left - 8)
+        if bg is None:
+            return (y0, y1, 0, 0, None)
+        blocks = _band_col_blocks(img, y0, y1, left, bg)
+        tx0, tx1 = _band_text_col(blocks, y0, y1, left)
+        if tx1 - tx0 < 12 or tx1 > left:
+            tx0, tx1 = 0, 0
+        return (y0, y1, tx0, tx1, bg)
+    except Exception as e: # noqa: BLE001
+        log.debug("量高亮行几何失败：%s", e)
+        return (0, 0, 0, 0, None)
+
+
+_RE_TIMEISH = re.compile(r"^[0-9]{1,2}[:：][0-9]{2}$")
+
+
+def _name_plausible(s: str) -> bool:
+    """粗筛会话名：**不会是行里右侧那个时间列的形状**（`16:32` / 纯数字）。
+
+    为什么必须挡：名字行与时间戳在**同一行**，切歪一点就会把时间戳当成名字读出来 ——
+    那个值永远匹配不上目标会话，表现出来的就是"走格走了一整圈却不认门"。
+    """
+    t = str(s or "").strip()
+    if not t:
+        return False
+    return not (_RE_TIMEISH.fullmatch(t) or t.isdigit())
+
+
+def _band_name_box(img, y0: int, y1: int, tx0: int, tx1: int, bg) -> tuple:
+    """名字那一刀的裁剪框 `(x0, y0, x1, y1)`；找不到给 `None`。
+
+    **纯几何**（不含 OCR），单独抽出来是为了让判据能直接验它：文字列里按行切分 → 取最上面
+    那行（名字在上、预览在下）→ 行内按"空 ≥18px"分段 → 取**第一段**（时间戳在最右）。
+    """
+    try:
+        w, h = img.size
+        if bg is None or tx1 - tx0 < 8:
+            return None
+        px = img.convert("RGB").load()
+
+        def ink(x, yy):
+            r, g, b = px[x, yy][:3]
+            return abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) >= 60
+
+        x_end = max(tx0 + 1, tx1)
+        runs, cur = [], None
+        for yy in range(y0, y1):
+            has = sum(1 for x in range(tx0, x_end, 2) if ink(x, yy)) >= 2
+            if has and cur is None:
+                cur = yy
+            elif not has and cur is not None:
+                if yy - cur >= 6:
+                    runs.append((cur, yy))
+                cur = None
+        if cur is not None and y1 - cur >= 6:
+            runs.append((cur, y1))
+        if not runs:
+            return None
+        ly0, ly1 = runs[0] # 最上面那行 = 名字行
+        if ly1 - ly0 >= 30:
+            # 名字行与预览行**贴在一起**（行间没有空档：字号紧凑或缩放档不同）⇒ 会被并成一坨。
+            # 这时名字只占**上半天**（中线略下就是名字的底边）—— 比"找墨迹最少的行"稳：
+            # 两行贴死时那条"谷"可能只剩几根笔画，切在哪儿都会带进下一行的字头。
+            ly1 = ly0 + (ly1 - ly0) // 2 + 2
+        blocks, c0, gap = [], None, 0
+        for x in range(tx0, x_end):
+            if any(ink(x, yy) for yy in range(ly0, ly1)):
+                if c0 is None:
+                    c0 = x
+                gap = 0
+            elif c0 is not None:
+                gap += 1
+                if gap >= 18:
+                    blocks.append((c0, x - gap))
+                    c0, gap = None, 0
+        if c0 is not None:
+            blocks.append((c0, x_end))
+        blocks = [b for b in blocks if b[1] - b[0] >= 6]
+        if not blocks:
+            return None
+        bx0, bx1 = blocks[0] # 最靠左那段 = 名字
+        # 边距实测（合成图 + 真机帧各试 12 组）：左右 ±3、**上下 ±5**。
+        # 上下留 3 会在字被切掉一点点时读出"缺一个字"（'件传输助手手牛1'）或串字；
+        # px：`件传输助手手牛1`（±3）对 `文件传输助手`（±5）——同一帧只差这两行像素。
+        return (max(0, bx0 - 3), max(0, ly0 - 5), min(w, bx1 + 3), min(h, ly1 + 5))
+    except Exception as e: # noqa: BLE001
+        log.debug("量名字裁剪框失败：%s", e)
+        return None
+
+
+def _band_name_geo(img, y0: int, y1: int, tx0: int, tx1: int, bg) -> str:
+    """文字列里读名字：**几何定框 → OCR**（原图直读，读不出再反相）。
+
+    三条几何事实（真机实测）：① 高亮行有**两行字**（名字在上、预览在下），而绿底带的几何
+    中心正好落在两行之间 ⇒ 按中心裁一刀会把两行各切一半；② 时间戳在**名字行的最右**，
+    与名字之间隔着一大段空白 ⇒ 行内按"空 ≥18px 分段"取**第一段**；③ 头像在文字列左侧。
+    读不出返回 `''`（由调用方按"判据不可用"处理）。
+    """
+    box = _band_name_box(img, y0, y1, tx0, tx1, bg)
+    if not box:
+        return ""
+    try:
+        crop = img.crop(box)
+        if crop.width < 6 or crop.height < 6:
+            return ""
+        got = clean("".join(str(i[0]) for i in recognize_dual(crop))).strip()
+        if got and _name_plausible(got):
+            log.debug("高亮行名字（几何 x=%d..%d y=%d..%d）：%r", box[0], box[2], box[1], box[3], got)
+            return got
+        got2 = clean("".join(str(i[0]) for i in recognize_dual(
+            preprocess_ink(crop, zoom=3, invert=True)))).strip()
+        return got2 if _name_plausible(got2) else ""
+    except Exception as e: # noqa: BLE001
+        log.debug("高亮行几何取名失败：%s", e)
+        return ""
+
+
+def _band_name(img, y_abs: int) -> str:
+    """绿底高亮行的名字 —— 读得出来就用，读不出给 `''`（**不许**因此否定这一行的存在）。
+
+    ① **几何取名**（`_band_name_geo`）：文字列 → 行切分 → 行内取最靠左的那一段。
+       名字与预览是两行、时间戳在名字行最右，按"分界线左 235~95"裁一刀会既切掉名字开头、
+       又把时间戳圈进来（实测读到半个字形的 `'L'`）。
+    ② 几何拿不到才退回老路（原图直读 → 整行 → 反相），保持既有容错。
+    """
+    try:
+        y0, y1, tx0, tx1, bg = _band_geo(img, int(y_abs))
+        if y1 and tx1:
+            got = _band_name_geo(img, y0, y1, tx0, tx1, bg)
+            if got:
+                return got
+        # ⚡ 老路（顺序重要）：真机实测绿底行那一格**原图就能读出名字**，而"反相 + 二值化"
+        #   反而会把它读没 ⇒ 先原图直读。
         try:
             _plain_box = _name_box(img, int(y_abs))
             _pc = img.crop(_plain_box)
             if _pc.width >= 8 and _pc.height >= 6:
                 _plain = clean("".join(str(i[0]) for i in recognize_dual(_pc))).strip()
-                if _plain:
+                if _plain and _name_plausible(_plain):
                     return _plain
         except Exception as e: # noqa: BLE001
             # 只记录不外抛：原图直读是"更快的那条路"，它失败时下面还有两条独立路径
             # （name_of_row 与反相二值化），不该因为这一段打断整次识别。
             log.debug("绿底行原图直读失败（%s: %s）⇒ 改走反相路径", type(e).__name__, e)
         got = name_of_row(img, int(y_abs), "", zoom=3) or ""
-        if got:
+        if got and _name_plausible(got):
             return got
         crop = img.crop(_name_box(img, int(y_abs)))
         if crop.width < 8 or crop.height < 6:
             return ""
         # B：反相路径改走预处理管线（反色还原+二值化）； A1：读空由 RapidOCR 补
         inv = preprocess_ink(crop, zoom=3, invert=True)
-        return clean("".join(str(i[0]) for i in recognize_dual(inv))).strip()
+        got3 = clean("".join(str(i[0]) for i in recognize_dual(inv))).strip()
+        return got3 if _name_plausible(got3) else ""
     except Exception:
         return ""
 
