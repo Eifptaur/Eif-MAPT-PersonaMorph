@@ -730,8 +730,7 @@ def _draft_cleanup_note(adapter, backend, main: int, gui, r, dirty_before: bool,
     if dirty_before:
         return ("；⚠️ 输入框里**原本就有你的内容**（%s），我**没有**自动清（怕误删你自己的东西）—— "
                 "请人工把刚粘/挂进去的%s撤掉" % (pre_why, what))
-    _cok, _cwhy = _clear_composer_posted(adapter, backend, main, gui, r,
-                                         tag=tag or ("发%s失败清残留" % what))
+    _cok, _cwhy = _clear_composer_posted(adapter, backend, main, gui, r, tag=tag or "撤草稿")
     return "；残留清理：%s" % _cwhy
 
 

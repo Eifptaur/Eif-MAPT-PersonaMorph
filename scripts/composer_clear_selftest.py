@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import _srcmatch as _sm # noqa: E402
 import _srcslice as _ss # noqa: E402
 import agent.wechat as W # noqa: E402
+from agent import input_backend as ib # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -228,6 +229,137 @@ ok("全文件再无 `VK_CONTROL`（投递档下它只会退化成字面字母）
 ok("`_probe_input_box_frame` / `_input_ink` 支持复用现成帧（省一次抓帧）",
    _sm.has(SRC, "def _probe_input_box_frame(gui, img=None):") and
    _sm.has(SRC, "def _input_ink(gui, box, strip: int = 80, img=None) -> int:"))
+
+print("── E. 端到端（假后端 + 假库 + 假时钟）：发图失败**真的会去撤草稿** ──")
+
+
+class _Clock:
+    """假时钟：`time.sleep` 只推进假时间（否则这条链要真等十几秒）。"""
+
+    def __init__(self):
+        self.t = 1_000_000.0
+
+    def time(self):
+        return self.t
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += float(s)
+
+
+class _ImgBackend(ib.MessageBackend):
+    """投递档替身：只记调用，绝不碰 ctypes/窗口。"""
+
+    def __init__(self):
+        super().__init__(press_ms=0, activate=False)
+        self.calls = []
+
+    def _wake(self, hwnd):
+        return None
+
+    def click(self, hwnd, screen_pt, right=False, hover_ms=0, press_ms=None):
+        self.calls.append(("click", tuple(int(v) for v in screen_pt)))
+        return True, ""
+
+    def keys(self, hwnd, vks, hold_ms=30):
+        self.calls.append(("keys", tuple(int(v) for v in vks)))
+        return True, ""
+
+    def send_text(self, hwnd, text):
+        self.calls.append(("send_text", text))
+        return True, ""
+
+
+class _ImgGui:
+    main_hwnd = 4321
+    origin_x = 100
+    origin_y = 50
+    render_rect = (101, 90, 1240, 980)
+
+    def _update_render_rect(self):
+        return None
+
+
+class _ImgStub:
+    """`send_image_posted` 的 self：只给那条链真正用到的口子。
+
+    库**永远不加新行** ⇒ 一定走"发送没落地"那条出口；`_input_has_content` 恒为"有内容"
+    ⇒ 判据认为图还挂在输入框里。
+    """
+
+    _looks_like_img_msg = staticmethod(W.WeChatAdapter._looks_like_img_msg)
+
+    def __init__(self, ink_seq):
+        self.ink_seq = list(ink_seq)
+
+    def _idn_txn_begin(self):
+        return None
+
+    def _idn_txn_end(self):
+        return None
+
+    def _get_gui(self):
+        return _ImgGui()
+
+    def chat_is_open(self, chat_id, gui=None):
+        return True, "stub：会话已打开"
+
+    def _db_messages(self, chat_id, limit=8):
+        return [{"local_id": 100, "content": "旧消息", "type": "文本"}]
+
+    def db_alive(self, chat_id):
+        return True, "假库：读得到"
+
+    def _input_has_content(self, gui, r):
+        return True, "stub 发送按钮=绿"
+
+    def _mark_sent(self, text):
+        return None
+
+    def _click_posted(self, backend, hwnd, pt, tag="", **kw):
+        return True, ""
+
+    def _right_click_menu_posted(self, gui, rel_x, rel_y, label, delay=0.7):
+        return True
+
+
+def _run_img(ink_seq):
+    """跑一遍 `send_image_posted`（脚本外的一切副产物都打桩）。"""
+    import agent.clipboard as _CB
+    stub, be = _ImgStub(ink_seq), _ImgBackend()
+    saved = (W.time, ib.select_backend, W._input_top_band, W._probe_input_box_frame,
+             W._input_ink, W._composer_card_points, _CB.set_image)
+    W.time = _Clock()
+    ib.select_backend = (lambda cfg=None, gui=None: be)
+    W._input_top_band = (lambda gui, band_px=20: ((101, 690, 1240, 780), (600, 700)))
+    W._probe_input_box_frame = (lambda gui, img=None: (101, 690, 1240, 900))
+    W._input_ink = (lambda gui, b, strip=80, img=None: (stub.ink_seq.pop(0) if stub.ink_seq else 0))
+    W._composer_card_points = (lambda gui: [])
+    _CB.set_image = (lambda p: (True, "stub：已放剪贴板"))
+    try:
+        res, why = W.WeChatAdapter.send_image_posted(stub, "filehelper", "C:/stub/x.png", wait_s=0.5)
+    finally:
+        (W.time, ib.select_backend, W._input_top_band, W._probe_input_box_frame,
+         W._input_ink, W._composer_card_points, _CB.set_image) = saved
+    return res, why, be
+
+
+_rE, _wE, _bE = _run_img([0, 6, 0])
+ok("端到端：发送没落地时判 not_sent", _rE == W.V_NOT_SENT, "%r" % (str(_rE),))
+ok("端到端：**真的去撤了草稿**（投递 End + 退格，不是只在文案里说）",
+   any(c == ("keys", (0x23,)) for c in _bE.calls)
+   and any(c == ("keys", (0x08,)) for c in _bE.calls), str(_bE.calls[-14:]))
+ok("端到端：撤草稿同样**不用 Ctrl+A**",
+   not any(c == ("keys", (0x11, 0x41)) for c in _bE.calls), str(_bE.calls))
+ok("端到端：回执里写明残留已清", "残留清理" in _wE and "已清空" in _wE, _wE)
+
+_rE2, _wE2, _bE2 = _run_img([6, 6])
+ok("端到端：粘贴前框里**本来就有用户内容** ⇒ 不撤（只提示人工）",
+   not any(c == ("keys", (0x08,)) for c in _bE2.calls), str(_bE2.calls))
+ok("端到端：提示里点名是哪张图、并说明为什么没动它",
+   ("没有" in _wE2) and ("这张图" in _wE2), _wE2)
 
 print("结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(0 if FAIL == 0 else 1)
