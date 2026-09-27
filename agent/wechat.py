@@ -6199,9 +6199,13 @@ class WeChatAdapter:
                         except Exception:
                             new_id = 0
                         if new_id > base_id:
-                            # 只有在"回读到的这行确实是图片"时才登记成自己发的 —— 登记错了会把
-                            # **别人的话**丢掉（漏回），比漏判回声更糟。不是图片类 ⇒ 照旧报成功、不登记。
-                            if self._looks_like_img_msg(top):
+                            # 只有在"回读到的这行确实是**我们刚发的那种**"时才登记成自己发的 —— 登记错了会把
+                            # **别人的话**丢掉（漏回），比漏判回声更糟。不是那一类 ⇒ 照旧报成功、不登记。
+                            # ⚡ 动图走文件通道发出去，微信落的是**动画表情**（type=47）⇒ 用表情那条判据；
+                            #   静态图仍用图片判据（表情不许混进发图登记，见 `_looks_like_emoji_msg`）。
+                            _ours = (self._looks_like_emoji_msg(top) if _anim
+                                     else self._looks_like_img_msg(top))
+                            if _ours:
                                 _self_local_note(self, chat_id, top.get("local_id"),
                                                      top.get("create_time"))
                             return V_OK, ("投递发图成功（第 %d 枪 %s · %s · DB 回读 local_id=%s type=%s）"
@@ -6330,18 +6334,25 @@ class WeChatAdapter:
 
     @staticmethod
     def _looks_like_img_msg(row) -> bool:
-        """DB 回读的行是不是"我们刚发出去的那种"消息（**图片 与 动画表情 都算**）。
+        """DB 回读的行是不是"图片类"消息（本机实测图片消息 type='图片'）。"""
+        if not row:
+            return False
+        t = str(row.get("type_name") or row.get("type") or "")
+        return ("图片" in t) or ("image" in t.lower())
+
+    @staticmethod
+    def _looks_like_emoji_msg(row) -> bool:
+        """DB 回读的行是不是"我们刚发出去的那个**动画表情**"。
 
         ⚡ 动图现在走**文件通道**发（把 .gif 当文件放剪贴板），微信会把它收成**动画表情**
-        （真机 DB 回读 `local_type=47`）⇒ 原来只认"图片"的话，这条**不会被登记成自己发的**
-        ⇒ 机器人会去回自己刚发的表情（漏回反过来那一头）。
+        （真机 DB 回读 `local_type=47`）⇒ 这一条要按**表情**登记成自己发的，
+        否则机器人会去回自己刚发的表情（漏回反过来那一头）。
+        ⛔ 不并进 `_looks_like_img_msg`：表情**走自己那条链**，不许混进"发图登记"（那条有反向锚盯着）。
         """
         if not row:
             return False
         t = str(row.get("type_name") or row.get("type") or "")
-        low = t.lower()
-        return (("图片" in t) or ("image" in low)
-                or ("动画表情" in t) or ("表情" in t) or ("emoticon" in low))
+        return ("动画表情" in t) or ("emoticon" in t.lower())
 
     @staticmethod
     def _sent_file_log_path() -> str:

@@ -220,9 +220,18 @@ ok("发文字：内容不一致那条『宽松成功』分支**不登记**（没
 
 _seg2 = _srcslice.from_func(_SRC, "send_image_posted")
 _seg2 = _seg2[:_seg2.index("def send_file_posted(")]
-ok("发图：登记被 `_looks_like_img_msg` 挡着",
-   "if self._looks_like_img_msg(top):" in _seg2
+# ⚡ 口径更新（动图走文件通道之后）：发图这条链现在有**两条**判据 —— 静态图走图片判据、
+#   动图（微信落成 `动画表情`）走表情判据；两者不许互相吞（表情有自己的链）。
+ok("发图：登记被「图片 / 动画表情」两条判据挡着（不该登记的一律不登记）",
+   _seg2.count("_ours = (self._looks_like_emoji_msg(top) if _anim") >= 1
+   and _seg2.count("else self._looks_like_img_msg(top))") >= 1
+   and _seg2.count("if _ours:") >= 1
    and _seg2.count("_self_local_note") == 1)
+_li = _srcslice.from_func(_SRC, "_looks_like_img_msg")
+_le = _srcslice.from_func(_SRC, "_looks_like_emoji_msg")
+ok("两条判据各司其职：图片判据仍是原样（只认图片/image），表情判据认「动画表情」",
+   _li.count('return ("图片" in t) or ("image" in t.lower())') >= 1
+   and _le.count("动画表情") >= 1)
 
 _seg3 = _srcslice.from_func(_SRC, "send_file_posted")
 _seg3 = _seg3[:_seg3.index("\n    def ", 10)]

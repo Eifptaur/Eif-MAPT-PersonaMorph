@@ -400,8 +400,8 @@ ck("B22b 控制台有对应的下拉（三档：自动 / 只用真表情 / 只�
    'data-cfg="wechat.emoji_send_mode"' in _SRC_CONSOLE2
    and _SRC_CONSOLE2.count('value="auto"') >= 1 and 'value="real"' in _SRC_CONSOLE2
    and 'value="image"' in _SRC_CONSOLE2)
-ck("B22c 代价写在界面里（真表情＝浮层要激活、前台会闪；图片＝对方看到的是图片）",
-   "必须被激活才能渲染" in _SRC_CONSOLE2 and "对方收到的是图片" in _SRC_CONSOLE2)
+ck("B22c 代价写在界面里（真表情＝浮层要激活、前台会闪；图片＝对方看到的是一张图）",
+   "必须被激活才能渲染" in _SRC_CONSOLE2 and "对方看到的是一张图" in _SRC_CONSOLE2)
 ck("B22d 产品按这个选项分流（只图 imag不面板 / 只真表情 real 不许改发图片 / auto 兜底）",
    _sm.has(_SRC_TOOLS, '_mode != "image"') and _sm.has(_SRC_TOOLS, '_mode == "real"')
    and "emoji_panel_open" in _SRC_TOOLS and "posted_paste" in _SRC_TOOLS)
