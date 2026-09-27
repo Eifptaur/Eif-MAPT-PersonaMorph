@@ -721,14 +721,20 @@ th{color:var(--tx2);font-weight:500}
   <button id="vgAllow" class="pri">本次允许发送</button>
   <button id="vgGo" class="ghost">看版本矩阵</button>
 </div>
-<div id="noticeBar" class="updbar notice">
-  <span id="noticeText">遇到问题就点「反馈」提交一下 —— <b>不用你跑任何检查</b>：这台机器的兼容性信息（系统/缩放/微信版本/最近失败）它自己会带上。</span>
-  <span class="sp"></span>
-  <button id="noticeGo" class="ghost">去反馈</button>
-</div>
+
 <style>
-.updbar{display:flex;align-items:center;gap:10px;margin:0 18px 10px;padding:9px 14px;border-radius:10px;
-  background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px;clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px);-webkit-clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px)}
+/* ⛔ 公告**不再放顶栏**（用户口径：「顶栏空间不够，完全显示不下」）。
+   现在放在**内容区顶部**（见 <main> 内第一条）。样式也换掉——不用那套圆角胶囊：
+   改成「左侧色条 + 近直角」的朴素版式，信息层次靠左侧强调条与标题色。 */
+#noticeBar{display:flex;align-items:flex-start;gap:12px;margin:0 0 14px;padding:12px 14px 12px 15px;
+  border-radius:2px;background:linear-gradient(90deg,rgba(88,166,255,.10),rgba(88,166,255,.02) 55%,transparent);
+  border-left:3px solid var(--acc,#58a6ff);color:var(--tx,#e6e8ec);font-size:12.5px;line-height:1.6}
+#noticeBar .nb-body{flex:1 1 auto;min-width:0}
+#noticeBar .nb-t{color:var(--acc,#58a6ff);font-weight:600;margin-right:5px}
+#noticeBar button{flex:0 0 auto;white-space:nowrap}
+/* 通用条（更新条 / 版本闸条）——恢复基础样式，只去掉原来那圈 clip-path 切角 */
+.updbar{display:flex;align-items:center;gap:10px;margin:0 18px 10px;padding:9px 14px;border-radius:6px;
+  background:var(--card,#1b1e24);border:1px solid var(--bd,var(--line,#2a2f37));color:var(--tx,#e6e8ec);font-size:13px}
 .updbar.warn{border-color:#8a7a3a}
 .updbar .sp{flex:1}
 /* 消息要点一长，按钮会被压到"一个字一行"（直播实拍过的丑样子）。
@@ -863,6 +869,25 @@ th{color:var(--tx2);font-weight:500}
     if (a) { a.click(); } else { location.hash = '#sec-feedback'; }
     try { window.scrollTo(0, 0); } catch (e) { }
   };
+  // 「本次不显示」/「不再显示」：两个**不同的记忆范围**（本标签页 vs 永久）
+  var _nb = document.getElementById('noticeBar');
+  var _K_ONCE = 'wxAgent.notice.off.session', _K_NEVER = 'wxAgent.notice.off';
+  try {
+    if (localStorage.getItem(_K_NEVER) === '1') { if (_nb) _nb.remove(); }
+    else if (sessionStorage.getItem(_K_ONCE) === '1') { if (_nb) _nb.remove(); }
+  } catch (e) { }
+  var _n1 = document.getElementById('noticeOnce');
+  if (_n1) _n1.onclick = function (ev) {
+    ev.stopPropagation();
+    try { sessionStorage.setItem(_K_ONCE, '1'); } catch (e) { }
+    if (_nb) _nb.remove();
+  };
+  var _n2 = document.getElementById('noticeNever');
+  if (_n2) _n2.onclick = function (ev) {
+    ev.stopPropagation();
+    try { localStorage.setItem(_K_NEVER, '1'); } catch (e) { }
+    if (_nb) _nb.remove();
+  };
 })();
 </script>
 
@@ -931,6 +956,17 @@ th{color:var(--tx2);font-weight:500}
   </aside>
 
   <main class="main">
+<!-- ⛔ 公告放在**内容区顶部**（不在顶栏：顶栏放不下，会挤成"每行一两个字"）。
+     两个按钮：「本次不显示」（本标签页）与「不再显示」（永久）。 -->
+<div id="noticeBar" role="note">
+  <div class="nb-body">
+    <b class="nb-t">遇到问题？</b>
+    <span id="noticeText">去「检测报告中心」找到对应的问题 → 出具检测报告 → 点「反馈」提交。这台机器的兼容性信息（系统 / 缩放 / 微信版本 / 最近失败）它会自己带上，不用你另跑检查。</span>
+  </div>
+  <button id="noticeGo" class="ghost">去反馈</button>
+  <button id="noticeOnce" class="ghost" title="这个标签页内不再显示；下次打开还会出现">本次不显示</button>
+  <button id="noticeNever" class="ghost" title="以后都不再显示">不再显示</button>
+</div>
 
     <section id="sec-overview" class="card" data-sec>
       <span class="ov-tools">
