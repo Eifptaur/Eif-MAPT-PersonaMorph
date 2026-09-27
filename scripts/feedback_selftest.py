@@ -564,8 +564,8 @@ ok("界面上有常驻公告条 #noticeBar", _ji > 0, "")
 _jseg = _ui2[_ji:_ji + 620] if _ji > 0 else ""
 ok("公告是**常驻**的（不带 display:none，跟「只在有事时出现」的更新条区分开）",
    bool(_jseg) and "display:none" not in _jseg, _jseg[:56].replace("\n", " "))
-ok("公告写明「不用你跑任何检查」（新口径：数据产品自己带，不再要用户交报告）",
-   "不用你跑任何检查" in _jseg, _jseg[:56].replace("\n", " "))
+ok("公告写明「不用你另跑检查」（新口径：数据产品自己带，不再要用户交报告）",
+   "不用你另跑检查" in _jseg, _jseg[:56].replace("\n", " "))
 ok("公告里就有一个「去反馈」按钮（不用用户自己找入口）", "去反馈" in _jseg, "")
 ok("「去反馈」复用导航那一项切面板（不另写一套切面板逻辑）",
    "querySelector('#nav a[href=\"#sec-feedback\"]')" in _ui2, "")

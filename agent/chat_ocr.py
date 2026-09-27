@@ -1693,8 +1693,10 @@ def _band_name(img, y_abs: int) -> str:
                 _plain = clean("".join(str(i[0]) for i in recognize_dual(_pc))).strip()
                 if _plain:
                     return _plain
-        except Exception:
-            pass
+        except Exception as e: # noqa: BLE001
+            # 只记录不外抛：原图直读是"更快的那条路"，它失败时下面还有两条独立路径
+            # （name_of_row 与反相二值化），不该因为这一段打断整次识别。
+            log.debug("绿底行原图直读失败（%s: %s）⇒ 改走反相路径", type(e).__name__, e)
         got = name_of_row(img, int(y_abs), "", zoom=3) or ""
         if got:
             return got
@@ -2578,8 +2580,10 @@ def loose_matches(a: str, b: str, thresh: float = 0.7, need: int = 3) -> bool:
             pa, pb = _alnum_pre(a), _alnum_pre(b)
             if pa and pb and pa == pb and len(pa) >= 2 and abs(len(A) - len(B)) <= 3:
                 return True
-        except Exception:
-            pass
+        except Exception as e: # noqa: BLE001
+            # 前缀判据是"再放宽一层"的补充，它失败不改变上面字符集 Jaccard 的结论
+            # ⇒ 记录后按"这一层不成立"继续，别把整次判定变成静默失败。
+            log.debug("宽松匹配的前缀判据失败（%s: %s）⇒ 按不匹配处理", type(e).__name__, e)
         return False
     except Exception:
         return False

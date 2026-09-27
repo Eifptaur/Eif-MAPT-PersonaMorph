@@ -4471,8 +4471,11 @@ class WeChatAdapter:
                 _cur = ""
             if _cur:
                 return _cur
-        except Exception:
-            pass
+        except Exception as e: # noqa: BLE001
+            # 只记录不外抛：这条路读不到时会落到下面的**标题栏**那条独立证据，
+            # 在这里静默 return 空会把"还有另一条路"一起丢掉。
+            log.debug("读会话头：绿底高亮行这条路失败（%s: %s）⇒ 转标题栏兜底",
+                      type(e).__name__, e)
         try:
             from . import chat_header as _ch
             from . import chat_ocr as _co
@@ -4582,8 +4585,11 @@ class WeChatAdapter:
                 try:
                     ib.MessageBackend(activate=True).keys(main, [self._VK_DOWN])
                     time.sleep(0.25)
-                except Exception:
-                    pass
+                except Exception as e: # noqa: BLE001
+                    # 这一段只是"闭眼先走一格"，按不动就按原路继续（再读一次头 /
+                    # 如实报读不到），不能在这里静默吞掉后装作按过了。
+                    log.debug("走格：读不到起始会话头时试按一格失败（%s: %s）",
+                              type(e).__name__, e)
                 _hdr0 = self._header_now(gui)
                 if _hdr0 and self._header_match(name, _hdr0):
                     _hold_end()
