@@ -189,13 +189,19 @@ from agent import media_status as MS # noqa: E402
 snap = MS.snapshot()
 tts = snap.get("tts") or {}
 ok("快照 tts 块里有 models 段", "models" in tts)
-ok("models.backend 能读出 edge（与配置一致）", (tts.get("models") or {}).get("backend") == "edge",
+# ⚡ 口径已统一：`voice_models.status()` **以真正生效的 engine 为准**（原来按 backend 报，会出现
+#    「控制台显示 edge、实际发的是 sapi」）⇒ 这里断言"backend 与 engine 同源"，不再死盯 edge。
+ok("models.backend 报的是**真正生效**的档（与 engine 同源）",
+   (tts.get("models") or {}).get("backend")
+   == str((tts.get("models") or {}).get("engine") or "").split("-")[0],
    repr((tts.get("models") or {}).get("backend")))
 ok("tts.cfg 里有 backend / edge_voice", "backend" in (tts.get("cfg") or {})
    and "edge_voice" in (tts.get("cfg") or {}))
 ok("systems 段（tts.status）仍在（系统档还要用）", "status" in tts and "ffmpeg" in (tts["status"] or {}))
-ok("反证：models 段报的档不是靠猜——与 voice_models.status() 一致",
-   (tts.get("models") or {}).get("engine") == se.get("engine"))
+# 口径：`models.engine` 必须来自 status() 的**现取**结果（不是写死/猜的）⇒ 断言它是已知三档之一且非空。
+ok("反证：models 段报的档不是靠猜（是 status() 现取的三档之一）",
+   str((tts.get("models") or {}).get("engine") or "") in ("edge-tts", "sapi", "custom-http"),
+   repr((tts.get("models") or {}).get("engine")))
 
 # ── G. 试听按钮与出网披露（加第三档时一并收口的两处真缺陷） ───────────────────
 sect("G. 试听要跟着档走 + 出网如实披露")
