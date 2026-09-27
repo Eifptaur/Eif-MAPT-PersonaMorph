@@ -157,10 +157,13 @@ def main():
        "detect_pane_left(img)" in (b_loc or ""))
     ok("⑥ 左右分界＝**会话区中点**（用整幅中点会把别人的行判成自己的 ⇒ 定位失败）",
        "(int(pane_left) + int(rw)) // 2" in (b_loc or ""))
-    ok("⑥ 失败带「滚动重找有没有用」标记（无锚点/没检测到方块/抓不到画面/落点越界 ⇒ 不动视口）",
+    ok("⑥ 失败带「滚动重找有没有用」标记（无锚点/抓不到画面/OCR 不可用/落点越界 ⇒ 不动视口）",
        "_poke_locate_rollable" in (b_loc or "")
-       and (b_loc or "").count("rollable=False") >= 6,
+       and (b_loc or "").count("rollable=False") >= 5,
        (b_loc or "").count("rollable=False"))
+    ok("⑥ 「这一帧没有对方的头像方块」**算可滚动重找**（对方消息被顶出视口时就是这样，翻页才找得到）",
+       "这一帧没检测到" in (b_loc or "")
+       and "rollable=False" not in (b_loc or "").split("这一帧没检测到")[1][:200], "")
     ok("⑥ 拍一拍链只对「滚了可能有救」的失败才滚动（滚也没用的直接如实失败）",
        "_poke_locate_rollable" in (b_send or ""))
 

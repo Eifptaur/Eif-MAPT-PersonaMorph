@@ -9202,9 +9202,11 @@ class WeChatAdapter:
             else:
                 side = [b for b in blocks if (b[0] + b[2]) // 2 <= mid]
             if not side:
+                # ⚠️ 这里**必须**算「可滚动重找」：对方的消息被顶出视口时就长这样
+                #   （整帧只有右侧自己的方块）—— 翻一页往往就能看到对方的行与头像。
+                #   真机实测（会话「群deepseek」，可见区全是自己发的）走的正是这一支。
                 return _fail("这一帧没检测到%s的头像方块（整帧共 %d 个）⇒ 不猜点"
-                             % ("右侧（自己）" if self_side else "左侧（对方）", len(blocks)),
-                             rollable=False)
+                             % ("右侧（自己）" if self_side else "左侧（对方）", len(blocks)))
 
             got = None
             # ② **帧内 OCR**：在"已经抓到的那一帧"上找目标的消息行。
