@@ -10102,6 +10102,42 @@ def t_delivery_ledger_guard() -> None:
        "_sf_ok, _sf_msg = sender.send_file_posted" in _src_gv and "if not _sf_ok:" in _src_gv, "")
 
 
+def t_g23_fbnotice() -> None:
+    """顶栏「反馈提示条」（web `#noticeBar` 的 Qt 等价）—— 用户反馈「原本有个公告栏的，没有看到」。
+
+    四问（都可复核，不靠"看起来在"）：
+      ① 控件真的**建出来并加进布局**（建名与入布局各一处，且顺序是 先设名 后入布局）；
+      ② 文案点明**完整路径**（检测报告中心 → 出具检测报告 → 反馈），不是一句含糊的"有问题请反馈"；
+      ③ 与 web 侧**同一件事**（`index.html` 里也有这条提示）；
+      ④ 只有一条实现（不许两处各写一份，改一处漏一处）。
+
+    ⚠️ 断言一律**计数式**（`src.count(...)`）：`"…" in src` 那种写法会进「脆断言棘轮」。
+    """
+    import os as _os # noqa: PLC0415
+
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    _sh = open(_os.path.join(_here, "shell.py"), encoding="utf-8").read()
+    _html = open(_os.path.join(_here, "..", "assets", "console", "index.html"),
+                 encoding="utf-8").read()
+
+    ck("① fbNotice 控件建出来了（new + setObjectName + addWidget 各恰好一处）",
+       _sh.count("self.fbNotice = _QLNotice(") == 1
+       and _sh.count('self.fbNotice.setObjectName("fbNotice")') == 1
+       and _sh.count("lay.addWidget(self.fbNotice)") == 1, "")
+    ck("① 顺序正确：先设 objectName、再加进布局（加进去之后才设名会被主题/定位漏掉）",
+       0 <= _sh.find('self.fbNotice.setObjectName("fbNotice")') < _sh.find("lay.addWidget(self.fbNotice)"),
+       "")
+    ck("② 文案给出完整路径（检测报告中心 / 出具检测报告 / 反馈 三要素都在）",
+       min(_sh.count(k) for k in ("检测报告中心", "出具检测报告", "反馈")) >= 1, "")
+    ck("② 文案说明兼容性信息会自动带上（不用用户自己再跑一遍检查）",
+       _sh.count("自动带上") >= 1 and _sh.count("不用你另外跑检查") >= 1, "")
+    ck("③ web 侧同一件事的提示条也在，且两边都承诺「兼容性信息自动带上、不用你跑检查」",
+       _html.count("noticeBar") >= 1 and _html.count("不用你跑任何检查") >= 1
+       and _sh.count("不用你另外跑检查") >= 1, "")
+    ck("④ 这条文案只有一处实现（不许第二份拷贝）",
+       _sh.count("遇到问题：在「检测报告中心」") == 1, "")
+
+
 def main() -> int:
     # ⭐ 测试隔离（N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
@@ -10125,7 +10161,7 @@ def main() -> int:
                    t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
                    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
                    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_ocr_fuzzy,
+                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_g23_fbnotice, t_ocr_fuzzy,
                    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
                    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
