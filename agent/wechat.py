@@ -9280,6 +9280,12 @@ class WeChatAdapter:
                     if any(j in tn for j in _SYS_NOTICE_JUNK):
                         continue # 系统提示居中、**没有头像** ⇒ 绝不拿来认人
                     sc = max(_seq_ratio(tn, nd) for nd in _needles)
+                    # ⚠️ **有头像的行优先**：微信对同一个人的连续发言只给第一条显示头像
+                    #   ⇒ 两条文本都匹配上时，选**有头像**的那条才拍得下去（真机实测：
+                    #   锚点匹配到无头像的那条 ⇒ 只能如实失败）。这里只加一个小加权，
+                    #   相似度仍是主判据（接近时才分胜负），不放松任何护栏。
+                    if any(not (b[3] < y or b[1] > y + h) for b in side):
+                        sc += 0.05
                     if sc > 0.5 and sc > _bsc:
                         _bsc, _bb = sc, (x, y, w, h)
                 # ⛔ 删掉"没对上就取最下面那条左侧文本"的兜底：
@@ -9300,6 +9306,13 @@ class WeChatAdapter:
                     _pick, _dist = b, d
             if _pick is None:
                 return _fail("没有可用的头像方块", rollable=False)
+            # ⚠️ 先问一句「这行到底有没有头像」：微信对**同一个人的连续发言**只给第一条显示头像，
+            #   后面的消息行**本来就没有头像**（真机实测：那一行对应的头像列区域是**纯白**，
+            #   最大色差 0，连 diff=8 都检不出任何块）。这种情况说「最近的方块在 94px 外」
+            #   会让人以为是检测失灵 —— 如实讲清原因。
+            _overlap = [b for b in side if not (b[3] < row_y or b[1] > row_y + row_h)]
+            if not _overlap:
+                return _fail("这一行没有头像（微信对同一个人的连续发言只给第一条显示头像）⇒ 这次不拍")
             if _dist > 90:
                 return _fail("离「%s」的消息行最近的头像方块也在 %dpx 外（>90）⇒ "
                              "不敢点（怕拍到别人）" % (target_name, _dist))
