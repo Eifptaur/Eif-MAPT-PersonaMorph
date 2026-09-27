@@ -2300,8 +2300,12 @@ SEARCH_BOX_MIN_H = 22 # 搜索框最小高度
 SEARCH_BOX_LIGHT = 243 # 搜索框填充的亮度下限（白框；面板底色只有 ~237）
 
 
-def search_box_rect(img, left=None):
+def search_box_rect(img, left=None, span=None):
     """在会话列表**标题带**里找"搜索框"那个圆角矩形（**几何判据，不读字**）。返回 `(x0,y0,x1,y1)` 或 None。
+
+    `span=(x0,x1)` 时**直接用它当列范围**、不经 `_list_span` —— 给"左沿估计不可信"时的兜底用。
+    用户口径：「要么放大镜图标、要么白框里写着搜索；**没有「搜索」二字就直接认那个白框**」
+    ⇒ 白色框是**几何**特征，不该被"会话区左沿估计"卡死。
 
     ⚠️ 为什么必须有它：对面那台（微信 4.1.13.65 / 125%）**本来就有搜索框**，
     但 ①占位文本被 OCR 读成 `…` ⇒ "读到「搜索」字样才认 box"这条**永远不成立**；②框里那个放大镜字形是
@@ -2313,7 +2317,10 @@ def search_box_rect(img, left=None):
     try:
         g = img.convert("L")
         px = g.load()
-        x0c, x1c, _lf = _list_span(img, left=left)
+        if span:
+            x0c, x1c = int(span[0]), int(span[1])
+        else:
+            x0c, x1c, _lf = _list_span(img, left=left)
         yb0, yb1 = _search_band(img, x0c, x1c)
         if yb1 - yb0 < 18 or x1c - x0c < 120:
             return None
@@ -2389,6 +2396,21 @@ def find_search_entry(img, left=None, zoom: int = 2):
                     "x": int((_bx[0] + _bx[2]) / 2), "y": int((_bx[1] + _bx[3]) / 2),
                     "why": "几何判据认出搜索框 %dx%d（白底圆角矩形，不读占位文本）"
                            % (_bx[2] - _bx[0], _bx[3] - _bx[1])}
+    except Exception:
+        pass
+    # ②b 兜底：**放宽列范围**再找一次那个白色框（不依赖会话列表左沿的估计）。
+    #    为什么要它：`_list_span` 的范围是从会话区左沿反推的（left-240..left-6），左沿一估偏
+    #    （本机实测 507 vs 真实 345；生产反馈里"找不到搜索入口：标题带里既没读到「搜索」字样、
+    #    也没识别出放大镜图标"就是这一类），而搜索框在会话列表**上方**，会整个落在范围之外。
+    #    用户口径：「要么放大镜图标、要么白框里写着搜索；**没有「搜索」二字就直接认那个白框**」。
+    try:
+        _w = img.size[0]
+        _bx2 = search_box_rect(img, span=(int(_w * 0.02), int(_w * 0.60)))
+        if _bx2 and (_bx2[2] - _bx2[0]) >= 60 and (_bx2[3] - _bx2[1]) >= 16:
+            return {"variant": "box",
+                    "x": int((_bx2[0] + _bx2[2]) / 2), "y": int((_bx2[1] + _bx2[3]) / 2),
+                    "why": "几何判据认出搜索框 %dx%d（放宽列范围兜底，不依赖会话区左沿估计）"
+                           % (_bx2[2] - _bx2[0], _bx2[3] - _bx2[1])}
     except Exception:
         pass
     # ⓪ 第二道闸：帧**本身就是搜索窗画面**时，

@@ -5240,10 +5240,6 @@ class WeChatAdapter:
                 return False, "渲染区未知（窗口不可见？）"
             from . import chat_ocr as _co
             from . import chat_header as _chh
-            try:
-                pane = int(gui.detect_pane_left())
-            except Exception:
-                pane = int(rw * _chh.PANE_LEFT_REL)
             # ① 搜索入口：**两套 UI 都要认**（用户 本机"没有搜索框了，只有搜索的
             #    一个图标，摁了之后才有搜索框"；另一台电脑"是有搜索框的"⇒ 两种形态都必须是正路，
             #    不许假设其中一种）。认字优先（读到「搜索」＝搜索框形态，点文字最稳），
@@ -5251,6 +5247,17 @@ class WeChatAdapter:
             img = _chh.capture_image(gui=gui)
             if img is None:
                 return False, "抓不到画面（窗口不可见？）"
+            # 左沿：**帧内现量**优先。库方法 `gui.detect_pane_left()` 在 WeChatGUI 上**根本不存在**
+            #   （AttributeError ⇒ 一直静默走比例兜底），而比例兜底在会话栏被拉宽/窗口很宽时会偏大，
+            #   `find_search_entry` 的列范围（left-240..left-6）就会**整个错过搜索框** ⇒
+            #   报"找不到搜索入口"（生产反馈里那条、以及"拍一拍"那几轮都是同一个病根）。
+            pane = 0
+            try:
+                pane = int(_chh.detect_pane_left(img)) or 0
+            except Exception:
+                pane = 0
+            if not pane:
+                pane = int(rw * _chh.PANE_LEFT_REL)
             ent = _co.find_search_entry(img, left=pane or None)
             if not ent:
                 # ⚡ 这条分支原来是**裸返回**（现场什么都不留）。加最小边长判据后，本机

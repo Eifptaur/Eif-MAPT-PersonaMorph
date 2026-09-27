@@ -455,7 +455,9 @@ ck("B19b 真鼠标兜底也默认关（allow_real_fallback 默认 False）",
 #   搜索路线点了**名字匹配**的结果行、内容也像目标，却因为「活动行时间戳读不出」被判否
 #   ⇒ 整条搜索判失败 ⇒ **回退"找行 + 滚轮"** ⇒ 用户看到它在划会话列表。
 #   修法：在搜索路线这个上下文里把"读不出"按**弱证据**放行（发送闸不动）。
-_SEG_SEARCH = _srcslice.from_func(SRC_WECHAT, "open_chat_by_search")[:16000]
+# ⛔ 不再按字符数切：原来写死 `[:16000]`，函数一变长就把后半段（B20a 要查的那句）切在外面
+#    ⇒ 判据假红（本轮给它加了「左沿帧内现量」的注释与代码就正好撞上）。`from_func` 本身就是 AST 跨度。
+_SEG_SEARCH = _srcslice.from_func(SRC_WECHAT, "open_chat_by_search")
 ck("B20 搜索路线：'时间戳读不出'按弱证据放行（不再整条回退去滚列表）",
    _sm.has(_SEG_SEARCH, '_why_s = str(idn_why)') and _sm.has(_SEG_SEARCH, '"读不出" in _why_s'))
 ck("B20a 发送闸没跟着放宽（注释里写明「发送闸一个字不动」）",
