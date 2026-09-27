@@ -398,5 +398,8 @@ def sticker_image(db, chat_id: str, local_id, out_dir: str = "", allow_scan: boo
         return ""
     if not sniff(plain):
         return ""
-    out_dir = out_dir or os.path.join(ROOT, "media", "emoji")
+    # ⛔ 落点必须是**前端「表情包收藏夹」读的那个目录**（`wechat.EMOJI_DIR` = `<ROOT>/data/emojis`）。
+    #   原来落在 `media/emoji` ⇒ 解出来的表情**根本不出现在控制台收藏夹里**
+    #   （真机实测：`data/emojis` 空、`media/emoji` 有 6 张 ⇒ 前端一张都看不到）。
+    out_dir = out_dir or os.path.join(ROOT, "data", "emojis")
     return to_viewable(plain, out_dir, md5)
