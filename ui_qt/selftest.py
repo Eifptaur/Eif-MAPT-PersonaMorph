@@ -7079,8 +7079,8 @@ def t_ocr_fuzzy() -> None:
     w._group_by_wxid = {}
     w._get_gui = lambda: None
     w._known_chat_names = lambda: [] # D1 新契约：DB 侧候选名（各场景按需覆写）
-    w._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
-    w.current_chat_name = lambda gui=None: ("演示祥", "桩：绿底行补读（错一字）")
+    w._active_row_time_ok = lambda chat_id, gui=None, img=None: (False, "桩：时间档不参与")
+    w.current_chat_name = lambda gui=None, img=None: ("演示祥", "桩：绿底行补读（错一字）")
     try:
         w._idn_txn_begin() # 开事务（与产品 send_text 同款）
         # 场景 A：strict 全漏 → 模糊唯一 → 放行（事务已开）
@@ -7109,7 +7109,7 @@ def t_ocr_fuzzy() -> None:
            ok2 is False, "ok=%s why=%s" % (ok2, str(why2)[:50]))
         w._idn_txn_begin()
         # 场景 C：strict 命中回归——读对时档① 直接过，模糊档根本不该被触达
-        w.current_chat_name = lambda gui=None: ("演示群", "桩：读对了")
+        w.current_chat_name = lambda gui=None, img=None: ("演示群", "桩：读对了")
         _hit = {"fuzzy": 0}
         _real_mf = _co.matches_fuzzy
         _co.matches_fuzzy = lambda *a, **k: (_hit.__setitem__("fuzzy", _hit["fuzzy"] + 1)
@@ -7123,7 +7123,7 @@ def t_ocr_fuzzy() -> None:
         w._idn_txn_begin()
         _orig_cb = _co.capture_best
         _co.capture_best = lambda *a, **k: _PImD.new("RGB", (80, 40), (255, 255, 255))
-        w.current_chat_name = lambda gui=None: ("工作群B", "桩：读到了打开中的会话名")
+        w.current_chat_name = lambda gui=None, img=None: ("工作群B", "桩：读到了打开中的会话名")
         _co.session_rows = lambda img: [{"name": n} for n in ["张三丰"]] # B 行不可见（绿底行读不准的形态）
         # 场景 D：竞争名只在 DB 侧 ⇒ 候选集补全后歧义可检 ⇒ 判否（修复前误判 True 的真实反例）
         w._known_chat_names = lambda: ["工作群B"]
@@ -7191,8 +7191,8 @@ def t_ocr_fuzzy() -> None:
         w5._nick_map = {}
         w5._monitored_chat_ids = lambda: []
         w5.display_name = lambda ck: ""
-        w5._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
-        w5.current_chat_name = lambda gui=None: ("演示祥", "桩：当前行读错一字")
+        w5._active_row_time_ok = lambda chat_id, gui=None, img=None: (False, "桩：时间档不参与")
+        w5.current_chat_name = lambda gui=None, img=None: ("演示祥", "桩：当前行读错一字")
         _orig_cb3 = _co.capture_best
         _orig_gb = _co.green_bands
         _orig_srows3 = _co.session_rows
@@ -7227,9 +7227,9 @@ def t_ocr_fuzzy() -> None:
         w4._nick_map = {}
         w4._monitored_chat_ids = lambda: []
         w4.display_name = lambda ck: ""
-        w4._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
+        w4._active_row_time_ok = lambda chat_id, gui=None, img=None: (False, "桩：时间档不参与")
         w4._seen_names_add(["工作群C"])
-        w4.current_chat_name = lambda gui=None: ("工作群C", "桩：读到未知会话名")
+        w4.current_chat_name = lambda gui=None, img=None: ("工作群C", "桩：读到未知会话名")
         _orig_cb2 = _co.capture_best
         _co.capture_best = lambda *a, **k: _PImD.new("RGB", (80, 40), (255, 255, 255))
         _orig_srows2 = _co.session_rows
@@ -7299,8 +7299,8 @@ def t_ocr_fuzzy() -> None:
         w6._nick_map = {}
         w6._monitored_chat_ids = lambda: []
         w6.display_name = lambda ck: ""
-        w6._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
-        w6.current_chat_name = lambda gui=None: ("测试(2)", "桩：正确读出")
+        w6._active_row_time_ok = lambda chat_id, gui=None, img=None: (False, "桩：时间档不参与")
+        w6.current_chat_name = lambda gui=None, img=None: ("测试(2)", "桩：正确读出")
         _co.capture_best = lambda *a, **k: _PImG.new("RGB", (80, 40), (255, 255, 255))
         _co.green_bands = lambda *a, **k: [{"y0": 90, "y1": 130, "y_abs": 100, "score": 0.9}]
         _co.session_rows = lambda img: [
@@ -7321,8 +7321,8 @@ def t_ocr_fuzzy() -> None:
         w7._nick_map = {}
         w7._monitored_chat_ids = lambda: []
         w7.display_name = lambda ck: ""
-        w7._active_row_time_ok = lambda chat_id, gui=None: (False, "桩：时间档不参与")
-        w7.current_chat_name = lambda gui=None: ("演示（3）", "桩：成员数装饰读数")
+        w7._active_row_time_ok = lambda chat_id, gui=None, img=None: (False, "桩：时间档不参与")
+        w7.current_chat_name = lambda gui=None, img=None: ("演示（3）", "桩：成员数装饰读数")
         _co.session_rows = lambda img: [
             {"name": "演示（3）", "y_abs": 100}, {"name": "张三丰", "y_abs": 220}]
         w7._idn_txn_begin()
