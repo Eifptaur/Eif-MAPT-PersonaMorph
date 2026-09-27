@@ -5127,7 +5127,8 @@ def _fb_submit(btn, note) -> None:
     def _work(box: dict) -> None:
         try:
             box["r"] = post_json("/api/feedback/submit",
-                                 {"kind": kind, "text": text, "contact": contact, "files": []},
+                                 {"kind": kind, "text": text, "contact": contact,
+                                  "files": list(getattr(page, "_fb_files", None) or [])},
                                  timeout=30.0)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
@@ -6486,7 +6487,7 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     card = Card(t)
     card.body.addWidget(h2(t, "反馈状态"))
     card.body.addWidget(desc(t, "反馈发不出去时只存在本机，网络/邮箱修好后点「补发积压」再试；"
-                                "附件暂时要在网页控制台里添加（这里提交不带附件）。"))
+                                "附件在本页直接选：最多 4 个，图片 ≤2MB、其他文件 ≤20MB。"))
     lb = QLabel("")
     lb.setFont(qfont(t, 12))
     lb.setWordWrap(True)
@@ -6495,32 +6496,99 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     fl_note.setFont(qfont(t, 12))
     fl_note.setWordWrap(True)
     fl_note.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    files_lb = QLabel("没选附件")
+    files_lb.setObjectName("fbFileList")
+    files_lb.setFont(qfont(t, 12))
+    files_lb.setWordWrap(True)
+    files_lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
     row = QHBoxLayout()
     b_rf = Btn("刷新", t, "ghost")
     b_fl = Btn("补发积压", t, "ghost")
-    b_web = Btn("去网页加附件", t, "ghost") # Qt 壳不代持附件上传（web 为真值）——给入口不补 UI
-    b_web.setObjectName("fbWebAdd")
+    b_pick = Btn("选择附件", t, "ghost") # 原生选文件（web fbPick + fbFileInput 的等价物）
+    b_pick.setObjectName("fbPickAdd")
+    b_clr = Btn("清空附件", t, "ghost")
+    b_clr.setObjectName("fbPickClear")
     row.addWidget(b_rf)
     row.addWidget(b_fl)
-    row.addWidget(b_web)
+    row.addWidget(b_pick)
+    row.addWidget(b_clr)
     row.addStretch(1)
     card.body.addLayout(row)
+    card.body.addWidget(files_lb)
     card.body.addWidget(fl_note)
     card.body.addWidget(lb)
     page.layout().addWidget(card)
 
-    def _open_web() -> None:
-        # 附件上传只在网页控制台有（Qt 壳不代持）——给入口不补 UI。
-        # fragment 不走 join_url 的 path 槽位（同 vermat 拍板入口的口径：
-        # /#sec-feedback?token=tk 会把 token 困进 fragment ⇒ 401 / 锚跳转失效）。
-        from PySide6.QtCore import QUrl as _QUrl # noqa: PLC0415
-        from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
-        from agent_bridge import current_url as _cur # noqa: PLC0415
+    _IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+    _FB_MAX, _FB_IMG_MB, _FB_FILE_MB = 4, 2, 20
 
-        _QDS.openUrl(_QUrl(str(_cur() or "").strip() + "#sec-feedback"))
-        fl_note.setText("已在浏览器打开网页控制台的反馈页（附件在那里添加）· " + time.strftime("%H:%M:%S"))
+    def _fmt_sz(n: int) -> str:
+        return ("%.1f MB" % (n / 1048576.0)) if n >= 1048576 else ("%.0f KB" % (n / 1024.0))
 
-    b_web.clicked.connect(_open_web)
+    def _render_files() -> None:
+        cur = list(getattr(page, "_fb_files", None) or [])
+        if not cur:
+            files_lb.setText("没选附件（点「选择附件」）")
+        else:
+            files_lb.setText("已选 %d 个：%s" % (
+                len(cur), " · ".join("%s（%s）" % (f.get("name"), _fmt_sz(int(f.get("size") or 0)))
+                                     for f in cur)))
+
+    def _pick_files() -> None:
+        """原生选附件（web fbPick/fbFileInput 的等价物）：多选 → 按 web 同款上限校验 → base64。
+
+        ⛔ 不再"去网页加附件"（用户口径：网页能做的都得在 Qt 做）。校验口径与 web 逐条一致：
+        最多 4 个、图片 ≤2MB、其他文件 ≤20MB；读不出来的**如实说**，不静默丢。
+        """
+        import base64 as _b64 # noqa: PLC0415
+
+        from PySide6.QtWidgets import QFileDialog as _QFD # noqa: PLC0415
+
+        cur = list(getattr(page, "_fb_files", None) or [])
+        room = _FB_MAX - len(cur)
+        if room <= 0:
+            fl_note.setText("最多带 %d 个附件（先「清空附件」再加）" % _FB_MAX)
+            return
+        paths, _f = _QFD.getOpenFileNames(page, "选择要附上的文件（最多 %d 个）" % room,
+                                          "", "所有文件 (*.*)")
+        if not paths:
+            return
+        skipped = []
+        for p in list(paths)[:room]:
+            try:
+                size = os.path.getsize(p)
+            except Exception as e: # noqa: BLE001
+                skipped.append("%s（读不到：%s）" % (os.path.basename(p), type(e).__name__))
+                continue
+            is_img = str(p).lower().endswith(_IMG_EXT)
+            cap = (_FB_IMG_MB if is_img else _FB_FILE_MB) * 1048576
+            if size > cap:
+                skipped.append("%s（%s，超过 %dMB）"
+                               % (os.path.basename(p), _fmt_sz(size),
+                                  _FB_IMG_MB if is_img else _FB_FILE_MB))
+                continue
+            try:
+                with open(p, "rb") as fh:
+                    data = _b64.b64encode(fh.read()).decode("ascii")
+            except Exception as e: # noqa: BLE001
+                skipped.append("%s（读不出来：%s）" % (os.path.basename(p), type(e).__name__))
+                continue
+            cur.append({"name": os.path.basename(p), "size": size, "data": data})
+        page._fb_files = cur
+        _render_files()
+        if skipped:
+            fl_note.setText("这几个没加上：" + "；".join(skipped[:3]))
+        else:
+            fl_note.setText("已加 %d 个附件 · %s" % (len(cur), time.strftime("%H:%M:%S")))
+
+    def _clear_files() -> None:
+        page._fb_files = []
+        _render_files()
+        fl_note.setText("附件已清空 · " + time.strftime("%H:%M:%S"))
+
+    b_pick.clicked.connect(_pick_files)
+    b_clr.clicked.connect(_clear_files)
+    _render_files()
 
     def _load() -> None:
         def _work(box: dict) -> None:

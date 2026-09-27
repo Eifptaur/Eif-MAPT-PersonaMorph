@@ -2687,22 +2687,47 @@ def t_commfb() -> None:
         _orig_open = _QDS.openUrl
         _QDS.openUrl = staticmethod(lambda u: _opened.append(
             u.toString() if hasattr(u, "toString") else str(u)))
+        # ── feedback 页：附件**原生**选择（不再是「去网页加附件」）──
+        from PySide6.QtWidgets import QFileDialog as _QFD2 # noqa: PLC0415
+
+        _orig_gofns = _QFD2.getOpenFileNames
+        _tmp_att = os.path.join(_tf.gettempdir(), "pm_fb_att.txt")
+        with open(_tmp_att, "w", encoding="utf-8") as fh:
+            fh.write("attachment-for-test")
         try:
-            bw = page2.findChild(Btn, "fbWebAdd")
-            ck("feedback 页「去网页加附件」按钮可按 objectName=fbWebAdd 定位",
-               bw is not None, "found=%s" % (bw is not None))
-            if bw is not None:
+            _QFD2.getOpenFileNames = staticmethod(lambda *a, **k: ([_tmp_att], ""))
+            bp = page2.findChild(Btn, "fbPickAdd")
+            bc = page2.findChild(Btn, "fbPickClear")
+            ck("feedback 页有原生「选择附件」与「清空附件」两颗（objectName 定位）",
+               bp is not None and bc is not None,
+               "pick=%s clear=%s" % (bp is not None, bc is not None))
+            if bp is not None:
                 _opened.clear()
-                bw.click()
+                bp.click()
                 QApplication.processEvents()
-                _wait(lambda: bool(_opened))
-                ck("去网页加附件 ⇒ openUrl 收到 <控制台URL>#sec-feedback（token 在 query、fragment 收尾）",
-                   _opened == ["http://127.0.0.1:%d/?token=tk#sec-feedback" % port],
-                   str(_opened))
-                ck("去网页加附件的回执落在独立回执行（不占状态卡）",
-                   "附件在那里添加" in page2._fb_flnote.text(), page2._fb_flnote.text())
+                _fl = list(getattr(page2, "_fb_files", None) or [])
+                ck("点「选择附件」⇒ 文件进了本页附件清单（带 base64 data，不是空壳）",
+                   len(_fl) == 1 and _fl[0].get("name") == os.path.basename(_tmp_att)
+                   and len(str(_fl[0].get("data") or "")) > 8,
+                   str([f.get("name") for f in _fl]))
+                ck("原生选附件**不再开浏览器/网页控制台**（一次 openUrl 都没有）",
+                   _opened == [], str(_opened))
+                _flist = page2.findChild(QLabel, "fbFileList")
+                ck("附件清单落在独立那一行（不占状态卡）",
+                   _flist is not None and os.path.basename(_tmp_att) in _flist.text(),
+                   _flist.text() if _flist is not None else "缺")
+            if bc is not None:
+                bc.click()
+                QApplication.processEvents()
+                ck("「清空附件」真的清掉（清单回到空）",
+                   list(getattr(page2, "_fb_files", None) or []) == [])
         finally:
-            _QDS.openUrl = _orig_open
+            _QFD2.getOpenFileNames = _orig_gofns
+            _QDS.openUrl = _orig_open # 还原 openUrl 替身（上面那段还挂着它）
+            try:
+                os.remove(_tmp_att)
+            except OSError:
+                pass
     finally:
         QFileDialog.getOpenFileName = _orig_gofn
         agent_bridge.current_url = _orig_url
@@ -2907,6 +2932,8 @@ def t_veradv() -> None:
         calls.clear()
         _btext(vp, "版本不匹配怎么办")[0].click()
         _wait(lambda: "现在没有待拍板的事" in note_lb[0].text())
+        _time.sleep(0.35) # 让这次点击引发的**两路**回显（读台账的异步 + 原生入口）都落地再走
+        QApplication.processEvents()
         ck("拍板入口：无待决 → 回显「现在没有待拍板的事」",
            "现在没有待拍板的事" in note_lb[0].text(), note_lb[0].text())
         st_state["with_item"] = True
@@ -2951,7 +2978,11 @@ def t_veradv() -> None:
                 ck("拍板入口点击 ⇒ 走**原生四选一**入口（一次 openUrl 都没有；不再把人送去网页控制台）",
                    bool(_pd_calls) and _opened == [],
                    "原生调用=%d opened=%s" % (len(_pd_calls), _opened))
-                _wait(lambda: "有待拍板的事" in note_lb[0].text()) # 等异步回显落完再离场
+                # ⚠️ 等这次「读台账」的异步回显**落地**再离场（不论有/无待决项）：
+                #   它后落地会覆盖后面那颗按钮（依赖自愈 / 升级适配层）的回显，污染它们的断言。
+                _wait(lambda: "待拍板" in note_lb[0].text())
+                _time.sleep(0.35)
+                QApplication.processEvents()
         finally:
             panels_custom._pd_decide_native = _orig_pd
             _QDS.openUrl = _orig_open
