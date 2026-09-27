@@ -9544,6 +9544,10 @@ class WeChatAdapter:
             #   ⇒ 那条路是**死的**：只会在屏幕上多点一次右键、留下一个菜单，不可能拍上。
             _d("6) 移动到 (%d,%d) 并右键…（头像方块 %s 内；光标位置与命中窗口将在成功/失败时回读）"
                % (gui.origin_x + ax, gui.origin_y + ay, _bbox or "?"))
+            # ⚡ **错峰**：右键菜单是「失焦即关」的浮窗 —— 用户在用鼠标点别处时，菜单会立刻消失。
+            #   发这一枪之前先等一个输入空档（最多 5s / 最近 1.5s 无键鼠输入；等不到也照做，
+            #   由 `_right_click_menu` 内部的"菜单真出现且含目标项"校验兜底）。
+            _wait_user_pause(5.0, 1.5)
             menu_hit = _poke_menu_with_retry((ax, ay), _bbox)
             _d("   光标最终位置：%s（右键后）" % (_cursor_pos(),))
             # 翻过页的话把聊天滚回最新（不影响用户看到的位置）；UIA 那版是空操作，所以用投递版
@@ -10256,6 +10260,10 @@ class WeChatAdapter:
             _busy2 = self._busy_reason("表情面板")
             if _busy2:
                 return False, "你在忙（%s）⇒ 本回合不开表情面板" % _busy2
+            # ⚡ **错峰**：表情面板是「失焦即关」的浮窗 —— 用户在用鼠标点别处时开它，面板会立刻消失。
+            #   动手前先等一个输入空档（最多 5s，等到"最近 1.5s 没键鼠输入"就走；等不到也照做，
+            #   由后面的回读确认兜底）。这是"跟用户的鼠标错峰"，不是"在用户用鼠标时也能操作浮窗"。
+            _wait_user_pause(5.0, 1.5)
             gui = self._get_gui()
             from . import ui_adapt
             if not ui_adapt.prepare_screen(gui):
@@ -10432,6 +10440,8 @@ class WeChatAdapter:
             #   坐标＝我们自己实测的值（`_scratch/sticker_g_ab.py::HEART_REL`：面板相对 (0.314, 0.918)）。
             _heart = (px0 + int(pw * 0.314), py0 + int(ph * 0.918))
             _old_heart = (px0 + int(pw * 0.171), py0 + int(ph * 0.804 - 13))
+            # ⚡ 面板已开着，**点格子这一枪同样怕用户来点别处**（面板失焦即关）⇒ 再等一个空档。
+            _wait_user_pause(4.0, 1.2)
             ui_adapt.click(gui, _heart[0] - rx, _heart[1] - ry, heal=False)
             log.info("表情链：点 ♡ 收藏标签（面板相对 0.314/0.918 → 屏幕 %s）", _heart)
             time.sleep(0.7)
