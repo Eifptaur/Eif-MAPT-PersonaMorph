@@ -9443,6 +9443,8 @@ class WeChatAdapter:
             if dbg is not None:
                 dbg.append(msg)
         try:
+            # ⚡ 链头记下「用户当时的前台」（右键菜单会把微信短暂带到前台，链尾 `finally` 还回去）
+            _stash_fg()
             gui = self._get_gui()
             rec = gui.render_rect
             _d("1) 微信窗口：%s 可见=%s" % (
@@ -9570,6 +9572,10 @@ class WeChatAdapter:
         except Exception as e:
             _d("✘ 异常：%s" % e)
             return False, str(e)
+        finally:
+            # ⚡ 链尾把前台还给用户（右键菜单是弹出窗，会把微信**短暂**带到前台）。
+            #   保护同 `_restore_fg_until`：stash 就是微信 ⇒ 不还；最近 1.2s 有用户输入 ⇒ 不抢。
+            _restore_fg_until("拍一拍收尾", timeout=1.2, keep=False)
 
     # ── 拍一拍概率门控（回拍 90% / 主动皮一下低频）────────────────────────
 
@@ -9922,6 +9928,9 @@ class WeChatAdapter:
             return False, _halt
         # 引用也**先试投递**（菜单那一跳走投递：不动光标（可能短暂置前约 1~3 秒后自动还回））；
         # 投递不成才由 `_real_mouse_allowed()` 决定是否回真鼠标。原来的"只走后台 ⇒ 跳过"已删。
+        # ⚡ 链头记下「用户当时的前台」：右键菜单是弹出窗，会把微信**短暂**带到前台，
+        #   链尾 `finally` 用 `_restore_fg_until` 还回去（它自带"最近有用户输入就不抢"的保护）。
+        _stash_fg()
         try:
             gui = self._get_gui()
             group = self.group_name(chat_id)
@@ -10033,6 +10042,9 @@ class WeChatAdapter:
             return True, "已引用并发送"
         except Exception as e:
             return False, str(e)
+        finally:
+            # ⚡ 链尾把前台还给用户（右键菜单/弹出窗会把微信短暂带到前台）
+            _restore_fg_until("引用链收尾", timeout=1.2, keep=False)
 
     # ── 消息菜单操作（收藏 / 撤回 / 删除 / 置顶 / 多选转发等）─────────────
     # 复用引用链路的「头像定位 + 气泡起点右键」：对指定消息弹右键菜单点菜单项。
@@ -10264,6 +10276,10 @@ class WeChatAdapter:
             #   动手前先等一个输入空档（最多 5s，等到"最近 1.5s 没键鼠输入"就走；等不到也照做，
             #   由后面的回读确认兜底）。这是"跟用户的鼠标错峰"，不是"在用户用鼠标时也能操作浮窗"。
             _wait_user_pause(5.0, 1.5)
+            # ⚡ 链头记下「用户当时的前台窗口」：弹出式面板会把微信**短暂**带到前台，
+            #   整条表情链收尾时（`emoji_panel_send` 的 finally）用 `_restore_fg_until` 还回去。
+            #   （不在这里还 —— 面板要留着给紧接着的 `emoji_panel_send` 点格子。）
+            _stash_fg()
             gui = self._get_gui()
             from . import ui_adapt
             if not ui_adapt.prepare_screen(gui):
@@ -10449,11 +10465,69 @@ class WeChatAdapter:
             cols = 5
             ROWS = 5 # 一屏完整行（面板约 6~7 行，预留）
 
+            def _panel_grid():
+                """**实测**面板里的格子行列中心（面板图内坐标）——不再假设"5 列均匀"。
+
+                真机实测（面板 771×771）：逐列差异有周期 ≈68px ⇒ **约 11 列**，而行数同理；
+                而老的反推（5 列 / 步长 0.170）算出来的"第 20 格"落点周围 5×5 **全是面板底色**
+                （灰度 250）⇒ 点在空白处 ⇒ "点了第 20 格但库里没新行"。这就是真根因。
+                返回 (列中心列表, 行中心列表)（面板图内坐标）。检不出就给空表，由调用方回退反推。
+                """
+                try:
+                    from PIL import ImageGrab
+                    _g = ImageGrab.grab((px0, py0, px1, py1), all_screens=True).convert("L")
+                    _p = _g.load()
+                    _W, _H = _g.size
+                    from collections import Counter
+                    _c = Counter()
+                    for _yy in range(0, _H, 3):
+                        for _xx in range(0, _W, 3):
+                            _c[_p[_xx, _yy]] += 1
+                    _bg = _c.most_common(1)[0][0]
+
+                    def _centers(vals):
+                        # ⛔ 阈值**不能取固定小数**：真机实测列差异是"峰 ≈225 / 谷 ≈2"的方波，
+                        #   取 12 那种小阈值会把**格子之间的窄缝**也算成"有内容" ⇒ 整行连成一片
+                        #   ⇒ 只检出 3 个"列"（真实约 11 列）⇒ 落点又偏。⇒ 取**峰谷中点**。
+                        _srt = sorted(vals) or [0]
+                        # 谷取**最小值**：格子之间的窄缝只占少数列，用分位数取不到真谷
+                        #   （实测列差异是"高 147~225 / 低 2~17"交替，取 25 分位会落在高区 ⇒ 阈值过高 ⇒ 只剩 1 列）。
+                        _lo, _hi = _srt[0], _srt[-1]
+                        _t = max(6.0, (_lo + _hi) / 2.0)
+                        segs, cur = [], None
+                        for _i, _v in enumerate(vals):
+                            if _v > _t:
+                                if cur is None:
+                                    cur = [_i, _i]
+                                cur[1] = _i
+                            elif cur is not None:
+                                if cur[1] - cur[0] >= 8:
+                                    segs.append(cur)
+                                cur = None
+                        if cur is not None and cur[1] - cur[0] >= 8:
+                            segs.append(cur)
+                        return [(a + b) // 2 for a, b in segs]
+
+                    _cv = [sum(1 for _yy in range(_H) if abs(_p[_xx, _yy] - _bg) > 40)
+                           for _xx in range(_W)]
+                    _rv = [sum(1 for _xx in range(_W) if abs(_p[_xx, _yy] - _bg) > 40)
+                           for _yy in range(_H)]
+                    return _centers(_cv), _centers(_rv)
+                except Exception:
+                    return [], []
+
+            _gc, _gr = _panel_grid() # 实测列中心 / 行中心（面板图内坐标）
+            log.info("表情链：面板实测网格 —— 列 %d 个、行 %d 个（%s）",
+                     len(_gc), len(_gr), "实测" if (_gc and _gr) else "实测失败⇒回退反推")
+
             def _cell_pos(i: int, variant: str = "measured"):
-                """格子中心。**主用实测常量**（`sticker_h_send.py`：第 3 行第 3 列 = 0.5227/0.4903，
-                反推第一格 0.183/0.166、步长 0.170/0.162 —— 与 memory 里 0.182/0.167/0.170/0.162 互证）。
-                ⛔ 老代码用的是 `0.10+0.19c / 0.085+0.14r`：按它算第 3 行第 3 列是 (0.48, 0.365)，
-                **纵向偏上约 96px** ⇒ 点在格子缝里，这就是"面板开了、表情没发出去"的直接原因之一。"""
+                """格子中心。**优先用面板实测网格**（`_panel_grid`：列数/行距都是量出来的），
+                实测失败才回退老的"5 列均匀"反推常量。"""
+                if variant == "measured" and _gc and _gr:
+                    _n = max(1, len(_gc))
+                    _c, _r = i % _n, i // _n
+                    if _c < len(_gc) and _r < len(_gr):
+                        return (px0 + _gc[_c], py0 + _gr[_r])
                 _col = i % cols
                 _row = i // cols
                 if variant == "measured":
@@ -10511,6 +10585,10 @@ class WeChatAdapter:
             return False, ("点了表情格但都没能确认发出（%s）——**如实说没发出去**，稍后可重试" % _last)
         except Exception as e:
             return False, str(e)
+        finally:
+            # ⚡ 链尾把前台还给用户：弹出式面板/右键菜单会把微信**短暂**带到前台。
+            #   `_restore_fg_until` 自带两条保护（stash 就是微信自己 ⇒ 不还；最近 1.2s 有用户输入 ⇒ 不抢）。
+            _restore_fg_until("表情链收尾", timeout=1.2, keep=False)
 
     # ── 图片下载 ─────────────────────────────────────────────────────────
 
