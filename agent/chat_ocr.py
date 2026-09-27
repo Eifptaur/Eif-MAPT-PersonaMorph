@@ -1682,6 +1682,19 @@ def _band_name(img, y_abs: int) -> str:
        上层（`chat_is_open`）还有会话头指纹那条独立证据。
     """
     try:
+        # ⚡ **先试原图直读**（顺序很重要）：真机实测，绿底高亮行那一格**原图就能读出名字**
+        #   （`aaa偷啃使，，`）；而下面的"反相 + 二值化"反而把它读没了（同一帧只剩 `'C'`）。
+        #   原来第一步就是 `name_of_row`（它内部正是反相+二值化）⇒ **一上来就走最差的那条**，
+        #   于是"当前会话是谁"永远读不出 ⇒ 所有需要确认会话的链（切会话/发图前置/拍一拍）全卡住。
+        try:
+            _plain_box = _name_box(img, int(y_abs))
+            _pc = img.crop(_plain_box)
+            if _pc.width >= 8 and _pc.height >= 6:
+                _plain = clean("".join(str(i[0]) for i in recognize_dual(_pc))).strip()
+                if _plain:
+                    return _plain
+        except Exception:
+            pass
         got = name_of_row(img, int(y_abs), "", zoom=3) or ""
         if got:
             return got

@@ -4463,6 +4463,17 @@ class WeChatAdapter:
             w, h = im.size
             crop = im.crop((int(w * 0.26), int(h * 0.03), int(w * 0.66), int(h * 0.14)))
             txt = [str(t) for t, *_ in _co.recognize(crop)]
+            if not txt:
+                # ⛔ **聊天区标题栏是「深底浅字」**，而 WinRT OCR 对深底浅字经常**一个字都读不出**
+                #   （真机实测：同一帧里，**会话列表**那一行 `aaa偷啃使．` 读得出，因为它浅底深字；
+                #    而标题栏的 crop 返回 **0 条**）⇒ 于是"读不到会话头"⇒ 所有需要确认当前会话的链
+                #   全部卡住（切会话、发图前置、拍一拍…）。
+                #   ⇒ 反色再看一遍（深底浅字 → 浅底深字）。
+                try:
+                    from PIL import ImageOps as _IO
+                    txt = [str(t) for t, *_ in _co.recognize(_IO.invert(crop.convert("RGB")))]
+                except Exception:
+                    txt = []
             return "|".join(txt[:3])
         except Exception:
             return ""
