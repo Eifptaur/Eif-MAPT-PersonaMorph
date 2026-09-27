@@ -101,3 +101,25 @@ def read_build_from(path: str = "") -> str:
         return str(m.group(1)) if m else ""
     except OSError:
         return ""
+
+def tag(v: str = "") -> str:
+    """把内部版本号映射成 **GitHub release tag 形状**（`2026.9.22.5` → `v2.1.6`）。
+
+    为什么要它：内部版本号是日期式（`YYYY.M.D.N`），一眼像日期；而仓库发布用的 tag 是
+    `v2.1.<N+1>`（有第 5 段小更新时追加同一个 M）。界面按 tag 显示，与用户在 GitHub 上看到的那个一致。
+    解析不出来（老版本 / 脏串）就**原样返回**，绝不编一个。
+    """
+    s = str(v or VERSION or "").strip()
+    if s.startswith("v"):
+        s = s[1:]
+    p = s.split(".")
+    if len(p) < 4:
+        return s
+    try:
+        n = int(p[3])
+    except Exception:
+        return s
+    out = "v2.1.%d" % (n + 1)
+    if len(p) >= 5 and str(p[4]).strip():
+        out += "." + str(p[4]).strip()
+    return out

@@ -21,6 +21,7 @@
 """
 
 from __future__ import annotations
+from agent import version as _ver
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
@@ -61,9 +62,9 @@ def decide(s: dict | None) -> tuple[str, bool]:
         warn = True
     elif st == "newer":
         n = (" · " + " · ".join(str(x) for x in (s.get("notes") or []))) if s.get("notes") else ""
-        text = "有新版本 %s（当前 %s）%s" % (s.get("theirs") or "？", s.get("mine") or "未记录", n)
+        text = "有新版本 %s（当前 %s）%s" % (_ver.tag(s.get("theirs")), _ver.tag(s.get("mine")) or "未记录", n)
     elif st == "older":
-        text = "更新源里的版本（%s）比本机旧，可能是源配错了" % (s.get("theirs") or "？")
+        text = "更新源里的版本（%s）比本机旧，可能是源配错了" % _ver.tag(s.get("theirs"))
         warn = True
     elif st == "error":
         text = "更新源异常：%s" % (s.get("why") or "未知原因")
@@ -85,7 +86,7 @@ def pill(s: dict | None) -> tuple[str, bool] | None:
     if st == "pending":
         return "上次更新只装了一半", True
     if st == "newer":
-        return "有新版本 %s" % (s.get("theirs") or "？"), False
+        return "有新版本 %s" % _ver.tag(s.get("theirs")), False
     if st == "older":
         return "更新源版本有误", True
     if st == "error":
@@ -232,8 +233,8 @@ class UpdateBar(QFrame):
         cur = self._cur
         st = str((cur or {}).get("status") or "")
         if st == "newer":
-            text = "有新版本 %s（当前 %s）" % (cur.get("theirs") or "？",
-                                              cur.get("mine") or "未记录")
+            text = "有新版本 %s（当前 %s）" % (_ver.tag(cur.get("theirs")),
+                                              _ver.tag(cur.get("mine")) or "未记录")
         else:
             text, _warn = decide(cur)
         self.detail.setText(text or "没有待处理的更新事项。")
