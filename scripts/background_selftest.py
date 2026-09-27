@@ -298,13 +298,15 @@ ck("B19b **每按一格都读会话头确认**（走过头能立刻发现；不�
 ck("B19c 这条路上**不许有坐标点击、不许滚动、不许开搜索窗**",
    "_click_posted(" not in _KEYS_SEG and ".wheel(" not in _KEYS_SEG
    and "open_chat_by_search" not in _KEYS_SEG and "SetCursorPos" not in _KEYS_SEG)
-ck("B19d 读不到会话头就**不按键**（fail-closed：不许闭着眼往下走）",
-   "读不到会话头" in _KEYS_SEG and "不按键" in _KEYS_SEG)
-ck("B19e 走法有界（budget ≤6，实测 24 格＝占前台 7.45s ⇒ 不许放长）+ 反向自纠偏（两相）",
+ck("B19d 读不到会话头时**先试按一格**再判（原来直接 fail-closed ⇒「目标就在下面一格」也一枪不按、退回搜索）",
+   "读不到会话头" in _KEYS_SEG and "试按一格" in _KEYS_SEG)
+ck("B19e 走法有界（单向 budget=12）+ 反向自纠偏（两相）—— 上限放宽是因为现在**每 3 格才还一次**，"
+   "不再一口气占住前台",
    "_KEYS_WALK_BUDGET" in SRC_WECHAT and _sm.has(_KEYS_SEG, "for _phase in (0, 1)")
    and _sm.has(_KEYS_SEG, "budget = int"))
-ck("B19h **每按一格就把前台还回去**（伪激活必然招来微信占前台；实测 24 格累计 7.45s）",
-   "_restore_fg_until(\"按键走格（每格还）\"" in _KEYS_SEG and "_fg_stash_ok()" in _KEYS_SEG)
+ck("B19h 还前台**不是每格都还**（每格一还、连走多格 ⇒ 用户看到「窗口疯狂闪」且发不出消息）；"
+   "改每 3 格还一次 + 链尾兜一次",
+   "_restore_fg_until(\"按键走格（每 3 格还一次）\"" in _KEYS_SEG and "_fg_stash_ok()" in _KEYS_SEG)
 ck("B19i 名字匹配**严格优先、宽容兜底**（实测 OCR 会吃掉 emoji：`海绵宝宝の吸🈲课堂` 读成 `海绵宝宝吸课堂`）",
    _sm.has(SRC_WECHAT, "def _header_match(") and _sm.has(SRC_WECHAT, "loose_matches(hdr, name)"))
 ck("B19j 还前台时：**前台落在微信主窗上**不受「最近有输入就不抢」那条拦（那是我们的伪激活招来的）",

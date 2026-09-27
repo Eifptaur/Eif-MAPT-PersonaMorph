@@ -4542,10 +4542,21 @@ class WeChatAdapter:
             #   空档等待从 1.6s 放宽到 8s（他在连按键盘时就等一个缝；等不到也照做，且全程摁住微信）。
             _wait_user_pause(max_s=8.0, idle=0.9)
             _hdr0 = self._header_now(gui)
+            # ⚡ 读不到会话头时**不再直接放弃**：原来这里 fail-closed ⇒ 用户反馈的"目标明明就在
+            #   下面一格"也**一枪不按**、退回搜索路线（那条要浮窗激活、占前台 2~7 秒，比走格贵一个量级）。
+            #   现在先试着按 **1 格**再读一次 —— 只走一格的"闭眼"代价可控，而且是"目标就在隔壁"的常见情形。
             if not _hdr0:
-                # ⛔ fail-closed：读不到会话头就**不许按键**——否则等于"闭着眼往下走"，
-                #   走过头了也不知道（微信最小化/被挡住时就会这样）。交给后面的点列表/搜索路线。
-                return False, "读不到会话头（窗口最小化/被遮挡？）⇒ 不按键（免得闭眼乱走）"
+                try:
+                    ib.MessageBackend(activate=True).keys(main, [self._VK_DOWN])
+                    time.sleep(0.25)
+                except Exception:
+                    pass
+                _hdr0 = self._header_now(gui)
+                if _hdr0 and self._header_match(name, _hdr0):
+                    return True, ("按键走格成功：↓ 1 格（读不到起始会话头，按一格后读到 %r）；"
+                                  "零坐标、没开搜索窗" % _hdr0[:22])
+            if not _hdr0:
+                return False, "读不到会话头（窗口最小化/被遮挡？）⇒ 试按一格后仍读不到，不再按键"
             d = self._walk_dir(chat_id, _hdr0) or 1
             be = ib.MessageBackend(activate=True) # ⛔ 必须带伪激活（不带时微信不理投递的方向键）
             budget = int(budget or self._KEYS_WALK_BUDGET)
@@ -4563,8 +4574,12 @@ class WeChatAdapter:
                     # ⚡ 
                     #   实测**会**短暂置前——伪激活是必须的，而微信收到后会自己占前台；24 格实测
                     #   累计 2.95s）⇒ **每按一格就把前台还回去**，把一次 3 秒的打扰切成 N 段 ~0.3 秒。
-                    if _fg_stash_ok():
-                        _restore_fg_until("按键走格（每格还）", timeout=0.25, keep=False)
+                    # ⚡ **不再每格都还**：实测「每按一格就把前台还回去」在连走多格时表现为
+                    #   **窗口疯狂闪**（别人反馈"微信窗口疯狂闪、但就是不发信息"）。
+                    #   而 `_hold_begin("按键走格")` 已经把微信摁住（占前台 1.0~7.5s → 0.15s）
+                    #   ⇒ **每 3 格还一次**足够，整条链结束时由 `_hold_end` 再兜一次。
+                    if steps % 3 == 0 and _fg_stash_ok():
+                        _restore_fg_until("按键走格（每 3 格还一次）", timeout=0.25, keep=False)
                     hdr = self._header_now(gui)
                     if hdr and self._header_match(name, hdr):
                         return True, ("按键走格成功：%s %d 格（会话头读到 %r）；零坐标、没开搜索窗"
