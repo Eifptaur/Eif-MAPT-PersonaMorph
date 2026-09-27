@@ -1789,7 +1789,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="btns" style="margin-top:6px"><button id="ttsProbe" class="ghost" type="button">连通测试</button><span class="hint" id="ttsProbeOut"></span></div>
         <span class="hint"><b>这是你自己电脑上跑起来的服务，不是网页、也不是我们帮你托管</b>：像 <b>GPT-SoVITS</b>（文字→音频，可克隆音色）这类本地模型，用它自带的 <code>api.py</code> 起一个本机服务（默认 <code>http://127.0.0.1:9880/tts</code>），模型文件放在它自己的目录里加载；这里填它的地址即可。<b>不填＝用上面「本机系统声音」那一档</b>（系统自带、零配置）。回音频字节（audio/wav）直接用；回配置格式就在下面填字段名。</span></div></div>
       <div class="row"><label>取哪个字段</label><div class="grow"><input type="text" data-cfg="voice_reply.http_json_field" placeholder="如 data（内容编码）或 audio（文件路径）；回音频字节就留空">
-        <span class="hint">这条通道只能证明<b>端点通不通、返回的是不是音频</b>；<b>音色是不是目标角色属「未声明」</b>，发出去的仍是音频文件。</span></div></div>
+        <span class="hint">这条通道只能证明<b>端点通不通、返回的是不是音频</b>；<b>音色是不是目标角色属「未声明」</b>，发出去的仍是音频文件。</span></div>
+      <div class="row"><label>参考音频（SoVITS 类）</label><div class="grow"><input type="text" data-cfg="voice_reply.http_ref_audio" placeholder="服务端本机路径，如 D:////refs////demo.wav"><span class="hint">只有「文字 + 参考音频 → 语音」那一类端点（如 GPT-SoVITS 的 <code>/tts</code>）需要，且必须是<b>服务端那台机器上</b>的路径——不是上传文件。其它端点留空即可。</span></div></div>
+      <div class="row"><label>参考音频的文字</label><div class="grow"><input type="text" data-cfg="voice_reply.http_prompt_text" placeholder="参考音频里念的那句话（同上端点必需）"></div></div>
+      <div class="row"><label>参考音频语言</label><div class="grow"><input type="text" data-cfg="voice_reply.http_prompt_lang" placeholder="如 zh / en"></div></div></div>
       <script>
       (function(){
         var b = document.getElementById('ttsProbe'); if(!b) return;

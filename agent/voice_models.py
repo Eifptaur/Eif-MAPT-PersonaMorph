@@ -99,6 +99,15 @@ def _post(url: str, text: str, timeout: int, cfg: dict):
     body = {"text": text, "text_lang": str(cfg.get("http_lang") or "zh")}
     if cfg.get("http_text_field"):
         body = {str(cfg["http_text_field"]): text}
+    # ⚡ 「文字 + 参考音频 → 语音」那一类端点（GPT-SoVITS 的 /tts）**必须**带这三项，
+    #    缺了它直接回 400（ref_audio_path is required）；填了才带上，没填就不带
+    #    （对别的端点无害）。ref_audio_path 要的是**服务端本机路径**，不是上传的文件。
+    for _k, _ck in (("ref_audio_path", "http_ref_audio"),
+                    ("prompt_text", "http_prompt_text"),
+                    ("prompt_lang", "http_prompt_lang")):
+        _v = str(cfg.get(_ck) or "").strip()
+        if _v:
+            body[_k] = _v
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json", "Accept": "*/*"})

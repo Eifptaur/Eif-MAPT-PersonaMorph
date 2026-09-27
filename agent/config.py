@@ -331,6 +331,9 @@ DEFAULT_CONFIG = {
         "vc_fail_open": False, # 变声失败时是否照发未变声的原音（默认否＝不发：「不假装」红线）
         # HTTP 语音服务（`voice_models` 读；以前只在示例文件里有、默认表没声明）
         "http_url": "", # 自建 TTS/语音服务地址；留空＝不用这条路
+        "http_ref_audio": "", # 参考音频（GPT-SoVITS 那一类端点必需；填**服务端本机路径**）
+        "http_prompt_text": "", # 参考音频对应的文字（同上必需）
+        "http_prompt_lang": "", # 参考音频的语言（如 zh / en）
         "http_json_field": "", # 回 JSON 时取哪个字段当音频（回二进制就留空）
         "vc_timeout_ms": 60000, # 变声（含本地模型推理）通常比合成慢，给足时间
     },
