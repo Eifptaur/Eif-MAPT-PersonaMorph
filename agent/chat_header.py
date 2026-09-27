@@ -73,6 +73,13 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
         step = max(1, (y1 - y0) // 12)
         run, start = 0, 0
         _lo = int(min(w * lo_rel, PANE_SCAN_MIN_PX))
+        # ⛔ **上界**：会话列表是**固定像素宽**（真机 ≈300px，加左边竖导航栏后左沿 ≈345），
+        #    面板左沿不可能跑到半屏去。真机实测（群「aaa偷啃使用者」，渲染 1088×972）：
+        #    它把聊天区里一段「连续 24 列纯白」（气泡之间的空白）当成了左沿，返回 **507**
+        #    （真实 ≈345、库值 239）⇒ 下游 `_avatar_blocks(img, pane_left)` 的扫描起点被推到 507，
+        #    **头像列（x≈360~413）整块落在扫描区之外** ⇒ 报「左侧一个头像方块都没有」⇒ 拍不上。
+        #    ⇒ 超过上界就按「没量到」处理（返回 0，由调用方退回库值/比例兜底）。
+        _hi_pane = min(int(w * 0.42), 520)
         for x in range(_lo, min(w, int(w * hi_rel))):
             tot = n = 0
             for y in range(y0, y1, step):
@@ -84,7 +91,7 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
                     start = x
                 run += 1
                 if run >= need:
-                    return start
+                    return start if start <= _hi_pane else 0
             else:
                 run = 0
         return 0
