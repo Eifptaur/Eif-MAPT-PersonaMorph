@@ -3168,10 +3168,17 @@ class WeChatAdapter:
             u.GetWindowRect(hwnd, ctypes.byref(r))
             sw = int(u.GetSystemMetrics(0))
             sh = int(u.GetSystemMetrics(1))
-            # 目标尺寸：宽 1160；高 900（微信 PC 侧栏在高度不足时会把部分图标收进"…"省略号，
-            # 导致"发现/朋友圈"等不可见——900 高保证全部侧栏图标常显；小屏按比例收缩但不低于 820）
-            tw = 1160 if sw >= 1366 else int(sw * 0.82)
-            th = min(900, max(820, sh - 100))
+            # 目标尺寸：**从配置读**（`ui.lock_window_size`），没配才用默认。
+            # ⛔ 原来写死 1160×900 ⇒ 用户每次启动都发现自己调小的窗口被改大（"一启动窗口就变"）。
+            #    现在以配置值为准；小屏仍按比例收缩，高度不低于 820（微信侧栏图标全显的下限）。
+            _ls = (_gc().get("ui") or {}).get("lock_window_size") or [1113, 909]
+            try:
+                tw, th = int(_ls[0]), int(_ls[1])
+            except Exception:
+                tw, th = 1113, 909
+            if sw < 1366:
+                tw = min(tw, int(sw * 0.82))
+            th = min(th, max(820, sh - 100))
             _wb.touch()
             # 用户投诉「为什么老是把我的窗口改得那么大」⇒ 加档位：默认**只缩不放**。
             #   off         ＝完全不碰
