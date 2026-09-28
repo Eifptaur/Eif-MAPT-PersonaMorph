@@ -570,6 +570,73 @@ def _band_ink(im, dark: int = 190) -> float:
         return 1.0 # 量不出来就当有字（宁可多花一次 OCR，也别把"有字"当"空白"漏掉）
 
 
+#: 放大档的目标：**放大后**字高落在这个区间时本机引擎最稳。
+#: ⛔ 这个数是**本机实测扫出来的**，不是照抄文献：文献常说"字高 20~30px 最好"，
+#: 而本机扫描（`scripts/ocr_bench.py`，12 组样本 × 8 档字号 × 5~8 档放大）显示
+#: **20~35px 反而偏差**，命中率随放大后字高升到 **~50~90px 才达峰**，再往上不再涨（12px 那种
+#: 天生信息不足的，放到 8 倍也救不回来）。⇒ 取 45~90 为目标区间，上限 6 档（省时间与内存）。
+ZOOM_TARGET_LO, ZOOM_TARGET_HI, ZOOM_MAX = 45, 90, 6
+
+
+def text_height_hint(im, dark: int = 190) -> int:
+    """估"这块带子里字的像素高"（横向墨迹行投影里连续墨迹段的**中位高度**）。
+
+    只用来**挑放大档**，不参与任何身份判定。量不出来返回 0 ⇒ 调用方退回"多档硬试"的老路
+    （老路仍然保留，新函数只负责把最可能那一档排到最前面 ⇒ 省 OCR 预算）。
+    """
+    try:
+        g = im.convert("L")
+        px = g.load()
+        w, h = g.size
+        if w < 4 or h < 4:
+            return 0
+        # 逐行统计"墨迹像素占比"，占比超阈值算"有字行"；连续有字行的长度＝字高估计
+        runs = []
+        cur = 0
+        for y in range(h):
+            hit = 0
+            n = 0
+            for x in range(0, w, 2):
+                n += 1
+                if px[x, y] < dark:
+                    hit += 1
+            if n and (hit / float(n)) >= 0.06:   # 6% 一行里就有明显笔画
+                cur += 1
+            else:
+                if cur >= 6:                      # ≥6px 才算"一个字的高度"，滤掉横线
+                    runs.append(cur)
+                cur = 0
+        if cur >= 6:
+            runs.append(cur)
+        if not runs:
+            return 0
+        runs.sort()
+        return int(runs[len(runs) // 2])
+    except Exception as e: # noqa: BLE001
+        # 量不出来就是"退回老的多档硬试"，不是错误；但要留一行痕（本仓静默点棘轮只许降）
+        log.debug("字高量不出来（退回多档硬试）：%s", e)
+        return 0
+
+
+def auto_zoom(im, lo: int = None, hi: int = None, zmax: int = None) -> int:
+    """按实测字高挑放大倍数，让字高尽量落进 `[lo, hi]`（默认 20~30px）。量不出来返回 0。
+
+    ⛔ 为什么不是"越大越好"：放大到远超目标只会把笔画边缘插糊、二值化后粘连，实测 zoom=4/5
+    经常比 zoom=3 差（本文件 `_header_read` 的老注释里记着同一现象：zoom=2 读空、3 命中、4 又空）。
+    ⇒ 这一档只做"**把最可能那一档排到最前**"，多档兜底照旧。
+    """
+    _lo = int(ZOOM_TARGET_LO if lo is None else lo)
+    _hi = int(ZOOM_TARGET_HI if hi is None else hi)
+    _zmax = int(ZOOM_MAX if zmax is None else zmax)
+    h = text_height_hint(im)
+    if h <= 0:
+        return 0
+    if h >= _lo:
+        return 1 if h > _hi else max(1, min(_zmax, int(round(_hi / float(h)))))
+    z = int(round(_lo / float(h)))
+    return max(1, min(_zmax, z))
+
+
 # ————————————————— B：反色二值化预处理管线（调研 S2） —————————————————
 # 为什么：高亮行是**白字绿底**（反色底），直接识别基本必败（实测单字母 E → 「巷」）；
 # 标题带是浅灰细字，对比度也弱。管线 = 自动对比拉伸 → （可选）反色还原 → Otsu 二值化 → 放大。
@@ -637,13 +704,20 @@ def _enhance_gray(crop):
         return None
 
 
-def _header_read(img, zoom: int = 2) -> tuple:
+def _header_read(img, zoom: int = 2, cands=None) -> tuple:
     """对**一帧**跑标题带读，返回 (文本, 命中的 zoom)；读空返回 ("", 0)。
 
     多档试的由来（拍摄现场「点对了会话却不发图」的根因）：放大倍数决定成败——
     同一张截图（本机 4.1.15.8，渲染区 1191×890，会话头 `演示(3)`）：
       `zoom=2`（老默认）⇒ **`''`（一个字都读不出）**；`zoom=3` ⇒ `'演示（3）'` 稳定命中；`zoom=4` ⇒ `''`。
-    ⇒ 先试调用方给的 zoom，空了再依次试 3 / 4 / 2 / 5，读到就返回。
+    ⇒ 先试调用方给的 zoom，空了再依次试其余档，**读到就返回**（无候选集时的老行为）。
+
+    ⭐ C（调研 S3+S4，给了 `cands` 时**换成"多档择优"**）：
+      "读到就停"有个致命弱点——**第一档读出来的可能是错的**（不是空）。
+      本机基准里 `演示(3)` 会被读成 `演示〔3）`、`工作汇报` 读成 `工作汇报`…
+      ⇒ 有候选集时：每档读到的文本先按**候选集**打分（`best_candidate`），
+      **完全命中（score=1.0）立即收**；否则记住分最高的那一档继续试完，最后取分最高的。
+      依据仍写进日志（`header_text` 侧），**不许猜**：候选集为空/没有一档像 ⇒ 与老行为同（第一档非空的）。
     为了不白烧 OCR 预算：带子里几乎没墨（`_band_ink` 很低）时**直接返回 ''**，不做任何识别。
     """
     try:
@@ -653,31 +727,65 @@ def _header_read(img, zoom: int = 2) -> tuple:
         crop = img.crop(box)
         if _band_ink(crop) <= 0.004: # 空白带（没有会话/标题没画出来）⇒ 别烧 OCR
             return "", 0
+        return _read_band_crop(crop, zoom, cands)
+    except Exception as e: # noqa: BLE001
+        log.debug("标题带读取失败（找带/裁图那一步）：%s", e)
+        return "", 0
+
+
+def _read_band_crop(crop, zoom: int = 2, cands=None) -> tuple:
+    """**带内读取**（档序 + 择优）——`_header_read` 的核，也是基准直接量的那一段。
+
+    单独抽出来是为了**基准能测到上线的那段逻辑**（`scripts/ocr_bench.py` 直接喂合成 crop，
+    不必造一整张截图去骗 `header_box`）；行为与 `_header_read` 完全一致。
+    """
+    try:
+        # C（调研 S4）：先按**实测字高**挑一档排最前（量不出来＝0 ⇒ 不影响老顺序），
+        #    目标是把"最可能成的那一档"先试 ⇒ 省 OCR 预算；老的多档兜底照旧（并补上第 6 档：
+        #    本机扫描显示放大到"字高 ~50~90px"才达峰，小字应当再放大一档）。
+        _az = auto_zoom(crop)
         zooms = []
-        for z in (int(zoom or 0), 3, 4, 2, 5):
+        for z in (_az, int(zoom or 0), 5, 4, 3, 6, 2):
             if z and z > 1 and z not in zooms:
                 zooms.append(z)
+        _best = ["", 0, -1.0]   # [文本, 档, 分数]（分数只在有候选集时用得上）
+
+        def _consider(got: str, z: int) -> bool:
+            """收一档读数：返回 True＝**完全命中可以立刻收工**。"""
+            if not got:
+                return False
+            if not cands:
+                _best[0], _best[1], _best[2] = got, z, 1.0
+                return True     # 无候选集 ⇒ 保持老行为：第一档非空即返回
+            _b, _sc, _why = best_candidate(got, cands)
+            if _sc > _best[2]:
+                _best[0], _best[1], _best[2] = got, z, _sc
+            return _sc >= 1.0
+
         for z in zooms:
             # B：标题带走预处理管线（对比+二值化+放大，替代裸 resize）； A1：读空由 RapidOCR 补
             c = preprocess_ink(crop, zoom=z, invert=False)
             got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
-            if got:
-                return got, z
+            if _consider(got, z):
+                return _best[0], _best[1]
         # C：全档读空 ⇒ CLAHE 增强后再补一轮（只补前两档，预算友好；读空本来就没读到，
         #    多花一次值得；光照不均/低对比帧在全局 Otsu 下小字被碎掉，CLAHE 能救回来）
-        g2 = _enhance_gray(crop)
-        if g2 is not None:
-            for z in zooms[:2]:
-                c2 = preprocess_ink(g2, zoom=z, invert=False)
-                got = "".join(str(i[0]) for i in recognize_dual(c2)).strip()
-                if got:
-                    return got, z
+        if _best[2] < 1.0:
+            g2 = _enhance_gray(crop)
+            if g2 is not None:
+                for z in zooms[:2]:
+                    c2 = preprocess_ink(g2, zoom=z, invert=False)
+                    got = "".join(str(i[0]) for i in recognize_dual(c2)).strip()
+                    if _consider(got, z):
+                        return _best[0], _best[1]
+        if _best[0]:
+            return _best[0], _best[1]
         return "", 0
     except Exception:
         return "", 0
 
 
-def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> str:
+def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2, cands=None) -> str:
     """OCR 会话头，返回识别到的文字（读不到返回 ""）。zoom＝放大倍数（小字放大后识别率更高）。
 
     **自抓帧路径（`img=None`）带帧间投票**：先多抓挑一帧最好的（`capture_best`，防
@@ -686,6 +794,8 @@ def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> s
     （空带/渲染抖动）不否决。实测同一画面两次读数会抖（偶发错字/漏字），投票把
     「这一次读对、下一次读错」拉平成稳定命中。总预算 `timeout_s()` 兜底，到点拿已有结果走。
     **显式传 `img` 时保持单帧、行为与历史完全一致**（调用方已挑好帧 / 测试注入路径）。
+    `cands`＝候选集（这台机器上真实存在的会话名）：给了就走 `_header_read` 的**多档择优**，
+    并且**投票前先把两次读数纠到候选集**再比（"演示〔3）"与"演示（3）"于是能投成一致）。
     """
     try:
         if img is None:
@@ -694,7 +804,7 @@ def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> s
                 im1 = capture_best(gui=gui, frames=2)
                 if im1 is None:
                     return ""
-                got, zu = _header_read(im1, zoom)
+                got, zu = _header_read(im1, zoom, cands=cands)
                 if not got or confirm_frames <= 1:
                     return got
                 _disp = [] # 与首读明显不同的复核读数（等待仲裁）
@@ -705,7 +815,7 @@ def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> s
                     im2 = ch.capture_image(gui=gui)
                     if im2 is None:
                         continue
-                    got2, _ = _header_read(im2, zu or zoom) # 复核帧复用首读命中的 zoom
+                    got2, _ = _header_read(im2, zu or zoom, cands=cands) # 复核帧复用首读命中的 zoom
                     if not got2:
                         continue
                     if norm(got2) == norm(got) or _edit_dist_le(norm(got2), norm(got), 1):
@@ -715,7 +825,7 @@ def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> s
                     if not budget_out(tok):
                         im3 = ch.capture_image(gui=gui)
                         if im3 is not None:
-                            got3, _ = _header_read(im3, zu or zoom)
+                            got3, _ = _header_read(im3, zu or zoom, cands=cands)
                             if got3:
                                 if norm(got3) == norm(got) or _edit_dist_le(norm(got3), norm(got), 1):
                                     return got
@@ -727,7 +837,7 @@ def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2) -> s
             finally:
                 end_window(tok)
         # 显式传帧路径：单帧、行为与历史完全一致
-        got, _zu = _header_read(img, zoom)
+        got, _zu = _header_read(img, zoom, cands=cands)
         return got
     except Exception:
         return ""
@@ -1099,6 +1209,90 @@ def matches_fuzzy(text: str, name: str, others, db_others=None) -> bool:
 # ⚠️ 实测：微信 4.1.15.8 的**会话标题文字**是浅灰细字，WinRT OCR 整幅都读不出来
 #    （同一张图里会话列表的名字/预览/时间戳都能读出来）⇒ 不能靠"标题"确认，改靠**会话列表**
 #    ＋**绿色高亮行**：OCR 名字能读、高亮是可测的像素信号，两者对得上才认。
+# ————————————————— C：候选词表纠错（调研 S3；后处理是纯软件收益最大的一档） —————————————————
+# 依据：同样一张图，**做不做后处理能差三四十个百分点**（业界共识）；而我们手上本来就有一份
+# "这台机器上真实存在的会话名清单"（监听白名单 ∪ 库里的会话 ∪ 屏幕上读到的行）——
+# 这正是 OCR 纠错最理想的先验：**不用通用词典，用"可能是谁"的那个小集合**。
+# 与 `matches_fuzzy` 的分工：那个是**判定**（这串是不是目标名，用于授权放行）；
+# 这个是**纠正**（这串在候选集里最可能是谁，用于把名字还原成集合里的写法，好拿去搜索/展示）。
+# 两者共用同一份"候选唯一"底气 —— **都不许猜**。
+
+
+def _cand_score(text: str, cand: str) -> tuple:
+    """→ `(距离, 归一化后文本, 归一化后候选)`；任一侧归一化为空 ⇒ `(-1, "", "")`（不参与）。"""
+    a, b = norm(text), norm(cand)
+    if not a or not b:
+        return -1, "", ""
+    for _p in ("草稿", "draft"):
+        if a.startswith(_p):
+            a = a[len(_p):]
+        if b.startswith(_p):
+            b = b[len(_p):]
+    if not a or not b:
+        return -1, "", ""
+    if a == b:
+        return 0, a, b
+    if abs(len(a) - len(b)) > 3:
+        return -1, a, b
+    # 小 DP 求真实距离（串很短；上限 3 足够判断"谁更近"）
+    prev = list(range(len(b) + 1))
+    best_row = prev[-1]
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1,
+                         prev[j - 1] + (0 if a[i - 1] == b[j - 1] else 1))
+        prev = cur
+        best_row = min(best_row, min(cur))
+        if best_row > 3:
+            return 4, a, b
+    return (prev[-1] if prev[-1] <= 3 else 4), a, b
+
+
+def best_candidate(text: str, cands, max_dist: int = None) -> tuple:
+    """把 OCR 串**纠到候选集里最可能的那个名字** → `(best, score, why)`；认不出 ⇒ `("", 0.0, 原因)`。
+
+    三条护栏（缺一不纠，**宁可不纠也不猜**）：
+      ① 距离上限：归一化后短名（<8 字）≤1、长名 ≥8 字 ≤2（与 `matches_fuzzy` 同一档）；
+      ② **候选唯一**：次近候选必须明显更远（距离至少差 1）⇒ 两个都像＝歧义，不纠；
+      ③ 至少有一个候选在距离上限内（否则返回空串，调用方保持原样）。
+    `score`：距离 0 ⇒ 1.0，距离 1 ⇒ 0.85，距离 2 ⇒ 0.7（给报告/日志排序用，不是授权依据）。
+    `why`：人话依据（写进日志与检验报告，可回放：读了什么、纠成什么、差几个字、几个候选参与）。
+    """
+    t = str(text or "")
+    _cands = [str(c) for c in (cands or []) if str(c or "").strip()]
+    if not t.strip() or not _cands:
+        return "", 0.0, "没有候选集或文本为空 ⇒ 不纠（原样）"
+    scored = []
+    for c in _cands:
+        d, _a, _b = _cand_score(t, c)
+        if d < 0:
+            continue
+        scored.append((d, c))
+    if not scored:
+        return "", 0.0, "候选集里没有可比的非空名字 ⇒ 不纠（原样）"
+    scored.sort(key=lambda x: (x[0], len(x[1])))
+    d0, c0 = scored[0]
+    _lim = int(max_dist) if max_dist is not None else (1 if len(norm(c0)) < 8 else 2)
+    if d0 > _lim:
+        return "", 0.0, "最近的候选「%s」也要差 %d 个字（上限 %d）⇒ 不纠（原样）" % (c0[:12], d0, _lim)
+    if d0 > 0 and len(scored) > 1 and scored[1][0] == d0:
+        return "", 0.0, "有两个候选同样接近（「%s」与「%s」都差 %d 个字）⇒ 歧义，不纠" % (
+            c0[:12], scored[1][1][:12], d0)
+    score = 1.0 if d0 == 0 else (0.85 if d0 == 1 else 0.7)
+    return c0, score, "OCR=%r → 候选集里最近「%s」（差 %d 个字；共 %d 个候选参与；上限 %d）" % (
+        t[:16], c0[:16], d0, len(scored), _lim)
+
+
+def snap_name(text: str, cands, max_dist: int = None) -> str:
+    """`best_candidate` 的薄封装：**认不出就原样返回**（绝不返回空、绝不猜）。"""
+    t = str(text or "")
+    if not t or not cands:
+        return t
+    best, _sc, _why = best_candidate(t, cands, max_dist=max_dist)
+    return best or t
+
+
 GREEN = (81, 167, 116) # 实测：活动会话行背景色
 GREEN_TOL = 34 # 颜色容差（每通道）——库里写的 (21,172,112) 在本机**量不到**，
                                 # 实测绿底是 (81,167,116)，容差 26 时判定为 0 ⇒ 这就是"找不到高亮行"的真因
@@ -2289,7 +2483,31 @@ def capture_best(gui=None, frames: int = 3, img=None, good_rows: int = 8,
 
 
 def current_chat_name(img=None, gui=None, min_green: float = 0.12, retries: int = 3,
-                      budget_s=None) -> tuple:
+                      budget_s=None, cands=None) -> tuple:
+    """只读：返回 (当前打开的会话名, 依据) —— **有候选集时把名字纠到集合里的写法**。
+
+    纠错层（调研 S3）：`cands`＝这台机器上真实可能存在的会话名（监听白名单 ∪ 库里的会话 ∪
+    屏幕上读到的行）。给了就把 OCR 读到的名字**纠到最近的候选**，并把人话依据拼进返回串
+    （读了什么 → 纠成什么 → 差几个字 → 几个候选参与），**可回放**。
+    ⛔ 三条护栏见 `best_candidate()`：距离上限 / **候选唯一** / 空候选集一律**原样返回**——
+    无候选集时行为与历史**完全一致**（只多一层调用，不改任何判定）。
+    其余口径（像素法定高亮行、多帧重试、硬超时 fail-closed）见实现体。
+    """
+    nm, why = _current_chat_name_impl(img=img, gui=gui, min_green=min_green,
+                                      retries=retries, budget_s=budget_s)
+    try:
+        if nm and cands:
+            best, score, cwhy = best_candidate(nm, cands)
+            if best and best != nm:
+                return best, "%s ｜ 纠错：%s（score=%.2f）" % (why, cwhy, score)
+    except Exception as _e: # noqa: BLE001
+        # 纠错层出错不许影响主判据（宁可返回原始读数，也不许把"读到了"变成"读不到"）
+        log.info("候选词表纠错跳过：%s", _e)
+    return nm, why
+
+
+def _current_chat_name_impl(img=None, gui=None, min_green: float = 0.12, retries: int = 3,
+                            budget_s=None) -> tuple:
     """只读：返回 (当前打开的会话名, 依据)。依据串里写明是靠哪一行的绿底判出来的。
 
     ⚠️ 不能让"标题"来当判据：实测微信 4.1.15.8 的会话标题是**浅灰细字**，WinRT OCR 读不出来

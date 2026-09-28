@@ -3822,7 +3822,16 @@ class WeChatAdapter:
         try:
             from . import chat_ocr as _co
             # ⚡ `img`＝调用方**已经抓好的那一帧**（`chat_is_open` 一轮里各档共用，省掉重复抓帧）。
-            return _co.current_chat_name(img=img, gui=gui or self._get_gui())
+            # C（调研 S3）：把"这台机器上真实存在的会话名"作为**候选集**传下去 ⇒ OCR 读错的名字
+            #   能纠回集合里的写法（例：读成「演示祥」→ 纠成「演示」），并把人话依据拼进返回串。
+            #   ⛔ 三条护栏在 `chat_ocr.best_candidate()`：距离上限 / 候选唯一 / 空集不纠；
+            #   候选集取不到就传 None —— 行为与历史**完全一致**（只多一层调用，不改判定）。
+            _cands = None
+            try:
+                _cands = self._known_chat_names()
+            except Exception as _e: # noqa: BLE001
+                log.info("候选集取不到（本次跳过名字纠错）：%s", _e)
+            return _co.current_chat_name(img=img, gui=gui or self._get_gui(), cands=_cands)
         except Exception as e:
             return "", "OCR 判当前会话异常：%s" % e
 

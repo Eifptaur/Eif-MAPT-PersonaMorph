@@ -2333,9 +2333,10 @@ th{color:var(--tx2);font-weight:500}
     </section>
 <section id="sec-server" class="card" data-sec>
       <h2>服务器</h2>
-      <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。</div>
+      <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。<br>要在<b>别的电脑</b>上用浏览器打开：① 先设一个「访问口令」；② 打开下面的「允许远程访问」；③ 监听地址填 <code>0.0.0.0</code>（或本机内网 IP），保存后重启控制台，再在对方浏览器里打开 <code>http://本机IP:端口/?token=口令</code>。链路是 HTTP 明文 ⇒ 只在可信内网用，或走 SSH 隧道转发。</div>
       <div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
       <div class="row"><label>端口</label><div class="grow"><input type="number" min="1" max="65535" data-cfg="server.port" style="max-width:140px"><button class="ghost" id="portRestore" type="button" title="恢复默认端口 3210" style="margin-left:8px">恢复原端口(3210)</button><span class="hint" style="margin-left:8px">修改后需重启机器人生效（一键关闭→一键启动）</span></div></div>
+      <div class="row"><label>允许远程访问</label><input type="checkbox" data-cfg="server.allow_remote"><div class="hint">默认关。打开后才允许把监听地址设成非本机地址（务必先设访问口令）。</div></div>
       <div class="row"><label>自动开浏览器</label><input type="checkbox" data-cfg="server.auto_open_browser"></div>
       <div class="row"><label>访问口令（掩码）</label><div class="grow" style="display:flex;align-items:center;gap:8px"><input type="password" data-cfg="server.token" placeholder="留空=启动时自动生成" style="flex:1"><button class="ghost" id="tkShow" type="button">显示</button><span class="hint">网址里 ?token= 后就是它；访问口令=控制台钥匙，请保密</span></div></div>
       <div class="row"><label>统计周期</label><div class="grow"><select data-cfg="stats.period">
