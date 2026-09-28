@@ -25,6 +25,7 @@ try:
 except Exception:
     pass
 
+from agent import backoff as _bo # noqa: E402  借用前台的配额（第二道闸；本判据里要复位它）
 from agent import config as cfg_mod # noqa: E402
 # ⛔ 隔离：本判据会走**真**发送准备链（假 GUI），那条链会登记/归还窗口借用 ⇒
 #   产品的 `data\window_borrow.json` 会被建出来又删掉（净变化 0，只有持续采样才看得见）。
@@ -131,11 +132,15 @@ def main():
         ok("⑤ 有留痕（fg_refused 记到了次数）", ua.fg_refused().get("n", 0) >= 5, ua.fg_refused())
 
         # ⑥ 真鼠标档下：照常放行（没被闸门误杀）
+        #    ⚠️ A 轮起这里是**两道闸**：① `fg_allowed()`（该不该）② 借用前台的**配额**（还能不能）。
+        #    本段测的是①放开后的行为 ⇒ 先把配额复位，再看原方法是否照常执行；
+        #    ②的"连借被拦"由 `backoff_selftest.py` 专测（E 段 + B 段）。
         cfg_mod.get_config = lambda: _cfg(False, True)
+        _bo.rebind()
         g2 = ua.harden_gui(ExplodingGUI())
         g2.bring_to_front(keep_topmost=True)
         g2.calibrate_layout(save=True)
-        ok("⑥ 两个开关都放开 ⇒ 原方法照常执行",
+        ok("⑥ 两个开关都放开 ⇒ 原方法照常执行（配额已复位）",
            g2.calls == ["bring_to_front", "calibrate_layout"], g2.calls)
 
         # ⑦ ⭐ 回归：复现当时的链路 —— 库的 get_input_box 内部自己触发置顶
@@ -405,10 +410,11 @@ def main():
         ok("⑪ 上闸后 `_get_uia()` 直接返回 **None**（不物化 UIA、不 SetForegroundWindow），原方法一次没调",
            _r is None and _UiaGUI.calls == [], (_r, _UiaGUI.calls))
         cfg_mod.get_config = lambda: _cfg(False, True)
+        _bo.rebind()   # 同 ⑥：本段测的是"闸门放开"，先把借用前台的配额复位
         _g2 = _UiaGUI()
         _UiaGUI.calls = []
         _r2 = _g2._get_uia()
-        ok("⑪ 真鼠标档下照常可用（不误杀）", _r2 == "ENGINE" and _UiaGUI.calls == ["_get_uia"],
+        ok("⑪ 真鼠标档下照常可用（不误杀；配额已复位）", _r2 == "ENGINE" and _UiaGUI.calls == ["_get_uia"],
            (_r2, _UiaGUI.calls))
         ok("⑪ 静态：闸表里有 `_get_uia`", '("_get_uia", None)' in usrc)
         ok("⑪ 静态：我们自己不直接构造 `WeChatUIA(`（只走 gui._get_uia，已上闸）",

@@ -151,29 +151,38 @@ class TokenBucket:
         self.capacity = max(1, int(per_minute))
         self.min_gap_s = max(0.0, float(min_gap_s))
         self._clock = clock
-        self._hits = []          # 窗口内的取用时刻
-        #: 上次取用时刻；**-1.0 当"没取过"的哨兵**（0.0 是合法时钟值 —— 判据注入 clock 时第一个
-        #  采样点就是 0，用 0 当哨兵会让"最小间隔"那道检查整条被跳过，实测踩过两次）
-        self._last = -1.0
+        self._hits = []          # 窗口内的取用时刻（**全局**：一分钟总上限）
+        #: 各动作上次取用时刻；**-1.0 当"没取过"的哨兵**（0.0 是合法时钟值 —— 判据注入 clock 时
+        #  第一个采样点就是 0，用 0 当哨兵会让"最小间隔"那道检查整条被跳过，实测踩过两次）
+        #  ⚠️ 最小间隔**按动作名各记一份**：用户报的问题是"**同一个动作**反复借前台"（一直顶界面），
+        #     而一次正常流程里 `bring_to_front` + `calibrate_layout` 本来就要连着来 → 不该互相卡。
+        self._last_by = {}
         self.refused = 0
         self.last_why = ""
 
-    def take(self) -> tuple:
-        """取一个配额 → `(ok, 为什么不行)`。取不到时**不要动手**。"""
+    def take(self, name: str = "") -> tuple:
+        """取一个配额 → `(ok, 为什么不行)`。取不到时**不要动手**。
+
+        `name`＝动作名（例：`bring_to_front`）。**最小间隔按动作各记**（同一个动作反复借才是要治的），
+        一分钟总上限仍然是**全局**的（前台被抢的总次数才是用户真正的代价）。
+        """
+        key = str(name or "")
         with _LOCK:
             t = self._clock()
             self._hits = [x for x in self._hits if (t - x) < 60.0]
-            gap = t - self._last
-            if self.min_gap_s and self._last >= 0.0 and gap < self.min_gap_s:
+            last = self._last_by.get(key, -1.0)
+            gap = t - last
+            if self.min_gap_s and last >= 0.0 and gap < self.min_gap_s:
                 self.refused += 1
-                self.last_why = "距上一次借用前台才 %.0f 秒（最少隔 %.0f 秒）" % (gap, self.min_gap_s)
+                self.last_why = "「%s」距上一次借用前台才 %.0f 秒（最少隔 %.0f 秒）" % (
+                    key or "借前台", gap, self.min_gap_s)
                 return False, self.last_why
             if len(self._hits) >= self.capacity:
                 self.refused += 1
                 self.last_why = "这一分钟已经借了 %d 次前台（上限 %d）" % (len(self._hits), self.capacity)
                 return False, self.last_why
             self._hits.append(t)
-            self._last = t
+            self._last_by[key] = t
             return True, ""
 
     def status(self) -> dict:

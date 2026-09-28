@@ -642,7 +642,7 @@ def _guarded(name: str, fail_value):
             # ② 配额：一分钟最多借几次、两次之间至少隔多久（拒了就当"这次没做到"，不抛）
             try:
                 from . import backoff as _bo
-                _qok, _qwhy = _bo.foreground().take()
+                _qok, _qwhy = _bo.foreground().take(name)   # 按动作名各记最小间隔（同一动作反复借才拦）
             except Exception as _e: # noqa: BLE001  配额件缺失 ⇒ 放行，但要留一行痕迹
                 _qok, _qwhy = True, ""
                 log.info("置前配额件不可用（按放行）：%s", _e)

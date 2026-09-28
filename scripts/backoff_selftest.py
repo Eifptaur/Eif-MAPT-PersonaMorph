@@ -86,6 +86,15 @@ ok("B5 ★ 这一分钟额度用满 ⇒ 拒（「闪来闪去」的直接解药�
 _u[0] = 90.0
 ok("B6 滚出窗口 ⇒ 额度恢复", tb.take()[0] is True)
 ok("B7 拒绝次数有记账（能汇报给用户）", tb.status()["refused"] >= 2, str(tb.status()["refused"]))
+# B8 ★ 粒度：最小间隔**按动作各记** —— 同一个动作反复借才拦；
+#    一次正常流程里 bring_to_front + calibrate_layout 本来要连着来，不该互相卡。
+_u2 = [0.0]
+tb2 = B.TokenBucket(per_minute=6, min_gap_s=10, clock=lambda: _u2[0])
+_b1 = tb2.take("bring_to_front")[0]
+_b2 = tb2.take("calibrate_layout")[0]
+_b3 = tb2.take("bring_to_front")[0]
+ok("B8 不同动作不互相卡（各记一份最小间隔）；同一动作连着借才拦",
+   _b1 is True and _b2 is True and _b3 is False, "%s/%s/%s" % (_b1, _b2, _b3))
 
 print("\n── C. 配置与默认值（缺键必须落到保守侧）──")
 _bk_src = src("agent/backoff.py")
@@ -102,8 +111,8 @@ ok("C5 退避有上限（不许无界增长）", float(B.DEF["backoff_max_s"]) <
 print("\n── D. 接线（源码级：三条出口都真的接上了，不是写了没人调）──")
 _ua = src("agent/ui_adapt.py")
 _wx = src("agent/wechat.py")
-ok("D1 借用前台的唯一咽喉点 `_guarded` 里取了配额",
-   "_bo.foreground().take()" in _ua and "置前配额用尽" in _ua)
+ok("D1 借用前台的唯一咽喉点 `_guarded` 里取了配额（**按动作名**记账）",
+   "_bo.foreground().take(name)" in _ua and "置前配额用尽" in _ua)
 ok("D2 配额件不可用时**留痕并放行**（不静默吞）", "置前配额件不可用" in _ua)
 ok("D3 切会话公开入口先过停手闸",
    _has(_wx, "backoff as _bo") and '_bo.breaker("switch_chat").can_try()' in _wx)

@@ -429,7 +429,8 @@ ck("B17c″ 回声窗走 `_echo_window()`（默认 120 秒、可配）+ 文本�
 # B18：
 #   切会话必须**搜索框优先** —— 搜索入口位置固定、不依赖滚动、也不怕列表被别的窗口盖住；
 #   老的「找行 + 滚轮」只作兜底（保留，不删）。
-_SEG_SW = _srcslice.from_func(SRC_WECHAT, "switch_chat_posted")[:6000]
+# ⚠️ A 轮起公开入口是"停手薄壳"，真正干活的在实现体 ⇒ 顺序判据读**实现体**
+_SEG_SW = _srcslice.func_src(SRC_WECHAT, "_switch_chat_posted_impl")
 _HIT_SEARCH = _SEG_SW.find("open_chat_by_search(chat_id, name=name, gui=gui)")
 _HIT_ROW = _SEG_SW.find("find_row")
 ck("B18 切会话是搜索框优先（搜索调用必须出现在找行之前）",
@@ -545,7 +546,8 @@ except Exception as _e:
 #   搜索框路线没成时，**默认不许退回「在会话列表里找行 + 滚轮」那条老路** ——
 #   那条路虽然走投递（不动光标），但**会话列表会在用户眼前滚**，他看到的"它在划"就是这个动作。
 #   ⇒ 做成开关 `wechat.scroll_list_fallback`（默认 False＝不回退），要成功率优先的用户自己去开。
-_SEG_SW2 = _srcslice.from_func(SRC_WECHAT, "switch_chat_posted")[:6000]
+# ⚠️ A 轮起公开入口是"停手薄壳"，真正干活的在实现体 ⇒ 顺序判据要读**实现体**
+_SEG_SW2 = _srcslice.func_src(SRC_WECHAT, "_switch_chat_posted_impl")
 _HIT_GATE = _SEG_SW2.find("self._scroll_list_fallback()")
 _HIT_ROW2 = _SEG_SW2.find("find_row")
 ck("B23 搜索失败后默认不回退（开关检查必须出现在'找会话行'之前）",
