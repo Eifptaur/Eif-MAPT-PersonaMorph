@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcslice # noqa: E402  AST 定位函数体（判据不许拿 `def` 行当文本边界）
 from agent import backoff as B # noqa: E402
 
+# ⛔ 夹具命名口径：**不许用 `wxid_` 前缀**（出包 PII 闸门按真形态拦，实测被拦过一次）；
+#   会话 id 在这个判据里只是「一个字符串」，用中性名字即可。
 PASS = FAIL = 0
 
 
@@ -133,7 +135,7 @@ _f = _Fake()
 B.rebind()
 
 
-def _try(_chat="wxid_fixture_chat"):
+def _try(_chat="fixture_chat_id"):
     return _GATE(_f, _chat)
 
 
