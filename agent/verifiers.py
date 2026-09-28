@@ -26,6 +26,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # ── 小工具（全部只读、全部兜异常）──────────────────────────────────────────
+#: 隐私收口件（唯一实现点 `agent/pii.py`）。**模块级导入 + 赋值兜底**：
+#: 写法上刻意避开"`except` 里只 `return`"那种形态（本仓静默点棘轮只许降，
+#: 而"脱敏器缺失"必须有个明确动作：退化成 `None` ⇒ 调用点原样/全掩）。
+try:
+    from .pii import mask_id as _pii_mask_fn
+    from .pii import scrub_text as _pii_scrub_fn
+except ImportError:            # 打包漏了 pii.py 这种事故：不静默，退化成"不改文本 / 全掩"
+    _pii_mask_fn = None
+    _pii_scrub_fn = None
+
+
+def _pii_scrub(s: str) -> str:
+    """把报告文本里的**账号/群号**掩掉（报告是给用户**粘贴进「反馈」发出去**的）。"""
+    return _pii_scrub_fn(s) if _pii_scrub_fn else s
+
+
+def _mid2(s: str) -> str:
+    """掩码一个账号/群号（转 `agent/pii.mask_id`；缺失时退成全掩）。"""
+    return _pii_mask_fn(s) if _pii_mask_fn else "***"
+
+
 def _p(*parts) -> str:
     return os.path.join(ROOT, *parts)
 
@@ -256,7 +277,7 @@ def v_send_blocked() -> dict:
         db = WeChatDB()
         chats = db.list_message_chats() or []
         checks.append(_check("消息库读得到", bool(chats), "会话数=%d · 目录=%s"
-                             % (len(chats), os.path.basename(str(getattr(db, 'account_dir', '')) or '-'))))
+                             % (len(chats), _mid2(os.path.basename(str(getattr(db, 'account_dir', '')) or '-')))))
     except Exception as e:
         checks.append(_check("消息库读得到", False, "打不开消息库：%s" % str(e)[:60]))
     # 最近一次投递发送的结果
@@ -1105,7 +1126,11 @@ def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
     #   两处不同源。现在 `partial` 与报告头**同源**（都来自同一次 `_n_unk` 计算）。
     return {"id": vid, "name": name, "symptom": symptom, "ok": (None if ok is None else bool(ok)),
             "partial": bool(ok is True and _n_unk),
-            "verdict": verdict, "action": action, "checks": checks, "report": "\n".join(lines)}
+            "verdict": verdict, "action": action, "checks": checks,
+        # ⛔ 出口兜底：报告是**设计给人粘贴进「反馈」发出去**的（本文件头就写了"可复制"）⇒
+        #    整段过一遍 `pii.scrub_text`：账号/群号一律只留可辨认的首尾掩码。
+        #    （2026-09-28 现场：反馈消息里带着别人的 `账号=wxid_<真号>` 发到了群里。）
+        "report": _pii_scrub("\n".join(lines))}
 
 
 def catalog() -> list:

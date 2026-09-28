@@ -39,10 +39,21 @@ except Exception:
 OUT_DIR = os.path.join(ROOT, "报告")
 SECTIONS = [] # [(标题, 行列表, 原始dict)]
 
+#: 隐私收口件（唯一实现点 `agent/pii.py`）。**模块级导入 + 赋值兜底**（避开"except 里只 return"
+#: 的静默点形态：本仓静默点棘轮只许降）。缺失时退化成"不改文本"，绝不因此让报告出不来。
+sys.path.insert(0, ROOT)
+try:
+    from agent.pii import scrub_text as _scrub_text
+except ImportError:
+    _scrub_text = None
+
 
 def redact(s):
-    """打码：家目录 → %USERPROFILE% · 主机名 → %COMPUTERNAME%。
-    发回来的报告里不许带他的个人信息。"""
+    """打码：家目录 → %USERPROFILE% · 主机名 → %COMPUTERNAME% · **账号/群号 → 掩码**。
+    发回来的报告里不许带他的个人信息。
+
+    ⛔ 原来只打码路径与主机名，账号（`wxid_…`）是**原名**印进去的 —— 用户把报告发回时，
+    就把自己（或群里别人）的微信号一起发了。现在统一走 `agent.pii.scrub_text`（唯一实现点）。"""
     try:
         home = os.path.expanduser("~")
         if home:
@@ -55,6 +66,8 @@ def redact(s):
             s = s.replace(node, "%COMPUTERNAME%")
     except Exception:
         pass
+    if _scrub_text is not None:
+        s = _scrub_text(s)
     return s
 
 
@@ -516,8 +529,10 @@ def sec_visual():
             # ——读到旧号时新消息一条都进不来，而暂停/水位/key 全是好的 ⇒ 报告里必须留下这个证据。
             _alv = _info.get("account_live")
             _anames = list(_info.get("account_names") or [])
+            from agent.pii import mask_id as _mid # noqa: PLC0415
             lines.append("  消息库账号: %s%s（来源=%s）"
-                         % (_how.get("account") or _how.get("account_dir") or _how.get("dir") or "取不到",
+                         % (_mid(_how.get("account") or _how.get("account_dir")
+                                 or _how.get("dir")) or "取不到",
                             "" if _alv is None else ("（库正在被写）" if _alv
                                                      else "（**没在动**：微信可能已经切号了）"),
                             _how.get("src") or "?"))
@@ -525,7 +540,8 @@ def sec_visual():
                 lines.append("  为什么读这个账号: %s" % _how.get("account_why"))
             if len(_anames) > 1:
                 lines.append("  这台机器上的微信账号目录: %s（**只有「正在被写」的那个该读**；"
-                             "切号没跟上的话，新消息一条都看不到）" % "、".join(_anames))
+                             "切号没跟上的话，新消息一条都看不到）"
+                             % "、".join(_mid(n) for n in _anames))
     except Exception as e:
         lines.append("  微信数据目录: 取不到（%s: %s）" % (type(e).__name__, str(e)[:120]))
     if _how_err:

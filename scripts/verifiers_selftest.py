@@ -72,6 +72,21 @@ for item in cat:
     ok("%s：报告包含症状/判决/证据/可粘进反馈" % item["id"],
        all(x in r["report"] for x in ("症状：", "判决：", "逐项证据", "粘进「反馈」")), r["report"][:80])
 
+print("── B2. 报告**不许带账号/群号原名**（它是设计给人粘进「反馈」发出去的）──")
+# ⛔ 2026-09-28 现场：用户在控制台提交反馈，消息里带着 `账号=wxid_<真号>` 发到了群里。
+#    症状检验器的报告是同一条出口（本段上面那句"可粘进反馈"就是它的用途）⇒ 两向锚：
+#    塞一个**真实形态**的账号/群号进去，报告里不许出现原名；同时掩码要可辨认。
+#    夹具运行时拼（与其它 PII 夹具同规矩），免得判据文件自己命中出包 PII 闸门。
+_RAW_ID = "wxid_" + "txd5z5k7iuy022" + "_e1df"
+_RAW_GRP = "12345" + "678901@chatroom"
+V.set_runtime_how({"account": _RAW_ID, "account_names": [_RAW_ID, "另一个号"],
+                   "accounts_live": [_RAW_ID]}, None)
+_rp = V.run("send_blocked")["report"]
+ok("B2a 反向锚：报告里**没有**账号/群号原名",
+   (_RAW_ID not in _rp) and (_RAW_GRP not in _rp), [ln for ln in _rp.splitlines() if "账号" in ln][:1])
+ok("B2b 掩码可辨认（`wxid_***…` 在，排障仍对得上「是不是同一个号」）",
+   "wxid_***" in _rp, "")
+
 print("── C. 判决逻辑：第一条不通过的检查＝卡点（**三态**：True/False/None=没测到）──")
 _r = V.run("send_blocked")
 if _r["checks"]:

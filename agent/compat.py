@@ -144,7 +144,11 @@ def _data_dir() -> dict:
         rep["dir"] = str(st.get("effective") or st.get("now") or "")
         rep["how"] = str(st.get("source_text") or st.get("src") or st.get("effective_from") or "")
         if st.get("account"):
-            rep["how"] += " · 账号=%s(%s)" % (st.get("account"), st.get("account_live"))
+            # ⛔ 这里是 2026-09-28 的隐私事故点：原来拼的是**账号原名**，而 `how` 会进
+            #    反馈消息（`attach_text`）与检验报告 ⇒ 用户一提交，别人的微信号就发到了群里。
+            #    现在统一走 `pii.mask_id`（只留首尾，够核对"是不是同一个号"）。
+            from .pii import mask_id as _mid
+            rep["how"] += " · 账号=%s(%s)" % (_mid(st.get("account")), st.get("account_live"))
         up = str(st.get("account_up") or "")
         if not up and rep["dir"]:
             up = os.path.dirname(rep["dir"]) if os.path.basename(rep["dir"]) == "db_storage" else rep["dir"]
@@ -623,7 +627,11 @@ def attach_text() -> str:
         for it in fl[-10:]:
             out.append("  %s %s @%s %s" % (it.get("at_text"), it.get("code"), it.get("where"),
                                            it.get("detail") or ""))
-    return "\n".join(out)
+    # ⛔ 出口兜底：整段再过一次 `pii.scrub_text` —— 白名单漏一处（或以后新加的字段带了 id）
+    #    也不会把**别人的微信号**发出去（2026-09-28 现场：反馈消息里带着 `账号=wxid_<真号>`）。
+    #    掩码只留首尾，排障照旧够用。
+    from .pii import scrub_text as _scrub
+    return _scrub("\n".join(out))
 
 
 if __name__ == "__main__":

@@ -158,6 +158,38 @@ def main():
         ok("F9 状态文件坏了 ⇒ `last()` 回空、`attach_text()` 照样出文本（永不抛）",
            CP.last() == {} and "兼容性" in CP.attach_text())
 
+        # ── F15~F18：**账号 / 群号** 也属隐私（2026-09-28 现场事故）──
+        #    现场：用户在控制台提交反馈，反馈消息里带着 `账号=wxid_<真号>` 发到了群里。
+        #    两向锚：塞进**真实形态**的账号与群号 ⇒ 两条出口（反馈摘要 / 用户发回的检验报告）
+        #    都不许出现原名；同时掩码要**可辨认**（排障能对着看是不是同一个号）。
+        #    ⛔ 夹具在**运行时拼**（与其它 PII 夹具同规矩），免得判据文件自己命中出包 PII 闸门。
+        _RAW_ID = "wxid_" + "txd5z5k7iuy022" + "_e1df"
+        _RAW_GRP = "12345" + "678901@chatroom"
+        CP.auto_run("判据-隐私锚", force=True) # F9 刚把状态文件写坏 ⇒ 重采一份有效指纹
+        _d3 = CP.last()
+        _d3.setdefault("fingerprint", {})
+        for _k in ("data_dir", "windows"):
+            _d3["fingerprint"].setdefault(_k, {})
+        _d3["fingerprint"]["data_dir"]["how"] = "你填的目录 · 账号=%s(True)" % _RAW_ID
+        _d3["fingerprint"]["data_dir"]["dir"] = "D:\\xwechat_files\\%s\\db_storage" % _RAW_ID
+        _d3["fingerprint"]["windows"]["release"] = "Windows 11 · 群 %s" % _RAW_GRP
+        io.open(_st, "w", encoding="utf-8").write(_json.dumps(_d3, ensure_ascii=False))
+        _t3 = CP.attach_text()
+        ok("F15 脱敏（反向锚）：**账号/群号原名**不出现在反馈摘要里",
+           (_RAW_ID not in _t3) and (_RAW_GRP not in _t3) and ("wxid_" not in _t3.replace("wxid_***", "")),
+           [ln for ln in _t3.splitlines() if "账号" in ln][:1])
+        ok("F16 掩码**可辨认**（`wxid_***…` 形态在，排障仍能对「是不是同一个号」）",
+           "wxid_***" in _t3 and "***@chatroom" in _t3, "")
+        import sys as _sys # noqa: PLC0415
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import collect_report as CR # noqa: PLC0415
+        _r1 = CR.redact("消息库账号: %s（来源=你填的目录）群 %s" % (_RAW_ID, _RAW_GRP))
+        ok("F17 检验报告的 `redact()` 也掩账号/群号（它是**用户发回**的另一条出口）",
+           (_RAW_ID not in _r1) and (_RAW_GRP not in _r1) and ("wxid_***" in _r1), _r1[:70])
+        ok("F18 反向锚：不碰无关内容（只换 id 形态，别把报告改坏）",
+           CR.redact("Windows 11 build 26200 · 缩放 100% · 分片=message_0.db")
+           == "Windows 11 build 26200 · 缩放 100% · 分片=message_0.db", "")
+
         _wv = io.open(_os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
         ok("F10 接线：反馈提交处真的把 `attach_text()` 放进 env（不是写了没人调）",
            _sm.has(_wv, 'env["compat"] = _cpfb.attach_text()'))

@@ -150,11 +150,12 @@ def _self_local_note(obj, chat_id, local_id, create_time=None) -> None:
 
 
 def _mask_id(s: str) -> str:
-    """掩码显示 wxid（日志与控制台都不回显完整账号）。"""
-    t = str(s or "")
-    if len(t) <= 8:
-        return t[:2] + "***"
-    return t[:4] + "***" + t[-3:]
+    """掩码显示 wxid（日志与控制台都不回显完整账号）。
+
+    实现已收敛到 `agent/pii.py`（唯一实现点）：这里只转发，避免"日志一套口径、诊断面另一套"。
+    """
+    from .pii import mask_id as _m
+    return _m(s)
 
 # 模块级 logger：本文件里多处 `log.info(...)` 一直没定义 `log` ⇒
 # 只要走到"投递前置不满足 / 学会话头"这些分支就抛 NameError，被外层 except 吞掉后表现为
