@@ -7517,11 +7517,16 @@ $('memSearch').addEventListener('keydown', (e)=>{
         const _via = {smtp:'邮件', webhook:'推送到你的群/设备', upload_url:'网址'}[r && r.via] || '已送出';
         const _n = (r && r.files) ? ('，带 ' + r.files + ' 个附件') : '';
         if(r && r.state === 'sent'){ rst.textContent = '已发出（' + _via + _n + '）'; rst.style.color='var(--ok-tx)'; }
-        else if(r && r.state === 'queued'){ rst.textContent = '注意：已存在本机，但还没发出去：' + (r.why||'') + '（待发 ' + (r.pending||0) + ' 条）'; rst.style.color='var(--warn)'; }
+        else if(r && r.state === 'queued'){
+          // 没发出去就必须说清"作者还没收到"，并给一条能立刻走的动作（复制内容发给作者）
+          rst.textContent = (r.no_channel ? '⚠️ 作者还没收到：' : '注意：还没发出去：') + (r.why||'')
+            + '（待发 ' + (r.pending||0) + ' 条）' + (r.copy_text ? ' —— 内容还在框里，复制发给作者即可。' : '');
+          rst.style.color='var(--warn)'; }
         else if(r && r.state === 'blocked'){ rst.textContent = (r.why||'发得太频繁了') + '——这条没有发出，也没保存，内容还在框里。'; rst.style.color='var(--warn)'; }
         else { rst.textContent = '' + ((r&&r.why)||'提交失败'); rst.style.color='var(--err-tx)'; }
- // 被限流时**不清空输入框**：内容还给用户，改一改或等一会儿再发
-        if(!(r && r.state === 'blocked')){
+ // ⛔ 只有**真的发出去了**才清空输入框：没发出去（queued/blocked/报错）时内容一律还给用户，
+ //   否则他写的那一大段就没了（2026-09-28 反馈的现场形态）。
+        if(r && r.state === 'sent'){
           document.getElementById('fbText').value = '';
           _fbSel.length = 0; fbRender();
         }

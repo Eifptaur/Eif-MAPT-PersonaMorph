@@ -94,6 +94,15 @@ SCAN = [
 ALLOW = (
     # .gitignore 里的 `_scratch/` 是"别把本地草稿提交进来"这条规则本身，属正常仓库配置
     (".gitignore", "开发资料引用"),
+    # ⭐ **出厂反馈接收端**：`assets/feedback_endpoint.json`（含作者自己的群机器人地址）。
+    #   它**不进仓库**（.gitignore 里那条）⇒ 只在本机存在、出包时显式收进包 —— 产品必须自带
+    #   一个接收端，"用户点一下就把反馈发到作者那儿"才成立（2026-09-28 的真 bug：产品不自带接收端，
+    #   网友在控制台提交了、作者一条都没收到）。
+    #   代价如实写明：**下载包的人能提取这个地址往那个群推消息** ⇒ 泄露了就轮换
+    #   （改本机 config.json 里的 webhook_url + 重新出一版即可；因为不进仓库，**不用改 git 历史**）。
+    #   这里显式放行而不是绕过闸门：`main()` 每次出包都会打印一行"已收进出厂反馈接收端"。
+    ("assets/feedback_endpoint.json", "企业微信 webhook key"),
+    ("assets/feedback_endpoint.json", "长密钥参数"),
     # 这条是**脱敏自检的输入夹具**：那一行故意塞满假 PII（假手机号/假邮箱/假姓名/假身份证/`wxid_abc123`），
     # 用来断言 scrub_prompt 会把它们都抹掉。它是合成的样本，不是真实账号数据 ⇒ 显式放行并写明理由。
     ("scripts/image_gen_selftest.py", "微信账号/数据"),
@@ -172,6 +181,15 @@ def main():
                         continue # 只发运行时 zip，不发解压出来的树
                     extra.append(os.path.relpath(os.path.join(dp, f), ROOT).replace("\\", "/"))
         files = sorted(set(files) | set(extra))
+    # ── 出厂反馈接收端（`assets/feedback_endpoint.json`）──────────────
+    #   它**不在 git 里**（含真实凭据，.gitignore 挡着）⇒ 这里显式收进包。
+    #   缺了必须**大声说**：没有它，本机没配通道的用户提交反馈只会落在自己机器上、作者收不到。
+    _ep = "assets/feedback_endpoint.json"
+    if os.path.exists(os.path.join(ROOT, _ep)):
+        files = sorted(set(files) | {_ep})
+        print("已收进出厂反馈接收端：%s（用户零配置即可提交；仓库里没有这个文件）" % _ep)
+    else:
+        print("⚠️ 没找到 %s ⇒ 用户本机没配通道时，反馈只会落在他自己机器上（作者收不到）" % _ep)
     print(f"跟踪 {len(tracked())} 个文件 → 进包候选 {len(files)} 个"
           + ("（含离线依赖）" if with_wheels else ""))
 

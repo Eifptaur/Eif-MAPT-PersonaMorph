@@ -24,6 +24,11 @@ os.chdir(ROOT)
 
 from agent import feedback as FB # noqa: E402
 
+# ⛔ 夹具隔离：本判据多处要造「什么都没配」的场景（`FB._cfg` 打桩成 {}），
+#   而**出厂自带接收端**是磁盘上的文件（开发机上往往真的存在）⇒ 必须显式关掉它，
+#   否则那些用例会走真通道、断言全部失真（"没通道"这条路径就永远测不到）。
+os.environ["WX_FEEDBACK_ENDPOINT"] = ""
+
 # ⛔ 隔离：本判据的四个夹具（`feedback_selftest*.jsonl` / `feedback_rejected_selftest.jsonl` /
 #   附件目录）原来都写在**产品 `data\` 里**，用完即删 ⇒ 跑前跑后对账的净变化是 0、判据看着"干净"，
 #   而那一瞬间真机器人（或用户）在 `data\` 里看到的是我们的夹具。改到 %TEMP%（持续采样闸当场抓到的）。
@@ -593,6 +598,62 @@ ok("K3 env 里**没有** compat（关掉开关/取不到）时，正文照样成
 _cfgsrc = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 ok("K4 自动带上这件事是**可关**的（配置键 `feedback.attach_compat` 默认 True）",
    _cfgsrc.find('"attach_compat": True') >= 0, "")
+
+print("\n── L. 出厂自带接收端（用户零配置也能送达；用户自己的配置优先）──")
+# 起因（2026-09-28 的真反馈）：早先几版把接收端**写进代码/示例**随包发布 ⇒ 用户点一下就能发到作者；
+# 后来因为"仓库公开、key 视为已泄露"被清空 ⇒ 用户侧没了通道，反馈只落他自己机器上、作者收不到。
+# 现在的口径：接收端放**独立数据文件**（`assets/feedback_endpoint.json`，**不进仓库**、出包时注入），
+# 用户的 config.json 优先、空则用它兜底。这一节把这条链钉住。
+_ep_probe = os.path.join(_FB_ISO, "endpoint_probe.json")
+io.open(_ep_probe, "w", encoding="utf-8").write(
+    '{"webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=00000000-0000-0000-0000-000000000000"}')
+# ⛔ 本段要真调一次 `submit()` ⇒ 必须像 C 段那样把存档/限流/附件目录全换成夹具，
+#   否则它会写进**产品 data/**、还会撞真实限流（实测：第二次跑就 state=blocked，红的是判据自己）。
+_cfg_saved_L = FB._cfg
+_fi_saved_L = (FB.FEEDBACK_FILE, FB.REJECT_FILE, FB.MEDIA_DIR, dict(FB.LIMIT), dict(FB.ATTACH))
+try:
+    FB.FEEDBACK_FILE = os.path.join(_FB_ISO, "feedback_L.jsonl")
+    FB.REJECT_FILE = os.path.join(_FB_ISO, "feedback_rejected_L.jsonl")
+    FB.MEDIA_DIR = os.path.join(_FB_ISO, "media_L")
+    FB.LIMIT.update({"per_minute": 0, "per_hour": 0, "per_day": 0, "dup_window_s": 0})
+    os.environ["WX_FEEDBACK_ENDPOINT"] = _ep_probe
+    FB._cfg = lambda: {}
+    _c1, _s1 = FB._channel_cfg()
+    ok("L1 本机什么都没配 ⇒ 通道来自**出厂自带接收端**（用户零配置也能送达）",
+       bool(_c1.get("webhook_url")) and _s1 == "出厂内置接收端", "%s / %s" % (bool(_c1.get("webhook_url")), _s1))
+    ok("L2 stats 也认这条通道（can_send=True、来源写清楚）",
+       FB.stats().get("can_send") is True and FB.stats().get("channel_src") == "出厂内置接收端",
+       str(FB.stats().get("channel")))
+    FB._cfg = lambda: {"webhook_url": "https://example.com/mine"}
+    _c2, _s2 = FB._channel_cfg()
+    ok("L3 用户自己配了通道 ⇒ **以用户的为准**（不被出厂端顶掉）",
+       _c2.get("webhook_url") == "https://example.com/mine" and _s2 == "本机配置", _c2.get("webhook_url"))
+    # 反向锚：关掉出厂端 ⇒ 回到"没通道"，且此时必须给 no_channel + copy_text（不许假成功）
+    os.environ["WX_FEEDBACK_ENDPOINT"] = ""
+    FB._cfg = lambda: {}
+    ok("L4 关掉出厂端（WX_FEEDBACK_ENDPOINT 空串）⇒ 判定回到「没有任何通道」",
+       FB.stats().get("can_send") is False, str(FB.stats().get("channel")))
+    _r0 = FB.submit("其他", "L4 反向锚：没通道时这条不该被当成发成功")
+    ok("L5 没通道提交 ⇒ 明确 no_channel + 给出可复制全文（绝不假成功）",
+       _r0.get("state") == "queued" and _r0.get("no_channel") is True and bool(_r0.get("copy_text")),
+       "state=%s no_channel=%s copy=%d字" % (_r0.get("state"), _r0.get("no_channel"),
+                                            len(str(_r0.get("copy_text") or ""))))
+finally:
+    os.environ["WX_FEEDBACK_ENDPOINT"] = ""
+    FB._cfg = _cfg_saved_L
+    (FB.FEEDBACK_FILE, FB.REJECT_FILE, FB.MEDIA_DIR, _lim_L, _att_L) = _fi_saved_L
+    FB.LIMIT.clear()
+    FB.LIMIT.update(_lim_L)
+    FB.ATTACH.clear()
+    FB.ATTACH.update(_att_L)
+_pack = io.open(os.path.join(ROOT, "scripts", "pack_online.py"), encoding="utf-8").read()
+ok("L6 出包里**显式收进**这个文件（缺了会大声报警，不是悄悄没有）",
+   "assets/feedback_endpoint.json" in _pack and "已收进出厂反馈接收端" in _pack
+   and "没找到 %s ⇒ 用户本机没配通道时" in _pack, "")
+ok("L7 出包闸门对它的凭据形态**显式放行并写明理由**（不是绕过扫描）",
+   '("assets/feedback_endpoint.json", "企业微信 webhook key")' in _pack, "")
+ok("L8 该文件**不进仓库**（.gitignore 挡着；轮换＝重新出一版，不用改 git 历史）",
+   "assets/feedback_endpoint.json" in io.open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read(), "")
 
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))

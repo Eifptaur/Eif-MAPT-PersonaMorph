@@ -37,6 +37,42 @@ from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FEEDBACK_FILE = os.path.join(ROOT, "data", "feedback.jsonl")
 
+#: **出厂自带的反馈接收端**（一个独立的小数据文件，不是 `config.json`）。
+#:
+#: 为什么需要它：反馈要"点一下就发到作者那儿"，就得有一个**产品自带**的接收端；
+#: 而 `config.json` 不许进包（出厂断言禁止：更新会覆盖用户自己的配置），所以单开这一个文件：
+#:   · 用户自己的 `config.json` 里配了通道 ⇒ **以用户的为准**（本文件只是兜底默认）；
+#:   · 没配 ⇒ 用本文件里的接收端 ⇒ 用户零配置也能提交（这就是 2026-09-28 那批
+#:     "在控制台反馈了但作者没收到"的根因：当时产品不自带接收端，反馈只落用户本机）。
+#:   · **本文件不进仓库**（.gitignore）：真实地址只在出包时注入，轮换＝重新出一版（不用改 git 历史）。
+BUILTIN_ENDPOINT_FILE = os.path.join(ROOT, "assets", "feedback_endpoint.json")
+
+
+def builtin_endpoint() -> dict:
+    """读出厂自带的接收端；读不到/格式不对 ⇒ 空 dict（**绝不抛**：缺这个文件不该让反馈功能崩）。
+
+    `WX_FEEDBACK_ENDPOINT` 可改路径，**显式设成空串就关掉**（判据/自检要造"没配任何通道"的场景
+    时用 —— 否则开发机上只要有这个文件，"没通道"那条路径就测不到；产品运行时不必设它）。
+    """
+    p = os.environ.get("WX_FEEDBACK_ENDPOINT", BUILTIN_ENDPOINT_FILE)
+    if not str(p or "").strip():
+        return {}
+    try:
+        with open(str(p), "r", encoding="utf-8") as fh:
+            d = json.load(fh)
+        if not isinstance(d, dict):
+            return {}
+        out = {}
+        for k in ("webhook_url", "webhook_token", "upload_url"):
+            v = str(d.get(k) or "").strip()
+            if v:
+                out[k] = v
+        return out
+    except Exception: # noqa: BLE001
+        # 缺失/坏 JSON/权限：都按"没有出厂接收端"处理（下面的 try/except 只吞这里，
+        # 因为"没有兜底端"本身是合法状态，不是错误——真没通道时 UI 会如实说"作者收不到"）
+        return {}
+
 #: 反馈类型（前端下拉与后端校验共用同一份，避免"界面能填、后端不认"）
 KINDS = ("问题", "建议", "想法", "其他")
 
@@ -568,12 +604,29 @@ def _post_webhook(url: str, item: dict, token: str = "", timeout: int = 15) -> d
     return {"ok": True, "why": "已推送到你的设备/群"}
 
 
+def _channel_cfg() -> tuple:
+    """→ (通道配置, 来源说明)。**用户本机 config.json 优先，空则用出厂自带接收端兜底。**
+
+    只补 `upload_url` / `webhook_url` / `webhook_token` 三个键 —— 邮箱凭据（smtp）**不内置**
+    （那是个人凭据，不该随包发），用户配了就照用、作为第三顺位兜底。
+    """
+    cfg = dict(_cfg())
+    be = builtin_endpoint()
+    used = False
+    for k in ("upload_url", "webhook_url", "webhook_token"):
+        if not str(cfg.get(k) or "").strip() and be.get(k):
+            cfg[k] = be[k]
+            used = True
+    return cfg, ("出厂内置接收端" if used else "本机配置")
+
+
 def deliver(item: dict) -> dict:
     """按顺序试通道；返回 {ok, via, why}。都不成 ⇒ ok=False 且**不改** sent_at（等重发）。
 
-    顺序：自建中转 → **「推送到你」（群机器人 / PushPlus / 任意中转，用户零配置）** → SMTP。
+    顺序：自建中转 → **「推送到你」（群机器人 / PushPlus / 任意中转）** → SMTP。
+    通道取值见 `_channel_cfg`：用户本机配置优先，空则用出厂自带接收端（用户零配置也能送达）。
     """
-    cfg = _cfg()
+    cfg, _src = _channel_cfg()
     url = str(cfg.get("upload_url") or "").strip()
     hook = str(cfg.get("webhook_url") or "").strip()
     hook_token = str(cfg.get("webhook_token") or "").strip()
@@ -655,9 +708,20 @@ def submit(kind: str, text: str, contact: str = "", env: dict | None = None, fil
         return {"ok": True, "state": "sent", "id": item["id"], "via": rep.get("via"),
                 "files": len(_saved), "why": str(rep.get("why") or "") + _extra}
     st = stats()
+    # ⛔ 「没配通道」与「配了但发失败」必须分开说：前者是**作者根本收不到**（用户以为提交成功了，
+    #    实际只落在他自己机器上——2026-09-28 的真反馈：网友在控制台提交了，作者一条没收到）。
+    #    ⇒ 这一态返回 `no_channel` + `copy_text`（整条反馈的可复制全文），让界面能一句话说清
+    #    "作者收不到" 并给一个**一键带走**的动作；别再让用户对着"已存在本机"猜。
+    _no_ch = not st.get("can_send")
     return {"ok": True, "state": "queued", "id": item["id"], "files": len(_saved),
-            "why": str(rep.get("why") or "") + _extra,
-            "pending": st["pending"], "note": "已存在本机，配好通道后可一键补发"}
+            "no_channel": bool(_no_ch),
+            "copy_text": compose(item),
+            "why": ("本机没有配任何投递通道 ⇒ **作者收不到这条反馈**" if _no_ch
+                    else str(rep.get("why") or "")) + _extra,
+            "tried": rep.get("tried") or [],
+            "pending": st["pending"],
+            "note": ("把这条内容复制发给作者（或先在本机配好通道再点「补发积压」）" if _no_ch
+                     else "已存在本机，配好通道后可一键补发")}
 
 
 def _mark_sent(item_id: str, via: str) -> bool:
@@ -674,11 +738,29 @@ def pending() -> list:
     return [it for it in _read_all() if not it.get("sent_at")]
 
 
+def pending_text(limit: int = 5) -> str:
+    """把**排队中**的反馈拼成一段可直接粘给作者的文本（界面「复制反馈」按钮用）。
+
+    为什么要有它：本机没配通道时，反馈只落在用户自己的 `data/feedback.jsonl` 里 ——
+    用户看不到、也不会去翻文件。给一段**现成的文本**让他一键复制粘给作者，是零配置下唯一
+    真能把内容送到作者手上的路（2026-09-28 反馈：网友以为提交了作者就能收到）。
+    `limit` 只取最近几条（粘贴一大段反而没人愿意发）。
+    """
+    items = sorted(pending(), key=lambda x: x.get("at") or 0)
+    if not items:
+        return ""
+    tail = items[-max(1, int(limit)):]
+    out = ["（本机待发反馈共 %d 条，下面是最近 %d 条；作者还没收到）" % (len(items), len(tail))]
+    for it in tail:
+        out.append("\n===== 反馈 %s =====\n%s" % (str(it.get("id") or ""), compose(it)))
+    return "\n".join(out)
+
+
 def stats() -> dict:
     items = _read_all()
     pend = [it for it in items if not it.get("sent_at")]
     sent = [it for it in items if it.get("sent_at")]
-    cfg = _cfg()
+    cfg, ch_src = _channel_cfg()
     has_mail = bool((cfg.get("smtp") or {}).get("user") and (cfg.get("smtp") or {}).get("password")
                     and str(cfg.get("to") or "").strip())
     has_url = bool(str(cfg.get("upload_url") or "").strip())
@@ -693,6 +775,7 @@ def stats() -> dict:
     return {"total": len(items), "pending": len(pend), "sent": len(sent),
             "enabled": bool(cfg.get("enabled", True)),
             "channel": "+".join(_ch) or "未配置",
+            "channel_src": ch_src if _ch else "",
             "can_send": bool(has_url or has_hook or has_mail),
             "last": (sorted(items, key=lambda x: x.get("at") or 0)[-1:] or [{}])[0].get("at_h", "")}
 

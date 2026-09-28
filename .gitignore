@@ -88,3 +88,6 @@ config.json.bak*
 # 产品根只留产品本体与一键启动；开发期一切诊断产物落在 dev-workspace/ 下。
 dev-workspace/
 exports/
+
+# 出厂反馈接收端（含凭据）：只在出包时注入，**不进仓库**（轮换＝重新出一版，不改 git 历史）
+assets/feedback_endpoint.json

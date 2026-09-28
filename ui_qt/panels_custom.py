@@ -5112,14 +5112,19 @@ def _fb_submit(btn, note) -> None:
         if d.get("state") == "sent":
             _c8_say(note, t, "已发出（%s%s）" % (via, n), "ok")
         elif d.get("state") == "queued":
-            _c8_say(note, t, "注意：已存在本机，但还没发出去：%s（待发 %s 条）"
-                    % (d.get("why") or "", d.get("pending") or 0), "warn")
+            # 没发出去就必须说清"作者还没收到"（不能让人以为提交完就到了）
+            _pre = "⚠️ 作者还没收到：" if d.get("no_channel") else "注意：还没发出去："
+            _tail = "——内容还在框里，复制发给作者即可。" if d.get("copy_text") else ""
+            _c8_say(note, t, "%s%s（待发 %s 条）%s"
+                    % (_pre, d.get("why") or "", d.get("pending") or 0, _tail), "warn")
         elif d.get("state") == "blocked":
             _c8_say(note, t, "%s——这条没有发出，也没保存，内容还在框里。"
                     % (d.get("why") or "发得太频繁了"), "warn")
         else:
             _c8_say(note, t, str(d.get("why") or "提交失败"), "err")
-        if d.get("state") != "blocked" and text_w is not None:
+        # ⛔ 只有**真的发出去了**才清空输入框：没发出去（queued / blocked / 报错）时内容还给用户，
+        #    否则他写的那一大段就没了（2026-09-28 反馈的现场形态）。
+        if d.get("state") == "sent" and text_w is not None:
             text_w.setPlainText("")
         rl = getattr(page, "_fb_reload", None)
         if rl is not None:
