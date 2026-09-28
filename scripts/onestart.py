@@ -68,7 +68,8 @@ def _prog(prefix, done, total):
     try:
         pct = int(done * 100 / max(1, total))
         if GUI:
-            key = {"依赖检查": "deps", "自检": "selftest", "安装依赖": "install"}.get(prefix, "step")
+            key = {"依赖检查": "deps", "自检": "selftest", "安装依赖": "install",
+               "界面组件": "ui"}.get(prefix, "step")
             evt("PROG", key, done, total)
             return
         if _LAST_PROG.get(prefix) == pct:
@@ -600,6 +601,42 @@ def main():
         log("一键启动结束（失败：依赖）")
         return 1
     log("依赖检查通过 ✔")
+
+    # 1.5 界面组件（PySide6，桌面控制台的图形库）提前到首启可见的依赖阶段装。
+    #     requirements.txt 不含它：以前它拖到机器人起来之后才由 qt_bootstrap 临时下载
+    #     （约 74MB），Qt 壳因此晚一两分钟才出窗 ⇒ 启动器 15 秒等不到窗口就走后备开窗，
+    #     干净机器首启看到的就是"先弹一扇白窗、界面要等两分多钟"。
+    #     放子进程跑（scripts/setup_ui.py）：GUI 模式下显示与进度计数由本进程决定，
+    #     子进程崩溃也不影响启动流程。失败不致命：真正要用界面时 qt_bootstrap 还会再试，
+    #     仍失败照旧回落网页控制台。
+    log("      界面组件（PySide6，桌面控制台的图形库）检查——已装自动跳过，首次约 74MB")
+    ui_pct = [0]
+
+    def _ui_progress(ln):
+        # setup_ui 的输出行（如"[信息] 界面组件：下载进度 30%（30MB，来自清华）"）
+        # 抽百分比驱动进度；取 max 防乱序回退，封顶 99 留给"就绪"收满。
+        # 纯字符串操作 + 数字串 int，抛不出异常，不需要兜底分支。
+        _s = str(ln or "").strip()
+        _i = _s.find("下载进度")
+        if _i >= 0:
+            _j = _s.find("%", _i)
+            if _j > _i:
+                _pct = int("".join(_ch for _ch in _s[_i + 4:_j] if _ch.isdigit()) or "0")
+                ui_pct[0] = max(ui_pct[0], min(99, _pct))
+                _prog("界面组件", ui_pct[0], 100)
+            return
+        if "已下到本地" in _s:
+            ui_pct[0] = max(ui_pct[0], 95)
+            _prog("界面组件", 95, 100)
+        elif "就绪" in _s:
+            _prog("界面组件", 100, 100)
+
+    ok_ui, _tail_ui = run_stream([py, "-X", "utf8", "-u", os.path.join(ROOT, "scripts", "setup_ui.py")],
+                                 on_line=_ui_progress)
+    if ok_ui:
+        log("界面组件就绪 ✔")
+    else:
+        log("界面组件这次没装上（不影响本次启动：真要用界面时还会再试，仍失败就先用网页控制台）")
 
     # 2. 自检（55 项逐项百分比；WARN 提示项也计入完成）
     log("")

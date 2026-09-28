@@ -53,12 +53,18 @@ def main() -> int:
             fh.write("\n".join(KEY))
 
     def mb():
+        """落点目录的总 MB。量不到大小的文件**如实计数并报到 stderr**（列目录后被删/被占用）——
+        这个数会因此偏小，但不能把"量不到"当成"没有这个文件"；走 stderr 是为了不打乱 stdout 的行序。"""
         n = 0
-        for f in os.listdir(a.out):
+        skipped = []
+        for f in sorted(os.listdir(a.out)):
             try:
                 n += os.path.getsize(os.path.join(a.out, f))
-            except OSError:
-                pass
+            except OSError as e:
+                skipped.append("%s(%s)" % (f, type(e).__name__))
+        if skipped:
+            sys.stderr.write("（%d 个文件量不到大小 ⇒ 下面的 MB 数偏小：%s）\n"
+                             % (len(skipped), "、".join(skipped[:4])))
         return n / 1048576.0
 
     print("落点：%s（已有 %.1f MB）" % (a.out, mb()))

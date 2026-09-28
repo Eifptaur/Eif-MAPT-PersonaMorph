@@ -1520,6 +1520,11 @@ static class Program
         internal const int HealWatchIntervalMs = 1000;
         System.Windows.Forms.Timer _healWatch; // 硬超时看门狗：不依赖探活线程，只读表
 
+        /// Qt 壳监视器的周期（毫秒）。只枚举进程、不碰网络；Qt 壳是"晚到一两分钟"
+        /// 量级的出现，快几百毫秒没有意义，与 HealWatchIntervalMs 同取 1 秒一跳。
+        internal const int QtWatchIntervalMs = 1000;
+        System.Windows.Forms.Timer _qtw; // Qt 壳监视器：Qt 壳上了屏幕 ⇒ 后备窗自动退场
+
         /// 最大化 ↔ 还原（标题栏双击与「□」按钮走同一处）
         public void ToggleMax()
         {
@@ -2016,7 +2021,17 @@ static class Program
                 //   一个活口都没有就直接上我们自己的页，绝不把死地址丢给 WebView2。
                 try
                 {
-                    if (HealEnabled) { StartHeal(); HealTick(); }
+                    if (HealEnabled)
+                    {
+                        StartHeal();
+                        StartQtWatch();
+                        // ⛔ 后备窗禁止纯白：探活在线程池里跑、结果回来之前 WebView2 是一块
+                        //   空白白底（干净机器实测首启就是"先弹一扇全白的窗"）。此刻先把
+                        //   自己的"正在起来"页画上去——探活回来该接活口接活口（GoLive）、
+                        //   该讲原因讲原因（HealApply 会换成"还没连上"那张页），白底没有露脸机会。
+                        try { GoDown(true); } catch { }
+                        HealTick();
+                    }
                     else { _wv.CoreWebView2.Navigate(_url); }
                 }
                 catch { Ui.FallbackBrowser(_url); }
@@ -2149,6 +2164,73 @@ static class Program
         {
             _navDown = true; _showingDown = true; _downStarting = starting;
             try { _wv.CoreWebView2.NavigateToString(Ui.DownPage(_url, _healWhy, starting, _healFail)); } catch { }
+        }
+
+        // ---------------------------------------------------------------------
+        // 后备窗与 Qt 壳的交接：Qt 壳一上屏幕，后备窗自动退场。
+        // 由来（另一台干净机器实测）：首启 Qt 壳要等界面组件装完才出现（一两分钟），
+        // 一键启动 15 秒等不到窗口就开了这个后备窗；Qt 壳后来出现了，后备窗还杵在
+        // 屏幕上 ⇒ 同一个「群相 控制台」标题、同一份职责，并存就是双窗。
+        // ---------------------------------------------------------------------
+
+        /// python 进程里那个「群相 控制台」窗在不在屏幕上（＝Qt 壳已经起来了）。
+        /// ConsoleForm 自己的标题也是这四个字 ⇒ 两条同时成立才认：
+        /// ①进程不是自己；②进程名是 python/pythonw（Qt 壳跑在产品运行时里；
+        ///   启动器/关闭器都是本 exe，浏览器页标题带" - 浏览器名"后缀，两头都进不来）。
+        /// 判窗口径沿用 Ui.ConsoleWindowAlive() 的 MainWindowTitle 精确相等，不另发明。
+        internal static bool QtShellWindowAlive()
+        {
+            int self = Process.GetCurrentProcess().Id;
+            Process[] ps = null;
+            try { ps = Process.GetProcesses(); } catch { return false; }
+            try
+            {
+                foreach (Process pr in ps)
+                {
+                    try
+                    {
+                        if (pr.Id == self) continue;
+                        string nm = "";
+                        try { nm = pr.ProcessName.ToLowerInvariant(); } catch { }
+                        if (nm != "python" && nm != "pythonw") continue;
+                        if (pr.MainWindowHandle == IntPtr.Zero) continue;
+                        if (pr.MainWindowTitle == "群相 控制台") return true;
+                    }
+                    catch { }
+                }
+            }
+            finally
+            {
+                foreach (Process pr in ps) { try { pr.Dispose(); } catch { } }
+            }
+            return false;
+        }
+
+        void StartQtWatch()
+        {
+            try
+            {
+                if (_qtw != null) return;
+                _qtw = new System.Windows.Forms.Timer();
+                _qtw.Interval = QtWatchIntervalMs;
+                _qtw.Tick += delegate { QtWatchTick(); };
+                _qtw.Start();
+            }
+            catch { }
+        }
+
+        void QtWatchTick()
+        {
+            try
+            {
+                if (IsDisposed) return;
+                if (!QtShellWindowAlive()) return;
+                // Qt 壳已经上屏幕 ⇒ 后备窗的使命到此为止，关自己（不是藏起来：
+                // 攒着占内存、任务栏还多一个同名图标）。Qt 壳若随后又被关掉，
+                // 下一次「打开控制台」按正常路径另开，不依赖这个窗还活着。
+                try { Close(); } catch { }
+            }
+            catch { }
         }
 
         // ---- b：「正在拉起」的硬超时与失败出口 ----

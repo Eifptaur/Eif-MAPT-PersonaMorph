@@ -221,6 +221,7 @@ function Parse-Line([string]$line) {
             $ratio = if ($total -gt 0) { $done / $total } else { 0 }
             if ($key -eq 'deps') { Set-State '检查 / 安装依赖…' (12 + [int](33 * $ratio)) 1 ('已检查 ' + $done + ' / ' + $total + ' 项') }
             elseif ($key -eq 'install') { Set-State '正在安装依赖…' 45 1 '使用国内镜像下载安装（请稍候）' }
+            elseif ($key -eq 'ui') { Set-State '正在安装界面组件…' (46 + [int](16 * $ratio)) 1 ('PySide6（桌面控制台的图形库，首次约 74MB）· ' + $done + '%') }
             elseif ($key -eq 'selftest') { Set-State '环境自检（55 项）…' (70 + [int](20 * $ratio)) 2 ('第 ' + $done + ' / ' + $total + ' 项') }
         }
     }
