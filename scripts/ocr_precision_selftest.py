@@ -87,6 +87,41 @@ ok("B4 目标区间就是本机实测那档（防有人改回文献里的 20~30�
    O.ZOOM_TARGET_LO >= 40 and O.ZOOM_TARGET_HI <= 120,
    "%d~%d" % (O.ZOOM_TARGET_LO, O.ZOOM_TARGET_HI))
 
+print("\n── B5. 会话头字色（用户提供的现场事实：选中后标题变白）──")
+import sys as _sys2 # noqa: E402
+_sys2.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import ocr_bench as _B   # 借它的字体（真 CJK 字体；PIL 默认位图字体渲染不出中文）
+    _f = _B._font(20)
+except Exception as _e: # noqa: BLE001
+    _f = None
+    print("   （拿不到字体：%s）" % str(_e)[:60])
+
+
+def _band(fg, bg, w=200, h=40):
+    im = Image.new("RGB", (w, h), bg)
+    d = ImageDraw.Draw(im)
+    if _f is not None:
+        d.text((12, 10), "演示群聊", fill=fg, font=_f)
+    return im
+
+
+_pol_dark = O.header_polarity(_band((38, 38, 38), (247, 247, 247)))
+_pol_light = O.header_polarity(_band((248, 248, 250), (72, 74, 80)))
+ok("B5 ★ 黑字浅底 ⇒ 判成「未选中」（text=dark / selected_hint=False）",
+   _pol_dark["text"] == "dark" and _pol_dark["selected_hint"] is False, str(_pol_dark))
+ok("B6 ★ 白字深底 ⇒ 判成「选中」（text=light / selected_hint=True）",
+   _pol_light["text"] == "light" and _pol_light["selected_hint"] is True, str(_pol_light))
+_pol_flat = O.header_polarity(Image.new("RGB", (200, 40), (150, 150, 150)))
+ok("B7 ★ 反向锚：对比不足 ⇒ 如实说 unknown（不许猜）",
+   _pol_flat["text"] == "unknown" and _pol_flat["selected_hint"] is None, str(_pol_flat))
+if _f is not None:
+    _g1, _z1 = O._read_band_crop(_band((38, 38, 38), (247, 247, 247)), 2, cands=["演示群聊"])
+    _g2, _z2 = O._read_band_crop(_band((248, 248, 250), (72, 74, 80)), 2, cands=["演示群聊"])
+    ok("B8 两种底色的会话头都能读出名字（白字那条不再漏）",
+       O.norm(_g1) == O.norm("演示群聊") and O.norm(_g2) == O.norm("演示群聊"),
+       "%r / %r" % (_g1, _g2))
+
 print("\n── C. 多档择优（行为锚：假引擎给出受控读数）──")
 _real_dual = O.recognize_dual
 try:
@@ -101,9 +136,11 @@ try:
         return [("演示", 0, 0, 10, 10)]
     O.recognize_dual = _fake_dual
     got, z = O._read_band_crop(Image.new("RGB", (_base_w, 60), (250, 250, 250)), 2, cands=["演示", "家人群"])
-    ok("C1 ★ 有候选集 ⇒ 不「读到就停」，选了更像候选的那一档", got == "演示" and z >= 3, "%r z=%d" % (got, z))
+    ok("C1 ★ 有候选集：裸图档**不像候选就不收**（不许猜），继续试到更像候选的那一档",
+       got == "演示" and z >= 3, "%r z=%d" % (got, z))
     got2, z2 = O._read_band_crop(Image.new("RGB", (_base_w, 60), (250, 250, 250)), 2)
-    ok("C2 无候选集 ⇒ 保持老行为（第一档非空即返回）", got2 == "演示祥祥祥" and z2 == 2, "%r z=%d" % (got2, z2))
+    ok("C2 无候选集：裸图档非空且像名字 ⇒ **一次识别即返回**（2026-09-29 实测：真实小块上它最快且不差）",
+       got2 == "演示祥祥祥" and z2 == 1, "%r z=%d" % (got2, z2))
 
     def _fake_none(c, timeout=None):   # noqa: ANN001
         return []
@@ -123,6 +160,8 @@ ok("D2 `current_chat_name` 有纠错薄壳（先实现体、后纠错）+ 出错
 ok("D3 `header_text` 收 cands 并在四处调用里都传下去",
    _sm.has(_ocr, "def header_text(img=None, gui=None, zoom: int = 2, confirm_frames: int = 2, cands=None)")
    and _ocr.count("_header_read(") >= 5 and _ocr.count("cands=cands") >= 4)
+ok("D3b `_read_band_crop` 按**字色极性**排预处理顺序（白字先反相）",
+   _sm.has(_ocr, "header_polarity(crop)") and _sm.has(_ocr, 'if _pol.get("text") == "light"'))
 ok("D4 `_header_read` 委托给 `_read_band_crop`（基准量的就是它）",
    _sm.has(_ocr, "return _read_band_crop(crop, zoom, cands)"))
 

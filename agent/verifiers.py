@@ -880,6 +880,49 @@ def v_update_stuck() -> dict:
 
 
 # ── ⑦ 控制台打不开 ────────────────────────────────────────────────────────
+def v_machine_profile() -> dict:
+    """**这台机器学到了什么**（只读档案：环境自适应与本机能力；不是症状诊断）。
+
+    为什么要单列一条：环境自适应（`agent/env_profile.py`）探测出的"本机有什么能力、哪条路真成过"
+    是**随时想看**的信息（例：本机 RapidOCR 装没装、OCR 放大档该取多少、会话行该投哪个窗），
+    而"出问题时才点"的症状检验器里藏着它不是它的位置（第一版就是塞在「消息发不出去」报告末尾，已改）。
+
+    ⛔ **严格只读**：只调 `env_profile.status_text()`（读 `data/env_profile.json` + 现场读数），
+       不动窗口、不发消息、不改配置；本器**不参与**判决（全部是 `info=True` 的说明格，
+       所以它永远不会给出"没测到/通过"的误读——`_finish` 里说明格不算未测项）。
+    """
+    checks = []
+    try:
+        from . import env_profile as _ep
+        # 现场**只读探测**一次（有 10 分钟缓存；不写盘、不动窗口）
+        _p = _ep.probe()
+        _env = _p.get("env") or {}
+        _op = _p.get("op") or {}
+        _w = _env.get("windows") or {}
+        _d = _env.get("display") or {}
+        _g = _env.get("data_dir") or {}
+        _ib = _op.get("input_backend") or {}
+        _fg = _op.get("foreground") or {}
+        _ocr = _op.get("ocr") or {}
+        checks.append(_check("机器指纹", None, "OS build %s · 显示缩放 %s · 显示器 %s 个 · 适配层 %s"
+                             % (_w.get("build") or "?", _d.get("scale") or "?", _d.get("monitors"),
+                                _g.get("patched_lib") or "?"), info=True))
+        checks.append(_check("输入档位", None, "后端=%s（%s）· 可借前台=%s"
+                             % (_ib.get("name") or "?", "投递档" if _ib.get("message") else "非投递档",
+                                _fg.get("allowed")), info=True))
+        checks.append(_check("OCR", None, "内置可用=%s · RapidOCR=%s · 放大档目标 %s"
+                             % (_ocr.get("engine_ready"), _ocr.get("rapidocr"),
+                                _ocr.get("zoom_target")), info=True))
+        for ln in (_ep.status_text() or [])[:8]:
+            checks.append(_check("档案", None, str(ln)[:300], info=True))
+    except Exception as e: # noqa: BLE001
+        checks.append(_check("档案", None, "读不到：%s" % str(e)[:120], info=True))
+    return _finish("machine", "这台机器学到了什么",
+                   "想看本机能力/自适应档案（只读；不需要出问题）",
+                   None, "只读档案", "把它连同「反馈」一起发来，能省掉一轮来回", checks,
+                   info_only=True)
+
+
 def v_console_dead() -> dict:
     checks = []
     port = _port()
@@ -1099,10 +1142,18 @@ VERIFIERS = {
     "update_stuck": ("更新不动 / 打不开", v_update_stuck),
     "update_source": ("更新拉取不到 / timeout", v_update_source),
     "console_dead": ("控制台打不开", v_console_dead),
+    # ⚠️ 唯一一条**信息型**（非症状）条目：随时可看"这台机器学到了什么"（只读档案）
+    "machine": ("这台机器学到了什么", v_machine_profile),
 }
 
 
-def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
+def _finish(vid, name, symptom, ok, verdict, action, checks, info_only: bool = False) -> dict:
+    """`info_only=True` ⇒ 这条**不是判据**（只读档案）：报告头写「只读档案」，不写"没测到"。
+
+    ⛔ 为什么要这个开关：`v_machine_profile`（这台机器学到了什么）全是说明格 ⇒ `ok=None`
+       ⇒ 老逻辑会画成「○ 没测到」，用户会读成"这次没验出来"（而它根本不需要验）。
+       信息型条目必须**如实说自己是信息**，这就是"功能描述要精确"的那一条。
+    """
     # ⛔ **说明格不算"没测到"** —— 它们本来就不是判据，
     #   算进去会让 `v_send_blocked` / `v_update_stuck` **恒 ◐、永不给 ✅**（审计场景 E 实测）。
     _unk = [c for c in checks if c.get("ok") is None and not c.get("info")]
@@ -1111,7 +1162,9 @@ def _finish(vid, name, symptom, ok, verdict, action, checks) -> dict:
     #   画成 ❌（那是"证据说不是"），也不许画 ✅（那是"承诺成立"）。
     # ⛔ **有没测到的项时，报告头也不许打 ✅** ——
     #   现场是「一格 True + 其余 None」被画成 ✅，用户拿去当"没问题"（而那一格根本什么都没保证）。
-    if ok is True:
+    if info_only:
+        _head = "📄 只读档案（不判通过/失败）"
+    elif ok is True:
         _head = "✅ 通过" if not _n_unk else ("◐ 部分通过（%d 项没测到）" % _n_unk)
     elif ok is False:
         _head = "❌ 卡住"

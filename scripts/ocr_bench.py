@@ -13,10 +13,15 @@
 用法：
     runtime\\python\\python.exe scripts\\ocr_bench.py            # 默认 12 组 × 3 档字号
     runtime\\python\\python.exe scripts\\ocr_bench.py --verbose  # 逐条打印读数
+    runtime\\python\\python.exe scripts\\ocr_bench.py --repeat 2 # **连跑两遍**（数字必须一致才算数）
+
+⛔ **教训（2026-09-29）**：本人曾拿一份"86.1% / 94.4%"的读数去汇报，**后来复现不出来**
+（当时第二引擎还没正式装上，读数里混了它的贡献）。⇒ 从此**基准数字必须连跑两遍一致**才敢写进回执。
 """
 import argparse
 import io
 import os
+import re
 import sys
 import time
 
@@ -79,6 +84,8 @@ def _read(img, zooms) -> tuple:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="连跑 N 遍核对**复现性**（数字必须一致才算数）")
     a = ap.parse_args()
 
     if not O.available():
@@ -129,6 +136,26 @@ def main():
         print("   %-26s %3d/%3d = %5.1f%%" % (label, ok_n, n, 100.0 * ok_n / max(1, n)))
     print("   平均 OCR 调用 %.2f 次/条 · 平均单条耗时 %.2fs（%d 条）"
           % (stat["tries"] / max(1, total), stat["secs"] / max(1, total), total))
+    if int(a.repeat or 1) > 1:
+        # ⛔ 复现性纪律：**数字连跑两遍不一致 ⇒ 不许写进回执**（本人踩过：86.1% 那次复现不出来）。
+        import subprocess
+        _flags = 0x08000000 if os.name == "nt" else 0   # ⛔ 不许闪控制台窗（判据钉着这一条）
+        r = subprocess.run([sys.executable, __file__], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", creationflags=_flags)
+        tails = [ln for ln in (r.stdout or "").splitlines() if ln.strip().startswith(("①", "②", "③", "④"))]
+        print("\n==== 第 2 遍（复现性核对）====")
+        same = True
+        for ln in tails:
+            print("   " + ln.strip())
+            k = ln.strip().split()[0]
+            want = {"①": stat["raw"], "②": stat["legacy"], "③": stat["auto"], "④": stat["snap"]}.get(k)
+            # ⛔ 不用 try/except 解析（本仓静默点棘轮只许降）：解析不出来就给 -1，显式比较。
+            # ⚠️ 标签里可能含空格（"老管线（固定档序 2/3/4/5）"）⇒ 从 `n/ N =` 那一段取数，别按空格切
+            _m2 = re.search(r"(\d+)/\s*\d+\s*=", ln)
+            got_hit = int(_m2.group(1)) if _m2 else -1
+            if want and got_hit != want[0]:
+                same = False
+        print("   ⇒ 复现性：%s" % ("一致 ✓" if same else "**不一致**（这份数字不可用，先查为什么）"))
     return 0
 
 

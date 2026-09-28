@@ -3191,6 +3191,16 @@ def main():
                 log.info("兼容性自动体检：%s", _r.get("summary") or _r.get("why") or _r)
             except Exception as _e: # noqa: BLE001
                 log.warning("兼容性自动体检跳过（不影响运行）：%s", _e)
+            # 环境自适应：开机记一版"本机档案"（**只读探测** + 落盘，供「这台机器学到了什么」读）
+            # ⛔ 不写这一段的话，`data/env_profile.json` 永远是空的、那条检验器只会显示"未探测"
+            #    （2026-09-29 发现：`record_probe` 当时**没有任何生产调用点**）。best-effort、不阻塞。
+            try:
+                from agent import env_profile as _epm
+                _st = _epm.record_probe()
+                log.info("本机档案已登记：%s（自动应用=%s）",
+                         str(_st.get("machine") or "?")[:60], _epm.auto_apply_enabled())
+            except Exception as _e2: # noqa: BLE001
+                log.warning("本机档案登记跳过（不影响运行）：%s", _e2)
         threading.Thread(target=_compat_boot, daemon=True, name="compat-boot").start()
     except Exception as _e: # noqa: BLE001
         log.warning("兼容性自动体检线程没起起来（不影响运行）：%s", _e)

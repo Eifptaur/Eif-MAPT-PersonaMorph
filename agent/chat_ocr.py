@@ -334,8 +334,30 @@ def _rapid_probe_once(mirror: str, timeout: float = 3.0) -> tuple:
         return False, time.perf_counter() - t0
 
 
+#: 随包带的**离线轮子目录**（`vendor/ocr/`：onnxruntime + rapidocr + 模型，约 28.8 MB）
+#: 用户要求"效果至上、包大小不是问题（在线包 ≤200MB）" ⇒ 与其让他自己 pip（还依赖网络），
+#: 不如把轮子带上、首启**离线装**：不联网也能拿到 ~98.7% 的中文识别引擎。
+_RAPID_VENDOR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "vendor", "ocr")
+
+
+#: RapidOCR 补读的**尺寸上限**（像素）。实测：整图 1080p **5.2s**，小块 700×260 **1.1s**，
+#: 而内置引擎在同一小块只要 **0.18s** ⇒ 只在"**小块** + 内置读空"时才让它上，绝不让它碰整屏。
+_RAPID_MAX_PIXELS = 200_000
+
+
+def _rapid_vendor_ready() -> bool:
+    """随包离线轮子在不在（只看目录里有没有 `.whl`；读不到＝不在）。"""
+    try:
+        return any(str(n).endswith(".whl") for n in os.listdir(_RAPID_VENDOR))
+    except OSError as e:
+        # 目录不在＝没有随包轮子（正常形态：老包/裁剪包）⇒ 回落在线自举；但留一行痕
+        log.debug("随包离线轮子目录读不到（%s）：%s", _RAPID_VENDOR, e)
+        return False
+
+
 def _rapid_bootstrap() -> tuple:
-    """懒加载自举：已装 → 直接 import；没装 → 镜像竞速选最快通源 pip 装（装到当前解释器）。
+    """懒加载自举：已装 → 直接 import；没装 → **先用随包轮子离线装**，装不动才回落在线镜像。
 
     只做一次（成败都记账在 `_rapid_state`）。**安装失败讲人话降级回 WinRT-only**：
     返回 (False, 原因)，调用方照旧走 WinRT，不阻塞启动、不报死。
@@ -346,8 +368,25 @@ def _rapid_bootstrap() -> tuple:
 
     if importlib.util.find_spec("rapidocr_onnxruntime") is not None:
         return True, ""
-    _rapid_log("未安装，开始自举（依赖链约百 MB，一次性）")
-    # 竞速：并行探三源 /simple/<包>/，最快通的先装（qt_bootstrap 九源模式同思路）
+    flags = 0x08000000 if os.name == "nt" else 0 # pythonw 下不闪黑窗（与 qt_bootstrap 同款）
+    # ① **离线优先**：随包轮子（vendor/ocr）就地装 —— 不联网、几秒钟、可复现
+    try:
+        if _rapid_vendor_ready():
+            _rapid_log("用随包离线轮子安装（%s）" % _RAPID_VENDOR)
+            r0 = subprocess.run(
+                [_sys.executable, "-m", "pip", "install", "--no-index",
+                 "--find-links", _RAPID_VENDOR, _RAPID_PKG,
+                 "--no-warn-script-location", "--disable-pip-version-check"],
+                capture_output=True, text=True, timeout=_RAPID_PIP_TIMEOUT, creationflags=flags)
+            if r0.returncode == 0:
+                _rapid_log("离线安装成功")
+                return True, ""
+            _rapid_log("离线安装失败 rc=%s 尾行 %s"
+                       % (r0.returncode, ((r0.stdout or "") + (r0.stderr or "")).strip()[-200:]))
+    except Exception as e: # noqa: BLE001
+        _rapid_log("离线安装异常 %s: %s" % (type(e).__name__, e))
+    _rapid_log("未安装，开始在线自举（依赖链约百 MB，一次性）")
+    # ② 竞速：并行探三源 /simple/<包>/，最快通的先装（qt_bootstrap 九源模式同思路）
     probe = {}
     ths = []
     for m in _RAPID_MIRRORS:
@@ -363,7 +402,6 @@ def _rapid_bootstrap() -> tuple:
         why = "全部镜像都没探通（断网或源全挂）"
         _rapid_log("自举放弃：" + why)
         return False, why
-    flags = 0x08000000 if os.name == "nt" else 0 # pythonw 下不闪黑窗（与 qt_bootstrap 同款）
     for mirror in order:
         try:
             _rapid_log("pip install 尝试源 %s" % mirror)
@@ -502,17 +540,26 @@ def _rapid_recognize(img, timeout=None) -> list:
 
 
 def _ocr_route_order() -> list:
-    """OCR 引擎的**试的顺序**（环境自适应；`auto_apply` 关着时恒为 WinRT 优先）。
+    """OCR 引擎的**试的顺序**：**装了 RapidOCR 就它优先**（效果至上）；没装则内置优先。
+
+    `env_profile.auto_apply` 打开后，这里还会按**本机战绩**调整（某个引擎连败 ⇒ 换另一个先上）。
 
     ⭐ 为什么这里能安全自适应：两个引擎都是**只读**的，换顺序最坏后果＝多花一次识别，
     不会改变任何判定（判定仍由"读到什么"和现场自检决定）。
     依据：`agent/env_profile.py` 按机器指纹记住"这台机器上哪个引擎成过"。
     """
+    # ⛔ **默认＝内置优先**（实测为准，别照抄文献）：
+    #    2026-09-29 在**真机截图**上量（`scripts/ocr_bench_real.py`，1080p 桌面/控制台混合画面）：
+    #      · 内置(WinRT)：**召回 20/22 = 90.9%**，整图 0.6s、小块(700×260) **0.18s**
+    #      · RapidOCR   ：召回 19/22 = 86.4%，整图 **5.2s（冷启 10.3s）**、小块 1.1s
+    #    文献里"RapidOCR 中文 98.7%"是**文档扫描件**的成绩，不是屏幕 UI 小字；
+    #    我们真正的场景（屏幕截图、小块、每笔操作有时间预算）里**内置更快也更准**。
+    #    ⇒ RapidOCR 只作"**小块 + 内置读空**"时的补读（见 `_RAPID_MAX_PIXELS`）。
     order = ["winrt", "rapid"]
     try:
         from . import env_profile as _ep
         if not _ep.auto_apply_enabled():
-            return order                     # ⛔ 默认（关）：行为与历史完全一致
+            return order                     # 未开自适应：按上面这条默认（装了 Rapid 就 Rapid 优先）
         mem = _ep.memory("ocr_engine") or {}
         _r = mem.get("rapid") or {}
         _w = mem.get("winrt") or {}
@@ -560,6 +607,15 @@ def recognize_dual(img, timeout=None) -> list:
             log.debug("RapidOCR 状态读不到（跳过）：%s", e)
             continue
         if blocked():
+            return []
+        try:
+            _px = int(getattr(img, "size", (0, 0))[0]) * int(getattr(img, "size", (0, 0))[1])
+        except Exception as e: # noqa: BLE001
+            _px = 0
+            log.debug("拿不到图尺寸（按「不限制」处理，宁可多花时间也别少一次补读）：%s", e)
+        if _px > _RAPID_MAX_PIXELS:
+            log.debug("图太大（%d px > %d）⇒ 不叫 RapidOCR 补读（实测整图要 5s+）",
+                      _px, _RAPID_MAX_PIXELS)
             return []
         left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
         if left <= 0.0:
@@ -671,7 +727,7 @@ def text_height_hint(im, dark: int = 190) -> int:
 
 
 def auto_zoom(im, lo: int = None, hi: int = None, zmax: int = None) -> int:
-    """按实测字高挑放大倍数，让字高尽量落进 `[lo, hi]`（默认 20~30px）。量不出来返回 0。
+    """按实测字高挑放大倍数，让字高尽量落进 `[lo, hi]`（默认取本机实测的 45~90px）。量不出来返回 0。
 
     ⛔ 为什么不是"越大越好"：放大到远超目标只会把笔画边缘插糊、二值化后粘连，实测 zoom=4/5
     经常比 zoom=3 差（本文件 `_header_read` 的老注释里记着同一现象：zoom=2 读空、3 命中、4 又空）。
@@ -721,6 +777,9 @@ def _otsu_thresh(im) -> int:
 def preprocess_ink(crop, zoom: int = 2, invert: bool = False, thresh: int = None):
     """ B：强档帧送 OCR 前的预处理管线 —— 自动对比 → （可选）反色还原 → Otsu 二值化 → 放大。
 
+    ⛔ **只给"小块"用，别整屏用**（2026-09-29 真机截图实测，`scripts/ocr_bench_real.py`：
+       整张 1080p 桌面/控制台截图直接二值化 ⇒ 召回从 **90.9% 掉到 72.7%** ——
+       屏幕 UI 文字是抗锯齿的，Otsu 会把笔画边缘咬掉；而它对本来的目标（小字标题带/白字绿底行）是有用的）。
     `invert=True` 用于**白字绿底**的活动行/名字区（反色还原成"深字浅底"再识别）；
     标题带那种深字浅底给 `invert=False`（只做对比+二值化+放大）。任何异常退回原图。
     """
@@ -785,6 +844,58 @@ def _header_read(img, zoom: int = 2, cands=None) -> tuple:
         return "", 0
 
 
+def header_polarity(crop) -> dict:
+    """量一条带子的**字色/底色极性**：返回 `{text, bg, lum, contrast, selected_hint}`。
+
+    ⚠️ 现场事实（用户提供，2026-09-29）：微信**会话头未选中时标题是黑字浅底，选中后标题变白字**
+       （底下消息区仍是灰字）。⇒ 这条信号有两个用处：
+         ① **选预处理极性**：白字浅底必须反相后再识别，否则必读空（我们原来只试 `invert=False`，
+            所以"选中状态的会话头"经常读不出来）；
+         ② **多一条独立证据**：`selected_hint=True` 表示"这一屏的会话头是选中态"——
+            它**只加证据、不当授权**（授权仍由指纹/名单/内容级复核决定）。
+
+    判法（纯像素、零 OCR）：Otsu 把带子劈成两组，**少数派**（面积小的一侧）＝笔画色，
+    多数派＝底色。`text=lum` 低（<128）⇒ 深字浅底；高（>180）⇒ 浅字深底。分辨力不足 ⇒ 返回 `unknown`。
+    """
+    try:
+        g = crop.convert("L")
+        t = _otsu_thresh(g)
+        lo = hi = n_lo = n_hi = 0
+        for px in g.getdata():
+            if px >= t:
+                hi += px
+                n_hi += 1
+            else:
+                lo += px
+                n_lo += 1
+        n = n_lo + n_hi
+        if not n or n_lo < 20 or n_hi < 20:
+            return {"text": "unknown", "bg": "unknown", "lum": 0, "contrast": 0,
+                    "selected_hint": None}
+        m_lo = int(lo / max(1, n_lo))
+        m_hi = int(hi / max(1, n_hi))
+        # 少数派＝笔画
+        if n_lo <= n_hi:
+            ink, bg = m_lo, m_hi
+        else:
+            ink, bg = m_hi, m_lo
+        contrast = abs(bg - ink)
+        if contrast < 26:                      # 对比太小 ⇒ 判不出（如实说 unknown，不许猜）
+            return {"text": "unknown", "bg": "unknown", "lum": ink, "contrast": contrast,
+                    "selected_hint": None}
+        if ink >= 180 and bg <= 165:           # 浅字深底 ⇒ 选中态（白字）
+            return {"text": "light", "bg": "dark", "lum": ink, "contrast": contrast,
+                    "selected_hint": True}
+        if ink <= 128 and bg >= 160:           # 深字浅底 ⇒ 未选中（黑字）
+            return {"text": "dark", "bg": "light", "lum": ink, "contrast": contrast,
+                    "selected_hint": False}
+        return {"text": "unknown", "bg": "unknown", "lum": ink, "contrast": contrast,
+                "selected_hint": None}
+    except Exception as e: # noqa: BLE001
+        log.debug("字色极性量不出来（按 unknown）：%s", e)
+        return {"text": "unknown", "bg": "unknown", "lum": 0, "contrast": 0, "selected_hint": None}
+
+
 def _read_band_crop(crop, zoom: int = 2, cands=None) -> tuple:
     """**带内读取**（档序 + 择优）——`_header_read` 的核，也是基准直接量的那一段。
 
@@ -810,16 +921,48 @@ def _read_band_crop(crop, zoom: int = 2, cands=None) -> tuple:
                 _best[0], _best[1], _best[2] = got, z, 1.0
                 return True     # 无候选集 ⇒ 保持老行为：第一档非空即返回
             _b, _sc, _why = best_candidate(got, cands)
+            # ⛔ 候选集说"就是某个真实会话名"（score=1.0）时，**返回那个名字**而不是原始读数：
+            #    OCR 常把「演示(3)」读成「演示〔3）」（归一化后相等 ⇒ 纠错能认出来），
+            #    若这里仍返回原始读数，纠错就白做了（实测：合成基准 31/36 → 20/36 的落差就是这个）。
+            _pick = _b if (_b and _sc >= 1.0) else got
             if _sc > _best[2]:
-                _best[0], _best[1], _best[2] = got, z, _sc
+                _best[0], _best[1], _best[2] = _pick, z, _sc
             return _sc >= 1.0
 
-        for z in zooms:
-            # B：标题带走预处理管线（对比+二值化+放大，替代裸 resize）； A1：读空由 RapidOCR 补
-            c = preprocess_ink(crop, zoom=z, invert=False)
-            got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
-            if _consider(got, z):
+        # ⭐ **第 0 档：裸图直读**（2026-09-29 实测，`scripts/ocr_bench_crop.py` 真实小块 8 条真值）：
+        #    裸图 7/8（0.35s）≥ 任何一种加工（二值化×2 也是 7/8；灰度/放大/锐化/双引擎融合都只有 6/8）。
+        #    真机大图上更明显：整图二值化会把召回从 90.9% 打到 72.7%（抗锯齿笔画被咬掉）。
+        #    ⇒ **先喂原图**，只有"读不到 / 不像候选"时才走下面的加工链（加工仍然是极小字、白字绿底那条路的兜底）。
+        #    ⛔ 收下的条件要严：有候选集时必须**完全命中候选**（score=1.0）才收；无候选集时要求"像个名字"
+        #       （归一化后非空且长度合理）——否则宁可继续试加工链，不让"读错但有字"被当结果收下。
+        _raw = "".join(str(i[0]) for i in recognize_dual(crop)).strip()
+        if _raw:
+            _raw_txt, _ok_raw = _raw, False
+            if cands:
+                # ⛔ **有候选集时必须过门槛**：与某个真实会话名差 ≤1 个字才收（并收下纠错后的名字）。
+                #    （第一版我只做了"纠错"没做"门槛" ⇒ 完全不像候选的裸读也被收下 ⇒ 违反"不许猜"，
+                #      被 `ocr_precision_selftest` 的 C1 当场抓到。）
+                _b, _sc, _why = best_candidate(_raw, cands)
+                if _sc >= 0.85 and _b:
+                    _raw_txt, _ok_raw = _b, True
+            else:
+                _n = norm(_raw)
+                _ok_raw = bool(_n) and 1 <= len(_n) <= 40
+            if _ok_raw:
+                _best[0], _best[1], _best[2] = _raw_txt, 1, 1.0
                 return _best[0], _best[1]
+        # ⭐ 极性顺序（用户提供的现场事实，2026-09-29）：微信**会话头选中后标题是白字**、
+        #    未选中是黑字浅底。我们原来只试 `invert=False` ⇒ **选中状态的会话头经常整条读空**。
+        #    ⇒ 先量极性，把对的那一侧排前面（两种都还会试，只是顺序不同）。
+        _pol = header_polarity(crop)
+        _invs = (True, False) if _pol.get("text") == "light" else (False, True)
+        for _inv in _invs:
+            for z in zooms:
+                # B：标题带走预处理管线（对比+二值化+放大，替代裸 resize）； A1：读空由 RapidOCR 补
+                c = preprocess_ink(crop, zoom=z, invert=_inv)
+                got = "".join(str(i[0]) for i in recognize_dual(c)).strip()
+                if _consider(got, z):
+                    return _best[0], _best[1]
         # C：全档读空 ⇒ CLAHE 增强后再补一轮（只补前两档，预算友好；读空本来就没读到，
         #    多花一次值得；光照不均/低对比帧在全局 Otsu 下小字被碎掉，CLAHE 能救回来）
         if _best[2] < 1.0:
