@@ -20,6 +20,7 @@ os.chdir(ROOT)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcslice # noqa: E402  AST 定位函数体（判据不许拿 `def` 行当文本边界）
+from _srcmatch import has as _has # noqa: E402  空白容忍的源码包含（脆断言棘轮只许降）
 from agent import backoff as B # noqa: E402
 
 # ⛔ 夹具命名口径：**不许用 `wxid_` 前缀**（出包 PII 闸门按真形态拦，实测被拦过一次）；
@@ -89,7 +90,7 @@ ok("B7 拒绝次数有记账（能汇报给用户）", tb.status()["refused"] >=
 print("\n── C. 配置与默认值（缺键必须落到保守侧）──")
 _bk_src = src("agent/backoff.py")
 _cfg_src = src("agent/config.py")
-ok("C1 参数集中在一处（`DEF`），没有散落的魔法数", "DEF = {" in _bk_src)
+ok("C1 参数集中在一处（`DEF`），没有散落的魔法数", _has(_bk_src, "DEF = {"))
 ok("C2 配置里六个键都在（用户可调）",
    all(('"%s"' % k) in _cfg_src for k in B.DEF), str(list(B.DEF)))
 ok("C3 默认阈值是「少」的那一侧（≤3 次）", int(B.DEF["stop_after_failures"]) <= 3,
@@ -105,7 +106,7 @@ ok("D1 借用前台的唯一咽喉点 `_guarded` 里取了配额",
    "_bo.foreground().take()" in _ua and "置前配额用尽" in _ua)
 ok("D2 配额件不可用时**留痕并放行**（不静默吞）", "置前配额件不可用" in _ua)
 ok("D3 切会话公开入口先过停手闸",
-   "backoff as _bo" in _wx and "_bo.breaker(\"switch_chat\").can_try()" in _wx)
+   _has(_wx, "backoff as _bo") and '_bo.breaker("switch_chat").can_try()' in _wx)
 ok("D4 切会话结果记账（成功 ok / 失败 fail）",
    '_bo.breaker("switch_chat").ok()' in _wx and '_bo.breaker("switch_chat").fail(' in _wx)
 ok("D5 记账只在**这一层**（实现里不再重复记：`note_switch_fail` 不碰 backoff）",

@@ -102,9 +102,14 @@ def main():
 
     # ④ 失败要**看得见**：切会话失败 → warning + 台账（可供检验器读）
     ok("④ 记录了切会话失败台账（note_switch_fail）", "def note_switch_fail(" in src)
-    b_sw = code_of(src, "switch_chat_posted")
+    # ⚠️ A 轮起：公开入口 `switch_chat_posted` 变成"薄壳"（只过停手闸 + 记账），
+    #    真正干活的在 `_switch_chat_posted_impl` ⇒ 这一枪要读**实现体**，
+    #    同时钉一条"入口仍然转发到实现体"（防以后改名/重构把行为悄悄摘掉）。
+    b_sw = code_of(src, "_switch_chat_posted_impl")
     ok("④ 搜索路线失败走 warning + 记台账（不再只 log.info）",
        "note_switch_fail(" in b_sw and 'log.warning("切会话：搜索框路线没成' in b_sw)
+    ok("④ 公开入口仍转发到实现体（薄壳不许把行为摘掉）",
+       "_switch_chat_posted_impl(" in code_of(src, "switch_chat_posted"))
     ok("④ 台账有环形上限与读取口", "def recent_switch_fails(" in src and "_SWITCH_FAILS_MAX" in src)
 
     # ⑤ 用户可见面：症状检验器「它不回复」必须把这格摆出来
