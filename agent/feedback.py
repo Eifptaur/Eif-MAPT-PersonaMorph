@@ -210,14 +210,35 @@ def _cfg() -> dict:
         return {}
 
 
+#: 版本件（模块级导入 + 赋值兜底：避开"except 里只 return"的静默点形态）
+try:
+    from .version import VERSION as _PM_VERSION
+    from .version import read_build_from as _pm_read_build
+except ImportError:
+    _PM_VERSION, _pm_read_build = "?", None
+
+
 def _version() -> str:
-    try:
-        import re
-        p = os.path.join(ROOT, "assets", "console", "index.html")
-        mt = os.path.getmtime(p)
-        return time.strftime("%m%d-%H%M", time.localtime(mt))
-    except Exception:
-        return "?"
+    """反馈里那行 `v…` —— **必须是真版本号**（+ 内容指纹），不是别的东西。
+
+    ⛔ 原来这里返回的是 `assets/console/index.html` 的**文件修改时间**（`%m%d-%H%M`），
+      于是反馈里写着 `v0928-2133` —— **长得像版本号、其实毫无版本意义**，
+      连作者都会看错（2026-09-28：我据此把一个正常版本的报障当成了"内部构建"）。
+      ⇒ 现在：`<VERSION>+<build 前 6 位>`；控制台页面的时间另存一个字段，不再冒充版本。
+    """
+    _b = str(_pm_read_build() or "").strip() if _pm_read_build else ""
+    return "%s%s" % (_PM_VERSION, ("+" + _b[:6]) if _b else "")
+
+
+def _console_stamp() -> str:
+    """控制台页面文件的时间戳（诊断用，**不冒充版本号**）。
+
+    ⛔ 不用 try/except 兜底（本仓静默点棘轮只许降）：文件不在就明确返回空串。
+    """
+    p = os.path.join(ROOT, "assets", "console", "index.html")
+    if not os.path.exists(p):
+        return ""
+    return time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(p)))
 
 
 def _read_all() -> list:
@@ -687,6 +708,7 @@ def submit(kind: str, text: str, contact: str = "", env: dict | None = None, fil
         "at": time.time(),
         "at_h": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
         "ver": _version(),
+        "console": _console_stamp(),   # 控制台页面时间戳（诊断用；不冒充版本号）
         "env": env or {},
         "files": _saved,
     }

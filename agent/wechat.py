@@ -4878,6 +4878,38 @@ class WeChatAdapter:
 
     @_idn_txn_scope
     def switch_chat_posted(self, chat_id: str, gui=None, name: str = None, confirm_s: float = 8.0):
+        """**投递版切会话**（公开入口）——先过「停手闸」，再走实现。
+
+        ⛔ 为什么要有这一层（2026-09-28 网友反馈："一直顶界面、闪来闪去，还一直划群列表"）：
+          实现里每一枪都会短暂借一次前台（1.8~3.2 秒后还回），而**失败了还会按消息再来**——
+          于是用户看到的就是反复顶窗 + 列表在动。停手闸（`agent/backoff.py`）在这里统一记账：
+          连续失败到阈值 ⇒ 冷却期内**一次都不再试**，冷却后只放一发试探；成功即合上。
+          ⚠️ 记账放在**这一层**（按"整次切会话"的最终结果），实现里的 `note_switch_fail`
+             继续只做"症状台账"——两处职责分开，避免同一枪被算两次。
+        """
+        from . import backoff as _bo
+        _ok, _why = _bo.breaker("switch_chat").can_try()
+        if not _ok:
+            return False, (_why + "｜想立刻重试：控制台「微信」面板重置停手状态（或先手动点开目标会话）。")
+        try:
+            _r = self._switch_chat_posted_impl(chat_id, gui=gui, name=name, confirm_s=confirm_s)
+        except Exception as _e: # noqa: BLE001
+            _bo.breaker("switch_chat").fail("异常：%s" % str(_e)[:80])
+            raise
+        if isinstance(_r, tuple) and len(_r) == 2:
+            _ok2, _why2 = bool(_r[0]), str(_r[1] or "")
+        else:
+            _ok2, _why2 = bool(_r), ""
+        if _ok2:
+            _bo.breaker("switch_chat").ok()
+        else:
+            _back = _bo.breaker("switch_chat").fail(_why2)
+            log.info("切会话失败 ⇒ 记账（连续 %d 次）；按停手闸：%.0f 秒内不再试",
+                     _bo.breaker("switch_chat").fails, _back)
+        return _r
+
+    def _switch_chat_posted_impl(self, chat_id: str, gui=None, name: str = None,
+                                 confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
 
         为什么需要：投递（L5）不切会话；而真实路径（L0）会真点真敲、被别的窗口挡住就失败，实测 `open_chat`

@@ -613,7 +613,14 @@ def fg_refused() -> dict:
 
 
 def _guarded(name: str, fail_value):
-    """造一个"带闸门的替身"：闸不过就留日志并返回 `fail_value`（**不抛异常**）。"""
+    """造一个"带闸门的替身"：闸不过就留日志并返回 `fail_value`（**不抛异常**）。
+
+    两道闸，缺一不可：
+      ① `fg_allowed()` —— **该不该**置前（配置/档位层面）；
+      ② `backoff.foreground()` 的**配额** —— **还能不能**再借一次（"学会停手"）。
+    只装 ① 的后果现场见过：闸放行、于是每条要回的消息都再借一次前台（每次短暂置前 1.8~3.2 秒后
+    还回）⇒ 用户那边就是"一直顶界面、闪来闪去"（2026-09-28 反馈）。配额把"次数"钉住。
+    """
     def _make(fn):
         import functools
 
@@ -631,6 +638,24 @@ def _guarded(name: str, fail_value):
                         import logging as _log
                     _log.warning("⛔ 拒绝置前/置顶：%s() 被调用（%s）—— 投递链不需要前台，"
                                  "而置顶会压过用户用来遮挡的窗口", name, why)
+                return fail_value
+            # ② 配额：一分钟最多借几次、两次之间至少隔多久（拒了就当"这次没做到"，不抛）
+            try:
+                from . import backoff as _bo
+                _qok, _qwhy = _bo.foreground().take()
+            except Exception as _e: # noqa: BLE001  配额件缺失 ⇒ 放行，但要留一行痕迹
+                _qok, _qwhy = True, ""
+                log.info("置前配额件不可用（按放行）：%s", _e)
+            if not _qok:
+                _FG_REFUSED["n"] += 1
+                _FG_REFUSED["why"] = "置前配额用尽：" + str(_qwhy)
+                _FG_REFUSED["who"] = name
+                try:
+                    from .wechat import log as _log2
+                except Exception:
+                    import logging as _log2
+                _log2.warning("⛔ 这次不置前：%s()（%s）—— 已按配额停手（用户在意的正是这个）",
+                              name, _qwhy)
                 return fail_value
             return fn(*a, **k)
         return _w
