@@ -63,12 +63,14 @@ from cursor_fx import WhaleCursor # noqa: E402
 from heal import Health, Probe, plan_for, probe_backend # noqa: E402
 from ocean import OceanWaves, paint_backdrop # noqa: E402
 from panels_qt import BATCH_SECS, build_panel # noqa: E402
-from stylekit_qt import THEMES, Tokens, apply_font_to_app, pill, qfont, resolve_family, rgba, surface_bg # noqa: E402
+from stylekit_qt import (THEMES, Tokens, apply_font_to_app, field_qss, pill, qfont,  # noqa: E402
+                         resolve_family, rgba, surface_bg)
 from widgets import ( # noqa: E402
     Badge,
     Btn,
     Card,
     Field,
+    FieldCombo,
     IconBtn,
     NavGroup,
     NavItem,
@@ -1491,12 +1493,7 @@ class Shell(QWidget):
         e.setFont(qfont(self.t, self.t.body_size))
         e.setFixedHeight(32)
         e.setMinimumWidth(220)
-        e.setStyleSheet(
-            f"QLineEdit{{background:{rgba(self.t.q('tx'), 0 if self.t.glass else 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{self.t.tx};border:1px solid {self.t.bd};"
-            f"border-radius:{pill(32)}px;padding:0 10px;}}"
-            f"QLineEdit:focus{{border:1px solid {self.t.blue};}}"
-        )
+        e.setStyleSheet(field_qss(self.t))
         return e
 
     def _divider(self) -> QFrame:
@@ -2336,18 +2333,12 @@ class _Combo(QWidget):
         self.t = t
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.cb = QComboBox()
+        self.cb = FieldCombo(t)
         self.cb.addItems(items)
         self.cb.setFont(qfont(t, t.body_size))
         self.cb.setFixedHeight(32)
         self.cb.setMinimumWidth(200)
-        self.cb.setStyleSheet(
-            f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{pill(32)}px;padding:0 10px;}}"
-            f"QComboBox::drop-down{{border:none;width:22px;}}"
-            f"QComboBox QAbstractItemView{{background:{t.bg if t.key!='whale' else '#0E2136'};"
-            f"color:{t.tx};border:1px solid {t.bd};selection-background-color:{t.blue_soft};}}"
-        )
+        self.cb.setStyleSheet(field_qss(t))
         lay.addWidget(self.cb)
 
 

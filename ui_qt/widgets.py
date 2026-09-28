@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QBoxLayout,
     QCheckBox,
+    QComboBox,
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
@@ -44,8 +45,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from icons import CHEVRON, svg_pixmap
 from stylekit_qt import (
+    FIELD_CHEVRON_W,
     Tokens,
+    field_qss,
     mix,
     pill,
     qfont,
@@ -977,12 +981,70 @@ class SearchBox(QLineEdit):
         self.setFont(qfont(t, t.body_size))
         self.setFixedHeight(32)
         self.setClearButtonEnabled(True)
-        self.setStyleSheet(
-            f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{pill(32)}px;"
-            f"padding:0 10px;}}"
-            f"QLineEdit:focus{{border:1px solid {t.blue};}}"
-        )
+        # 全族统一外观，只把圆角换成胶囊（搜索框这一处**有意**与输入槽不同形）
+        self.setStyleSheet(field_qss(t, radius=pill(32)))
+
+
+def style_field(w, t: Tokens, shape: str = "line", accent: str = "", radius: int = None):
+    """给任意输入控件套上"槽"的统一外观（QSS + 字号 + 单行高度），返回控件本身。
+
+    用途：那些直接 `QLineEdit()` / `QPlainTextEdit()` 建出来的地方 —— 它们原本没有样式，
+    在深色主题上就是一排系统白底。外观只此一处，见 `stylekit.field_qss`。
+    """
+    w.setStyleSheet(field_qss(t, shape, accent, radius))
+    if shape == "area":
+        w.setFont(qfont(t, t.body_size - 0.5))
+    else:
+        w.setFont(qfont(t, t.body_size))
+        w.setFixedHeight(32)
+    return w
+
+
+class FieldCombo(QComboBox):
+    """输入/选单"槽"里的下拉 —— 外观走 `stylekit.field_qss`，箭头**自绘矢量**。
+
+    为什么要子类：`field_qss` 关掉了系统箭头（QSS 的 `image:` 只能指文件，与"图标一律走
+    `icons` 的矢量 path"这条纪律冲突），不补一笔指示符，用户就看不出"这里能展开"。
+    箭头颜色取主题弱文字色，尺寸 12px，列宽与 QSS 的 `::drop-down` 同源（`FIELD_CHEVRON_W`）。
+    """
+
+    def __init__(self, t: Tokens, options=None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.t = t
+        self.setFont(qfont(t, t.body_size))
+        self.setFixedHeight(32)
+        self.setMinimumWidth(120)
+        self.setStyleSheet(field_qss(t))
+        if options:
+            for v, label in options:
+                self.addItem(label, v)
+        self._chev_for = None
+        self._chev_pm = None
+
+    def set_theme(self, t: Tokens) -> None:
+        """换主题（页重建时也会重造控件；这个口留给不重建的场合）。"""
+        self.t = t
+        self.setFont(qfont(t, t.body_size))
+        self.setStyleSheet(field_qss(t))
+        self._chev_for = None
+        self.update()
+
+    def _chevron(self):
+        # 按色缓存：paintEvent 里每帧重建 SVG 位图没必要
+        if self._chev_pm is None or self._chev_for != self.t.tx3:
+            self._chev_pm = svg_pixmap(CHEVRON, self.t.tx3, 12)
+            self._chev_for = self.t.tx3
+        return self._chev_pm
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        pm = self._chevron()
+        sz = pm.deviceIndependentSize()
+        x = self.width() - FIELD_CHEVRON_W + (FIELD_CHEVRON_W - sz.width()) / 2
+        y = (self.height() - sz.height()) / 2
+        p = QPainter(self)
+        p.drawPixmap(int(round(x)), int(round(y)), pm)
+        p.end()
 
 
 def h2(t: Tokens, text: str, badge: Badge | None = None) -> QWidget:

@@ -23,7 +23,6 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -38,8 +37,8 @@ import config_io
 import panels_custom
 import sec_meta
 from async_ui import run_async
-from stylekit_qt import Tokens, pill, qfont, rgba, surface_bg
-from widgets import Badge, Btn, Card, Field, Switch, desc, h2
+from stylekit_qt import Tokens, field_qss, qfont, rgba, surface_bg
+from widgets import Badge, Btn, Card, Field, FieldCombo, Switch, desc, h2
 
 # 本批要建面板的 26 个 sec（27 减去机器人=主面板），顺序照 web 文档序
 BATCH_SECS = sec_meta.SECS_OF_THIS_BATCH
@@ -205,29 +204,18 @@ def _hex(c) -> str:
     return c.name(QColor.NameFormat.HexArgb)
 
 
-class Combo(QComboBox):
-    """样式化下拉 —— 系统下拉在深色主题下很脏，QSS 全覆盖（shell._Combo 同款）。"""
+class Combo(FieldCombo):
+    """样式化下拉 —— 系统下拉在深色主题下很脏。外观全在 `stylekit.field_qss`（本类只补语义）。"""
 
     def __init__(self, t: Tokens, options: list[tuple[str, str]], default=None, parent=None):
-        super().__init__(parent)
-        self.t = t
+        # 最小宽度 120 在 FieldCombo 里已设：硬最小值只保「还看得清几个字」，
+        # 不用 200 把行顶死（Field._STACK_AT 之下会改成上下排列，控件满宽）。
+        super().__init__(t, parent=parent)
         for v, label in options:
             self.addItem(label, v) # userData=option 的真 value（web data-cfg 口径）
         values = [v for v, _l in options]
         if default is not None and str(default) in values:
             self.setCurrentIndex(values.index(str(default)))
-        self.setFixedHeight(32)
-        # 宽度自适应：硬最小值只保「还看得清几个字」，不再用 200 把行顶死
-        # （Field._STACK_AT 之下会改成上下排列，控件满宽）。
-        self.setMinimumWidth(120)
-        self.setFont(qfont(t, t.body_size))
-        self.setStyleSheet(
-            f"QComboBox{{background:{_hex(rgba(t.q('tx'), 16))};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{pill(32)}px;padding:0 10px;}}"
-            f"QComboBox::drop-down{{border:none;width:22px;}}"
-            f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-            f"color:{t.tx};border:1px solid {t.bd};selection-background-color:{t.blue_soft};}}"
-        )
 
 
 def _line(t: Tokens, text: str = "", password: bool = False, placeholder: str = "") -> QLineEdit:
@@ -241,12 +229,7 @@ def _line(t: Tokens, text: str = "", password: bool = False, placeholder: str = 
     e.setMinimumWidth(120)
     if password:
         e.setEchoMode(QLineEdit.EchoMode.Password)
-    e.setStyleSheet(
-        f"QLineEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
-        f"color:{t.tx};border:1px solid {t.bd};"
-        f"border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QLineEdit:focus{{border:1px solid {t.blue};}}"
-    )
+    e.setStyleSheet(field_qss(t))
     return e
 
 
@@ -255,11 +238,7 @@ def _area(t: Tokens, text: str, rows: int = 2, placeholder: str = "") -> QPlainT
     e.setPlaceholderText(placeholder)
     e.setFont(qfont(t, t.body_size - 0.5))
     e.setFixedHeight(20 * max(2, min(rows, 4)) + 20)
-    e.setStyleSheet(
-        f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px 8px;}}"
-        f"QPlainTextEdit:focus{{border:1px solid {t.blue};}}"
-    )
+    e.setStyleSheet(field_qss(t, shape="area"))
     return e
 
 

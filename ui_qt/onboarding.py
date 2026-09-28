@@ -23,7 +23,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -35,8 +34,8 @@ from PySide6.QtWidgets import (
 )
 
 import config_io
-from stylekit_qt import Tokens, qfont, rgba, surface_bg
-from widgets import Btn, DraggableDialog, desc, h2
+from stylekit_qt import Tokens, qfont, surface_bg
+from widgets import Btn, DraggableDialog, FieldCombo, desc, h2, style_field
 
 # 进程内只弹一次（web `_onboardOnce` 的 Qt 等价）
 _ONBOARD_ONCE = False
@@ -143,16 +142,16 @@ class _Wizard(DraggableDialog, QDialog):
         provs = _providers_from_web()
         self.providers = {k: v for k, v in provs.items() if k != "custom"}
 
-        self.prov_w = QComboBox()
+        self.prov_w = FieldCombo(t)
         self.prov_w.setObjectName("obProvider")
         for k, v in self.providers.items():
             self.prov_w.addItem(str(v.get("label") or k), k)
         self.prov_w.activated.connect(lambda _i: self._render_models())
 
-        self.model_w = QComboBox()
+        self.model_w = FieldCombo(t)
         self.model_w.setObjectName("obModel")
 
-        self.key_w = QLineEdit()
+        self.key_w = style_field(QLineEdit(), t)
         self.key_w.setObjectName("obKey")
         self.key_w.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_w.setPlaceholderText("粘贴该厂商的 Key（如 sk-...）")
@@ -233,7 +232,7 @@ class _Wizard(DraggableDialog, QDialog):
         lb.setFont(qfont(t, t.body_size))
         lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
         lb.setFixedWidth(84)
-        self.nick_w = QLineEdit()
+        self.nick_w = style_field(QLineEdit(), t)
         self.nick_w.setObjectName("obNick")
         self.nick_w.setPlaceholderText("填你自己微信的原名")
         self.nick_w.setText(cur)
@@ -346,11 +345,9 @@ class _Wizard(DraggableDialog, QDialog):
         self.check_out = QPlainTextEdit("体检中…")
         self.check_out.setObjectName("obCheck")
         self.check_out.setReadOnly(True)
-        self.check_out.setFont(qfont(t, 11.5))
+        style_field(self.check_out, t, shape="area")
+        self.check_out.setFont(qfont(t, 11.5))   # 日志体密排，字号比全族默认再小一档
         self.check_out.setFixedHeight(190)
-        self.check_out.setStyleSheet(
-            f"QPlainTextEdit{{background:{rgba(t.q('tx'), 0 if t.glass else 10).name()};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:8px;padding:6px;}}")
         self.body_lay.addWidget(self.check_out)
         self.b_next.setText("完成")
         self._run_selfcheck()

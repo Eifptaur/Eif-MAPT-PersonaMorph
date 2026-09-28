@@ -574,6 +574,57 @@ def surface_bg(t: Tokens) -> str:
     return _SURFACE_SOLID_GLASS if getattr(t, "glass", False) else t.card
 
 
+#: 输入/选单"槽"的形状档：`line`＝单行（输入框 / 下拉），`area`＝多行（文本区）
+FIELD_SHAPES = ("line", "area")
+
+#: 下拉箭头那一列的宽度 —— 单一来源：QSS 的 `::drop-down` 与 `widgets.FieldCombo`
+#: 自绘箭头都用它，改一处两边同步（不然箭头会偏出输入区或压住文字）。
+FIELD_CHEVRON_W = 26
+
+
+def field_qss(t: Tokens, shape: str = "line", accent: str = "", radius: int = None) -> str:
+    """输入 / 选单**槽**的统一外观 —— `QLineEdit` / `QComboBox` / `QPlainTextEdit` / `QTextEdit`。
+
+    为什么单列一族：这些控件是"往里面填东西的槽"，底色既不能像页面卡片那样用玻璃令牌
+    （填字的地方要读得清），也不能像浮层那样用实色卡片底（它们平铺在卡片里）。
+    之前每种控件各自手抄样式、抄漏的那些**直接落回系统白底**（深色主题上一排白条）。
+
+    形状：单行走 `radius_btn`（与按钮同一档 ⇒ 一行里不会方圆混排），多行走 `radius_field`；
+    底 = 主题文字色 20 alpha 叠在卡片上（深色主题比卡片亮一档、浅色比白卡深一档）；
+    描边 34（悬停 52），聚焦换成该主题的强调色（`accent="err"` 时用危险色 ——
+    给"必须原样输入才放行"那种确认框）。
+    下拉列表是**浮层** ⇒ 底走 `surface_bg(t)`（浮层必须实心，见项目纪律）。
+    箭头不在这里画：本函数显式关掉系统箭头（QSS 的 `image:` 只能指文件，而项目图标一律走
+    `icons` 的矢量 path），由 `widgets.FieldCombo` 在 `paintEvent` 里补一笔矢量 chevron。
+
+    `radius` 只在"这一处**有意**与全族不同"时传（例：导航搜索框要胶囊形）——
+    传了就用它，不传按形状档取。
+    """
+    if shape not in FIELD_SHAPES:
+        shape = "line"
+    r = t.radius_field if shape == "area" else t.radius_btn
+    if radius is not None:
+        r = int(radius)
+    pad = "4px 8px" if shape == "area" else "0 10px"
+    focus = t.err if str(accent) == "err" else t.blue
+    return (
+        f"QLineEdit,QComboBox,QPlainTextEdit,QTextEdit{{"
+        f"background:{qss(rgba(t.q('tx'), 20))};color:{t.tx};"
+        f"border:1px solid {qss(rgba(t.q('tx'), 34))};border-radius:{r}px;padding:{pad};"
+        f"selection-background-color:{t.blue_soft};selection-color:{t.tx};}}"
+        f"QLineEdit:hover,QComboBox:hover,QPlainTextEdit:hover,QTextEdit:hover{{"
+        f"border:1px solid {qss(rgba(t.q('tx'), 52))};}}"
+        f"QLineEdit:focus,QComboBox:focus,QPlainTextEdit:focus,QTextEdit:focus{{"
+        f"border:1px solid {focus};background:{qss(rgba(t.q('tx'), 28))};}}"
+        f"QComboBox::drop-down{{border:none;width:{FIELD_CHEVRON_W}px;}}"
+        f"QComboBox::down-arrow{{image:none;width:0;height:0;}}"
+        f"QComboBox QAbstractItemView{{background:{surface_bg(t)};color:{t.tx};"
+        f"border:1px solid {t.bd};border-radius:10px;padding:6px;outline:none;"
+        f"selection-background-color:{t.blue_soft};selection-color:{t.tx};}}"
+        f"QComboBox QAbstractItemView::item{{height:30px;padding:0 8px;border-radius:6px;}}"
+    )
+
+
 def qfont(t: Tokens, size: float, weight: int = 400, extra_spacing: float | None = None,
           display: bool = False) -> QFont:
     """造一个字体。Qt 的 QFont 不认 10.5 这类半点字号（会取整），这里显式保留。

@@ -9463,6 +9463,84 @@ def t_surface_bg_guard() -> None:
     ck("② 分母守卫：真的扫到了这些浮层选择器", _found >= 6, "扫到 %d 条" % _found)
 
 
+def t_field_guard() -> None:
+    """闸门：输入/选单"槽"的外观走**唯一实现点** `stylekit.field_qss`。
+
+    判据四条：
+      ① **反向**：除 `stylekit_qt.py`（它就是实现点）外，`ui_qt/*.py` 里不许再出现
+         `QLineEdit{` / `QComboBox{` / `QPlainTextEdit{` / `QTextEdit{` 这类 QSS 片段
+         —— 各自手抄的结果就是"抄漏的地方直接落回系统白底"（深色主题上一排白条）。
+      ② **分母守卫**：`field_qss(` 的引用点必须 ≥ 8（扫不到就成了空集假绿）。
+      ③ **功能**：造一个 `widgets.FieldCombo`，离屏渲染，**箭头那一列的笔画像素必须 > 0**
+         —— 实现里关掉了系统箭头（QSS 的 `image:` 只能指文件），自绘那一笔没画出来
+         用户就看不出"这里能展开"，这一条是防那种静默回退。
+      ④ 实现点自身覆盖四类控件且下拉列表走 `surface_bg`（浮层必须实心）。
+    """
+    import ast as _ast # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+    import re as _re # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    _dir = _o.path.join(_root, "ui_qt")
+    _sel = _re.compile(r"Q(?:LineEdit|ComboBox|PlainTextEdit|QTextEdit)\{")
+    _copies = []
+    _refs = 0
+    for _fn in sorted(_o.listdir(_dir)):
+        if not _fn.endswith(".py") or _fn in ("selftest.py", "stylekit_qt.py"):
+            continue
+        _src = open(_o.path.join(_dir, _fn), encoding="utf-8", errors="ignore").read()
+        _refs += _src.count("field_qss(")
+        if _sel.search(_src):
+            _copies.append(_fn)
+    ck("① 输入类 QSS 不再各文件手抄（唯一实现点＝stylekit.field_qss）",
+       not _copies, "仍在手抄：%s" % "、".join(_copies))
+    ck("② 分母守卫：真的扫到了 field_qss 的引用点", _refs >= 8, "引用 %d 处" % _refs)
+
+    _sk = open(_o.path.join(_dir, "stylekit_qt.py"), encoding="utf-8").read()
+    # 按 **AST** 取函数体（项目纪律：判据的"函数切片"不许拿 `def` 行当文本边界）
+    _body = ""
+    try:
+        for _n in _ast.walk(_ast.parse(_sk)):
+            if isinstance(_n, _ast.FunctionDef) and _n.name == "field_qss":
+                _ls = _sk.split("\n")
+                _body = "\n".join(_ls[_n.lineno - 1:_n.end_lineno])
+                break
+    except SyntaxError:
+        _body = ""
+    ck("④ field_qss 覆盖四类控件且下拉列表走 surface_bg",
+       bool(_body) and all(x in _body for x in ("QLineEdit", "QComboBox", "QPlainTextEdit",
+                                                "QTextEdit", "QAbstractItemView", "surface_bg(t)")),
+       "%d 字符" % len(_body))
+
+    # ③ 功能断言：箭头真的画出来了（离屏渲染，采箭头列）
+    try:
+        from PySide6.QtCore import QPoint as _QPt # noqa: PLC0415
+        from PySide6.QtGui import QColor as _QC # noqa: PLC0415
+        from PySide6.QtGui import QImage as _QI # noqa: PLC0415
+        from PySide6.QtGui import QPainter as _QP # noqa: PLC0415
+        from widgets import FieldCombo # noqa: PLC0415
+        from stylekit_qt import THEMES as _THM # noqa: PLC0415
+
+        _t = _THM["whale"]
+        _c = FieldCombo(_t, [("a", "甲"), ("b", "乙")])
+        _c.resize(220, 32)
+        _c.setCurrentIndex(0)
+        _img = _QI(220, 32, _QI.Format_ARGB32)
+        _img.fill(_QC(0, 0, 0, 255))
+        _p = _QP(_img)
+        _c.render(_p, _QPt(0, 0))   # 显式给 targetOffset
+        _p.end()
+        from stylekit_qt import FIELD_CHEVRON_W as _W # noqa: PLC0415
+        _ink = 0
+        for _y in range(32):
+            for _x in range(220 - _W, 220):
+                if _img.pixelColor(_x, _y).red() > 60:
+                    _ink += 1
+        ck("③ 功能：下拉箭头真的画出来了（离屏采箭头列 ink>0）", _ink > 0, "ink=%d" % _ink)
+    except Exception as _e: # noqa: BLE001
+        ck("③ 功能：下拉箭头真的画出来了（离屏采箭头列 ink>0）", False, repr(_e)[:120])
+
+
 def t_dev_dir_guard() -> None:
     """自检：**产品代码不许把本地草稿目录当路径用**（用户机器上不存在它）。
 
@@ -10620,6 +10698,7 @@ def main() -> int:
                    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
                    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
                    t_surface_bg_guard,
+                   t_field_guard,
                    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
                    t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
                    t_inject_surface_guard, t_foreground_borrow_guard,

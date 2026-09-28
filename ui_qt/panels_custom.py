@@ -27,7 +27,6 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -57,8 +56,9 @@ from async_ui import (
     widget_alive as _qt_alive,
 )
 from confirm import ConfirmDialog
-from stylekit_qt import SHAPE_CIRCLE, Tokens, pill, qfont, rgba, status_colors, surface_bg
-from widgets import Badge, Btn, Card, ElideLabel, Field, FlowBox, Switch, desc, h2, row_label
+from stylekit_qt import SHAPE_CIRCLE, Tokens, field_qss, pill, qfont, rgba, status_colors, surface_bg
+from widgets import (Badge, Btn, Card, ElideLabel, Field, FieldCombo, FlowBox, Switch,
+                     desc, h2, row_label)
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]
@@ -94,11 +94,7 @@ def _plain_area(t: Tokens, text: str = "", placeholder: str = "", height: int = 
     e.setPlaceholderText(placeholder)
     e.setFont(qfont(t, t.body_size - 0.5))
     e.setFixedHeight(height)
-    e.setStyleSheet(
-        f"QPlainTextEdit{{background:{_hex(rgba(t.q('tx'), 16))};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px 8px;}}"
-        f"QPlainTextEdit:focus{{border:1px solid {t.blue};}}"
-    )
+    e.setStyleSheet(field_qss(t, shape="area"))
     return e
 
 
@@ -223,9 +219,9 @@ def overview_panel(t: Tokens) -> QWidget:
     fc_box: dict = {"prices": None}
     f_row1 = QHBoxLayout()
     lb_v = row_label(t, "厂商")
-    fc_vendor = QComboBox()
+    fc_vendor = FieldCombo(t)
     fc_vendor.addItem("加载中…", "")
-    fc_model = QComboBox()
+    fc_model = FieldCombo(t)
     fc_note = desc(t, "")
     fc_note.setWordWrap(True)
     f_row1.addWidget(lb_v)
@@ -247,7 +243,7 @@ def overview_panel(t: Tokens) -> QWidget:
         card_f.body.addLayout(r)
     f_row2 = QHBoxLayout()
     lb_p = row_label(t, "时段")
-    fc_peak = QComboBox()
+    fc_peak = FieldCombo(t)
     fc_peak.addItem("空闲（夜间/周末）", "0")
     fc_peak.addItem("高峰（工作日 9-12 / 14-18）", "1")
     f_row2.addWidget(lb_p)
@@ -731,7 +727,7 @@ def overview_panel(t: Tokens) -> QWidget:
         loc_row = QHBoxLayout()
         lb_loc = _dlg_note(t)
         lb_loc.setText("按日期定位")
-        loc_cb = QComboBox()
+        loc_cb = FieldCombo(t)
         for d in sorted((str(b.get("day")) for b in bills if b.get("day")), reverse=True):
             loc_cb.addItem(d, d)
         loc_btn = Btn("定位", t, "ghost")
@@ -1206,7 +1202,7 @@ def check_panel(t: Tokens) -> QWidget:
     card_pk.body.addWidget(h2(t, "拍一拍检测"))
     pk_row1 = QHBoxLayout()
     lb_g = row_label(t, "目标群")
-    pk_group = QComboBox()
+    pk_group = FieldCombo(t)
     pk_group.addItem("自动（最近有人发言的群）", "")
     pk_group.setMinimumWidth(260)
     pk_row1.addWidget(lb_g)
@@ -1648,17 +1644,12 @@ def sessions_panel(t: Tokens) -> QWidget:
     acard = Card(t)
     acard.body.addWidget(h2(t, "存档：按条屏蔽 / 清除"))
     arc_row = QHBoxLayout()
-    arc_chat = QComboBox()
+    arc_chat = FieldCombo(t)
     arc_chat.setObjectName("arcChat")
     arc_chat.setMinimumWidth(220)
     arc_chat.setFixedHeight(32)
     arc_chat.setFont(qfont(t, t.body_size))
-    arc_chat.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
+    arc_chat.setStyleSheet(field_qss(t))
     arc_limit = _line(t, "30", placeholder="条数")
     arc_limit.setObjectName("arcLimit")
     arc_limit.setFixedWidth(70)
@@ -2754,16 +2745,8 @@ def persona_panel(t: Tokens) -> QWidget:
         tl.setStyleSheet(f"color:{t.tx};background:transparent;")
         box.addWidget(tl)
 
-        combo_style = (
-            f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-            f"QComboBox::drop-down{{border:none;width:22px;}}"
-            f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-            f"color:{t.tx};border:1px solid {t.bd};}}")
-        line_style = (
-            f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-            f"QLineEdit:focus{{border:1px solid {t.blue};}}")
+        combo_style = field_qss(t)
+        line_style = field_qss(t)
 
         def _fl(txt: str) -> QLabel:
             lb = QLabel(txt)
@@ -2780,7 +2763,7 @@ def persona_panel(t: Tokens) -> QWidget:
             return e
 
         box.addWidget(_fl("类型"))
-        type_sel = QComboBox()
+        type_sel = FieldCombo(t)
         type_sel.addItems(["新建分区", "添加角色到分区"])
         type_sel.setFixedHeight(32)
         type_sel.setFont(qfont(t, t.body_size))
@@ -2788,7 +2771,7 @@ def persona_panel(t: Tokens) -> QWidget:
         box.addWidget(type_sel)
 
         box.addWidget(_fl("分区名"))
-        cat_sel = QComboBox()
+        cat_sel = FieldCombo(t)
         cat_sel.setFixedHeight(32)
         cat_sel.setFont(qfont(t, t.body_size))
         cat_sel.setStyleSheet(combo_style)
@@ -2812,9 +2795,7 @@ def persona_panel(t: Tokens) -> QWidget:
         text_in.setPlaceholderText("角色设定（会交补足引擎+评分）")
         text_in.setMinimumHeight(90)
         text_in.setFont(qfont(t, t.body_size))
-        text_in.setStyleSheet(
-            f"QPlainTextEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_field}px;padding:4px 10px;}}")
+        text_in.setStyleSheet(field_qss(t, shape="area"))
         for w in (name_lb, name_in, text_lb, text_in):
             w.setVisible(False)
             box.addWidget(w)
@@ -2988,9 +2969,7 @@ def persona_panel(t: Tokens) -> QWidget:
         v.addWidget(tip)
         ed = QLineEdit(str(p.get("cat") or ""))
         ed.setFont(qfont(t, 12.5))
-        ed.setStyleSheet(
-            f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-            f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:6px 10px;}}")
+        ed.setStyleSheet(field_qss(t))
         v.addWidget(ed)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -3588,17 +3567,12 @@ def memory_panel(t: Tokens) -> QWidget:
     chat_row = QHBoxLayout()
     mem_search = _line(t, "", placeholder="搜索群名…")
     mem_search.setObjectName("memSearch")
-    chat_sel = QComboBox()
+    chat_sel = FieldCombo(t)
     chat_sel.setObjectName("memChats")
     chat_sel.setMinimumWidth(240)
     chat_sel.setFixedHeight(32)
     chat_sel.setFont(qfont(t, t.body_size))
-    chat_sel.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
+    chat_sel.setStyleSheet(field_qss(t))
     b_refresh = Btn("刷新", t, "ghost")
     b_refresh.setObjectName("memRefresh")
     chat_row.addWidget(QLabel("选择群聊"))
@@ -4521,9 +4495,7 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
                 ai.setFont(qfont(t, 11.5))
                 ai.setToolTip('给这个工具的参数（JSON 对象，例：{"city": "北京"}）；'
                               "它会替换 url/query/body 里的 {占位}")
-                ai.setStyleSheet(
-                    f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-                    f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:4px 8px;}}")
+                ai.setStyleSheet(field_qss(t))
                 ai.textChanged.connect(lambda txt, _k=keep: _k.__setitem__("args", txt))
                 tb = Btn("试一下", t, "ghost")
                 tb.setObjectName("utTest")
@@ -4700,7 +4672,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
     """
     import threading as _th # noqa: PLC0415
 
-    from PySide6.QtWidgets import QComboBox, QProgressBar # noqa: PLC0415
+    from PySide6.QtWidgets import QProgressBar # noqa: PLC0415
 
 
     card = Card(t)
@@ -4717,16 +4689,11 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
 
     preset_row = QHBoxLayout()
     preset_row.addWidget(QLabel("档位"))
-    preset_sel = QComboBox()
+    preset_sel = FieldCombo(t)
     preset_sel.setMinimumWidth(260)
     preset_sel.setFixedHeight(30)
     preset_sel.setFont(qfont(t, t.body_size))
-    preset_sel.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
+    preset_sel.setStyleSheet(field_qss(t))
     preset_row.addWidget(preset_sel, 1)
     card.body.addLayout(preset_row)
     preset_note = desc(t, "")
@@ -6729,7 +6696,7 @@ def _web_search_appendix(t: Tokens, page: QWidget) -> None:
     if not opts:
         return
     from panels_qt import _line # noqa: PLC0415
-    from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel # noqa: PLC0415
+    from PySide6.QtWidgets import QHBoxLayout, QLabel # noqa: PLC0415
 
     card = Card(t)
     card.body.addWidget(h2(t, "当前引擎参数"))
@@ -6747,16 +6714,11 @@ def _web_search_appendix(t: Tokens, page: QWidget) -> None:
     lbl = QLabel("引擎")
     lbl.setFont(qfont(t, t.body_size))
     lbl.setStyleSheet(f"color:{t.tx};background:transparent;")
-    combo = QComboBox()
+    combo = FieldCombo(t)
     combo.setObjectName("wsProvider")
     combo.setFixedHeight(32)
     combo.setFont(qfont(t, t.body_size))
-    combo.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
+    combo.setStyleSheet(field_qss(t))
     for val, txt in opts:
         combo.addItem(txt, val)
     prow.addWidget(lbl)
@@ -6907,17 +6869,13 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(h2(t, "模型厂商与模型"))
 
     def _combo_style() -> str:
-        return (f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-                f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-                f"QComboBox::drop-down{{border:none;width:22px;}}"
-                f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-                f"color:{t.tx};border:1px solid {t.bd};}}")
+        return field_qss(t)
 
     prow = QHBoxLayout()
     plab = QLabel("厂商")
     plab.setFont(qfont(t, t.body_size, 500))
     plab.setStyleSheet(f"color:{t.tx};background:transparent;")
-    combo = QComboBox()
+    combo = FieldCombo(t)
     combo.setObjectName("providerSel")
     combo.setFixedHeight(32)
     combo.setFont(qfont(t, t.body_size))
@@ -6933,7 +6891,7 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
     mlab = QLabel("模型")
     mlab.setFont(qfont(t, t.body_size, 500))
     mlab.setStyleSheet(f"color:{t.tx};background:transparent;")
-    mcombo = QComboBox()
+    mcombo = FieldCombo(t)
     mcombo.setObjectName("modelSel")
     mcombo.setFixedHeight(32)
     mcombo.setFont(qfont(t, t.body_size))
@@ -6942,9 +6900,7 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
     medit.setPlaceholderText("自定义模型名（如 glm-4-plus）")
     medit.setFixedHeight(32)
     medit.setFont(qfont(t, t.body_size))
-    medit.setStyleSheet(
-        f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}")
+    medit.setStyleSheet(field_qss(t))
     medit.hide()
     mrow.addWidget(mlab)
     mv = QVBoxLayout()
@@ -7076,9 +7032,7 @@ def _prov_key_dlg(t: Tokens, page: QWidget, prov: str, p: dict,
     ed.setEchoMode(QLineEdit.EchoMode.Password)
     ed.setFont(qfont(t, 12.5))
     ed.setPlaceholderText((str(p.get("keyHint")) if p.get("keyHint") else "") + "...")
-    ed.setStyleSheet(
-        f"QLineEdit{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:6px 10px;}}")
+    ed.setStyleSheet(field_qss(t))
     v.addWidget(ed)
     row = QHBoxLayout()
     row.addStretch(1)
@@ -7111,17 +7065,12 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
     card = Card(t)
     card.body.addWidget(h2(t, "简报（给指定会话注入预设信息，/api/briefs）"))
     prow = QHBoxLayout()
-    bf_chat = QComboBox()
+    bf_chat = FieldCombo(t)
     bf_chat.setObjectName("bfChat")
     bf_chat.setMinimumWidth(220)
     bf_chat.setFixedHeight(32)
     bf_chat.setFont(qfont(t, t.body_size))
-    bf_chat.setStyleSheet(
-        f"QComboBox{{background:{rgba(t.q('tx'), 16).name(QColor.NameFormat.HexArgb)};"
-        f"color:{t.tx};border:1px solid {t.bd};border-radius:{t.radius_btn}px;padding:0 10px;}}"
-        f"QComboBox::drop-down{{border:none;width:22px;}}"
-        f"QComboBox QAbstractItemView{{background:{'#0E2136' if t.glass else t.card};"
-        f"color:{t.tx};border:1px solid {t.bd};}}")
+    bf_chat.setStyleSheet(field_qss(t))
     b_bf_rf = Btn("刷新会话", t, "ghost")
     b_bf_rf.setObjectName("bfRefresh")
     prow.addWidget(QLabel("会话"))
