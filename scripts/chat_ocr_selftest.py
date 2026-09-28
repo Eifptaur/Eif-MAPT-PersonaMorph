@@ -76,7 +76,10 @@ ck("绿底行占比最高且 >0.5", scores[1] > 0.5 and scores[1] > scores[0] an
    "scores=%s" % [round(s, 2) for s in scores])
 rows = ocr.session_rows(img)
 ck("会话行聚合成 3 行", len(rows) == 3, "rows=%d" % len(rows))
-name, why = ocr.current_chat_name(img)
+# ⛔ 这里**按生产口径**传候选集（`wechat.current_chat_name` 就是这么传的）：
+#    OCR 在小字上会把「手」读成「孚」这类同形字（本夹具实测到过），候选集纠错正是治它的。
+#    不传候选集＝只测了半条链（而线上那条链是带纠错的）。
+name, why = ocr.current_chat_name(img, cands=list(names))
 ck("判定为第 2 行（文件传输助手）", ocr.matches(name, "文件传输助手"), "name=%r why=%s" % (name, why))
 ck("依据串里带绿底占比", "占比" in why, why)
 

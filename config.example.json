@@ -521,6 +521,9 @@
   "browser_path": ""
  },
  "member_notes": {},
+ "env_profile": {
+  "auto_apply": false
+ },
  "video_gen": {
   "enabled": false,
   "trigger_mode": "on_request",

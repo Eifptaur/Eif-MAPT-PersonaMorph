@@ -391,6 +391,17 @@ def v_send_blocked() -> dict:
                                     "最近没有『确认不了目标会话 ⇒ 发不出去』的记录":
                                         "把目标会话在微信里点开再重试；最后一条若写着「最小化」，"
                                         "把微信从任务栏点出来（或打开「最小化时自己还原」）"})
+    # ── 环境自适应（只读说明格）─────────────────────────────────────────────
+    # 为什么放这里：这个检验器的用途是"发不出去，为什么" —— 而"这台机器上**哪条路真的成过**"
+    # 正是解释里最有用的一段（例：本机投递档可用 / OCR 只有 WinRT / 记忆里哪条切会话路成过）。
+    # ⛔ `info=True`＝说明格：不参与判决（`ok=None` 不算"没测到"），免得把"没探测"误判成"没通过"。
+    try:
+        from . import env_profile as _ep
+        _lines = _ep.status_text() or []
+        checks.append(_check("这台机器学到了什么（环境自适应）",
+                             None, "；".join(str(x) for x in _lines[:4])[:260], info=True))
+    except Exception as e: # noqa: BLE001
+        checks.append(_check("环境自适应读数", None, "读不到：%s" % str(e)[:80], info=True))
     return _finish("send_blocked", "消息发不出去 / 卡在未通过", "消息发不出去、聊天记录生成了但发不出、"
                                                               "卡在「未通过 会话投递失败」", ok, verdict, action, checks)
 

@@ -501,22 +501,74 @@ def _rapid_recognize(img, timeout=None) -> list:
     return list(val or [])
 
 
+def _ocr_route_order() -> list:
+    """OCR 引擎的**试的顺序**（环境自适应；`auto_apply` 关着时恒为 WinRT 优先）。
+
+    ⭐ 为什么这里能安全自适应：两个引擎都是**只读**的，换顺序最坏后果＝多花一次识别，
+    不会改变任何判定（判定仍由"读到什么"和现场自检决定）。
+    依据：`agent/env_profile.py` 按机器指纹记住"这台机器上哪个引擎成过"。
+    """
+    order = ["winrt", "rapid"]
+    try:
+        from . import env_profile as _ep
+        if not _ep.auto_apply_enabled():
+            return order                     # ⛔ 默认（关）：行为与历史完全一致
+        mem = _ep.memory("ocr_engine") or {}
+        _r = mem.get("rapid") or {}
+        _w = mem.get("winrt") or {}
+        if _r.get("last_ok") and not _r.get("disabled"):
+            return ["rapid", "winrt"]        # 本机 RapidOCR 成过 ⇒ 先用它（更准）
+        if _w.get("disabled") and _r.get("ok"):
+            return ["rapid", "winrt"]        # WinRT 连败、Rapid 成过 ⇒ 换它先上
+    except Exception as e: # noqa: BLE001
+        log.debug("OCR 引擎顺序读不到（按默认）：%s", e)
+    return order
+
+
+def _ocr_remember(engine: str, ok: bool) -> None:
+    """把"这个引擎这一枪成没成"记进逐机档案（只记事实；失败也不抛）。"""
+    try:
+        from . import env_profile as _ep
+        if _ep.auto_apply_enabled():
+            _ep.remember("ocr_engine", engine, bool(ok))
+    except Exception as e: # noqa: BLE001
+        log.debug("OCR 引擎战绩记录失败（忽略）：%s", e)
+
+
 def recognize_dual(img, timeout=None) -> list:
     """ A1 串联降级：WinRT 先跑，**空/失败帧**才用 RapidOCR 对同一帧重试。
 
     「任一引擎给出非空结果即算数」；正常路径零额外开销（WinRT 读到就直接返回）。
     预算/熔断 fail-closed 与 `recognize` 完全同一套：熔断中或本笔预算用尽时
     **RapidOCR 也不跑**——两引擎全挂 ⇒ 仍按"自检不可用"处理，绝不放行。
+
+    ⭐ 环境自适应（B 第一步，`env_profile.auto_apply` **打开时**才生效）：若这台机器上记着
+    "RapidOCR 成过"，就**先试它**（本机实测更准），读空再回落 WinRT；关着 ⇒ 与历史完全一致。
     """
-    items = recognize(img, timeout=timeout)
-    if items:
-        return items
-    if blocked(): # 熔断中 / 预算用尽：第二引擎也不许跑（fail-closed）
-        return []
-    left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
-    if left <= 0.0:
-        return []
-    return _rapid_recognize(img, timeout=left)
+    for _name in _ocr_route_order():
+        if _name == "winrt":
+            items = recognize(img, timeout=timeout)
+            _ocr_remember("winrt", bool(items))
+            if items:
+                return items
+            continue
+        # RapidOCR：装了才试；熔断/预算用尽时**连它也不跑**（fail-closed，与老实现同口径）
+        try:
+            if not (rapidocr_status() or {}).get("installed"):
+                continue
+        except Exception as e: # noqa: BLE001
+            log.debug("RapidOCR 状态读不到（跳过）：%s", e)
+            continue
+        if blocked():
+            return []
+        left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
+        if left <= 0.0:
+            return []
+        items = _rapid_recognize(img, timeout=left)
+        _ocr_remember("rapid", bool(items))
+        if items:
+            return items
+    return []
 
 
 def header_box(img) -> tuple:
