@@ -96,12 +96,41 @@ def main():
     ap.add_argument("--built-at", default="")
     ap.add_argument("--expires-days", type=int, default=30,
                     help="清单有效期（天，默认 30；客户端过期即拒 ⇒ TUF freeze 防护的廉价面）")
+    ap.add_argument("--from-zip", default="",
+                    help="**从「要发布的那一个包」里算**文件树哈希/文件表/内容指纹（唯一事实来源）。"
+                         "不给就是老路子：按工作区文件算 —— 那条路在「出了两个包」或「出包后又改了代码」时"
+                         "会与包内实际内容对不上，更新器判「包与清单不自洽」、用户永远装不上。")
     a = ap.parse_args()
 
-    rels = sorted(r for r in po.tracked() if not po.excluded(r))
-    if not rels:
-        print("✘ git 里没有可跟踪的文件（是不是不在仓库里跑？）")
-        return 2
+    # ── 数据源：① `--from-zip`（推荐）：包内实际内容；② 工作区文件（老路子）──
+    _zip_files, _zip_total, _zip_tree, _zip_build = {}, 0, "", ""
+    if a.from_zip:
+        _zp = os.path.abspath(a.from_zip)
+        if not os.path.exists(_zp):
+            print("✘ --from-zip 指的包不存在：%s" % _zp)
+            return 5
+        sys.path.insert(0, po.ROOT)
+        from agent.update_apply import zip_tree as _zt # noqa: PLC0415 与更新器**同一份**算法
+        _tree, _hmap, _top, _cnt = _zt(_zp)
+        import zipfile as _zf # noqa: PLC0415
+        with _zf.ZipFile(_zp) as _z:
+            for _n in _z.namelist():
+                if _n.endswith("/"):
+                    continue
+                _rel = _n[len(_top) + 1:].replace("\\", "/")
+                if not _rel:
+                    continue
+                _zi = _z.getinfo(_n)
+                _zip_files[_rel] = {"sha256": _hmap[_rel], "size": int(_zi.file_size)}
+                _zip_total += int(_zi.file_size)
+            _vp = [n for n in _z.namelist() if n.endswith("agent/version.py")]
+            if _vp:
+                import re as _re2 # noqa: PLC0415
+                _vt = _z.read(_vp[0]).decode("utf-8", "replace")
+                _m2 = _re2.search(r"(?m)^BUILD\s*=\s*['\"]([^'\"]*)['\"]", _vt)
+                _zip_build = _m2.group(1) if _m2 else ""
+        print("✔ 从包内读：%d 个文件 · 树哈希 %s · build %s（与包永远自洽）"
+              % (len(_zip_files), _tree[:16] + "…", _zip_build or "(空)"))
 
     # ⛔ 出包闸门（V9）：空哈希的 DLC 一律拒绝生成清单（除非它**显式**声明 placeholder）
     _dlc_bad = dlc_problems(DLC)
@@ -112,21 +141,33 @@ def main():
         print("   ⇒ 要么填真 sha256/url，要么显式标 \"placeholder\": true（＝未实现、客户端目前不读）")
         return 3
 
-    files, total = {}, 0
-    for rel in rels:
-        abs_p = os.path.join(po.ROOT, rel.replace("/", os.sep))
-        if not os.path.exists(abs_p):
-            continue
-        size = os.path.getsize(abs_p)
-        files[rel] = {"sha256": sha256_file(abs_p), "size": size}
-        total += size
+    if a.from_zip:
+        files, total = _zip_files, _zip_total
+        tree_sha = _zip_tree = _tree
+    else:
+        rels = sorted(r for r in po.tracked() if not po.excluded(r))
+        # ⛔ 出包时**额外收进包、但不在仓库里**的文件（例：出厂反馈接收端）必须一起算进来 ——
+        #    更新器是从**包内全部条目**重算文件树哈希再与 `base.sha256` 对齐的，
+        #    这里少一个文件 ⇒ 用户点更新会被判"包与清单不自洽"、永远装不上。
+        rels = sorted(set(rels) | set(po.shipped_extra()))
+        if not rels:
+            print("✘ git 里没有可跟踪的文件（是不是不在仓库里跑？）")
+            return 2
+        files, total = {}, 0
+        for rel in rels:
+            abs_p = os.path.join(po.ROOT, rel.replace("/", os.sep))
+            if not os.path.exists(abs_p):
+                continue
+            size = os.path.getsize(abs_p)
+            files[rel] = {"sha256": sha256_file(abs_p), "size": size}
+            total += size
 
-    # 文件树组合哈希：排序后 (相对路径 + 该文件哈希) 再哈希 ⇒ 稳定、与 zip 时间戳无关
-    h = hashlib.sha256()
-    for rel in sorted(files):
-        h.update(rel.encode("utf-8"))
-        h.update(files[rel]["sha256"].encode("ascii"))
-    tree_sha = h.hexdigest()
+        # 文件树组合哈希：排序后 (相对路径 + 该文件哈希) 再哈希 ⇒ 稳定、与 zip 时间戳无关
+        h = hashlib.sha256()
+        for rel in sorted(files):
+            h.update(rel.encode("utf-8"))
+            h.update(files[rel]["sha256"].encode("ascii"))
+        tree_sha = h.hexdigest()
 
     notes = [s.strip() for s in a.notes.split(";") if s.strip()]
     # ⛔ 说明写法闸门：纯修 bug 只许一句「修复了一些 bug」，
@@ -141,7 +182,7 @@ def main():
     # ⚠️ 内容指纹**直接读文件**（不走 import：BUILD 改写前后同尺寸，字节码缓存会给出旧值 —— 
     #    造成"清单里的 build 与包里实际 BUILD 不一致"，用户侧会一直提示有新包）。发布链更该用 `--build`
     #    把**包内**那个值传进来（唯一事实来源＝即将发出去的那个包）。
-    _BUILD = str(a.build or "")
+    _BUILD = str(a.build or _zip_build or "")
     if not _BUILD:
         try:
             from agent.version import read_build_from as _rbf

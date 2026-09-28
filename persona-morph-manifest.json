@@ -1,13 +1,13 @@
 {
   "schema": "persona-morph/1",
   "base": {
-    "version": "2026.9.28.3",
-    "sha256": "ef244fcb6dc602088848fddc014a621c32e08609a9af934a1c71d16da569607e",
-    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.67/persona-morph-v2.1.67.zip",
-    "build": "6d2729e999bd",
-    "size": 35308354,
-    "files": 393,
-    "expires": "2026-10-28T06:57:32Z"
+    "version": "2026.9.28.3.1",
+    "sha256": "ea61125330a3e4aa051b69209234d881691205b73ef46d56e90dcb94fd63269e",
+    "url": "https://github.com/Eifptaur/Eif-MAPT-PersonaMorph/releases/download/v2.1.67.1/persona-morph-v2.1.67.1.zip",
+    "build": "d2cfa39d402a",
+    "size": 35322029,
+    "files": 394,
+    "expires": "2026-10-28T09:34:22Z"
   },
   "dlc": [
     {
@@ -36,13 +36,13 @@
     }
   ],
   "announce": {
-    "version": "2026.9.28.3",
+    "version": "2026.9.28.3.1",
     "notes": [
-      "新增：报障检验报告增加「窗口清单与判定链」一节，专治检测不到微信窗口"
+      "修复了一些 bug"
     ],
     "forceBase": false,
-    "minBase": "2026.9.28.3"
+    "minBase": "2026.9.28.3.1"
   },
-  "builtAt": "2026-09-28T06:57:32Z",
-  "updatedAt": 1790578652026
+  "builtAt": "2026-09-28T09:34:22Z",
+  "updatedAt": 1790588062622
 }

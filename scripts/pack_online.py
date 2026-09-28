@@ -133,6 +133,16 @@ def excluded(rel):
     return any(rel == e or rel.startswith(e) for e in EXCLUDE)
 
 
+#: 出包时**额外**收进包、但**不在仓库里**的文件（相对仓库根的 posix 路径）。
+#:
+#: ⛔ 这份清单必须与 `make_manifest.py` 共用同一句：更新器（`agent/update_apply.zip_tree`）
+#:    是从**包内全部条目**重算文件树哈希、再与清单 `base.sha256` 对齐才允许安装 ——
+#:    进包清单与清单哈希用的文件集只要差一个文件，用户点更新就会被判"包与清单不自洽"。
+def shipped_extra() -> list:
+    ep = "assets/feedback_endpoint.json"   # 出厂反馈接收端（见 ALLOW 里的说明）
+    return [ep] if os.path.exists(os.path.join(ROOT, ep)) else []
+
+
 def scan_file(abs_path, rel):
     """返回 [(规则名, 例子)]；二进制也扫（exe/dll 里可能嵌源码路径）"""
     if SKIP_BIN.search(rel):
@@ -184,12 +194,13 @@ def main():
     # ── 出厂反馈接收端（`assets/feedback_endpoint.json`）──────────────
     #   它**不在 git 里**（含真实凭据，.gitignore 挡着）⇒ 这里显式收进包。
     #   缺了必须**大声说**：没有它，本机没配通道的用户提交反馈只会落在自己机器上、作者收不到。
-    _ep = "assets/feedback_endpoint.json"
-    if os.path.exists(os.path.join(ROOT, _ep)):
-        files = sorted(set(files) | {_ep})
-        print("已收进出厂反馈接收端：%s（用户零配置即可提交；仓库里没有这个文件）" % _ep)
+    _extra_shipped = shipped_extra()
+    if _extra_shipped:
+        files = sorted(set(files) | set(_extra_shipped))
+        print("已收进出厂反馈接收端：%s（用户零配置即可提交；仓库里没有这个文件）" % _extra_shipped[0])
     else:
-        print("⚠️ 没找到 %s ⇒ 用户本机没配通道时，反馈只会落在他自己机器上（作者收不到）" % _ep)
+        print("⚠️ 没找到 assets/feedback_endpoint.json ⇒ 用户本机没配通道时，"
+              "反馈只会落在他自己机器上（作者收不到）")
     print(f"跟踪 {len(tracked())} 个文件 → 进包候选 {len(files)} 个"
           + ("（含离线依赖）" if with_wheels else ""))
 
