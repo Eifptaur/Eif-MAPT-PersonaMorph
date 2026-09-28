@@ -1969,7 +1969,10 @@ def _is_green(r: int, g: int, b: int) -> bool:
         if (abs(r - GREEN[0]) <= GREEN_TOL and abs(g - GREEN[1]) <= GREEN_TOL
                 and abs(b - GREEN[2]) <= GREEN_TOL):
             return True # 本机那种深绿（老口径，保留）
-        return (g - r) >= 12 and (g - b) >= 10 and g >= 140
+        # ⭐ 2026-09-29 补：**深色模式**下的选中行是**深绿**（公开评测一致：PC 微信 4.1.8 起
+        #    "选中背景改成绿色，且系统深色模式下选中依然是绿色"）⇒ 老门槛 `g>=140` 会把深绿整类漏掉。
+        #    放宽到 `g>=90` 并加"g 必须是三通道最大且领先 8"这条相对判据（灰/蓝/青的反例仍全部挡住）。
+        return (g - r) >= 12 and (g - b) >= 10 and g >= 90 and g >= max(r, b) + 8
     except Exception:
         return False
 
@@ -2293,9 +2296,30 @@ def _band_name(img, y_abs: int) -> str:
     """
     try:
         y0, y1, tx0, tx1, bg = _band_geo(img, int(y_abs))
+        # ⭐ **真机实测（2026-09-29，150% DPI 三张真机微信截图，见 ocr-samples/wechat/）**：
+        #    "宽裁名字行 + 裸图直读" 读得出（`aaa偷啃使．"星期日` / `微信团队咋天19：55`），
+        #    而**几何取名**这条老路会给出垃圾（`aaafillü使·"目`）或空 —— **根因**：它原来
+        #    `if got: return got` **不做合理性校验** ⇒ 垃圾读数把后面更靠谱的路全挡住了。
+        #    ⇒ ① 新增"宽裁裸读"排最前；② 所有路径一律**先过 `_name_plausible`** 才算数。
+        # ⭐ **按 `pane_left` 相对偏移扫名字列**（跨 DPI 稳；几何启发式在 150% 图上会把
+        #    "文字列"量成 24px 宽的缝 ⇒ 裁出来是空的，实测踩过）。窗口一律取"带子上半＝名字行"。
+        try:
+            _pl = ch.pane_left_for(img) or int(img.width * ch.PANE_LEFT_REL)
+        except Exception as e: # noqa: BLE001
+            _pl = int(img.width * ch.PANE_LEFT_REL)
+            log.debug("pane_left 取不到（用比例兜底）：%s", e)
+        _hy0 = int(y0) if y1 else max(0, int(y_abs) - 27)
+        _hy1 = int(y0) + max(8, ((int(y1) - int(y0)) // 2)) if y1 else _hy0 + 28
+        for _dx0, _dx1 in ((360, 160), (430, 120), (300, 60)):
+            _box = (max(0, _pl - _dx0), _hy0, max(0, _pl - _dx1), _hy1)
+            if _box[2] - _box[0] < 24 or _box[3] - _box[1] < 8:
+                continue
+            _w = clean("".join(str(i[0]) for i in recognize_dual(img.crop(_box)))).strip()
+            if _w and _name_plausible(_w):
+                return _w
         if y1 and tx1:
             got = _band_name_geo(img, y0, y1, tx0, tx1, bg)
-            if got:
+            if got and _name_plausible(got):
                 return got
         # ⚡ 老路（顺序重要）：真机实测绿底行那一格**原图就能读出名字**，而"反相 + 二值化"
         #   反而会把它读没 ⇒ 先原图直读。

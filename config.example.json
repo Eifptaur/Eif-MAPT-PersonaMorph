@@ -522,7 +522,7 @@
  },
  "member_notes": {},
  "env_profile": {
-  "auto_apply": false
+  "auto_apply": true
  },
  "video_gen": {
   "enabled": false,

@@ -48,6 +48,9 @@ WHITE_PHRASES = ("你眼里的火种",)
 
 SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".otf",
             ".dll", ".exe", ".pyd", ".pyc", ".so", ".zip", ".db", ".mp3", ".mp4", ".wav",
+            # ⭐ 2026-09-29：`vendor/ocr/*.whl`（随包带的 RapidOCR 轮子）是二进制压缩包，
+            #    与 `.zip` 同类 ⇒ 必须一起跳过；否则本判据会因"读不出来"响亮地红（它自己就是这么设计的）。
+            ".whl", ".tar", ".gz", ".bz2", ".7z",
             ".bin", ".dat", ".onnx", ".pt", ".webp", ".bmp", ".pak"}
 
 #: ⛔ 起子进程一律不许闪控制台窗（Windows 下不设它，用户会看到黑窗一闪）

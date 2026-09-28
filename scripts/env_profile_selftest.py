@@ -91,6 +91,8 @@ try:
        (EP.memory("switch_route").get("search") or {}).get("ok") == 1
        and (EP.memory("switch_route").get("search") or {}).get("last_ok", 0) > 0)
     _base = ["row", "search", "wheel"]
+    _real_aa0 = EP.auto_apply_enabled
+    EP.auto_apply_enabled = lambda: False          # ⭐ 默认已改为开 ⇒ 这一条要显式强制关
     ok("C3 ★ 反向锚：`auto_apply` **关** ⇒ 顺序原样返回（行为不变）",
        EP.route_order("switch_route", _base) == _base, str(EP.route_order("switch_route", _base)))
     EP.auto_apply_enabled = lambda: True
@@ -112,9 +114,10 @@ try:
     ok("C8 `reset` 清空记忆与人工覆盖", EP.memory("switch_route") == {} and not EP.manual_state())
     # OCR 引擎顺序（真实自适应点）
     EP.remember("ocr_engine", "rapid", True)
+    EP.auto_apply_enabled = lambda: True
     ok("C9 OCR 族：记着 RapidOCR 成过 ⇒ 打开后它排最前",
        EP.route_order("ocr_engine", ["winrt", "rapid"])[0] == "rapid")
-    EP.auto_apply_enabled = _real_aa
+    EP.auto_apply_enabled = lambda: False
     ok("C10 OCR 族：关着 ⇒ 原样（winrt 优先，与历史一致）",
        EP.route_order("ocr_engine", ["winrt", "rapid"])[0] == "winrt")
 finally:
@@ -124,8 +127,8 @@ finally:
 print("\n── D. 配置与接线 ──")
 _cfg = src("agent/config.py")
 _ocr = src("agent/chat_ocr.py")
-ok("D1 配置里有 `env_profile.auto_apply` 且**默认 False**",
-   _sm.has(_cfg, '"env_profile"') and _sm.has(_cfg, '"auto_apply": False'))
+ok("D1 配置里有 `env_profile.auto_apply` 且**默认 True**（用户口径：适配不该让用户动手）",
+   _sm.has(_cfg, '"env_profile"') and _sm.has(_cfg, '"auto_apply": True'))
 ok("D2 `config.example.json` 同步了（fullcheck 那条闸门会查）",
    "env_profile" in src("config.example.json"))
 ok("D3 OCR 双引擎接了自适应顺序（`_ocr_route_order` 真被用上）",

@@ -33,7 +33,15 @@ _FULL = os.path.join(_DEV, "_r18_full.png")      # 整屏（2560×1600）
 
 #: 真实小块：`(图, 像素框 x0,y0,x1,y1, 真值串...)` —— 框与真值都**目视核对过**（拼图 `_crops_verify.png`）
 #: ⛔ 改这里之前先重新做拼图核对（上一版就是坐标拍脑袋，量出来全是垃圾数据）。
+#: 用户提供的**真机微信截图**（150% DPI，1854×1281；见 `dev-workspace/persona-morph/ocr-samples/wechat/`）
+_WX = os.path.join(os.path.dirname(_DEV), "ocr-samples", "wechat")
+
 CASES = [
+    # 真机微信：**绿底高亮行（白字）**——我们最难读的形态，用户专门截给我的
+    (os.path.join(_WX, "0af83564-b60d-4812-aa4f-3c330c6399c0.png"), None, ("微信团队",)),
+    (os.path.join(_WX, "7bcf1579-61e9-4c80-a54a-47eb45341b53.png"), None, ("aaa偷啃使",)),
+    (os.path.join(_WX, "0af83564-b60d-4812-aa4f-3c330c6399c0.png"),
+     (0.06, 0.03, 0.40, 0.07), ("微信团队",)),          # 会话头（黑字浅底）
     (_FULL, (0.05, 0.20, 0.30, 0.25), ("新建任务",)),        # 侧栏首项（真实小字）
     (_FULL, (0.05, 0.20, 0.30, 0.30), ("新建任务", "助理", "项目")),   # 侧栏三项
     (_FULL, (0.30, 0.55, 0.75, 0.585), ("正在执行命令",)),    # 对话框一行
@@ -118,9 +126,20 @@ def main():
             print("（跳过：找不到 %s）" % path)
             continue
         im = Image.open(path).convert("RGB")
-        crop = im.crop(_box(im, frac))
-        print("── %s %s（%dx%d，真值 %d 条）" % (os.path.basename(path), frac, crop.width,
-                                             crop.height, len(truths)))
+        if frac is None:
+            # 整图素材：用**生产函数**自己定位绿底高亮行（这才是线上真实路径）
+            _bands = O.green_bands(im, min_ratio=0.30, min_h=28)
+            if not _bands:
+                print("（跳过：这帧没找到绿底高亮行）")
+                continue
+            crop = im.crop((0, max(0, _bands[0]["y0"] - 8), im.width, min(im.height, _bands[0]["y1"] + 8)))
+            _hl = O._band_name(im, _bands[0]["y_abs"])
+            print("── %s 绿底高亮行（生产 _band_name = %r；真值 %s）" % (
+                os.path.basename(path)[:8], _hl, "、".join(truths)))
+        else:
+            crop = im.crop(_box(im, frac))
+            print("── %s %s（%dx%d，真值 %d 条）" % (os.path.basename(path), frac, crop.width,
+                                                 crop.height, len(truths)))
         for label, fn in _variants(crop, list(truths)):
             t0 = time.time()
             lines = fn() or []

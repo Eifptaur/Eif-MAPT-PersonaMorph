@@ -881,7 +881,11 @@ def v_update_stuck() -> dict:
 
 # ── ⑦ 控制台打不开 ────────────────────────────────────────────────────────
 def v_machine_profile() -> dict:
-    """**这台机器学到了什么**（只读档案：环境自适应与本机能力；不是症状诊断）。
+    """**本机适配**（只读档案：本机能力 + 已经学到的路线；不是症状诊断）。
+
+    ⚠️ 名字改短的由来（用户 2026-09-29）：*"我说的是『这台机器学到什么』，作为一个功能描述，
+       它不够精确概括，太长了"* ⇒ 定名 **「本机适配」**（4 字：界定了范围＝本机、点明了目的＝适配），
+       症状行压缩为「本机能力与已学到的路线（只读）」。
 
     为什么要单列一条：环境自适应（`agent/env_profile.py`）探测出的"本机有什么能力、哪条路真成过"
     是**随时想看**的信息（例：本机 RapidOCR 装没装、OCR 放大档该取多少、会话行该投哪个窗），
@@ -917,9 +921,9 @@ def v_machine_profile() -> dict:
             checks.append(_check("档案", None, str(ln)[:300], info=True))
     except Exception as e: # noqa: BLE001
         checks.append(_check("档案", None, "读不到：%s" % str(e)[:120], info=True))
-    return _finish("machine", "这台机器学到了什么",
-                   "想看本机能力/自适应档案（只读；不需要出问题）",
-                   None, "只读档案", "把它连同「反馈」一起发来，能省掉一轮来回", checks,
+    return _finish("machine", "本机适配",
+                   "本机能力与已学到的路线（只读）",
+                   None, "只读档案", "需要排查时把它连同「反馈」一起发来（能省一轮来回）", checks,
                    info_only=True)
 
 
@@ -1143,7 +1147,7 @@ VERIFIERS = {
     "update_source": ("更新拉取不到 / timeout", v_update_source),
     "console_dead": ("控制台打不开", v_console_dead),
     # ⚠️ 唯一一条**信息型**（非症状）条目：随时可看"这台机器学到了什么"（只读档案）
-    "machine": ("这台机器学到了什么", v_machine_profile),
+    "machine": ("本机适配", v_machine_profile),
 }
 
 
