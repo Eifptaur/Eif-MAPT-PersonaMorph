@@ -73,6 +73,9 @@ docs/设计-*.md
 # 落点改到 dev-workspace/persona-morph/docs/（回执另归到 docs/回执归档/），产品仓库只留产品本体。
 # 与出包闸门 scripts/pack_online.py 的 EXCLUDE「docs/」同一口径 —— 仓库与包两边都不出现。
 docs/
+# 同上口径：对标调研与一次性探针目录也只在开发侧（历史里已清、仓库与包两边都不出现）
+research/
+ui_qt-probes/
 
 # ── 配置备份（含 API Key，绝不入库；我改配置时会留）──
 config.json.bak*
