@@ -21,6 +21,7 @@
 import argparse
 import re
 import ctypes
+import ctypes.wintypes
 import json
 import os
 import platform
@@ -226,6 +227,211 @@ def sec_wechat():
         raw["windows"] = [{"hwnd": h, "rect": r, "has_render_child": c} for h, r, c in found]
     except Exception as e:
         lines.append("  窗口枚举失败: %s" % e)
+    return lines, raw
+
+
+# ── 2b 微信窗口全量清单 + 适配层判定链 ──────────────────────────────────
+def sec_window_inventory():
+    """专治"开着微信却检测不到窗口 / 渲染区未知（窗口不可见？）"。
+
+    为什么单列一节：上面第二节能看到的只有**预期类名**（`MAIN_CLASS`）的窗口 —— 微信一旦改了
+    窗口类名（同一个 Qt 前缀换大版本就会变），那份清单会是**空的**，而"空的"无法区分
+    "微信没开"和"类名变了"。这一节**不按类名筛**：先按进程拿到全部顶层窗（类名原样打出来），
+    再把适配层那几步判定逐个跑一遍并给出结论，拿到报告就能直接定位是哪一环断的。
+    全程只读：只枚举窗口与查属性，不点击、不发消息、不动窗口与光标。
+    """
+    lines, raw = [], {}
+    u = ctypes.windll.user32
+    CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    # ① 进程：所有 Weixin.exe / WeChat.exe（多开会有多个）
+    procs = []
+    try:
+        TH32CS_SNAPPROCESS = 0x00000002
+        INVALID = ctypes.c_void_p(-1).value
+
+        class _PE32(ctypes.Structure):
+            _fields_ = [("dwSize", ctypes.c_ulong), ("cntUsage", ctypes.c_ulong),
+                        ("th32ProcessID", ctypes.c_ulong), ("th32DefaultHeapID", ctypes.c_void_p),
+                        ("th32ModuleID", ctypes.c_ulong), ("cntThreads", ctypes.c_ulong),
+                        ("th32ParentProcessID", ctypes.c_ulong), ("pcPriClassBase", ctypes.c_long),
+                        ("dwFlags", ctypes.c_ulong), ("szExeFile", ctypes.c_wchar * 260)]
+
+        k32 = ctypes.windll.kernel32
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snap and snap != INVALID:
+            e = _PE32()
+            e.dwSize = ctypes.sizeof(_PE32)
+            ok = k32.Process32FirstW(ctypes.c_void_p(snap), ctypes.byref(e))
+            while ok:
+                nm = str(e.szExeFile or "")
+                if nm.lower() in ("weixin.exe", "wechat.exe"):
+                    procs.append({"pid": int(e.th32ProcessID), "exe": nm})
+                ok = k32.Process32NextW(ctypes.c_void_p(snap), ctypes.byref(e))
+            k32.CloseHandle(ctypes.c_void_p(snap))
+    except Exception as e:
+        lines.append("  进程枚举失败: %s" % type(e).__name__)
+    lines.append("  微信进程: %d 个 %s" % (
+        len(procs), "、".join("%s(pid=%d)" % (p["exe"], p["pid"]) for p in procs) or "（没有在跑的微信进程）"))
+    raw["procs"] = procs
+    pids = {p["pid"] for p in procs}
+
+    # ② 这些进程下的**全部顶层窗**（不按类名筛）：类名原样给出来
+    wins = []
+    try:
+        def cb(h, _l):
+            try:
+                pid = ctypes.c_ulong()
+                u.GetWindowThreadProcessId(ctypes.c_void_p(h), ctypes.byref(pid))
+                if pids and int(pid.value) not in pids:
+                    return True
+                cls = ctypes.create_unicode_buffer(512)
+                u.GetClassNameW(ctypes.c_void_p(h), cls, 512)
+                r = ctypes.wintypes.RECT()
+                u.GetWindowRect(ctypes.c_void_p(h), ctypes.byref(r))
+                w, hh = int(r.right) - int(r.left), int(r.bottom) - int(r.top)
+                cloaked = -1
+                try:
+                    v = ctypes.c_int(0)
+                    ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                        ctypes.c_void_p(h), 14, ctypes.byref(v), ctypes.sizeof(v))
+                    cloaked = int(v.value)
+                except Exception as _e:
+                    cloaked = -1
+                tlen = u.GetWindowTextLengthW(ctypes.c_void_p(h))
+                wins.append({"hwnd": int(h), "class": str(cls.value), "w": w, "h": hh,
+                             "rect": (int(r.left), int(r.top), int(r.right), int(r.bottom)),
+                             "visible": bool(u.IsWindowVisible(ctypes.c_void_p(h))),
+                             "iconic": bool(u.IsIconic(ctypes.c_void_p(h))),
+                             "cloaked": cloaked, "title_len": int(tlen)})
+            except Exception as _e2: # noqa: BLE001
+                lines.append("  单个窗口读取失败: %s" % type(_e2).__name__)
+            return True
+
+        u.EnumWindows(CB(cb), 0)
+    except Exception as e:
+        lines.append("  顶层窗枚举失败: %s" % type(e).__name__)
+    wins.sort(key=lambda w: -(w["w"] * w["h"]))
+    lines.append("  顶层窗（这些进程下，按面积降序，类名原样）：")
+    for w in wins[:10]:
+        lines.append("    hwnd=%-9d %-28s %4dx%-5d visible=%s iconic=%s cloaked=%s 标题%d字"
+                     % (w["hwnd"], w["class"][:28], w["w"], w["h"], w["visible"], w["iconic"],
+                        w["cloaked"], w["title_len"]))
+    if not wins:
+        lines.append("    （无 —— 进程在但没有任何顶层窗？把这一节连同进程行一起发回来）")
+    raw["windows_all"] = wins[:10]
+
+    # ③ 适配层的**判定链**：逐步跑，断在哪一环一目了然
+    try:
+        from agent import input_backend as ib
+        lines.append("  适配层预期类名: MAIN_CLASS=%s · RENDER_CHILD=%s" % (ib.MAIN_CLASS, ib.RENDER_CHILD))
+        main = 0
+        try:
+            main = int(ib.find_main_window() or 0)
+            lines.append("  ① find_main_window()（类名精确匹配）→ hwnd=%s%s" % (
+                main or "0（没找到）",
+                (" class=%s rect=%s" % (ib._class_of(main), ib.window_rect(main))) if main else ""))
+        except Exception as e:
+            lines.append("  ① find_main_window() 抛错: %s: %s" % (type(e).__name__, e))
+        if main:
+            ch = ib._child_classes(main)
+            lines.append("     该窗子窗类名（实际）: %s" % ("、".join(sorted(ch)[:8]) or "（无子窗）"))
+            lines.append("     含渲染子窗 %s: %s" % (ib.RENDER_CHILD, ib.RENDER_CHILD in ch))
+            try:
+                rc = ib.find_render_child(main)
+                lines.append("  ② find_render_child() → %s%s" % (
+                    rc or "0（没找到）", (" class=%s" % ib._class_of(rc)) if rc else ""))
+            except Exception as e:
+                lines.append("  ② find_render_child() 抛错: %s" % type(e).__name__)
+        # 宽度门槛：wechat 找主窗的兜底要求"宽 > 600"，把最宽的同类名窗照出来
+        wide = [w for w in wins if w["class"].startswith(ib.MAIN_CLASS)]
+        if wide:
+            lines.append("  ③ 宽度门槛（兜底要求 宽>600）: 最宽同类名窗 %dx%d ⇒ %s"
+                         % (wide[0]["w"], wide[0]["h"], "通过" if wide[0]["w"] > 600 else "**不过**"))
+        else:
+            lines.append("  ③ 宽度门槛: **没有类名前缀为 %s 的窗口**（类名变了或窗口形态变了）" % ib.MAIN_CLASS)
+    except Exception as e:
+        lines.append("  适配层判定链跑不了: %s: %s" % (type(e).__name__, e))
+
+    # ④ 渲染区**直接量**（不构造适配层、不动任何窗口）：
+    #    适配层的 `render_rect` 就是"主窗里那个渲染子窗的屏幕矩形"，这里用同一套 win32 调用量出来，
+    #    零副作用 ⇒ 拿到的数就是"窗口这一层到底有没有"。
+    try:
+        from agent import input_backend as ib
+        main = int(ib.find_main_window() or 0)
+        if main:
+            rc = int(ib.find_render_child(main) or 0)
+            if rc:
+                r = ib.window_rect(rc)
+                lines.append("  ④ 渲染子窗 rect=%s ⇒ 渲染区 %dx%d · visible=%s"
+                             % (r, int(r[2] - r[0]), int(r[3] - r[1]),
+                                bool(ctypes.windll.user32.IsWindowVisible(rc))))
+            else:
+                lines.append("  ④ **没有渲染子窗** ⇒ 适配层必然报「渲染区未知」（这一层就断了）")
+        # 屏幕范围：窗口完全在屏幕外时点击/抓图全会失败（多屏拔掉显示器后最常见）
+        try:
+            GVS = 76, 77, 78, 79
+            xs = [ctypes.windll.user32.GetSystemMetrics(i) for i in GVS]
+            scr = (xs[0], xs[1], xs[0] + xs[2], xs[1] + xs[3])
+            def _inside(rr):
+                return not (rr[2] <= scr[0] or rr[0] >= scr[2] or rr[3] <= scr[1] or rr[1] >= scr[3])
+            _OS_CLS = ("IME", "MSCTF", "Base_Power", "SystemMessage", "DisplayICC", "Chrome_",
+                       "WxTrayIcon")
+            real = [w for w in wins if w["w"] > 0 and w["h"] > 0
+                    and not any(k in w["class"] for k in _OS_CLS)]
+            off = [w for w in real if not _inside(w["rect"])]
+            lines.append("  ⑤ 屏幕范围=%s ⇒ 微信自己的窗口里完全在屏外的: %d 个%s"
+                         % (scr, len(off),
+                            ("（" + "、".join(str(w["class"])[:24] for w in off[:3]) + "）") if off else ""))
+        except Exception as e:
+            lines.append("  ⑤ 屏幕范围检查失败: %s" % type(e).__name__)
+    except Exception as e:
+        lines.append("  ④ 渲染区直接量失败: %s: %s" % (type(e).__name__, e))
+
+    # ⑥ 可选：走**与 app 完全相同的序列**构造一次适配层，读它自己的读数
+    #    （默认不做 —— 构造会调用一次校准；已按 app 的次序先上类闸，但只在用户显式要时才跑）
+    if "--probe-adapter" in sys.argv:
+        try:
+            from agent import replica_adapter as _ra
+            _ra.patch_driver_quirks()
+            from agent import ui_adapt as _ua
+            _ua.harden_gui_class()
+            from wechatauto.guia import WeChatGUI
+            g = WeChatGUI()
+            rr = getattr(g, "render_rect", None)
+            lines.append("  ⑥ 适配层读数（--probe-adapter）: render_rect=%s · origin=(%s,%s)"
+                         % (rr, getattr(g, "origin_x", "?"), getattr(g, "origin_y", "?")))
+            raw["gui"] = {"render_rect": str(rr), "origin_x": getattr(g, "origin_x", None),
+                          "origin_y": getattr(g, "origin_y", None)}
+        except Exception as e:
+            lines.append("  ⑥ 适配层读数失败: %s: %s" % (type(e).__name__, str(e)[:120]))
+    else:
+        lines.append("  ⑥ 适配层读数：未跑（加 --probe-adapter 才会构造一次；默认只做上面的直接测量）")
+
+    # ⑦ 结论行：按硬判据给"最可能断在哪"
+    if not procs:
+        concl = "微信进程不在 ⇒ 先开微信并登录"
+    elif not wins:
+        concl = "进程在但没有顶层窗 ⇒ 窗口枚举被拦（安全软件）或特殊安装方式：把这一节原样发回"
+    else:
+        try:
+            from agent import input_backend as ib
+            wide = [w for w in wins if w["class"].startswith(ib.MAIN_CLASS)]
+            if not wide:
+                concl = ("**窗口类名不是预期的 %s**（上面那串实际类名就是证据）"
+                         "⇒ 属于要改适配层的版本差异，把这一节发回即可定位" % ib.MAIN_CLASS)
+            elif not any(ib.RENDER_CHILD in ib._child_classes(w["hwnd"]) for w in wide):
+                concl = "有同类名大窗但没有 %s 渲染子窗 ⇒ 窗口形态变了（或开的是浮窗/迷你窗）" % ib.RENDER_CHILD
+            elif wide[0]["w"] <= 600:
+                concl = "主窗太窄（宽 %d ≤ 600 兜底门槛）⇒ 把微信窗口拉宽到 600px 以上再试" % wide[0]["w"]
+            elif not any(w["visible"] for w in wide):
+                concl = "同类名窗全部不可见（iconic/cloaked）⇒ 把微信从托盘/任务栏点出来（看上面读数）"
+            else:
+                concl = "窗口这一层看着正常 ⇒ 看 ①②③④⑤ 哪一步给的 0/空，再配合 --probe-adapter 的读数"
+        except Exception as e:
+            concl = "结论行算不出来（%s）—— 把上面原始读数发回来即可" % type(e).__name__
+    lines.append("  ★ 结论: %s" % concl)
+    raw["conclusion"] = concl
     return lines, raw
 
 
@@ -572,6 +778,8 @@ def main():
     ap.add_argument("--send-test", action="store_true", help="额外做一次投递发送实测（会真发一条测试消息）")
     ap.add_argument("--allow-send", action="store_true",
                     help="本次进程内放行版本门（等价于控制台点「本次允许发送」）⇒ 让 --send-test 真跑一次")
+    ap.add_argument("--probe-adapter", action="store_true",
+                    help="额外构造一次驱动适配层读它的渲染区读数（会调用一次校准；已按 app 次序先上闸）")
     ap.add_argument("--open", action="store_true",
                     help="跑完打开报告目录（⚠️ 会把资源管理器弹到前台 ⇒ 两个 .cmd 已不再默认带它；"
                          "实测：带上它跑完，t=27.4s 前台被切到「报告」窗口）")
@@ -590,6 +798,7 @@ def main():
     t0 = time.time()
     for title, fn in (("一、系统与显示", sec_system),
                       ("二、微信与窗口", sec_wechat),
+                      ("二·B、微信窗口全量清单与判定链（报「检测不到窗口/渲染区未知」必带）", sec_window_inventory),
                       ("三、依赖 / 版本能力矩阵 / UIA", sec_deps_and_caps),
                       ("四、会话头可读性", sec_visual),
                       ("五、交付面：音源 / 模型端点 / B站 / 更新 / 磁盘", sec_delivery)):
