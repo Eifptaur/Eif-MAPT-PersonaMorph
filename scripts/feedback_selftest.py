@@ -606,7 +606,7 @@ print("\n── L. 出厂自带接收端（用户零配置也能送达；用户�
 # 用户的 config.json 优先、空则用它兜底。这一节把这条链钉住。
 _ep_probe = os.path.join(_FB_ISO, "endpoint_probe.json")
 io.open(_ep_probe, "w", encoding="utf-8").write(
-    '{"webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=00000000-0000-0000-0000-000000000000"}')
+    '{"webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=FAKE_ENDPOINT_KEY_FOR_SELFTEST"}')
 # ⛔ 本段要真调一次 `submit()` ⇒ 必须像 C 段那样把存档/限流/附件目录全换成夹具，
 #   否则它会写进**产品 data/**、还会撞真实限流（实测：第二次跑就 state=blocked，红的是判据自己）。
 _cfg_saved_L = FB._cfg

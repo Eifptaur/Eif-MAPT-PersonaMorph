@@ -2661,11 +2661,12 @@ def t_commfb() -> None:
         calls.clear()
         text_w.setPlainText("积压邮件内容")
         sb.click()
-        _wait(lambda: "注意：已存在本机" in fbn.text())
-        ck("排队（queued）⇒ 回显「注意：已存在本机…待发 2 条」，输入框清空",
+        _wait(lambda: "还没发出去" in fbn.text())
+        ck("排队（queued）⇒ 回显明说「还没发出去…待发 2 条」，且**输入框内容保留**（没送到就不许清，"
+           "否则用户写的那段就没了 —— 2026-09-28 反馈的现场形态）",
            "邮件没配好" in fbn.text() and "待发 2 条" in fbn.text()
-           and text_w.toPlainText() == "",
-           fbn.text())
+           and text_w.toPlainText() == "积压邮件内容",
+           fbn.text() + " / 框内=" + text_w.toPlainText())
 
         calls.clear()
         text_w.setPlainText("限流测试内容")
