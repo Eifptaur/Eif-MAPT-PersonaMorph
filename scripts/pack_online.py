@@ -64,6 +64,7 @@ EXCLUDE = (
     "whale-widget/assets/task-end-a.wav",
     "scripts/pack_online.py", # 打包器自身：里面有扫描规则字面量（含用户名样本），不进包
     "scripts/fetch_wheels.py", # 取离线轮子的开发工具（同族：只在出"快速包"时用），不进包
+    "scripts/subset_fonts.py", # 字体子集生成（开发工具：改了字体文件才用它重生成），不进包
     "persona-morph-manifest.json", # 更新清单：它给的是"包内文件的哈希"，自己进包会**哈希自指**死循环
     "offline/", # 离线运行时与 wheel（在线包不需要）
     "_scratch/", "报告/", "wechatauto_logs/", "data/", "runtime/", "logs/",
