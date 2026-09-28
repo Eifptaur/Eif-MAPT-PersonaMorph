@@ -34,6 +34,7 @@ os.environ["WX_FEEDBACK_ENDPOINT"] = ""
 #   而那一瞬间真机器人（或用户）在 `data\` 里看到的是我们的夹具。改到 %TEMP%（持续采样闸当场抓到的）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
 import _iso14 # noqa: E402
+from _srcmatch import has as _has # noqa: E402  空白容忍的源码包含判断（脆断言棘轮只许降）
 _FB_ISO = _iso14.ISO
 
 # 收件邮箱只用于「断言它不在代码里」⇒ **拼出来**：把真实地址写进仓库会命中打包器的
@@ -657,9 +658,9 @@ ok("L6 出包里**显式收进**这个文件（缺了会大声报警，不是悄
 ok("L9 pack 与 make_manifest **共用同一份**进包清单（shipped_extra）",
    "po.shipped_extra()" in _mf and "def shipped_extra(" in _pack, "")
 ok("L10 清单可以从「要发布的那个包」里算（--from-zip，与更新器同一份 zip_tree）",
-   "--from-zip" in _mf and "from agent.update_apply import zip_tree" in _mf, "")
+   _has(_mf, "--from-zip", "from agent.update_apply import zip_tree"), "")
 ok("L7 出包闸门对它的凭据形态**显式放行并写明理由**（不是绕过扫描）",
-   '("assets/feedback_endpoint.json", "企业微信 webhook key")' in _pack, "")
+   _has(_pack, '("assets/feedback_endpoint.json", "企业微信 webhook key")'), "")
 ok("L8 该文件**不进仓库**（.gitignore 挡着；轮换＝重新出一版，不用改 git 历史）",
    "assets/feedback_endpoint.json" in io.open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read(), "")
 
