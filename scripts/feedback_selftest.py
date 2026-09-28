@@ -647,9 +647,17 @@ finally:
     FB.ATTACH.clear()
     FB.ATTACH.update(_att_L)
 _pack = io.open(os.path.join(ROOT, "scripts", "pack_online.py"), encoding="utf-8").read()
+_mf = io.open(os.path.join(ROOT, "scripts", "make_manifest.py"), encoding="utf-8").read()
 ok("L6 出包里**显式收进**这个文件（缺了会大声报警，不是悄悄没有）",
-   "assets/feedback_endpoint.json" in _pack and "已收进出厂反馈接收端" in _pack
-   and "没找到 %s ⇒ 用户本机没配通道时" in _pack, "")
+   "assets/feedback_endpoint.json" in _pack and "def shipped_extra(" in _pack
+   and "shipped_extra()" in _pack and "已收进出厂反馈接收端" in _pack, "")
+# ⛔ 比"收了没"更要紧的一条：**进包清单必须是同一份** —— 更新器是从包内全部条目重算树哈希、
+#   再与清单 `base.sha256` 对齐才允许安装；pack 与 make_manifest 各算一份文件集，
+#   只要差一个文件（例：注入的接收端），用户点更新就被判"包与清单不自洽"、永远装不上。
+ok("L9 pack 与 make_manifest **共用同一份**进包清单（shipped_extra）",
+   "po.shipped_extra()" in _mf and "def shipped_extra(" in _pack, "")
+ok("L10 清单可以从「要发布的那个包」里算（--from-zip，与更新器同一份 zip_tree）",
+   "--from-zip" in _mf and "from agent.update_apply import zip_tree" in _mf, "")
 ok("L7 出包闸门对它的凭据形态**显式放行并写明理由**（不是绕过扫描）",
    '("assets/feedback_endpoint.json", "企业微信 webhook key")' in _pack, "")
 ok("L8 该文件**不进仓库**（.gitignore 挡着；轮换＝重新出一版，不用改 git 历史）",
