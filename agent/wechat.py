@@ -4857,6 +4857,24 @@ class WeChatAdapter:
                     _last = str(_why)
                     continue
                 time.sleep(0.6)
+                # ⚡⚡ **第一位＝纯像素绿底带**（2026-09-30 按诊断书 2.4 提位；朋友实测"切会话
+                #    确认 5s→0.5s"的正解）：
+                #    三条证据里只有这一条**不依赖 OCR**——而实测里 OCR 恰恰是最慢且最不稳的一环：
+                #      · 慢：`chat_is_open`/`chat_identity_ok` 各要抓帧 + OCR，单次 1~2s，两条串起来 3~5s；
+                #      · 不稳：高亮行是**白字绿底**，OCR 常年读空 —— 18 份 fail probe 里最典型的一条
+                #        把"测试"读成 `'试5《山r窑1`，另有一条判否理由是"同屏两个会话正文逐字雷同"。
+                #    ⇒ 绿底带是**跨整行的纯像素带**（`highlight_wide` 横跨整行，头像绿进不来），
+                #      之前实测在目标行稳定检出（占比 0.49），**它就是"当前会话=目标"的直接物理证据**。
+                #    所以在任何 OCR 确认**之前**先看一眼：落到目标行 ⇒ 立即短路成功，不等 OCR 重试帧。
+                #    ⚠️ 顺序铁律不变：`_meas=False`（量不到）时**绝不短路**，继续走下面的 OCR 证据链
+                #      —— fail-closed，"测不了"不等于"没切过去"。
+                _wb, _meas = _band_on_row()
+                if _wb is not None:
+                    if _cp and _ck:
+                        _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
+                    return True, ("投递点会话行（列表·免搜索，**纯像素绿底带** %d~%d 落在目标行 y=%s"
+                                  "｜目标窗=%s｜免 OCR 短路）"
+                                  % (_wb["y0"], _wb["y1"], row["y_abs"], ib.win_kind(main, _tgt)))
                 _op, _opwhy = self.chat_is_open(chat_id, gui=gui, name=name)
                 if _op:
                     if _cp and _ck:
@@ -4869,14 +4887,6 @@ class WeChatAdapter:
                         _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
                     return True, ("投递点会话行（列表·免搜索，内容级复核过｜目标窗=%s）"
                                   % ib.win_kind(main, _tgt))
-                # 第三条证据（纯像素、与 OCR 无关）：绿底带落在目标行 ⇒ 当前会话就是它。
-                # 这条专治"白字绿底读不出名字"（实测高亮行的名字 OCR 常年给空串）。
-                _wb, _ = _band_on_row()
-                if _wb is not None:
-                    if _cp and _ck:
-                        _cp.record_ok(_ck, "main" if int(_tgt) == int(main) else "render")
-                    return True, ("投递点会话行（列表·免搜索，绿底带 %d~%d 落在目标行 y=%s｜目标窗=%s）"
-                                  % (_wb["y0"], _wb["y1"], row["y_abs"], ib.win_kind(main, _tgt)))
                 _last = str(_opwhy)
             if _cp and _ck:
                 _cp.record_fail(_ck)

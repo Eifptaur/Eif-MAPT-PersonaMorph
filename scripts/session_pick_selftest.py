@@ -311,6 +311,56 @@ try:
         finally:
             CO.highlight_wide = _hw_keep
 
+        # ── P0-3（2026-09-30）：确认顺序**纯像素绿底带第一位**（诊断书 2.4，实测切会话 5s→0.5s）──
+        #   为什么必须有这几条：改的是"三条证据的先后"，而三条证据**最终都能判真**——
+        #   只测结果就分不出顺序（旧顺序也会成功）⇒ 判据必须**分辨谁先被问到**。
+        #   手法：桩住 OCR 那两条（`chat_is_open` / `chat_identity_ok`），给它们埋计数器；
+        #   绿底带已在目标行时，**OCR 两条应当一次都没被调用**（顺序真的前移了）；
+        #   反向再验一次：绿底带量不到时，必须**照样**退到 OCR（不是拿绿底带一票否决）。
+        _opcalls = {"n": 0, "idn": 0}
+        _hw3 = CO.highlight_wide
+        _fop, _fidn = _FakeSelf.chat_is_open, _FakeSelf.chat_identity_ok
+
+        def _op_cnt(self, chat_id, gui=None, name=None):
+            _opcalls["n"] += 1
+            return True, "stub-OCR-强档"
+
+        def _idn_cnt(self, chat_id, gui=None):
+            _opcalls["idn"] += 1
+            return (True, "stub")
+
+        try:
+            # ① 绿底带**第一枪之后**才落到目标行（点之前不能亮——亮了会命中"目标行已高亮⇒不许点"那条前置闸，
+            #    整条路会走成"一枪都不点"，压根到不了点后复核）
+            CO.highlight_wide = (lambda im, **kw: {"y_abs": 900, "y0": 880, "y1": 920, "score": 0.9}
+                                 if not _f8.clicks else
+                                 {"y_abs": 100, "y0": 80, "y1": 120, "score": 0.9})
+            _FakeSelf.chat_is_open, _FakeSelf.chat_identity_ok = _op_cnt, _idn_cnt
+            _f8 = _FakeSelf(hits=99) # OCR 两条**故意永远判否** —— 只有纯像素那条能给出成功
+            _o8, _w8 = W.WeChatAdapter._click_visible_session(_f8, "filehelper", "文件传输助手",
+                                                              gui=None, main=777)
+            ok("P0-3 绿底带在目标行（OCR 两条全判否）⇒ 纯像素独立短路成功",
+               _o8 is True and [c[0] for c in _f8.clicks] == [777], str(_w8)[:60])
+            ok("P0-3 ★绿底带命中时 **OCR 两条一次都没被问**（顺序真的提到第一位）",
+               _opcalls["n"] == 0 and _opcalls["idn"] == 0,
+               "chat_is_open 被调 %d 次、chat_identity_ok 被调 %d 次" % (_opcalls["n"], _opcalls["idn"]))
+            ok("P0-3 报告里写的是『纯像素绿底带』『免 OCR 短路』",
+               "纯像素绿底带" in str(_w8) and "免 OCR 短路" in str(_w8), str(_w8)[:90])
+
+            # ② 反向：绿底带**量不到**（None）⇒ 必须**照旧**退到 OCR 证据链，不许一票否决
+            _opcalls["n"] = _opcalls["idn"] = 0
+            CO.highlight_wide = lambda im, **kw: None
+            _f9 = _FakeSelf(hits=1)
+            _o9, _w9 = W.WeChatAdapter._click_visible_session(_f9, "filehelper", "文件传输助手",
+                                                              gui=None, main=777)
+            ok("P0-3 反向：绿底带量不到 ⇒ 照样成功（退到 OCR，不误杀）",
+               _o9 is True, str(_w9)[:60])
+            ok("P0-3 反向：绿底带量不到时 OCR 证据**确实被问到了**（fail-closed 兜底还在）",
+               _opcalls["n"] >= 1, "chat_is_open 被调 %d 次" % _opcalls["n"])
+        finally:
+            CO.highlight_wide = _hw3
+            _FakeSelf.chat_is_open, _FakeSelf.chat_identity_ok = _fop, _fidn
+
         # ⛔ `detect_pane_left` 在聊天区左列被气泡占满时会扫到气泡右边
         #    （报 660、真值 384）⇒ 会话列裁剪框偏进聊天区 ⇒ "列表里没看到×××那一行"。
         #    ⇒ 退到**结构锚**（竖栏右沿 + 固定列表宽）再找一次。
