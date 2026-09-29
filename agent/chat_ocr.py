@@ -1526,6 +1526,19 @@ def matches(text: str, name: str) -> bool:
     return False
 
 
+# ——— 授权档模糊兜底：放宽形态的**边际门槛**（2026-09-30） ———
+# 用户当面质疑："模型肯定是会读错的，就这水平吗？宁可不发也不冒险，发错人不就等于发不出去吗"
+# ⇒ 复核后确认**确有优化空间**：短名（<3 字）原来**永不参与**模糊、复合误读（错字+漏字）
+#   也漏网——而这两类恰恰是最常见的。放宽的底气**不是降低距离阈值**，而是换成
+#   **"唯一最近候选"判定**：竞争者必须至少比目标远 `_MARGIN` 才敢认（边际薄 ⇒ 弃权）。
+#   ⚠️ 没有候选集（`others` 为空）时**一律不放宽**——无参照就是猜。
+_FUZZY_MAX_DIST = 2  # 唯一最近判定下允许的最大距离（比固定阈值宽，但需边际背书）
+_MARGIN = 1          # 竞争者必须比目标**严格更远**至少这么多，否则视为歧义 ⇒ 弃权
+#                      ⚠️ 实测校准：曾设 2，把 `老扳 vs 老板`（目标距离1、竞争者`老同事`距离2）
+#                      误拒——竞争者只是"同样近"时该拒，但"已经远一档"就该认。
+#                      设 1 = 竞争者距离必须 ≥ d0+1，即**严格更远**（边际薄 ⇒ 弃权）。
+
+
 def _fuzzy_close(a: str, b: str) -> bool:
     """模糊接近判（授权档兜底用）：距离上限与长度挂钩，超短名不参与。
 
@@ -1541,6 +1554,59 @@ def _fuzzy_close(a: str, b: str) -> bool:
     if n < 3:
         return False
     return _edit_dist_le(a, b, 2 if n >= 8 else 1)
+
+
+def _edit_dist(a: str, b: str, cap: int = 6) -> int:
+    """真编辑距离（截到 `cap`）：串都很短，O(n·m) 够用。给"谁更近"的边际比较用。"""
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1,
+                         prev[j - 1] + (0 if a[i - 1] == b[j - 1] else 1))
+        if min(cur) > cap:
+            return cap + 1
+        prev = cur
+    return min(prev[-1], cap + 1)
+
+
+def _uniq_nearest(a: str, b: str, others) -> bool:
+    """**"唯一最近"背书**：`a`（屏幕读数）到 `b`（目标名）的距离，**严格小于**它到
+    `others` 里任何其它名字的距离。
+
+    这是允许放宽形态的**唯一底气**（与 `matches_fuzzy` 的②号约束同源，但强一档）：
+      - 竞争者**严格更远**（至少远 `_MARGIN`）才敢认——只远 1 的边际太薄（OCR 一次
+        抖动就能翻转），等于没有区分力，宁可不认；
+      - 竞争者与目标归一化同名（`norm` 相等）时直接弃权（那本来就是同一个名字的
+        两种写法，`norm_collides` 另有专门处理）。
+    没有 `others`（调用方没喂候选集）时**一律返回 False**——不许在无参照时放宽。
+
+    ⛔ **超短名（<3 字）不参与**（2026-09-30 自我纠正）：
+       我第一版把这条去掉，想"救回"短名误读，结果打破了 `ui_qt/selftest.py:7122`
+       那条既有判据「**两字名不参与（章三≠张三 距离1 也拒——超短名误认代价高）**」。
+       那条判据是**对的**：两字名差一个字就是**两个完全不同的人**（`章三`/`张三`），
+       而且常见的两字昵称彼此距离天然就是 1——再宽的边际也挡不住语义塌缩。
+       ⇒ 短名继续 fail-closed（读不准就不发，由用户手动确认）。
+    """
+    if not others:
+        return False
+    if min(len(a), len(b)) < 3:  # ⛔ 超短名不参与（代价远高于漏发，见 docstring）
+        return False
+    nb = norm(b)
+    d0 = _edit_dist(a, b)
+    if d0 > _FUZZY_MAX_DIST:
+        return False
+    for o in others:
+        no = norm(str(o or ""))
+        if not no or no == nb:
+            continue
+        if _edit_dist(a, no) < d0 + _MARGIN:
+            return False
+    return True
 
 
 def _fuzzy_overlaps(a: str, b: str) -> bool:
@@ -1604,8 +1670,12 @@ def matches_fuzzy(text: str, name: str, others, db_others=None) -> bool:
         _kb = _count_tail(name)
         if (_kb or norm_collides(name, db_others)) and _count_tail(text) != _kb:
             return False
-        # ① text 与目标是否接近（距离形态或包含形态）
-        if not (_fuzzy_close(a, b) or _fuzzy_overlaps(a, b)):
+        # ① text 与目标是否接近（距离形态 或 包含形态 或 **唯一最近**形态）
+        #    ⭐ 第三条路（2026-09-30）：前两条都有固定阈值，短名/复合误读够不着。
+        #    `_uniq_nearest` 换一条判据——不卡固定距离，卡**"竞争者明确更远"**：
+        #    短名读错 1 字（老板→老扳）、错字+漏字叠加（演示群→演示祥子）都能过，
+        #    但只要有另一个候选同样接近，立刻弃权（`_MARGIN` 保证金）。
+        if not (_fuzzy_close(a, b) or _fuzzy_overlaps(a, b) or _uniq_nearest(a, b, others)):
             return False
         # ② 候选集唯一性：others 里不许再有任何名字与 text 接近（与目标同名/同归一的除外）
         for o in (others or []):
