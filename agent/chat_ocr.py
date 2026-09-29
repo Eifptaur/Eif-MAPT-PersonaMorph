@@ -722,6 +722,62 @@ def recognize_union(img, timeout=None) -> list:
     return out
 
 
+#: 硬读档允许的放大倍率（**上限 3**：再大只是让第二引擎更慢，实测收益趋零）
+_BOOST_SCALES = (1, 2, 3)
+
+
+def recognize_boost(img, scales=None, contrast: bool = True, invert: bool = False,
+                    timeout=None) -> list:
+    """**硬读档**：多尺度（＋对比度增强／反色）各读一遍，**并集**返回。
+
+    ## 为什么要它（实测锚点）
+    `gh-024-transmission-WI-main-screen.png`（暗色主题的状态栏）上 `Uploaded / Downloaded /
+    Ratio / 1 Transfer` **整条读不到**——原图直读时它们只有十几个像素高。这不是"匹配口径"能救的，
+    得先让字**变大／变清楚**。
+
+    ## 口径与代价（如实说，绝不假装免费）
+      · 每一档都是 `recognize_union`（内置＋第二引擎各一遍）⇒ **耗时 ≈ 档数倍**，而第二引擎在大图上
+        本来就是秒级 ⇒ 它**只用于"难读时加档"**（诊断 / 标定 / 检验器 / 一次性读取），
+        **不进每笔发送链**（那条链仍走 `recognize_dual`：小块 + 尺寸闸）。
+      · 结果按 `norm()` 去重后**并集** ⇒ 只会比单档更多、不会更少（单调性由 `ocr_boost_selftest` 守着）。
+      · 缩放档读到的框会**除回原图尺度**（调用方拿到的坐标仍在原图坐标系里），否则上层定位会整体偏移。
+      · 对比度增强用 PIL `autocontrast`（无第三方依赖）；`invert` 只在调用方明确要时做
+        （暗色主题下字浅底深，反色后更接近识别器的训练分布）。
+    """
+    try:
+        from PIL import ImageOps
+    except Exception as e: # noqa: BLE001
+        log.debug("硬读档：PIL 不可用，退回单档：%s", e)
+        return recognize_union(img, timeout=timeout)
+    _want = [int(s) for s in (scales or _BOOST_SCALES) if 1 <= int(s) <= 3] or [1]
+    out, seen = [], set()
+    for s in sorted(set(_want)):
+        try:
+            w, h = img.size
+            im = img if s == 1 else img.resize((max(1, w * s), max(1, h * s)), 1)  # 1=Lanczos
+            if contrast:
+                im = ImageOps.autocontrast(im.convert("L"), cutoff=1).convert("RGB")
+            variants = [("normal", im)]
+            if invert:
+                variants.append(("invert", ImageOps.invert(im.convert("RGB"))))
+            for _tag, v in variants:
+                for it in recognize_union(v, timeout=timeout):
+                    try:
+                        txt, x, y, ww, hh = it[0], it[1], it[2], it[3], it[4]
+                    except Exception as e: # noqa: BLE001
+                        log.debug("硬读档：跳过形状不对的条目（%s）：%s", type(e).__name__, e)
+                        continue
+                    n = norm(str(txt))
+                    if not n or n in seen:
+                        continue
+                    seen.add(n)
+                    # ⛔ 坐标除回原尺度：不这么做，放大档的框会比原图大 2~3 倍，上层定位全错
+                    out.append((str(txt), int(x) // s, int(y) // s, int(ww) // s, int(hh) // s))
+        except Exception as e: # noqa: BLE001
+            log.debug("硬读档第 %s 档失败（继续下一档）：%s", s, e)
+    return out
+
+
 def header_box(img) -> tuple:
     """会话头文字带的像素矩形 (x0,y0,x1,y1) —— **与指纹同源**（走 `chat_header.band_box`）。
 

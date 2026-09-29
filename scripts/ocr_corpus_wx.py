@@ -185,6 +185,11 @@ def main() -> int:
     for q in QUERIES:
         if added >= a.target:
             break
+        # ⛔ 每个查询前重扫磁盘指纹：采集会被中断重跑、也可能两个进程重叠，
+        #    只靠进程启动时那一份快照会出现"同一张图换个名字又存一遍"（repo 版采集器踩过，
+        #    wx 版这里补上；判据 A2 正是靠它守住的）
+        seen.clear()
+        seen.update(md5s())
         for u, purl, turl in search_images(q):
             if added >= a.target:
                 break

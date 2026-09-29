@@ -288,7 +288,7 @@ except Exception as e:
     check("真鼠标一键检验已删除", False, str(e))
 
 # ═══════════ H. 文档中文 ═══════════
-for doc in ("README.md", "使用说明.md", "更新日志.md"):
+for doc in ("README.md", "更新日志.md"):   # 使用说明.md 已合并进 README（2026-09-29）
     t = io.open(os.path.join(ROOT, doc), encoding="utf-8").read()
     cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
     check(doc + " 中文比例", cjk / max(1, len(t)) > 0.08, "%.1f%%" % (100 * cjk / len(t)))

@@ -1430,8 +1430,10 @@ def t_ocr9() -> None:
            in WEB_PAGE.read_text(encoding="utf-8"))
         ck("ocr9D: 新文案同步进 whale_text 字典",
            "允许真鼠标兜底" in (root / "agent" / "whale_text.py").read_text(encoding="utf-8"))
-        _rd = (root / "使用说明.md").read_text(encoding="utf-8")
-        ck("ocr9D: 使用说明有「消息发不出去」自查小节", "消息发不出去" in _rd and "真鼠标兜底" in _rd)
+        # 2026-09-29：使用说明已合并进 README ⇒ 这条断言改从 README 读（同一段自查必须还在）
+        _rd = (root / "README.md").read_text(encoding="utf-8")
+        ck("ocr9D: README（原使用说明已并入）有「消息发不出去」自查小节",
+           "消息发不出去" in _rd and "真鼠标兜底" in _rd)
         ck("ocr9D: config.py 默认值 false 未变",
            '"allow_real_fallback": False' in (root / "agent" / "config.py").read_text(encoding="utf-8"))
     except Exception as e: # noqa: BLE001

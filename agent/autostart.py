@@ -77,6 +77,11 @@ def _legacy_task_enabled() -> bool:
     try:
         r = subprocess.run(["schtasks", "/query", "/tn", LEGACY_TASK],
                            capture_output=True, text=True, timeout=30,
+                           # ⛔ 中文 Windows 上 schtasks 的输出是 **GBK(mbcs)**
+                           #    ⇒ 不显式指定编码，这串文本流到别处（按 utf-8 读）会直接炸：
+                           #    实测本仓 run_all 的读取线程报 `UnicodeDecodeError: 0xb4`
+                           #    ⇒ 判据 22/0 全过却被判红。text=True 不够，必须给 encoding。
+                           encoding="mbcs", errors="replace",
                            creationflags=0x08000000)
         return r.returncode == 0
     except Exception as e:  # noqa: BLE001
@@ -89,6 +94,7 @@ def _remove_legacy_task() -> tuple:
     try:
         r = subprocess.run(["schtasks", "/delete", "/tn", LEGACY_TASK, "/f"],
                            capture_output=True, text=True, timeout=60,
+                           encoding="mbcs", errors="replace",   # 同上：中文输出是 GBK
                            creationflags=0x08000000)
         if r.returncode == 0:
             return True, "（老的开机任务也一起删掉了）"
@@ -131,6 +137,8 @@ def _make_shortcut(lnk_path: str, target_path: str, workdir: str) -> tuple:
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                            capture_output=True, text=True, timeout=60,
+                           # 中文 Windows 上它输出的也是 GBK(mbcs) ⇒ 同 schtasks 那两处的问题
+                           encoding="mbcs", errors="replace",
                            creationflags=0x08000000 if os.name == "nt" else 0)
     except Exception as e:  # noqa: BLE001
         return False, "调用 PowerShell 失败：%s" % str(e)[:80]

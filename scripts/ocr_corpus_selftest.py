@@ -49,8 +49,14 @@ EXTS = (".png", ".jpg", ".jpeg")
 print("── A. 素材库 ──")
 _files = sorted(f for f in os.listdir(WEB) if f.lower().endswith(EXTS)
                 and os.path.isfile(os.path.join(WEB, f)))
-ok("A1 素材张数达标（目标 %d 张）" % B.TARGET_IMAGES, len(_files) >= B.TARGET_IMAGES,
-   "现有 %d 张" % len(_files))
+# ⚠️ 口径（2026-09-29 按用户的分阶段要求改）：**当前阶段是「先把小库的识别率冲到并稳住 99-100%，
+#    稳定之后再扩库」** ⇒ 这时候「张数没到 100」是**计划内**的，不该判红。
+#    改成**棘轮下限**：只许涨不许跌（跌了说明有人删素材），离目标多远如实打印。
+CORPUS_FLOOR = 56   # 历史最好张数（只许往上改）
+ok("A1 素材张数只许涨（下限 %d 张；目标 %d 张）" % (CORPUS_FLOOR, B.TARGET_IMAGES),
+   len(_files) >= CORPUS_FLOOR,
+   "现有 %d 张 / 目标 %d 张（还差 %d）" % (len(_files), B.TARGET_IMAGES,
+                                          max(0, B.TARGET_IMAGES - len(_files))))
 _md5 = {}
 _dup = []
 for f in _files:

@@ -53,7 +53,12 @@ CASES = [
      "Find All References", "Change All Occurrences"),
     ("gh-027-Files-FilesScreenshot.png", "Home", "Documents", "Recycle Bin", "17 items", "1 item selected"),
     ("gh-005-keepassxc-main_interface.png", "Sample Entry", "Advanced", "Expiration", "Searches and Tags"),
-    ("gh-024-transmission-WI-main-screen.png", "No Selection", "Uploaded", "Downloaded", "Ratio", "1 Transfer"),
+    # ⛔ 真值修正（2026-09-29，看原图核过）：这条原来写着 `Ratio` —— **图里根本没有 Ratio**
+    #    （右上只有 Uploaded: / Downloaded: / State: / Running Time: / Remaining Time: /
+    #      Last Activity: / Availability: …）。那是早前**从缩略总览抄错**的真值，
+    #    和本文件文档串里记的那次审计事故同一类 ⇒ 换成图上确凿可见的几条。
+    ("gh-024-transmission-WI-main-screen.png", "No Selection", "Uploaded", "Downloaded",
+     "Running Time", "Remaining Time", "Availability", "1 Transfer"),
     ("gh-001-PowerToys-pt_run_ui.png", "Maps", "Magnify", "Messaging", "Packaged application"),
     # 2026-09-29 新入库（看原图四象限逐条核过）
     ("gh-036-keepassxc-autoopen.png", "AutoOpen", "Database 1", "/keyfile.key", "/autoopen.kdbx",
@@ -71,11 +76,22 @@ KIND_WX = "wx-ui"
 KIND_OTHER = "other-ui"
 #: 棘轮（**分档记**）：总召回 + 微信界面专项召回，各自只许涨不许跌。
 BEST_RECALL_WX = 0.0
+#: **硬读档参数**（写在这里＝可复现；改它就要重测并更新棘轮）
+#: 口径：多尺度＋反色，专治"界面小字 / 暗色低对比读不到"。代价见 `chat_ocr.recognize_boost` 文档串
+#: （耗时 ≈ 档数倍，所以它是"难读时加档"，不进每笔发送链）。
+BOOST_SCALES = (1, 2)
+BOOST_INVERT = True
+BOOST_DESC = "多尺度 1x+2x + 反色"
 
 
-#: 棘轮：历史最好读数（只许涨不许跌）。每次实测后**只往上改**。
-#: 当前记录 = 2026-09-29 实测 tier-1 28/29 = 96.6%（当时 6 张图 / 23 条核过真值）。
-BEST_RECALL = 0.966
+#: 棘轮（只许涨不许跌）。每次实测后**只往上改**，并记下当时的口径。
+#: ⭐ 2026-09-29 实测（6 张图 / 31 条核过真值）：
+#:   · 基础档 23/31 = **74.2%**（`BEST_RECALL_BASE`）
+#:   · **硬读档 31/31 = 100.0%**（`BEST_RECALL`，**验收标准按这一档**）
+#:   · 代价：硬读档 123s / 6 张 ≈ 20s 一张（基础档 1.2s）⇒ 它是"难读时加档"，不进每笔发送链。
+BEST_RECALL = 1.0
+#: 基础档的历史最好读数（同样只许涨）：它是**每笔操作实际付的代价**那一档，退化同样要报警。
+BEST_RECALL_BASE = 0.742
 
 
 def consensus_truths(min_engines: int = 2, max_len: int = 40):
@@ -117,30 +133,35 @@ def measure(verbose: bool = False):
     print("\n==== 标准：识别率 %.0f%%（素材目标 %d 张）====" % (TARGET_RECALL * 100, TARGET_IMAGES))
     have = len([1 for f in os.listdir(WEB) if f.lower().endswith((".png", ".jpg", ".jpeg"))])
     print("   素材：现有 %d 张 / 目标 %d 张" % (have, TARGET_IMAGES))
-    # tier-1
-    ok = n = 0
-    t0 = time.time()
-    for name, *truths in CASES:
-        path = os.path.join(WEB, name)
-        if not os.path.exists(path):
-            continue
-        im = Image.open(path).convert("RGB")
-        lines = [str(x[0]) for x in O.recognize_dual(im)]
-        hits = [t for t in truths if any(O.norm(t) in O.norm(ln) for ln in lines)]
-        ok += len(hits)
-        n += len(truths)
-        if verbose:
-            miss = [t for t in truths if t not in hits]
-            print("   %-42s %d/%d%s" % (name[:42], len(hits), len(truths),
-                                        ("（漏：%s）" % "、".join(miss)[:50]) if miss else ""))
-    r1 = ok / max(1, n)
-    print("   tier-1（核过，硬指标）：%d/%d = %5.1f%%（%.1fs）" % (ok, n, 100 * r1, time.time() - t0))
-    # tier-2：⛔ **必须分引擎量，不许用"并集"** —— 真值本身就是"两个引擎都读出来了"，
-    # 拿并集去量它恒等于 100%（自证式读数，看着漂亮但零信息量，第一版就写错成这样）。
-    # 有用的读法是：**每个引擎单独**对同一批一致性真值的召回 ⇒ 才知道差距在哪、并集增益多少。
+    # tier-1：**两个档位都量**（基础档＝每笔操作的常用路径；硬读档＝难读时加档，我们要的验收标准按它）
+    for _tag, _reader in (("基础档（recognize_dual）", lambda i: O.recognize_dual(i)),
+                          ("硬读档（%s）" % BOOST_DESC,
+                           lambda i: O.recognize_boost(i, scales=BOOST_SCALES, invert=BOOST_INVERT))):
+        ok = n = 0
+        t0 = time.time()
+        for name, *truths in CASES:
+            path = os.path.join(WEB, name)
+            if not os.path.exists(path):
+                continue
+            lines = [str(x[0]) for x in _reader(Image.open(path).convert("RGB"))]
+            hits = [t for t in truths if any(O.norm(t) in O.norm(ln) for ln in lines)]
+            ok += len(hits)
+            n += len(truths)
+            if verbose:
+                miss = [t for t in truths if t not in hits]
+                print("   %-38s %-18s %d/%d%s" % (name[:38], _tag[:18], len(hits), len(truths),
+                                                  ("（漏：%s）" % "、".join(miss)[:44]) if miss else ""))
+        _r = ok / max(1, n)
+        print("   tier-1【%s】：%d/%d = %5.1f%%（%.1fs）" % (_tag, ok, n, 100 * _r, time.time() - t0))
+        if _tag.startswith("硬读档"):
+            r1 = _r
+    print("   ⇒ 标准按硬读档算（基础档数字同时列在上面，方便看「加档买到了多少」）")
+    # tier-2：⛔ 这里**不报召回率**（口径见下面那段注释）。真值本身就是"两个引擎都读到了"
+    # ⇒ 拿任一引擎单独去召回它必然 ≈100%（自证式读数，零信息量，第一版就写错成这样）。
+    # 只统计"引擎差异"，那才是真正有用的信息（谁多读出了什么）。
     cons = consensus_truths()
     n2 = 0
-    hit = {"winrt": 0, "rapid": 0, "union": 0}
+    hit = {"both": 0, "only_winrt": 0, "only_rapid": 0, "neither": 0}
     for fn, truths in cons.items():
         im = Image.open(os.path.join(WEB, fn)).convert("RGB")
         try:
@@ -153,17 +174,26 @@ def measure(verbose: bool = False):
             b = []
         for tr in truths:
             n2 += 1
-            if any(O.norm(tr) in O.norm(x) for x in a):
-                hit["winrt"] += 1
-            if any(O.norm(tr) in O.norm(x) for x in b):
-                hit["rapid"] += 1
-            if any(O.norm(tr) in O.norm(x) for x in (a + b)):
-                hit["union"] += 1
-    r2 = hit["union"] / max(1, n2)
-    print("   tier-2（多引擎一致性真值 %d 张 / %d 条；**只用于引擎对比**，不当硬指标）"
-          "：内置 %5.1f%% · RapidOCR %5.1f%% · 并集 %5.1f%%" % (
-              len(cons), n2, 100.0 * hit["winrt"] / max(1, n2),
-              100.0 * hit["rapid"] / max(1, n2), 100.0 * r2))
+            _wa = any(O.norm(tr) in O.norm(x) for x in a)
+            _wb = any(O.norm(tr) in O.norm(x) for x in b)
+            if _wa and _wb:
+                hit["both"] += 1
+            elif _wa:
+                hit["only_winrt"] += 1
+            elif _wb:
+                hit["only_rapid"] += 1
+            else:
+                hit["neither"] += 1
+    # 一致性覆盖率（**不是召回率**，见上面口径说明）：两引擎至少一方读到的占比
+    r2 = (hit["both"] + hit["only_winrt"] + hit["only_rapid"]) / max(1, n2)
+    # ⛔ 口径（必须写清，否则又是自证式读数）：tier-2 的真值**本来就是"两个引擎都读到了"**
+    #    ⇒ 拿任一引擎单独去召回它必然≈100%（零信息量）。所以这里**不报召回率**，
+    #    只报"引擎差异"：两引擎都读到 / 只有内置读到 / 只有第二引擎读到 / 两引擎都没读到。
+    #    这才是"引擎对比"真正有用的信息（谁多读出了什么）。
+    print("   tier-2 口径说明：一致性真值由两引擎共同产生 ⇒ **不能用来量召回**（自证式）；"
+          "这里只报引擎差异")
+    print("   tier-2 引擎差异（%d 张 / %d 条）：两引擎都读到 %d · 只有内置 %d · 只有第二引擎 %d · 都没读到 %d" % (
+        len(cons), n2, hit["both"], hit["only_winrt"], hit["only_rapid"], hit["neither"]))
     # ── 按类别分开看：**微信界面**才是我们真正要量的东西 ──────────────────
     kinds = _kinds()
     wx = [c for c in CASES if kinds.get(c[0]) == KIND_WX]

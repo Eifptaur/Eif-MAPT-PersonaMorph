@@ -894,7 +894,8 @@ ck("F3 bg_status（单一事实源）写明伪激活代价", "不抢前台" not 
 # ⚠️ F 段原来只守三个文件 ⇒ 自检绿了、别处的旧说法还在。
 #    ⇒ 扩到**所有对用户/工程可见的声明点**（历史更新日志与 _scratch 不算）。
 _BAN = "不抢" + "前台" # 自己拼出来，免得自检文件本身命中
-_EXTRA = ["使用说明.md", "检验说明（另一台电脑用）.md", "AGENTS.md",
+# ⚠️ 2026-09-29：「使用说明.md」已合并进 README（不再单独维护）⇒ 声明点改指 README
+_EXTRA = ["README.md", "检验说明（另一台电脑用）.md", "AGENTS.md",
           os.path.join("agent", "tools.py"), os.path.join("agent", "notify_ui.py"),
           os.path.join("agent", "tray.py"), os.path.join("agent", "wechat.py")]
 _bad = []
