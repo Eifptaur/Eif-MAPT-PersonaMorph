@@ -41,6 +41,8 @@ from PIL import Image # noqa: E402
 from agent import chat_ocr as O # noqa: E402
 
 WEB = os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph", "ocr-samples", "web")
+#: **本机真实截图**语料（由 `scripts/ocr_corpus_local.py` 采入；只读用户目录、写副本到这里）
+LOCAL = os.path.abspath(os.path.join(os.path.dirname(WEB), "local"))
 
 #: `(素材文件名, 真值清单...)` —— 真值是我看着图逐个写下来的（可在 overview 拼图上复核）
 CASES = [
@@ -74,6 +76,10 @@ TARGET_RECALL = 0.99
 #: 分类来自 `_sources.json` 的 `kind` 字段（采集时写入）。
 KIND_WX = "wx-ui"
 KIND_OTHER = "other-ui"
+#: **本机真实截图**（用户自己机器上的画面）：与网图**分开统计**。理由：网图的字体渲染、DPI、
+#: 窗口边框、输入法候选框都不等于用户机器上的真实画面 ⇒ 拿网图算出的成功率**不能**说明
+#: "在这台机器上能不能认出来"。这一类的 `_sources.json` 在 `local/` 下（见 `ocr_corpus_local.py`）。
+KIND_LOCAL = "local-real"
 #: 棘轮（**分档记**）：总召回 + 微信界面专项召回，各自只许涨不许跌。
 BEST_RECALL_WX = 0.0
 #: **硬读档参数**（写在这里＝可复现；改它就要重测并更新棘轮）
@@ -141,8 +147,9 @@ def measure(verbose: bool = False):
     返回 `(tier1_ratio, tier2_ratio)`。
     """
     print("\n==== 标准：识别率 %.0f%%（素材目标 %d 张）====" % (TARGET_RECALL * 100, TARGET_IMAGES))
-    have = len([1 for f in os.listdir(WEB) if f.lower().endswith((".png", ".jpg", ".jpeg"))])
-    print("   素材：现有 %d 张 / 目标 %d 张" % (have, TARGET_IMAGES))
+    have = _count_imgs(WEB) + _count_imgs(LOCAL)
+    print("   素材：现有 %d 张 / 目标 %d 张（网图 %d + 本机真实截图 %d）" % (
+        have, TARGET_IMAGES, _count_imgs(WEB), _count_imgs(LOCAL)))
     # ⭐ 预热：第二引擎首次调用要**加载 ONNX 模型**（实测 20~30s）⇒ 不预热的话第一档会把这一笔
     #    算进去、看起来像"每张图都慢"。预热后报的数字才是**热态**的真实代价（冷启只付一次）。
     try:
@@ -162,7 +169,7 @@ def measure(verbose: bool = False):
         ok = n = 0
         t0 = time.time()
         for name, *truths in CASES:
-            path = os.path.join(WEB, name)
+            path = _path_of(name)
             if not os.path.exists(path):
                 continue
             lines = [str(x[0]) for x in _reader(Image.open(path).convert("RGB"))]
@@ -220,14 +227,17 @@ def measure(verbose: bool = False):
     kinds = _kinds()
     wx = [c for c in CASES if kinds.get(c[0]) == KIND_WX]
     ot = [c for c in CASES if kinds.get(c[0]) == KIND_OTHER]
+    lo = [c for c in CASES if kinds.get(c[0]) == KIND_LOCAL]
     print("   素材构成：微信界面 %d 张（%s）· 其他界面 %d 张（%s）" % (
         len(wx), ", ".join(c[0][:22] for c in wx[:3]), len(ot), ", ".join(c[0][:22] for c in ot[:3])))
-    for tag, group in (("微信界面", wx), ("其他界面", ot)):
+    if lo:
+        print("             本机真实截图 %d 张（%s）" % (len(lo), ", ".join(c[0][:24] for c in lo[:3])))
+    for tag, group in (("微信界面", wx), ("其他界面", ot), ("本机真实截图", lo)):
         if not group:
             continue
         k = n3 = 0
         for name, *truths in group:
-            path = os.path.join(WEB, name)
+            path = _path_of(name)
             if not os.path.exists(path):
                 continue
             lines = [str(x[0]) for x in O.recognize_dual(Image.open(path).convert("RGB"))]
@@ -237,7 +247,7 @@ def measure(verbose: bool = False):
     if BEST_RECALL_WX > 0 and wx:
         _k = _n = 0
         for name, *truths in wx:
-            _p = os.path.join(WEB, name)
+            _p = _path_of(name)
             if not os.path.exists(_p):
                 continue
             _lines = [str(x[0]) for x in O.recognize_dual(Image.open(_p).convert("RGB"))]
@@ -245,23 +255,52 @@ def measure(verbose: bool = False):
             _n += len(truths)
         print("   棘轮（微信界面）：历史最好 %5.1f%% ⇒ %s" % (
             BEST_RECALL_WX * 100, "没退" if _k / max(1, _n) >= BEST_RECALL_WX - 1e-9 else "⚠️ 退了！"))
-
-
-def _kinds() -> dict:
-    """读 `_sources.json` 的 `kind` 字段（没标的一律当"其他界面"，不猜）。"""
-    out = {}
-    try:
-        db = json.load(open(os.path.join(WEB, "_sources.json"), encoding="utf-8"))
-        for k, v in (db or {}).items():
-            out[k] = str((v or {}).get("kind") or KIND_OTHER)
-    except Exception as e:  # noqa: BLE001
-        print("   （读素材分类失败，按其他界面算：%s）" % str(e)[:60])
-    return out
+    # ⛔ 这两行原来被写死在 `_kinds()` 的 `return` 之后 ⇒ **永远执行不到**（死代码）。
+    #    修 `_kinds` 时一并挪回这里（它本来就属于"量完之后的结论"）。
     print("   差距：tier-1 距标准还差 %5.1f 个百分点" % ((TARGET_RECALL - r1) * 100))
     if BEST_RECALL > 0:
         print("   棘轮：历史最好 %5.1f%% ⇒ %s" % (
             BEST_RECALL * 100, "没退" if r1 >= BEST_RECALL - 1e-9 else "⚠️ 退了！"))
     return r1, r2
+
+
+def _path_of(name: str) -> str:
+    """素材实际路径：`web/` 与 `local/` 两处都找（真实截图与网图混在同一份 CASES 里）。"""
+    p = os.path.join(WEB, name)
+    if os.path.exists(p):
+        return p
+    return os.path.join(LOCAL, name)
+
+
+def _count_imgs(d: str) -> int:
+    """数一个目录里的图片张数。
+
+    ⛔ 这里**不能**用「读失败就当 0」的静默兜底（`except: return 0`）——那正是
+       「目录读不到」与「目录里真没图」被混成同一个结论：前者是**量具坏了**（该报错让人知道
+       目录/权限有问题），后者才该是 0。两者在"素材够不够"的口径下含义相反。
+       ⇒ 目录不存在 = 明说的 0（这是**预期**情况：还没采集过）；其它 `OSError` 一律**抛**上去。
+    """
+    if not os.path.isdir(d):
+        return 0
+    return len([f for f in os.listdir(d) if f.lower().endswith((".png", ".jpg", ".jpeg"))])
+
+
+def _kinds() -> dict:
+    """读 `_sources.json` 的 `kind` 字段（没标的一律当"其他界面"，不猜）。
+
+    ⛔ 注意：本函数**同时**要把 `local/` 语料（本机真实截图）并进来 —— 它们各有自己的
+       `_sources.json`（`kind="local-real"`）⇒ 两处都读，别只读 `web/`（否则真实截图
+       进了目录却永远不进任何统计口径，等于白采）。
+    """
+    out = {}
+    for _d, _fn in ((WEB, "_sources.json"), (LOCAL, "_sources.json")):
+        try:
+            db = json.load(open(os.path.join(_d, _fn), encoding="utf-8"))
+            for k, v in (db or {}).items():
+                out[k] = str((v or {}).get("kind") or KIND_OTHER)
+        except Exception as e:  # noqa: BLE001
+            print("   （读素材分类失败 %s，该目录按其他界面算：%s）" % (_fn, str(e)[:50]))
+    return out
 
 
 def main():
@@ -275,7 +314,7 @@ def main():
     ok = n = 0
     per = []
     for name, *truths in CASES:
-        path = os.path.join(WEB, name)
+        path = _path_of(name)
         if not os.path.exists(path):
             print("（跳过：找不到 %s）" % name)
             continue

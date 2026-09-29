@@ -224,6 +224,62 @@ def cmd_verify(a) -> int:
     return 0
 
 
+def cmd_corpus(a) -> int:
+    """**语料（本机真实截图）**：把用户自己屏幕上的画面收进来、喂进真值流水线。
+
+    子命令：
+      `scan`    —— 只扫（**只读**用户目录，列出会收哪些、为什么不合格；不落盘）
+      `add`     —— 扫并入语料库（**只在语料目录写副本**，绝不改动用户原目录）
+      `feed`    —— 把已入库的真实截图喂进真值流水线（产待审候选）
+      `check`   —— 体检已入库的素材（口径与网图一致：≥3 行 / ≥20 字 / ≥80000 px）
+      `status`  —— 只看真值流水线现状（不喂；等价内层 `--report`）
+
+    ⛔ 与 `truth` 的分工：`corpus` 管"**素材**"（有没有、干不干净），`truth` 管"**真值**"
+       （读得对不对、要不要人看）。素材入库**不等于**有了真值 —— 真值只有人核过才算。
+    """
+    what = str(getattr(a, "what", "") or "scan").lower()
+    import subprocess as _sp
+    _py = sys.executable or "python"
+    _script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           {"scan": "ocr_corpus_local.py",
+                            "add": "ocr_corpus_local.py",
+                            "feed": "local_truth_feed.py",
+                            "status": "local_truth_feed.py",
+                            "check": "ocr_corpus_local.py"}[what])
+    argv = [_py, _script]
+    if what == "scan":
+        argv.append("--dry-run")
+    elif what == "check":
+        argv.append("--check-only")
+    elif what == "status":
+        # ⛔ 等价性坑：内层 `--report`（只看不喂）原来**没有任何无界面入口** ——
+        #    想只看现状的人只能自己敲内层脚本名（等于无界面这条路少了一档）。
+        argv.append("--report")
+    _src = str(getattr(a, "dir", "") or "").strip()
+    if _src and what in ("scan", "add"):
+        argv += ["--dir", _src]
+    if what == "feed" and int(getattr(a, "index", 0) or 0):
+        argv += ["--limit", str(int(a.index or 0))]
+    # ⛔ 等价性坑 2：内层 `--include-flagged`（连隐私标记图也喂）原来也接不上 ——
+    #    默认跳过是**安全**的，但"明知有风险仍要喂"这条路必须存在（否则用户被默认值锁死）。
+    if what == "feed" and bool(getattr(a, "include_flagged", False)):
+        argv.append("--include-flagged")
+    print("执行：%s" % " ".join(os.path.basename(x) if x.endswith(".py") else x for x in argv))
+    try:
+        # ⛔ 与全仓一致：子进程**不弹窗**（否则无界面路径反而弹出一堆黑框）。
+        # ⛔⛔ 但 `CREATE_NO_WINDOW` 会把子进程的标准输出**摘掉**（实测：脚本确实输出了 7040 字节，
+        #    终端上一个字都看不到 —— 无界面命令"跑了但看不见"，等于没跑）⇒ **必须**显式把
+        #    子进程的 stdout/stderr 接到我们自己这里，才能既"不弹窗"又"看得见输出"。
+        kw = {"stdout": sys.stdout, "stderr": sys.stderr}
+        if os.name == "nt":
+            kw["creationflags"] = getattr(_sp, "CREATE_NO_WINDOW", 0)
+        return int(_sp.call(argv, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            **kw))
+    except Exception as e:  # noqa: BLE001
+        _die("跑不起来：%s" % str(e)[:80])
+        return 1
+
+
 def cmd_truth(a) -> int:
     """**真值审核**：看最可疑的那一撮、确认/否决、导出待审包（看图审，不是看字串猜）。
 
@@ -744,6 +800,7 @@ def menu(a) -> int:
         ("查问题（按症状查：发不出去 / 不回复 / 表情看不到…）", lambda: cmd_verify(_mk(a))),
         ("看最近在跟谁聊 / 看日志", lambda: _menu_sessions_logs(a)),
         ("真值审核（素材→真值：看最可疑的那一撮）", lambda: _menu_truth(a)),
+        ("语料：收本机截图/喂真值（只用你自己的屏幕画面）", lambda: _menu_corpus(a)),
         ("低配模式（老机器卡：一键关掉吃 CPU 的特效）", lambda: _menu_lowspec(a)),
         ("开机自动启动（可选，默认不开）", lambda: _menu_autostart(a)),
         ("暂停 / 恢复机器人", lambda: _menu_pause(a)),
@@ -812,6 +869,27 @@ def _menu_fixwechat(a) -> int:
         return cmd_calibrate(_mk(a))
     if c == "4":
         return cmd_fingerprint(_mk(a, what="take"))
+    return 0
+
+
+def _menu_corpus(a) -> int:
+    """菜单里的"语料"：先**只扫**（只读，给个预览），要收再收，收完可直接喂真值流水线。"""
+    print("  说明：本机截图是**你自己的屏幕画面** —— 网图再多也不能代表这台机器的字体渲染/DPI。")
+    print("       扫描阶段**只读**，绝不动你的原图；入库只在语料目录写副本。")
+    print("")
+    cmd_corpus(_mk(a, what="scan"))
+    print("")
+    print("  1. 收进语料库（写副本，不改原图）   2. 把已入库的喂进真值流水线（产待审候选）")
+    print("  3. 体检已入库的                    4. 只看真值流水线现状（不喂）      0. 返回")
+    c = _ask("请输入数字后回车（直接回车＝0）：", "0") or "0"
+    if c == "1":
+        return cmd_corpus(_mk(a, what="add"))
+    if c == "2":
+        return cmd_corpus(_mk(a, what="feed"))
+    if c == "3":
+        return cmd_corpus(_mk(a, what="check"))
+    if c == "4":
+        return cmd_corpus(_mk(a, what="status"))
     return 0
 
 
@@ -933,6 +1011,14 @@ def main(argv=None) -> int:
                    choices=("stats", "list", "show", "ok", "no", "export"))
     p.add_argument("index", nargs="?", type=int, default=0)
     p.set_defaults(func=cmd_truth)
+    p = sub.add_parser("corpus", help="语料（本机真实截图）：扫描 / 入库 / 喂真值流水线 / 体检 / 看现状")
+    p.add_argument("what", nargs="?", default="scan",
+                   choices=("scan", "add", "feed", "status", "check"))
+    p.add_argument("index", nargs="?", type=int, default=0, help="feed 时的张数上限")
+    p.add_argument("--dir", default="", help="源目录（只读；默认 ~/Pictures/Screenshots）")
+    p.add_argument("--include-flagged", action="store_true", dest="include_flagged",
+                   help="feed 时连隐私标记的图也喂（默认跳过，安全）")
+    p.set_defaults(func=cmd_corpus)
     p = sub.add_parser("sessions", help="最近会话"); p.add_argument("n", nargs="?", type=int, default=10); p.set_defaults(func=cmd_sessions)
     p = sub.add_parser("logs", help="日志尾部"); p.add_argument("n", nargs="?", type=int, default=60); p.set_defaults(func=cmd_logs)
     p = sub.add_parser("cfg", help="读/写单个配置键"); p.add_argument("action", choices=("get", "set"))

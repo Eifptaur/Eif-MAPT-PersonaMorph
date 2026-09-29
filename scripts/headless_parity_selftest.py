@@ -40,7 +40,7 @@ def ok(name, cond, detail=""):
 
 # ── 现状基线（**只许涨**；涨了就把这里改大并说明）──────────────────────────
 BASE_API_ROUTES = 109       # 控制台 /api/ 路由
-BASE_PMCTL_CMDS = 19        # pmctl 子命令
+BASE_PMCTL_CMDS = 20        # pmctl 子命令（19 → 20：新增 `corpus`，本机真实截图入库/喂真值）
 #: ★ **关键能力**：无显示器机器上真正需要能做的事 ⇒ 每条都必须有命令行路径
 KEY_CAPS = {
     "运行状态": "status",
@@ -61,6 +61,7 @@ KEY_CAPS = {
     "提反馈": "feedback",
     "反馈包": "pack",
     "真值审核": "truth",
+    "语料（本机真实截图入库/喂真值）": "corpus",
     "版本": "version",
 }
 
