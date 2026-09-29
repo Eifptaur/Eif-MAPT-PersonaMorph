@@ -138,5 +138,31 @@ else:
         skip("D. 真机对照", "%s: %s" % (type(e).__name__, str(e)[:60]))
 
 print("")
+print("== E. 接线（活体）：控制台点「使用」必须把人设回写进那两个控件 ==")
+# 🔴 真机 bug 的反回退锚：点「使用」后人设名不变、评分/补足仍作用到旧（默认）人设。
+#    根因＝`_apply_persona` 只把值 POST 给后端、**没回写** `personaName` /
+#    `personaRoleText` 两个控件，而评分/补足/联网检索读的正是控件的当前值。
+#    这条锚钉住三件事：① 有回写钩子；② 钩子同时写名字**和**文本；③ 两个控件都要被赋值。
+try:
+    _pc = io.open(os.path.join(ROOT, "ui_qt", "panels_custom.py"), encoding="utf-8").read()
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts/ 自身（放 `_src*`）
+    import _srcslice as _ss, _srcmatch as _sm # noqa: E402
+    _sync = _ss.func_src(_pc, "_apply_persona")
+    _do = _ss.func_src(_pc, "_do_sync_persona_ctrls")
+    ok("E1 `_apply_persona` 的写盘成功分支调用了**控件回写**（不是只回显一句话）",
+       _sm.has(_sync, "_sync_persona_ctrls"), "应调 `_sync_persona_ctrls(name, text)`")
+    ok("E2 回写钩子**同时**写人设名与角色文本（漏一个就会复现旧 bug）",
+       _sm.has(_do, "name_ctrl.setText") and _sm.has(_do, "role_text_ctrl.setPlainText"),
+       "`name_ctrl.setText` + `role_text_ctrl.setPlainText`")
+    ok("E3 回写钩子在控件建好之后被填充（`_sync_box[\"fn\"] = ...`）",
+       _sm.has(_pc, '_sync_box["fn"] = _do_sync_persona_ctrls'),
+       "两侧建桥：控件在前面定义、钩子在后填充")
+    ok("E4 旧 bug 的现象写进了注释（防后人又删回写）",
+       _sm.has(_pc, "点「使用」后") or _sm.has(_pc, "人设名不变"),
+       "注释说明「不回写 ⇒ 名字不变/评分仍作用旧人设」")
+except Exception as e: # noqa: BLE001
+    skip("E. 接线（活体）", "%s: %s" % (type(e).__name__, str(e)[:60]))
+
+print("")
 print("模型评分/补足判据：%d 通过 / %d 失败 / %d 跳过%s" % (PASS, FAIL, SKIP, "（含真机）" if LIVE else ""))
 sys.exit(1 if FAIL else 0)

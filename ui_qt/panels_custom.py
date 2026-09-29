@@ -2918,17 +2918,40 @@ def persona_panel(t: Tokens) -> QWidget:
             "已恢复上个人设并保存（重启后生效）" if (r and r.get("ok") is not False)
             else f"恢复失败：{e or (r or {}).get('error') or '后台没连上'}"))
 
+    # ⚡ 控件回写钩子：`_apply_persona` 定义在**本行之前**，而两个控件
+    #    （`personaName` / `personaRoleText`）建在**本行之后** ⇒ 用这个可变盒子
+    #    在两边搭桥。为什么必须回写：见 `_apply_persona._done` 里的 bug 说明
+    #    （不回写 ⇒ 点「使用」后名字不变、评分/补足仍作用到旧人设）。
+    _sync_box: dict = {"fn": lambda _n, _t: None}
+
+    def _sync_persona_ctrls(name: str, text: str) -> None:
+        """把「使用」选中的人设同步进下面两个输入控件（盘已写，这里只改界面）。"""
+        try:
+            _sync_box["fn"](name, text)
+        except Exception: # noqa: BLE001
+            pass
+
     def _apply_persona(p: dict) -> None:
         cur = {"name": config_io.read_path("persona.bot_name") or "",
                "text": config_io.read_path("persona.role_text") or ""}
         pnote.setText(f"切换人设「{p.get('name') or '未命名'}」并保存…")
+
+        def _done(r, e): # noqa: ANN001
+            if r and r.get("ok") is not False:
+                # 🔴 真机 bug：点「使用」后**上方「人设名」输入框不变、随后点评分/补足/联网检索
+                #   作用到的还是旧（默认）人设**。根因＝这里只把值 POST 给了后端，**没有回写
+                #   下面那两个控件**（`personaName` / `personaRoleText`）——
+                #   而评分/补足/检索读的正是控件的当前值 ⇒ 永远拿旧文本去算。
+                #   修法：写盘成功后把控件同步成新人设（就地改、不另外发请求）。
+                _sync_persona_ctrls(p.get("name", ""), p.get("text") or "")
+                pnote.setText(f"已切换人设「{p.get('name') or '未命名'}」并保存（重启后生效）")
+            else:
+                pnote.setText(f"切换失败：{e or (r or {}).get('error') or '后台没连上'}")
+
         _async_post(None, "/api/config", {
             "persona": {"last_used": cur, "bot_name": p.get("name", ""),
                         "role_text": p.get("text") or ""}
-        }, lambda r, e: pnote.setText(
-            f"已切换人设「{p.get('name') or '未命名'}」并保存（重启后生效）"
-            if (r and r.get("ok") is not False)
-            else f"切换失败：{e or (r or {}).get('error') or '后台没连上'}"))
+        }, _done)
 
     def _del_persona(p: dict) -> None:
         if not (p.get("key") or "").startswith("custom"):
@@ -3191,6 +3214,18 @@ def persona_panel(t: Tokens) -> QWidget:
     role_text_ctrl.setObjectName("personaRoleText")
     ccard.body.addWidget(Field(t, "自定义角色文本", "留空=内置；填了=完全替换（可参考 agent/persona.py）", role_text_ctrl))
     binds.append(("persona.role_text", role_text_ctrl, "textarea"))
+
+    # ⚡ 填充「控件回写钩子」：点「使用」写盘成功后，把人设名/角色文本同步到这两个控件。
+    #    ⛔ 必须同时回写 `name_ctrl` **和** `role_text_ctrl`：
+    #       · 只回写文本 ⇒ 用户看到名字没变（就是上报的那个现象）；
+    #       · 只回写名字 ⇒ 评分/补足/联网检索读的还是旧角色文本。
+    #    顺带把 `part` 之外的人事摆平：这里只动被「使用」决定的这两个控件，
+    #    不碰参与度/开关（那些是用户自己的选择，不该被人设切换冲掉）。
+    def _do_sync_persona_ctrls(name: str, text: str) -> None:
+        name_ctrl.setText(name or "")
+        role_text_ctrl.setPlainText(text or "")
+
+    _sync_box["fn"] = _do_sync_persona_ctrls
 
     # ── 行为档推荐（web roleHintBtn :6379-6415）：按角色卡让模型评估参与度/表情包档，
     #    弹窗里可改推荐值，「应用」写 persona.participation + store.sticker_level。──
