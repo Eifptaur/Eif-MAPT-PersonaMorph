@@ -2119,9 +2119,12 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
             pd = r.get("pending_decisions") or {}
             item = pd.get("item")
             if item:
-                return ("有待拍板的事：%s——微信 %s × 适配层 %s（本页可直接拍板：点这颗按钮会弹四选一）"
+                # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」，读不到时不显示 `unknown`
+                _w = str(item.get("wechat") or "")
+                _wv = ("本机微信版本 %s" % _w) if (_w and _w != "unknown") else "本机微信版本读不到"
+                return ("有待拍板的事：%s——%s · 适配层 %s（本页可直接拍板：点这颗按钮会弹四选一）"
                         % (item.get("title") or item.get("reason") or "版本适配",
-                           item.get("wechat") or "?", item.get("adapter") or "?"))
+                           _wv, item.get("adapter") or "?"))
             return "现在没有待拍板的事。"
 
         _post_action_raw(btn_pd, tk_note, _run, "读取待决台账…")
@@ -2167,8 +2170,9 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
         vg = (st.get("version_gate") or {}) if isinstance(st, dict) else {}
         wv = str(vm.get("wechat") or "").strip()
         ad = str(vm.get("adapter") or "").strip()
-        ver_lb.setText(("当前版本对：微信 %s × 适配层 %s" % (wv, ad or "-"))
-                       if wv and wv != "unknown" else "当前版本对：微信版本读不到")
+        # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」（用户 2026-09-30 当面指正的同一口径）
+        ver_lb.setText(("当前版本对：本机微信版本 %s · 适配层 %s" % (wv, ad or "-"))
+                       if wv and wv != "unknown" else "当前版本对：本机微信版本读不到")
         allow = vg.get("allow") if isinstance(vg.get("allow"), bool) else None
         if allow is None:
             gate_lb.setText("版本门：读不到（不影响发送）")
@@ -6255,18 +6259,39 @@ def _pd_decide_native(t: Tokens, parent, note, btn) -> None:
     if not item:
         note.setText("现在没有待拍板的事 · " + time.strftime("%H:%M:%S"))
         return
-    opts = [o for o in (item.get("options") or [])
+    opts = [dict(o) for o in (item.get("options") or [])
             if isinstance(o, dict) and str(o.get("key") or "")]
     if not opts:
         note.setText("这张单没带选项（旧版本写的单）⇒ 本页拍不了板，先按它的说明处理")
         return
-    lines = ["微信 %s × 适配层 %s" % (item.get("wechat") or "?", item.get("adapter") or "?")]
+    # 空动作项：后端（`version_gate.option_availability`，判据只有 `action_cmd()` 一份）
+    # 已经把"这一刻能不能做"算好并用 `disabled`/`why` 标出来了 ⇒ 这里**不重算**，
+    # 只把它翻成按钮可读的文案（"点了没反应"的选项必须先说清楚再置灰）。
+    # ⚠️ 后端没标（老版本后端）时一律按可点处理 —— 宁可不置灰，也不误伤能做的事。
+    for o in opts:
+        if o.get("disabled"):
+            _why = str(o.get("why") or "现在不用做这件事")
+            o["detail"] = str(o.get("detail") or "") + " ｜ " + _why
+    # ⛔ 文案铁律：「微信」只许指微信客户端 ⇒ 写「本机微信版本」，读不到时不显示 `unknown`
+    _w = str(item.get("wechat") or "")
+    _wv = ("本机微信版本 %s" % _w) if (_w and _w != "unknown") else "本机微信版本读不到"
+    lines = ["%s · 适配层 %s" % (_wv, item.get("adapter") or "?")]
     if item.get("reason"):
         lines.append(str(item.get("reason")))
+    # ⛔ 非严格模式**不许用模态拦路**（`version_gate._strict()` 默认 False ⇒ 未实测版本本来就照发）：
+    #   这里弹的是一张"你可以顺手看看"的卡片 —— 用 `show()` 而不是 `exec()`，
+    #   后面还会取回 `dlg.choice` 继续走提交（不阻塞调用方，用户不点也不耽误发送）。
+    #   严格模式（用户自己开了 strict⇒现在真的在拦发送）才用模态，强制他做决定。
+    strict = bool(((r.get("version_gate") or {}).get("strict")))
     dlg = ChoiceDialog(t, parent, str(item.get("title") or "这件事要你拍板"), lines, opts)
-    dlg.exec()
+    if strict:
+        dlg.exec()
+    else:
+        dlg.show()
+        dlg.raise_()
     if not dlg.choice:
-        note.setText("这次没拍板（条目留着，下次还会问）· " + time.strftime("%H:%M:%S"))
+        note.setText("这次没拍板（条目留着，同一对版本不再追问；不影响发送）· "
+                     + time.strftime("%H:%M:%S"))
         return
     note.setText("已拍板：%s，正在执行…" % dlg.choice)
     try:

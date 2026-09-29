@@ -29,22 +29,41 @@ KEEP_MAX = 200 # 台账上限（按时间保留最近的；防无限膨胀）
 # ── 四选一：版本不匹配时的固定选项（既有口径：✕＝什么都不做）────────────────
 # 为什么把"动作"和"文案"分开存：动作是机器判读用的（控制台据此决定按钮干什么），
 # 文案是给人看的（改文案不许动动作语义）。
+# ⛔ 文案铁律（2026-09-30 用户当面指正后立）：
+#   ① **"微信"这个词只许指"微信客户端"，绝不许指"我们的产品"** ——
+#      浮层上凡是"读不到的字段"，一律写「本机微信版本」（明确是客户端版本号），
+#      不许写成光秃秃的"微信"（用户会读成"我们的窗口在报错"）。
+#   ② **选项只许写"用户能做的动作"（祈使句）** —— 像"微信本身要处理"这种
+#      "要不要处理微信"的说法，用户无从下手（他没有处理微信的手段）⇒ 等于白给一个废选项。
+#   ③ 每个选项的 detail 必须写明**点了会发生什么**（起 job / 给指引 / 无需动作），
+#      不许出现"点了没反应"。
 VERSION_OPTIONS = [
     {"key": "upgrade_adapter", "label": "一键升级适配层",
-     "detail": "把微信适配层升到与本机微信版本配套的那个版本，升完重测一遍能力矩阵",
+     "detail": "把微信适配层升到与本机微信版本配套的那个版本，升完重测一遍能力矩阵（后台自动装，不用你跑命令）",
      "action": "upgrade_adapter"},
-    {"key": "update_host", "label": "更新本体",
-     "detail": "跑一次依赖自愈与版本体检，把本体依赖修到声明要求",
+    {"key": "update_host", "label": "更新本体依赖",
+     "detail": "跑一次依赖自愈与版本体检，把本体依赖修到声明要求（依赖已满足时本项会置灰，无需动作）",
      "action": "heal_deps"},
-    {"key": "allow_once", "label": "仅本次允许",
-     "detail": "只对本次运行放行发送，重启后重新拦",
+    {"key": "allow_once", "label": "本次运行继续发送",
+     "detail": "只对**本次运行**放行：重启产品后需要再点一次（未实测版本按未知版本处理）",
      "action": "allow_session"},
-    {"key": "wechat_side", "label": "微信本身要处理",
-     "detail": "只给排查指引，不装、不降级微信",
+    {"key": "wechat_side", "label": "我去微信那边看看",
+     "detail": "给你一份排查步骤（怎么看微信版本 / 怎么选更新提示），不会改动微信、不装、不降级",
      "action": "guidance"},
 ]
 
 OPTION_KEYS = tuple(o["key"] for o in VERSION_OPTIONS)
+
+# ⛔★ **"什么都不做"的语义（2026-09-30 修正；这里原先写错了，错得很贵）**：
+#   原文是「按「什么都不做」处理：**不发送**、不改配置」—— 把用户的"别拿这事烦我"
+#   读成了"**停手别发**" ⇒ 机器人静默失效，而且用户完全不知道是自己点出来的。
+#   更糟的是它与版本门自己的默认口径**自相矛盾**：`version_gate._strict()` 默认 False，
+#   此时未实测版本明明是 `allow=True`（照发）；用户点一下"什么都不做"却落了一个永久停手开关。
+#   ⇒ 正确语义：**"不额外做事、悄悄把单子收起来，发送照旧"**。
+#   ⚠️ 凡"什么都不做 / 稍后 / 忽略"这类否定式选项，**必须写明"什么不受影响"**，
+#      不能只写"什么不做"（来信第 3 页那条血泪教训就是同一类错误的镜像）。
+NONE_MESSAGE = ("按「什么都不做」处理：不装、不改配置、**不影响发送**"
+                "（未实测版本按未知版本处理，照常发送）；这条单子留着，同一版本不再问你")
 
 
 def path(p: str | None = None) -> str:
@@ -197,7 +216,7 @@ def apply_choice(item: dict | None) -> dict:
     it = item or {}
     ch = str(it.get("choice") or "")
     if not ch:
-        return {"action": "none", "label": "", "cmd": "", "message": "按「什么都不做」处理：不发送、不改配置"}
+        return {"action": "none", "label": "", "cmd": "", "message": NONE_MESSAGE}
     opt = next((o for o in (it.get("options") or []) if str(o.get("key")) == ch), {})
     act = str(opt.get("action") or "none")
     # ⛔ 这里原来硬写着
@@ -210,8 +229,8 @@ def apply_choice(item: dict | None) -> dict:
         "allow_session": "已放行本次运行：发送会按未验证版本对继续，重启后重新拦",
         "upgrade_adapter": "点「升级适配层」就行：产品在**后台自己装**（不重装微信、不用你跑任何命令），装完重测能力矩阵",
         "heal_deps": "点「更新本体」就行：产品在后台按体检结论补齐依赖，不用你跑任何命令",
-        "guidance": "这一版要在微信那边处理：先看适配层有没有对应版本，我们不装也不降级微信",
-        "none": "按「什么都不做」处理：不发送、不改配置",
+        "guidance": "这一版要在微信客户端那边处理：先看适配层有没有对应版本，我们不装也不降级微信",
+        "none": NONE_MESSAGE,
     }.get(act, "")
     return {"action": act, "label": str(opt.get("label") or ""), "cmd": cmd, "message": msg}
 
@@ -221,10 +240,43 @@ def ensure_version_decision(wechat: str = "", adapter: str = "", reason: str = "
                             p: str | None = None, reuse: bool = True) -> tuple:
     """版本对没实测过时开一张四选一单（同一对版本只开一次）。返回 `(条目, 是否新建)`。"""
     w, a = str(wechat or "unknown"), str(adapter or "unknown")
-    title = "微信 %s × 适配层 %s 没实测过" % (w, a)
+    # ⛔ 标题里**绝不出现光秃秃的"微信"**（用户 2026-09-30 当面指正）：
+    #   原标题 `微信 unknown × 适配层 1.2.2.2 没实测过` —— 用户读成「**我们的窗口**在报错」，
+    #   因为"微信"在用户认知里有两个所指：①他手机上/电脑上的**微信客户端**（版本号）；
+    #   ②**我们这产品**在他面前的昵称。这里要说的明明是 ①，就必须把"本机微信版本"写全。
+    #   读不到版本号时不许写 `unknown`（英文缩写等于没说）⇒ 直接写「本机微信版本读不到」。
+    _w = "本机微信版本读不到" if (not w or w == "unknown") else ("本机微信版本 %s" % w)
+    title = "%s · 适配层 %s 未实测" % (_w, a)
     return open_item("version_mismatch", pair_key(w, a), title,
-                     reason=reason or "这一对版本没有实测记录：发送这类动窗口/动键盘的能力按未验证处理",
+                     reason=reason or ("这一对版本没有实测记录：发消息要动微信窗口/键盘，"
+                                       "按未验证处理（**不影响发送**，只是可能不好用）"),
                      options=VERSION_OPTIONS, wechat=w, adapter=a, p=p, reuse=reuse)
+
+
+def current_options(item: dict | None) -> list:
+    """把条目里**冻结的旧文案**换回**当前口径**（只换 label/detail，`key` 与 `action` 原样）。
+
+    ⛔ 为什么需要：`data/pending_decisions.json` 里的单子是**开单那一刻**把文案一起落盘冻结的
+    （那样"用户当时看到的"才可追溯）。可选项名后来改了口径
+    （"仅本次允许" → "本次运行继续发送"、"微信本身要处理" → "我去微信那边看看"），
+    历史单再被渲染时就会把**已经废弃的说法**又端到用户面前 —— 这正是 2026-09-30 那条
+    "「微信」指代错"的复发路径。
+    ⇒ 做法：**不动台账数据**（那是在篡改历史记录），只在**渲染时**按当前口径覆盖文案。
+      认不出的 key（未来新增的）原样保留 —— fail-open，宁可显示旧字，也不许把选项弄丢。
+    """
+    cur = {o["key"]: o for o in VERSION_OPTIONS}
+    out = []
+    for o in ((item or {}).get("options") or []):
+        if not isinstance(o, dict):
+            continue
+        o2 = dict(o)
+        k = str(o2.get("key") or "")
+        now = cur.get(k)
+        if now:
+            o2["label"] = now["label"]
+            o2["detail"] = now["detail"]
+        out.append(o2)
+    return out
 
 
 def summary(p: str | None = None) -> str:

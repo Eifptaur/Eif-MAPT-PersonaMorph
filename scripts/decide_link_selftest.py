@@ -61,7 +61,11 @@ ok("矩阵有写回入口", "def note_decision(" in M and "def decisions(" in M)
 ok("current() 带这一对的表态历史", '"decisions": decisions(data, ver, adp)' in M)
 ok("状态里能拿到（控制台不另拉数据）", "version.decisions" not in H and "vm.decisions" in H)
 ok("面板有「最近表态」行", 'id="vmDec"' in H and "最近表态" in H)
-ok("表态历史用中文标签显示", "去升级适配层" in H and "仅本次允许" in H)
+# [2026-09-30 口径变更] 选项中文名改了（"仅本次允许"→"本次运行继续发送"、
+#   "微信本身要处理"→"我去微信那边看看"）⇒ 判据同步，并加一条"旧说法不许复活"。
+ok("表态历史用中文标签显示（新口径）",
+   "一键升级适配层" in H and "本次运行继续发送" in H)
+ok("旧说法不许复活（反回退）", "仅本次允许" not in H and "微信本身要处理" not in H)
 _tmp = tempfile.mkdtemp(prefix="link-judge-")
 try:
     VM.note_decision("9.9.9", "8.8.8", "allow_once", note="判据写入", path=os.path.join(_tmp, "m.json"))

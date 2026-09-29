@@ -353,13 +353,30 @@ def status() -> dict:
 # 口径：只有这两条会**真动手**，而且是后台作业（`agent/jobs.py`，分钟级、不阻塞控制台）：
 #   · upgrade_adapter → `scripts/wechat_check.py --update`（实测非交互：直接 pip install -U 适配层与关键依赖）
 #   · update_host     → `dep_heal.plan()` 给的第一条安装命令（离线优先 --no-index，其次镜像）
-# 「微信本身要处理」永远只给指引；「仅本次允许」只动本进程内存。**一律不装/不降级微信本体。**
+# 「我去微信那边看看」永远只给指引；「本次运行继续发送」只动本进程内存。**一律不装/不降级微信本体。**
 ACTION_JOBS = {"upgrade_adapter": "upgrade_adapter", "update_host": "dep_heal"}
+
+# ⛔ 键 vs 值这个坑真的踩到了（2026-09-30）：
+#   `ACTION_JOBS` 的**键**是选项 key，**值**是 job 名；而 `VERSION_OPTIONS` 里
+#   `update_host` 的 `action` 是 `heal_deps`（≠ 它的 key）。
+#   于是 `action_cmd("heal_deps")` 一路落到 `return ""` ⇒ 判成"拿不到命令"⇒ 按钮被误置灰
+#   （"点了没反应"那类观感的**第二个**来源）。修法：**key 和 action 值都认**，
+#   并在这里集中别名，别再让调用方猜自己手里是 key 还是 action。
+_ALIAS = {"heal_deps": "update_host"}
+
+
+def _canon(choice: str) -> str:
+    """把「选项 key」或「选项的 action 值」统一成 key（认不出来就原样返回）。"""
+    ch = str(choice or "")
+    return _ALIAS.get(ch, ch)
 
 
 def action_cmd(choice: str) -> str:
-    """这条选择要跑什么命令（空串＝不用跑）。给控制台/日志/判据共用，避免各处各写一份。"""
-    ch = str(choice or "")
+    """这条选择要跑什么命令（空串＝不用跑）。给控制台/日志/判据共用，避免各处各写一份。
+
+    参数**可以是选项 key，也可以是选项的 `action` 值**（见 `_canon`：`heal_deps` → `update_host`）。
+    """
+    ch = _canon(choice)
     if ch == "upgrade_adapter":
         try:
             from . import dep_heal as _dh
@@ -483,6 +500,75 @@ def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> di
         return {"needed": True, "item": item, "created": created, "status": st, "pop": pop}
     except Exception as e:
         return {"needed": True, "item": None, "created": False, "status": st, "error": str(e)}
+
+
+def option_availability(item: dict | None, status: dict | None = None) -> dict:
+    """这张单的每条选项**此刻真能不能做**：`{key: {"runnable": bool, "why": str}}`。
+
+    ⛔ 起因（用户 2026-09-30 当面指正「其他都有 bug，只能选什么都不做」）：
+       根因不是功能缺失，而是**点了没反应** —— `update_host` 在本机依赖齐全时
+       `action_cmd()` 返回空串（同一个洞还有 `upgrade_adapter` 拿不到 runtime python 时）。
+       坏选项要让用户在**按钮上**先看明白（置灰 + 写明"为什么点不了"），
+       而不是点完等一个永远不来的结果。
+    ⚠️ **判据只有一份**：能跑什么一律问 `action_cmd()`（本模块唯一实现），这里不再重写一份判断。
+       `wechat_side`（只给指引）/`allow_once`（只动内存）**永远可点**（它们本来就不跑命令）。
+       `none` 不是一个选项，不进这张表。
+    """
+    it = item or {}
+    out: dict = {}
+    st = status if isinstance(status, dict) else {}
+    for o in (it.get("options") or []):
+        if not isinstance(o, dict):
+            continue
+        k = str(o.get("key") or "")
+        if not k:
+            continue
+        act = str(o.get("action") or "")
+        # ⛔ 这里**必须**用 `_canon(act)`：选项的 `action` 值（`heal_deps`）与 `ACTION_JOBS`
+        #   的键（`update_host`）不是一套写法 —— 直接 `act not in ACTION_JOBS` 会把
+        #   `update_host` 误判成"非作业型、永远可点"（就是把坏选项放过去，白置灰）。
+        _act = _canon(act)
+        if _act not in ACTION_JOBS:           # 只给指引 / 只放行本会话 ⇒ 永远可点
+            out[k] = {"runnable": True, "why": ""}
+            continue
+        cmd = action_cmd(k)                   # ← 唯一实现（key 由 `_canon` 认，传 key 最稳）
+        if cmd:
+            out[k] = {"runnable": True, "why": ""}
+        elif k == "update_host":
+            out[k] = {"runnable": False,
+                      "why": "本机依赖都满足，这一项不用做" if not st.get("error")
+                             else "这次读不到依赖体检结果"}
+        else:
+            out[k] = {"runnable": False, "why": "现在拿不到要跑的命令，先别点它"}
+    return out
+
+
+def decorate_item(item: dict | None, status: dict | None = None) -> dict | None:
+    """把待决单**复制一份**并给每条选项补上 `disabled` / `why`（给控制台渲染用）。
+
+    ⚠️ **只改副本、绝不写回台账**：台账是"用户表过什么态"的事实，
+       而"这一刻某项能不能跑"是**环境态**（装完依赖就变了）—— 两者混在一起会把历史写脏。
+    另外顺手把**冻结的旧文案**换成当前口径（见 `pending_decisions.current_options`）：
+    文案是"给人看的当下口径"，历史单不该把废弃的说法再端给用户。
+    """
+    if not isinstance(item, dict):
+        return None
+    from . import pending_decisions as _pd
+    out = dict(item)
+    out["options"] = _pd.current_options(item)
+    avail = option_availability(out, status)
+    opts = []
+    for o in (out.get("options") or []):
+        if not isinstance(o, dict):
+            continue
+        o2 = dict(o)
+        a = avail.get(str(o.get("key") or "")) or {}
+        if a and not a.get("runnable"):
+            o2["disabled"] = True
+            o2["why"] = str(a.get("why") or "")
+        opts.append(o2)
+    out["options"] = opts
+    return out
 
 
 def decide(decision_id: str, choice: str, note: str = "",

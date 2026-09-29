@@ -662,6 +662,17 @@ th{color:var(--tx2);font-weight:500}
 .mask .box p{color:var(--tx2);font-size:13px;margin-bottom:14px}
 .mask .box input{width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:8px;font:inherit;margin-bottom:10px;
   background:var(--input-bg);color:var(--tx)}
+/* ── 非模态「拍板卡」（版本门 soft 模式）────────────────────────────────
+   ⛔ 未实测版本默认**照常发送**（version_gate._strict() 默认 False）⇒ 这时不许用遮罩
+      把用户锁住。卡片浮在右下角，去不去看随你，不点也不耽误发送。
+   样式与 `.mask .box` 同一套观感（同底色/同圆角/同阴影），只是**不铺满、不拦路**。 */
+.choice-soft{position:fixed;right:20px;bottom:20px;z-index:9997;max-width:420px;width:calc(100% - 40px);
+  animation:wxpage .22s ease}
+.choice-soft .box{background:var(--card);border:1px solid var(--blue-line);border-radius:16px;
+  padding:20px 22px;box-shadow:0 16px 48px rgba(0,0,0,.28);text-align:center;max-height:80vh;overflow:auto}
+.choice-soft .box img{width:52px;height:52px;border-radius:14px;margin-bottom:8px}
+.choice-soft .box h1{font-size:16px;margin-bottom:6px}
+.choice-soft .box p{color:var(--tx2);font-size:12.5px;margin-bottom:8px}
 .dn{display:none}
 </style>
 </head>
@@ -2318,7 +2329,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>待拍板</label><div class="grow">
         <b id="pdStat">检测中…</b>
         <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
-        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体 · 仅本次允许 · 微信本身要处理。× 等于什么都不做，单子留着、同一对版本不再追问。</div>
+        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体依赖 · 本次运行继续发送 · 我去微信那边看看。× 等于什么都不做——单子留着、同一对版本不再追问，<b>不影响发送</b>。</div>
       </div></div>
       <div class="row"><label>最近表态</label><div class="grow"><b id="vmDec">暂无</b></div></div>
       <div class="row"><label>一键修</label><div class="grow">
@@ -3779,8 +3790,8 @@ async function loadStatus(){  try{
         try{
           const vd = $('vmDec');
           if(vd){
-            const nm = {upgrade_adapter:'去升级适配层', update_host:'去更新本体',
-                        allow_once:'仅本次允许', wechat_side:'微信本身要处理', none:'什么都不做'};
+            const nm = {upgrade_adapter:'一键升级适配层', update_host:'更新本体依赖',
+                        allow_once:'本次运行继续发送', wechat_side:'我去微信那边看看', none:'什么都不做'};
             const ds = vm.decisions || [];
             vd.textContent = ds.length
               ? ds.map(function(d){ return (nm[d.choice] || d.choice) + ' · ' + String(d.when||'').slice(5, 16); }).join(' ｜ ')
@@ -5861,14 +5872,28 @@ function confirmBox(title, lines, okLabel, onOk, danger){
 
 /* ── 多选一弹窗（⑦ 版本不匹配四选一用）：mask + box + 果冻图标，每个选项一个按钮 ──
    口径：「弹窗按你推荐的做」+「×＝什么都不做」⇒ 最后一个按钮就是「什么都不做」，
-   点遮罩也等于什么都不做；单子不会因此消失（落台账，同一对版本不再追问）。 */
-function choiceBox(title, lines, options, onPick, subtext){
-  const m = document.createElement('div'); m.className='mask';
+   点遮罩也等于什么都不做；单子不会因此消失（落台账，同一对版本不再追问）。
+
+   ⛔ `mode`（2026-09-30 修）：**默认 `soft`（非模态）**。
+      版本门默认 `_strict()=False` ⇒ 未实测版本本来就**照常发送**，这时还拿一张全屏遮罩把
+      用户锁在弹窗里，是把"提醒"做成了"拦路"。所以：
+        · `soft` —— 不挂 mask、不锁滚动，卡片浮在右下角，去不去看随你，✅ 不点也照发；
+        · `hard` —— 只有用户自己开了 `version_gate.strict`（这时的确在拦发送）才用遮罩模态。
+      两种模式的**选项与回执完全一样**，只有"要不要挡路"不同。 */
+function choiceBox(title, lines, options, onPick, subtext, mode){
+  const hard = (mode === 'hard');
+  const m = document.createElement('div'); m.className = hard ? 'mask' : 'choice-soft';
   const lh = (lines||[]).filter(Boolean).map(s=>'<p style="text-align:left;margin:4px 0">'+s+'</p>').join('');
   const opts = (options||[]);
+  /* ⛔ 「其他都有 bug，只能选什么都不做」的根因是**点了没反应** ⇒ 后端算好的 `disabled`
+     一律在按钮上置灰 + 写明原因（`why`/`detail`），不许让用户点完等一个不来的结果。 */
   const btns = opts.map(function(o,i){
-    return '<button class="'+(i===0?'pri':'ghost')+'" data-opt="'+o.key+'" style="display:block;width:100%;text-align:left;margin:8px 0 0">'
-      + o.label + '<div style="opacity:.72;font-weight:400;font-size:12px;margin-top:2px">' + (o.detail||'') + '</div></button>';
+    const dis = !!o.disabled;
+    const det = [o.detail, dis ? (o.why || '现在不用做这件事') : ''].filter(Boolean).join(' ｜ ');
+    return '<button class="'+(i===0?'pri':'ghost')+'" data-opt="'+o.key+'"'
+      + (dis ? ' disabled title="'+ (o.why||'现在不用做这件事') +'"' : '')
+      + ' style="display:block;width:100%;text-align:left;margin:8px 0 0' + (dis?';opacity:.5;cursor:not-allowed':'') + '">'
+      + o.label + '<div style="opacity:.72;font-weight:400;font-size:12px;margin-top:2px">' + det + '</div></button>';
   }).join('');
   m.innerHTML = '<div class="box">' + ICON
     + '<h1>'+title+'</h1>' + lh
@@ -5876,13 +5901,18 @@ function choiceBox(title, lines, options, onPick, subtext){
     + '<button class="ghost" data-opt="" style="display:block;width:100%;text-align:left;margin:8px 0 0">什么都不做 ×</button></div>'
     + (subtext ? '<div class="hint" style="margin-top:10px">'+subtext+'</div>' : '')
     + '</div>';
-  document.body.appendChild(m); maskOpen(m);
+  document.body.appendChild(m); if(hard) maskOpen(m);
   let fired = false;
-  const fire = function(key){ if(fired) return; fired = true; maskClose(m); m.remove(); onPick && onPick(key); };
+  const fire = function(key){
+    if(fired) return; fired = true;
+    if(hard) maskClose(m);
+    m.remove();
+    onPick && onPick(key);
+  };
   m.querySelectorAll('button[data-opt]').forEach(function(b){
     b.onclick = function(){ fire(b.getAttribute('data-opt')||''); };
   });
-  m.onclick = function(ev){ if(ev.target === m) fire(''); }; // 点遮罩＝什么都不做
+  if(hard) m.onclick = function(ev){ if(ev.target === m) fire(''); }; // 模态下点遮罩＝什么都不做
   return m;
 }
 
@@ -5892,22 +5922,39 @@ async function postVersionAction(choice, id){
     body: JSON.stringify({choice: choice, id: id || ''})});
 }
 
-/* 版本不匹配那张单：四选一 + 把结果落台账（服务端写回能力矩阵） */
+/* 版本不匹配那张单：四选一 + 把结果落台账（服务端写回能力矩阵）
+   `item.strict` 由后端给出（`version_gate._strict()`）：
+     · 非严格（默认）⇒ **soft** 非模态卡片，去不去看随你、不点也照发；
+     · 严格（用户自己开了 version_gate.strict，这时确实在拦发送）⇒ **hard** 遮罩模态，必须拍板。 */
 function openDecision(item){
   if(!item || !item.id){ toast('没有待拍板的事'); return; }
-  const lines = [item.reason, '微信 ' + (item.wechat||'?') + ' × 适配层 ' + (item.adapter||'?')];
+  /* ⛔ 文案铁律：「微信」只许指微信客户端 ⇒ 这一行必须写「本机微信版本」。
+     且读不到版本号时不许显示 `unknown`（用户读不懂，还会读成"我们产品坏了"）。 */
+  const wv = (item.wechat && item.wechat !== 'unknown') ? ('本机微信版本 ' + item.wechat) : '本机微信版本读不到';
+  const lines = [item.reason, wv + ' · 适配层 ' + (item.adapter||'?')];
+  const mode = item.strict ? 'hard' : 'soft';
   choiceBox(item.title || '这件事要你拍板', lines, item.options || [], async function(key){
     try{
       const r = await getJSON('/api/decide', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({id: item.id, choice: key || ''})});
-      toast((r && r.message) || (key ? '已记下你的选择' : '按「什么都不做」处理'));
+      toast((r && r.message) || (key ? '已记下你的选择' : '按「什么都不做」处理：不影响发送'));
       const act = ((r && r.result) || {}).action || {};
       /* ⑦ 「一键升级适配层 / 更新本体」选了就**真去跑**（后台作业，分钟级，控制台不卡）；
-         「仅本次允许」由服务端放行；「微信本身要处理」只给指引，不装也不降级微信。 */
+         「本次运行继续发送」由服务端放行；「我去微信那边看看」只给指引，不装也不降级微信。 */
       if(key === 'upgrade_adapter' || key === 'update_host'){
         try{
           const a = await postVersionAction(key, item.id);
-          const cmd = ((a && a.result) || {}).cmd || '';
+          /* ⛔ 如实回执：`ran:false` 说明**根本没动手**（依赖已齐全 / 拿不到命令）——
+             绝不许说"已经在后台跑了"（那就是用户说的"点了没反应"）。 */
+          const r2 = (a && a.result) || {};
+          if(!a || !a.ok || !r2.ran){
+            confirmBox('这一项现在不用做', [
+              ((a && a.message) || r2.message || '没有要跑的步骤'),
+              '不用管它，<b>不影响发送</b>。',
+            ], '知道了');
+            loadStatus(); return;
+          }
+          const cmd = r2.cmd || '';
           confirmBox('已经在后台跑了', [
             cmd ? ('命令：<b>' + cmd + '</b>') : '已发出',
             '跑完到「版本能力矩阵」的「一键修」那一行看结果。',
@@ -5916,7 +5963,7 @@ function openDecision(item){
       }
       loadStatus();
     }catch(e){ toast('没能记下你的选择：' + e.message); }
-  }, '× 什么都不做：单子留着，同一对版本不再追问');
+  }, '什么都不做 ×：单子留着，同一对版本不再追问；<b>不影响发送</b>', mode);
 }
 
 $('stopBtn').onclick = ()=>{

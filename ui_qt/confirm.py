@@ -329,6 +329,11 @@ class ChoiceDialog(DraggableDialog, QDialog):
 
     ⛔ 为什么值得单独做一个：这件事**以前只能去网页控制台做**（Qt 侧只给了一个"去网页"的入口）
     —— 用户口径是"网页能做的都得在 Qt 做"，所以四选一必须落在原生弹窗里。
+
+    ⛔ **空动作选项必须置灰**（用户 2026-09-30 当面指正"其他都有 bug，只能选什么都不做"）：
+       `update_host`（依赖已满足时）与 `upgrade_adapter`（拿不到要跑的命令时）会**点了没反应**。
+       坏选项在按钮上先说清楚、并**置灰**，好过让用户点完等一个永远不来的结果。
+       判定由调用方算好用 `disabled` 字段传进来（这里不猜命令）。
     """
 
     decided = Signal(str)
@@ -348,6 +353,11 @@ class ChoiceDialog(DraggableDialog, QDialog):
         # 选项 key 清单（判据按它断言"弹出来的是台账里那几个选项"，不靠 OCR/文案）
         self.choice_keys = [str(o.get("key")) for o in (options or [])
                             if isinstance(o, dict) and str(o.get("key") or "")]
+        # 被置灰的 key（调用方按"这一刻真能不能跑"算好，用 `disabled` 字段传进来）
+        self.disabled_keys: list[str] = [
+            str(o.get("key")) for o in (options or [])
+            if isinstance(o, dict) and o.get("disabled") and str(o.get("key") or "")
+        ]
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -389,6 +399,10 @@ class ChoiceDialog(DraggableDialog, QDialog):
             b = Btn(label, t, "primary" if i == 0 else "ghost")
             b.setObjectName("choice_%s" % key)
             b.clicked.connect(lambda _=False, k=key: self._pick(k))
+            # 空动作项：置灰 + 在按钮上写明"为什么点不了"（别让用户点完等一个不来的结果）
+            if key in self.disabled_keys:
+                b.setEnabled(False)
+                b.setToolTip("现在不需要做这件事")
             box.addWidget(b)
             if detail:
                 dl = QLabel(_clean(detail))

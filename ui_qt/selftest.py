@@ -3007,7 +3007,8 @@ def t_veradv() -> None:
 
         from confirm import ChoiceDialog as _CD2 # noqa: PLC0415
 
-        _d2 = _CD2(t, None, "这件事要你拍板", ["微信 x × 适配层 y"], _pdmod.VERSION_OPTIONS)
+        _d2 = _CD2(t, None, "本机微信版本 x · 适配层 y 未实测", ["本机微信版本 x · 适配层 y"],
+                   _pdmod.VERSION_OPTIONS)
         ck("原生四选一带的是产品那四个选项（key 与台账逐字一致）",
            _d2.choice_keys == [o["key"] for o in _pdmod.VERSION_OPTIONS], str(_d2.choice_keys))
         _b0 = _d2.findChild(Btn, "choice_%s" % _pdmod.VERSION_OPTIONS[0]["key"])
@@ -3017,6 +3018,30 @@ def t_veradv() -> None:
            _d2.choice == _pdmod.VERSION_OPTIONS[0]["key"], str(_d2.choice))
         _d2.close()
         _d2.deleteLater()
+
+        # ── ★「点了没反应」的选项必须置灰（用户 2026-09-30 当面指正）──
+        # 反向两条一起钉：标了 disabled 的必须**真的不可点**，没标的必须**还能点**
+        # （只测前者的话，"一律置灰"也能过 —— 那会把能做的事也做废）。
+        _opts_grey = [dict(o) for o in _pdmod.VERSION_OPTIONS]
+        for _o in _opts_grey:
+            if _o["key"] == "update_host":
+                _o["disabled"] = True
+                _o["why"] = "本机依赖都满足，这一项不用做"
+        _d3 = _CD2(t, None, "本机微信版本 x · 适配层 y 未实测", ["依赖都满足"], _opts_grey)
+        _bg = _d3.findChild(Btn, "choice_update_host")
+        _bk = _d3.findChild(Btn, "choice_upgrade_adapter")
+        ck("后端标了 disabled 的选项在 Qt 里**真的置灰**（点不了，而不是点完没反应）",
+           _bg is not None and not _bg.isEnabled(), "enabled=%s" % (None if _bg is None else _bg.isEnabled()))
+        ck("★没标 disabled 的兄弟选项**仍可点**（不是一律置灰、把能做的也做废）",
+           _bk is not None and _bk.isEnabled(), "enabled=%s" % (None if _bk is None else _bk.isEnabled()))
+        ck("置灰的选项带了一句「为什么点不了」",
+           bool(_bg is not None and _bg.toolTip()), "tip=%r" % (None if _bg is None else _bg.toolTip()))
+        if _bg is not None:
+            _bg.click()
+        ck("置灰的按钮点了也不会把 key 写进 choice（防「灰了还能选」）",
+           _d3.choice == "", repr(_d3.choice))
+        _d3.close()
+        _d3.deleteLater()
 
         # ── advanced 页：布局/标定/种子/学习 ──
         wrap_a = panels_qt.build_panel(t, "advanced")

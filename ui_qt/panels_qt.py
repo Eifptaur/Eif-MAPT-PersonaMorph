@@ -1259,7 +1259,9 @@ def _status_text_for(status_id: str, st: dict) -> str:
         vm = st.get("version") or {}
         v = str(vm.get("wechat") or "").strip()
         a = str(vm.get("adapter") or "").strip()
-        return (("微信 %s × 适配层 %s" % (v, a or "-")) if v and v != "unknown" else "微信版本读不到")
+        # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」（用户 2026-09-30 当面指正的同一口径）
+        return (("本机微信版本 %s · 适配层 %s" % (v, a or "-")) if v and v != "unknown"
+                else "本机微信版本读不到")
     if sid in ("vsWhy", "ttsWhy"):
         # ⛔ 旧读法（st.tts/voice.ready）在 /api/status 里根本不存在 ⇒ 恒「读不到」
         #   （用户截图实锤：媒体页「引擎状态 检测中…→读不到」）。真值口径对齐 web
@@ -1364,8 +1366,10 @@ def _status_text_for(status_id: str, st: dict) -> str:
         ds = vm.get("decisions") or []
         if not ds:
             return "暂无"
-        nm = {"upgrade_adapter": "去升级适配层", "update_host": "去更新本体",
-              "allow_once": "仅本次允许", "wechat_side": "微信本身要处理", "none": "什么都不做"}
+        # ⛔ 文案铁律：「微信」只许指微信客户端；选项一律写成"用户能做的动作"（与
+        #    agent/pending_decisions.py::VERSION_OPTIONS 的 label **逐字一致**，两套 UI 不许各说各的）
+        nm = {"upgrade_adapter": "一键升级适配层", "update_host": "更新本体依赖",
+              "allow_once": "本次运行继续发送", "wechat_side": "我去微信那边看看", "none": "什么都不做"}
         return " ｜ ".join("%s · %s" % (nm.get(d.get("choice"), d.get("choice")),
                                         str(d.get("when") or "")[5:16]) for d in ds)
     if sid == "actStat":

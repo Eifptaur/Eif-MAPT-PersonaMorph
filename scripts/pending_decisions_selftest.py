@@ -48,14 +48,43 @@ try:
        keys == ["upgrade_adapter", "update_host", "allow_once", "wechat_side"], "、".join(keys))
     ok("每个选项都有给人看的文案", all(o.get("label") and o.get("detail") for o in PD.VERSION_OPTIONS))
     acts = {o["key"]: o["action"] for o in PD.VERSION_OPTIONS}
-    ok("「仅本次允许」＝allow_session", acts["allow_once"] == "allow_session", acts["allow_once"])
-    ok("「微信本身要处理」＝guidance（只给指引）", acts["wechat_side"] == "guidance", acts["wechat_side"])
+    ok("「本次运行继续发送」＝allow_session", acts["allow_once"] == "allow_session", acts["allow_once"])
+    ok("「我去微信那边看看」＝guidance（只给指引）", acts["wechat_side"] == "guidance", acts["wechat_side"])
     a4 = PD.apply_choice({"choice": "wechat_side", "options": PD.VERSION_OPTIONS})
-    ok("选「微信本身要处理」不带任何安装/降级动作", a4["action"] == "guidance" and not a4.get("cmd"),
+    ok("选「我去微信那边看看」不带任何安装/降级动作", a4["action"] == "guidance" and not a4.get("cmd"),
        "%s / cmd=%r" % (a4["action"], a4.get("cmd")))
     src = open(os.path.join(ROOT, "agent", "pending_decisions.py"), encoding="utf-8").read()
     ok("本模块自己不执行外部命令（不装包/不改微信）",
        all(k not in src for k in ("subprocess", "os.system", "pip install", "os.popen")))
+
+    print("── A2. 文案铁律（2026-09-30 用户当面指正后立）──")
+    # ⚠️ 这一段用**自己的一次性台账**：写进共享的 `DEC` 会把 B 段"第一次新建"污染成 False
+    #    （判据之间通过文件耦合过 —— 这正是要避免的）。
+    DEC2 = os.path.join(TMP, "pending_decisions_copy.json")
+    # ①「微信」只许指微信客户端：光秃秃的"微信"当主语 ⇒ 用户读成"我们的窗口在报错"
+    opts_zh = " ｜ ".join("%s：%s" % (o["label"], o["detail"]) for o in PD.VERSION_OPTIONS)
+    ok("选项文案里没有把「微信」当我家产品说的说法（如「微信本身要处理」）",
+       "微信本身要处理" not in opts_zh and "微信 " not in opts_zh, opts_zh[:80])
+    ok("选项 label 一律是「用户能做的动作」（祈使/我能…）",
+       all(any(o["label"].startswith(x) for x in ("一键", "更新", "本次", "我去")) for o in PD.VERSION_OPTIONS),
+       "、".join(o["label"] for o in PD.VERSION_OPTIONS))
+    ok("每条 detail 都写明点了会发生什么（起 job / 给指引 / 置灰）",
+       all(len(str(o.get("detail") or "")) >= 15 for o in PD.VERSION_OPTIONS))
+    # ② **反向断言**：标题里绝不许出现 `unknown`（英文缩写等于没说）；
+    #    读不到版本号时必须写「本机微信版本读不到」。
+    _it, _n = PD.ensure_version_decision("", "1.2.2.2", p=DEC2)
+    ok("读不到版本号 ⇒ 标题写「本机微信版本读不到」而不是 `unknown` / 光秃秃的「微信」",
+       "unknown" not in _it["title"] and "本机微信版本读不到" in _it["title"], _it["title"])
+    _it2, _n2 = PD.ensure_version_decision("4.1.13.65", "1.2.2.2", p=DEC2)
+    ok("读得到版本号 ⇒ 标题写「本机微信版本 4.1.13.65」",
+       _it2["title"].startswith("本机微信版本 4.1.13.65"), _it2["title"])
+    # ③ 否定式选项必须写明"什么**不受影响**"（只写"什么不做"= 同一类错误的镜像）
+    ok("「什么都不做」写明了「不影响发送」", "不影响发送" in PD.NONE_MESSAGE, PD.NONE_MESSAGE[:60])
+    # ⛔ 最严重那条：`none` 曾被读成"不发送" ⇒ 机器人静默失效，且与 `_strict()` 默认 False 自相矛盾
+    ok("「什么都不做」**绝不许**写成「不发送」",
+       "不发送" not in PD.NONE_MESSAGE
+       and "不发送" not in str(PD.apply_choice(None).get("message")))
+    ok("「什么都不做」的动作描述符＝none（不额外做事）", PD.apply_choice(None)["action"] == "none")
 
     print("── B. 同一对版本只问一次 ──")
     it1, new1 = PD.ensure_version_decision("4.1.13.65", "1.2.2.2", reason="没实测记录", p=DEC)
@@ -114,18 +143,75 @@ try:
        json.dumps(VM.load(MAT).get("runs"), ensure_ascii=False, sort_keys=True) == runs_before)
     VG.clear_allow()
 
-    print("── F. 「升级适配层 / 更新本体」只给命令，不立刻改环境 ──")
+    print("── F. 「升级适配层 / 更新本体依赖」只给命令，不立刻改环境 ──")
     it5, _n5 = PD.ensure_version_decision("4.1.13.65", "1.1.5.1", p=DEC)
     r5 = VG.decide(it5["id"], "upgrade_adapter", decisions_path=DEC, matrix_path=MAT)
     ok("动作＝upgrade_adapter 且带可复制命令",
        r5["action"]["action"] == "upgrade_adapter" and r5["action"]["cmd"], r5["action"].get("cmd"))
     ok("没有顺手放行（升级≠放行）", VG.is_allowed() is False)
-    ok("矩阵里记着「去升级适配层」", VM.decisions(VM.load(MAT), "4.1.13.65", "1.1.5.1")[-1]["choice"] == "upgrade_adapter")
+    ok("矩阵里记着「一键升级适配层」", VM.decisions(VM.load(MAT), "4.1.13.65", "1.1.5.1")[-1]["choice"] == "upgrade_adapter")
     it6, _n6 = PD.ensure_version_decision("4.1.13.65", "1.0.0.0", p=DEC)
     r6 = VG.decide(it6["id"], "update_host", decisions_path=DEC, matrix_path=MAT)
-    ok("动作＝heal_deps（更新本体走依赖自愈）", r6["action"]["action"] == "heal_deps", r6["action"]["action"])
+    ok("动作＝heal_deps（更新本体依赖走依赖自愈）", r6["action"]["action"] == "heal_deps", r6["action"]["action"])
+
+    print("── F2. 「点了没反应」的选项必须先置灰（用户 2026-09-30 当面指正）──")
+    # ⛔ 根因不是功能缺失，而是**点了没反应**：`update_host` 依赖齐全时 `action_cmd()` 返回空串。
+    #    判据要能分辨两种情况 ⇒ 一定要有**反向那条**（依赖缺时必须可点），否则"一律置灰"也能过。
+    _it7, _n7 = PD.ensure_version_decision("7.7.7", "1.2.2.2", p=os.path.join(TMP, "pd_avail.json"))
+    # ① 桩：假装本机依赖齐全（action_cmd 给空串）⇒ update_host 必须被标成不可用
+    _orig_cmd = VG.action_cmd
+    try:
+        VG.action_cmd = lambda ch: ("" if ch == "update_host" else "python x.py --update")
+        _av_ok = VG.option_availability(_it7, {"error": ""})
+        ok("依赖齐全 ⇒ `update_host` 标为不可用（不是点完等一个不来的结果）",
+           _av_ok["update_host"]["runnable"] is False and bool(_av_ok["update_host"]["why"]),
+           str(_av_ok["update_host"]))
+        ok("同一张单里 `upgrade_adapter` 仍可用（不是一律置灰）",
+           _av_ok["upgrade_adapter"]["runnable"] is True)
+        ok("只给指引 / 只放行本会话的选项**永远可点**",
+           _av_ok["wechat_side"]["runnable"] is True and _av_ok["allow_once"]["runnable"] is True)
+        # ② 反向：命令拿得到时 update_host 必须**可点**（证明这条判据能分辨，不是恒真/恒假）
+        VG.action_cmd = lambda ch: "python y.py"
+        _av_no = VG.option_availability(_it7, {})
+        ok("依赖缺（命令拿得到）⇒ `update_host` 可点（反向验证：判据能分辨）",
+           _av_no["update_host"]["runnable"] is True, str(_av_no["update_host"]))
+        # ③ decorate_item：给副本打标，**绝不许**把"环境态"写进台账
+        VG.action_cmd = lambda ch: ("" if ch == "update_host" else "python x.py --update")
+        _dec = VG.decorate_item(_it7, {})
+        _op = {o["key"]: o for o in _dec["options"]}
+        ok("decorate_item 给副本带上了 disabled / why",
+           _op["update_host"].get("disabled") is True and bool(_op["update_host"].get("why")),
+           str(_op["update_host"].get("why")))
+        ok("decorate_item 里可用的选项**不带** disabled（不是一律标灰）",
+           not _op["upgrade_adapter"].get("disabled"))
+        ok("★台账**没被写脏**（环境态不许进台账）",
+           all(not o.get("disabled") for o in PD.get(_it7["id"], os.path.join(TMP, "pd_avail.json"))["options"]))
+        # ④ 复用 `decorate_item` 时也得带上"旧文案换新口径"（历史单不许把废弃说法端给用户）
+        _dec2 = VG.decorate_item(_it7, {})
+        ok("decorate_item 同时把选项文案换成**当前口径**",
+           all(o["label"] in [x["label"] for x in PD.VERSION_OPTIONS] for o in _dec2["options"]),
+           str([o["label"] for o in _dec2["options"]]))
+    finally:
+        VG.action_cmd = _orig_cmd
 
     print("── G. 原子写与健壮性 ──")
+    # ★ 历史单（文案是开单那刻冻结的旧写法）渲染时必须换成当前口径，且**台账数据不许动**
+    _legacy = {"id": "version_mismatch|9|9", "options": [
+        {"key": "allow_once", "label": "仅本次允许", "detail": "只对本次运行放行发送，重启后重新拦"},
+        {"key": "wechat_side", "label": "微信本身要处理", "detail": "只给排查指引"},
+        {"key": "未来新选项", "label": "未来新选项", "detail": "认不出来"},
+    ]}
+    _co = PD.current_options(_legacy)
+    _gv = {o["key"]: o for o in _co}
+    ok("历史单的旧 label 被换成当前口径（仅本次允许 → 本次运行继续发送）",
+       _gv["allow_once"]["label"] == "本次运行继续发送", _gv["allow_once"]["label"])
+    ok("历史单的旧说法被换掉（微信本身要处理 → 我去微信那边看看）",
+       _gv["wechat_side"]["label"] == "我去微信那边看看", _gv["wechat_side"]["label"])
+    ok("★认不出的 key 原样保留（fail-open：宁可显示旧字，也不许把选项弄丢）",
+       _gv["未来新选项"]["label"] == "未来新选项")
+    ok("★current_options **不改原对象**（历史记录不许被就地篡改）",
+       _legacy["options"][0]["label"] == "仅本次允许")
+
     ok("没有 .tmp 残留", not os.path.exists(DEC + ".tmp"))
     raw = open(DEC, encoding="utf-8").read()
     parsed = json.loads(raw)

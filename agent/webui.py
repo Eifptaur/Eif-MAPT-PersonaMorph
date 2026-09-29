@@ -1658,11 +1658,19 @@ def _make_handler(parent):
                         from . import pending_decisions as _pd
                         _pnd = _vg2.pending()
                         _pit = _pnd.get("item") or {}
+                        _itopen = _pit if str(_pit.get("status")) == "open" else None
+                        # ⛔ 「其他都有 bug，只能选什么都不做」的根因是**点了没反应**：
+                        #   在服务端把"这一刻真能不能做"算出来（唯一判据 `action_cmd()`），
+                        #   让两套 UI（web / Qt）都能把坏选项**置灰并写明原因**，而不是点完等结果。
+                        _itopen = _vg2.decorate_item(_itopen, _pnd.get("status"))
                         st["pending_decisions"] = {
                             "open": len(_pd.open_items()),
                             "summary": _pd.summary(),
                             "needed": bool(_pnd.get("needed")),
-                            "item": _pit if str(_pit.get("status")) == "open" else None,
+                            # 严格模式（用户自己开了 version_gate.strict ⇒ 现在真的在拦发送）
+                            # 才允许用**模态**拦路；默认非严格 ⇒ 前端一律出非模态横幅，不挡用户。
+                            "strict": bool(_vg2._strict()),
+                            "item": _itopen,
                         }
                     except Exception as _pe:
                         st["pending_decisions"] = {"open": 0, "error": str(_pe)}
