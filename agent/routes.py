@@ -115,6 +115,11 @@ ROUTES = {
     "/api/ui/recalibrate": ("GET", "POST"),
     "/api/ui_fingerprint/forget": ("GET", "POST"),
     "/api/ui_fingerprint/take": ("GET", "POST"),
+    "/api/truth/export": ("GET",),
+    "/api/truth/list": ("GET",),
+    "/api/truth/stats": ("GET",),
+    "/api/truth/confirm": ("POST",),
+    "/api/truth/reject": ("POST",),
     "/api/update": ("GET",),
     "/api/update_apply": ("POST",),
     "/api/update_reset": ("POST",),
@@ -443,6 +448,21 @@ HANDLERS = {
     "/api/ui_fingerprint/take": {
         "GET": "_rapi_ui_fingerprint_take",
         "POST": "_rapi_ui_fingerprint_take_post",
+    },
+    "/api/truth/export": {
+        "GET": "_rapi_truth_export",
+    },
+    "/api/truth/list": {
+        "GET": "_rapi_truth_list",
+    },
+    "/api/truth/stats": {
+        "GET": "_rapi_truth_stats",
+    },
+    "/api/truth/confirm": {
+        "POST": "_rapi_truth_confirm_post",
+    },
+    "/api/truth/reject": {
+        "POST": "_rapi_truth_reject_post",
     },
     "/api/update_apply": {
         "POST": "_rapi_update_apply_post",

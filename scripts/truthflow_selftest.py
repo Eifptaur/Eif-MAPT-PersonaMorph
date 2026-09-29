@@ -155,5 +155,53 @@ ok("T10a 真值库文档写明「只有人核过才进硬指标」", _sm.has(_sr
 ok("T10b 真值库文档写明防自证（produced_by）", _sm.has(_src, "防自证"))
 ok("T10c 候选生成文档写明「不直接当真值」", _sm.has(_can, "不直接当真值"))
 
+print("\n── T11：审核链路（「素材→真值」必须真能被审）──")
+from PIL import Image as _Im # noqa: E402
+_src_dir = tempfile.mkdtemp(prefix="truthflow_src_")
+_img = os.path.join(_src_dir, "shot.png")
+_im = _Im.new("RGB", (400, 200), (250, 250, 250))
+_im.paste(_Im.new("RGB", (60, 20), (10, 10, 10)), (100, 60))     # 一块"文字"在 (100,60) 60×20
+_im.save(_img)
+TS.clear()
+TS.add("ocr_text", "shot.png", "上海", source=TS.SRC_PROPOSED, uncertainty=0.7,
+       produced_by="winrt", box=[100, 60, 60, 20], src=_img,
+       note="另一引擎没有相近读数")
+TS.add("ocr_text", "shot.png", "广州", source=TS.SRC_PROPOSED, uncertainty=0.5,
+       produced_by="winrt", note="没有 box/src（该项审不了图，应如实降级）")
+_out = tempfile.mkdtemp(prefix="truthflow_out_")
+_r = TS.export_pending(_out, limit=50)
+ok("T11a 导出待审包：清单 + 裁剪图都写出来了",
+   _r.get("ok") and os.path.exists(_r.get("list") or "") and _r.get("crops") == 1,
+   "count=%s crops=%s" % (_r.get("count"), _r.get("crops")))
+_crop = os.path.join(_out, "crops", "p1.png")
+ok("T11b 裁剪图**就是那块像素**（放大 3 倍：宽=(60+2*6)*3、高=(20+2*6)*3）",
+   os.path.exists(_crop) and _Im.open(_crop).size == ((60 + 12) * 3, (20 + 12) * 3),
+   str(_Im.open(_crop).size) if os.path.exists(_crop) else "没生成")
+ok("T11c 没有 box/src 的候选**如实降级**（不给假图、也不炸）",
+   TS.crop_for({"value": "广州"}, _out, "x") == "")
+_md = io.open(_r.get("list"), encoding="utf-8").read()
+ok("T11d 清单里写明「看图判」（不许让人凭字串猜）", "看图逐条判" in _md and "上海" in _md)
+TS.confirm("ocr_text", "shot.png", "上海", note="人核过")
+_c = TS.stats()
+ok("T11e 确认后：从待审移到人核（队列与统计同步更新）",
+   _c["human"] == 1 and _c["proposed"] == 1
+   and not any(v["value"] == "上海" for v in TS.pending(limit=50)), str(_c))
+TS.reject("ocr_text", "shot.png", "广州", why="原图没有这两个字")
+ok("T11f 否决后：从库里删掉并留痕（不会被当负面样本乱用）",
+   TS.stats()["proposed"] == 0 and bool(TS._load().get("_rejected")), str(TS.stats()))
+
+print("\n── T12：接线（控制台路由 + pmctl）──")
+from agent import routes as _rt # noqa: E402
+_need = ("/api/truth/stats", "/api/truth/list", "/api/truth/confirm", "/api/truth/reject",
+         "/api/truth/export")
+ok("T12a 五条真值路由在 `ROUTES` 与 `HANDLERS` 里都登记了（漏一个就是接不上）",
+   all(p in _rt.ROUTES and p in _rt.HANDLERS for p in _need),
+   str([p for p in _need if p not in _rt.ROUTES or p not in _rt.HANDLERS]))
+_pm = io.open(os.path.join(ROOT, "scripts", "pmctl.py"), encoding="utf-8").read()
+ok("T12b pmctl 有 `truth` 子命令与菜单项（人真能用它审）",
+   _sm.has(_pm, 'sub.add_parser("truth"') and _sm.has(_pm, "真值审核（素材→真值：看最可疑的那一撮）"))
+ok("T12c pmctl 的确认/否决前**必须提醒看图**（不给「凭字串猜」的机会）",
+   _sm.has(_pm, "看图") and _sm.has(_pm, "crops"))
+
 print("\n真值流水线判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

@@ -47,15 +47,24 @@ def from_image(path: str, produced_by: str = "") -> dict:
         return {"auto": [], "proposed": [], "why": "图打不开：%s" % str(e)[:60]}
     ref = os.path.basename(path)
     try:
-        a = [str(x[0]) for x in O.recognize(im)]
+        _ra = list(O.recognize(im))
     except Exception as e:  # noqa: BLE001
         log.debug("第一引擎读图失败（%s）：%s", ref, e)
-        a = []
+        _ra = []
     try:
-        b = [str(x[0]) for x in O._rapid_recognize(im)]
+        _rb = list(O._rapid_recognize(im))
     except Exception as e:  # noqa: BLE001
         log.debug("第二引擎读图失败（%s）：%s", ref, e)
-        b = []
+        _rb = []
+    a = [str(x[0]) for x in _ra]
+    b = [str(x[0]) for x in _rb]
+    # 每个字串记住它**在哪儿**（审核时要能看见那块像素）：优先第一引擎的框
+    box_of = {}
+    for _it in list(_ra) + list(_rb):
+        try:
+            box_of.setdefault(_norm(_it[0]), [int(_it[1]), int(_it[2]), int(_it[3]), int(_it[4])])
+        except Exception as e:  # noqa: BLE001
+            log.debug("候选框读不出（该条审核时看不到图）：%s", e)
     if not a and not b:
         return {"auto": [], "proposed": [], "why": "两个引擎都没读到（不产候选）"}
     na, nb = {_norm(x) for x in a if _norm(x)}, {_norm(x) for x in b if _norm(x)}
@@ -64,14 +73,14 @@ def from_image(path: str, produced_by: str = "") -> dict:
     _prod = produced_by or ("winrt+rapid" if (a and b) else ("winrt" if a else "rapid"))
     for s in sorted(both):
         TS.add("ocr_text", ref, s, source="auto:dual_agree", uncertainty=0.0,
-               produced_by=_prod, note="两引擎读数一致")
+               produced_by=_prod, note="两引擎读数一致", box=box_of.get(s), src=path)
         out["auto"].append(s)
     for s in sorted(only):
         # ⭐ 分级：另一个引擎**有没有读出相似的东西**，决定这条有多可疑
         _other = nb if s in na else na
         u, note = _grade(s, _other)
         TS.add("ocr_text", ref, s, source=TS.SRC_PROPOSED, uncertainty=u,
-               produced_by=_prod, note=note)
+               produced_by=_prod, note=note, box=box_of.get(s), src=path)
         out["proposed"].append(s)
     return out
 

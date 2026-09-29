@@ -3543,4 +3543,62 @@ X.XX
         def _rapi_ui_fingerprint_forget_post(self, path, data, parsed, method):
             # 原 _handle_body_request:2356
             self._ui_fingerprint_forget(data, urlparse(self.path).query)
+        # ── 真值审核：把「素材→真值」流水线接到控制台（不只是脚本能用）──────────
+        def _rapi_truth_stats(self, path, data, parsed, method):
+            try:
+                from . import truth_store as _ts
+                self._json({"ok": True, "result": _ts.stats(), "saving": _ts.review_saving()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_truth_list(self, path, data, parsed, method):
+            try:
+                from . import truth_store as _ts
+                from urllib.parse import parse_qs as _pq2
+                _q = _pq2(str(parsed.query or ""))
+                _lim = int((_q.get("limit") or ["20"])[0] or 20)
+                _kind = str((_q.get("kind") or [""])[0] or "")
+                self._json({"ok": True, "items": _ts.pending(limit=_lim, kind=_kind or None),
+                            "stats": _ts.stats(), "saving": _ts.review_saving()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _truth_act(self, data, confirm: bool):
+            """确认/否决一条待审真值。**按 (kind, ref, value) 定位**（列表里就有这三个字段）。"""
+            try:
+                from . import truth_store as _ts
+                d = data if isinstance(data, dict) else {}
+                kind = str(d.get("kind") or "ocr_text")
+                ref = str(d.get("ref") or "")
+                val = str(d.get("value") or "")
+                if not ref or not val:
+                    self._json({"ok": False, "error": "缺少 kind/ref/value（列表里那三项）"})
+                    return
+                if confirm:
+                    r = _ts.confirm(kind, ref, val, note=str(d.get("note") or "控制台确认"))
+                else:
+                    r = _ts.reject(kind, ref, val, why=str(d.get("why") or "控制台判定为错"))
+                self._json({"ok": bool(r.get("ok")), "result": r, "stats": _ts.stats()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_truth_confirm_post(self, path, data, parsed, method):
+            self._truth_act(data, True)
+
+        def _rapi_truth_reject_post(self, path, data, parsed, method):
+            self._truth_act(data, False)
+
+        def _rapi_truth_export(self, path, data, parsed, method):
+            """导出「待审包」：清单 md + 每条的放大裁剪图 ⇒ 人**看图**审，而不是看字串猜。"""
+            try:
+                from . import truth_store as _ts
+                from urllib.parse import parse_qs as _pq3
+                _q = _pq3(str(parsed.query or ""))
+                _lim = int((_q.get("limit") or ["200"])[0] or 200)
+                _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                _dir = os.path.join(_root, "报告", "真值待审-%s" % time.strftime("%Y%m%d-%H%M%S"))
+                self._json(_ts.export_pending(_dir, limit=_lim))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+
     return Handler

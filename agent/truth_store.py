@@ -65,7 +65,8 @@ def _key(kind: str, ref: str, value: str) -> str:
 
 
 def add(kind: str, ref: str, value: str, *, source: str = SRC_PROPOSED,
-        uncertainty: float = 1.0, produced_by: str = "", note: str = "") -> dict:
+        uncertainty: float = 1.0, produced_by: str = "", note: str = "",
+        box=None, src: str = "") -> dict:
     """加一条真值（或候选）。**`produced_by` 必须写明是谁产出的**（防自证）。
 
     `kind`：`ocr_text`（图上的字）/ `target`（某个命名目标在某坐标）。
@@ -83,6 +84,14 @@ def add(kind: str, ref: str, value: str, *, source: str = SRC_PROPOSED,
                    "uncertainty": round(float(uncertainty), 3),
                    "produced_by": produced_by, "note": str(note)[:200],
                    "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+        if box:
+            # ⛔ 审核要能**看见那块像素**：只给「哪张图 + 哪个字串」是审不了的
+            try:
+                it["box"] = [int(box[0]), int(box[1]), int(box[2]), int(box[3])]
+            except Exception as e:  # noqa: BLE001
+                log.debug("候选 box 形状不对（忽略）：%s", e)
+        if src:
+            it["src"] = str(src)      # 原图**完整路径**（`ref` 只是文件名，用来做键）
         db[k] = it
         if len(db) > MAX_ITEMS:
             # 淘汰：先丢"待审里最确定的"（信息量最少）；**人核过的永不淘汰**
@@ -199,6 +208,71 @@ def review_saving(review_above: float = None) -> dict:
             "saved_ratio": (1.0 - must / float(total)) if total else None,
             "pending_top": [(v.get("ref"), v.get("value", "")[:14], v.get("uncertainty"))
                             for v in pending(limit=3)]}
+
+
+def crop_for(item: dict, out_dir: str, name: str = "") -> str:
+    """把候选所在的**那块像素**裁出来存成小图（供人工审核）。返回路径；裁不了返回空。
+
+    ⛔ 为什么要它：审核的输入必须是**像素**，不是一串字。只给「哪张图的哪个字串」，
+       人没法判断"这字到底是不是这么写的"（这类候选往往就是小字/形近字）。
+    """
+    try:
+        box = item.get("box")
+        src = item.get("src")
+        if not box or not src or not os.path.exists(src):
+            return ""
+        from PIL import Image
+        os.makedirs(out_dir, exist_ok=True)
+        x, y, w, h = [int(v) for v in box[:4]]
+        _pad = 6                                   # 四周留点边，人眼更好评
+        im = Image.open(src).convert("RGB")
+        W, H = im.size
+        l, t = max(0, x - _pad), max(0, y - _pad)
+        r, b = min(W, x + max(1, w) + _pad), min(H, y + max(1, h) + _pad)
+        if r <= l or b <= t:
+            return ""
+        out = os.path.join(out_dir, (name or "crop") + ".png")
+        # 放大 3 倍：这类候选往往就是小字，原尺寸人眼也难判
+        im.crop((l, t, r, b)).resize(((r - l) * 3, (b - t) * 3), 1).save(out)
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("裁候选小图失败（该项审核时看不到图）：%s", e)
+        return ""
+
+
+def export_pending(out_dir: str, limit: int = 200, kind: str = None) -> dict:
+    """把待审队列导出成**人能直接审**的一包：`待审清单.md` + 每条的放大裁剪图。
+
+    这是"只让人确认不确定的"真正落地的那一步 —— 没有它，队列只是数据库里的一堆行。
+    """
+    items = pending(limit=max(1, int(limit)), kind=kind)
+    os.makedirs(out_dir, exist_ok=True)
+    lines = ["# 待审真值清单", "",
+             "来源：`data/truth_store.json` 里 `source=proposed` 的候选，按**不确定性降序**。",
+             "每条的 `crops/pN.png` 是那一块的放大裁剪（3 倍）——**看图逐条判**，别只看字串。", "",
+             "| # | 可疑度 | 字串 | 来源图 | 坐标 | 为什么可疑 |",
+             "|---|---|---|---|---|---|"]
+    n_crop = 0
+    for i, it in enumerate(items, 1):
+        _c = crop_for(it, os.path.join(out_dir, "crops"), "p%d" % i)
+        n_crop += 1 if _c else 0
+        _b = it.get("box") or []
+        lines.append("| %d | %s | `%s` | %s | %s | %s |" % (
+            i, it.get("uncertainty"), str(it.get("value"))[:24],
+            os.path.basename(str(it.get("src") or "")) or str(it.get("ref")),
+            ("%s,%s,%s,%s" % tuple(_b[:4])) if len(_b) >= 4 else "-",
+            str(it.get("note") or "")[:40]))
+    lines += ["", "## 怎么处理", "",
+              "· 确认对：`truth ok <序号>`（pmctl 或控制台「真值审核」面板）；",
+              "· 确认错：`truth no <序号>`（从库里删掉并留痕，不会被当成负面样本乱用）。"]
+    p_md = os.path.join(out_dir, "待审清单.md")
+    try:
+        with io.open(p_md, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception as e:  # noqa: BLE001
+        log.warning("写待审清单失败：%s", e)
+        p_md = ""
+    return {"ok": True, "out_dir": out_dir, "count": len(items), "crops": n_crop, "list": p_md}
 
 
 def clear(reason: str = "") -> int:

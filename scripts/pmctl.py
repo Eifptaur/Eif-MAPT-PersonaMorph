@@ -208,6 +208,91 @@ def cmd_verify(a) -> int:
     return 0
 
 
+def cmd_truth(a) -> int:
+    """**真值审核**：看最可疑的那一撮、确认/否决、导出待审包（看图审，不是看字串猜）。
+
+    子命令：`stats`（省了多少人工）· `list [n]`（按可疑度降序）· `show <n>`（第 n 条详情）·
+    `ok <n>`（确认对）· `no <n>`（判定错）· `export [n]`（导出清单 + 放大裁剪图）。
+    """
+    what = str(getattr(a, "what", "") or "stats").lower()
+    n = int(getattr(a, "index", 0) or 0)
+
+    def _items(limit: int = 0):
+        d = _req(a, "/api/truth/list?limit=%d" % (limit or 20))
+        if not d.get("ok"):
+            _die("读不到待审队列：%s" % (d.get("error") or d))
+        return list(d.get("items") or []), (d.get("saving") or {}), (d.get("stats") or {})
+
+    if what == "stats":
+        d = _req(a, "/api/truth/stats")
+        if not d.get("ok"):
+            _die("读不到真值统计：%s" % (d.get("error") or d))
+        r = d.get("result") or {}
+        s = d.get("saving") or {}
+        _kv("真值库", [("人核过（**只有它进硬指标**）", r.get("human")),
+                       ("机器自动确认（不进硬指标）", r.get("auto")),
+                       ("待审候选", r.get("proposed")),
+                       ("合计", r.get("total"))])
+        print("")
+        print("  逐条人看口径：合计 %s 条 ⇒ **必须逐条看 %s 条**（可疑度 ≥ %s）"
+              % (s.get("total"), s.get("must_review"), s.get("threshold")))
+        if s.get("saved_ratio") is not None:
+            print("  ⇒ 省下 **%.0f%%** 的逐条人工（其余：两引擎一致的可直接接受，低风险的快速处理）"
+                  % (100.0 * s["saved_ratio"]))
+        return 0
+
+    if what == "export":
+        d = _req(a, "/api/truth/export?limit=%d" % (n or 200), timeout=180.0)
+        if not d.get("ok"):
+            _die("导出失败：%s" % (d.get("error") or d))
+        print("已导出 %d 条待审（裁剪图 %d 张）到：" % (d.get("count", 0), d.get("crops", 0)))
+        print("  %s" % d.get("out_dir"))
+        print("  清单：%s" % d.get("list"))
+        print("  ⇒ 打开 `crops\\` 逐张看图，然后 `truth ok <序号>` / `truth no <序号>`。")
+        return 0
+
+    items, _sv, _st = _items(max(n, 20))
+    if not items:
+        print("待审队列是空的。（没有素材进过流水线时就是这样：先对素材跑一遍候选提取。）")
+        return 0
+    if what in ("list", ""):
+        print("待审候选（按可疑度降序，共显示 %d 条）：" % len(items))
+        for i, it in enumerate(items, 1):
+            b = it.get("box") or []
+            print("  %2d. [%s] `%s`  ← %s %s" % (
+                i, it.get("uncertainty"), str(it.get("value"))[:22],
+                os.path.basename(str(it.get("src") or "")) or it.get("ref"),
+                ("@%s,%s" % (b[0], b[1])) if len(b) >= 2 else ""))
+        print("")
+        print("  想看某条为什么可疑：`truth show <序号>`；导出看图审：`truth export`。")
+        return 0
+    if what == "show":
+        if n < 1 or n > len(items):
+            _die("序号超范围（1~%d）" % len(items))
+        it = items[n - 1]
+        _kv("第 %d 条" % n, [("可疑度", it.get("uncertainty")), ("字串", it.get("value")),
+                             ("来源图", os.path.basename(str(it.get("src") or "")) or it.get("ref")),
+                             ("坐标", it.get("box")), ("为什么可疑", it.get("note")),
+                             ("谁产出的", it.get("produced_by"))])
+        print("  ⚠️ 审核要**看图**：先 `truth export` 再打开 `crops\\p%d.png`。" % n)
+        return 0
+    if what in ("ok", "no"):
+        if n < 1 or n > len(items):
+            _die("序号超范围（1~%d）" % len(items))
+        it = items[n - 1]
+        body = {"kind": it.get("kind") or "ocr_text", "ref": it.get("ref"),
+                "value": it.get("value"), "note": "pmctl 确认"}
+        d = _req(a, "/api/truth/%s" % ("confirm" if what == "ok" else "reject"), "POST", body)
+        if not d.get("ok"):
+            _die("提交失败：%s" % (d.get("error") or d))
+        print("已%s：`%s`（%s）" % ("确认对" if what == "ok" else "判定为错",
+                                   str(it.get("value"))[:24], it.get("ref")))
+        print("  现在人核真值 %s 条（只有它能进硬指标）。" % (d.get("stats") or {}).get("human"))
+        return 0
+    _die("不认识的子命令：%s（可用：stats / list / show / ok / no / export）" % what)
+    return 2
+
+
 def cmd_check(a) -> int:
     t0 = time.time()
     d = _req(a, "/api/selfcheck", method="POST", body={}, timeout=300.0)
@@ -544,6 +629,7 @@ def menu(a) -> int:
         ("看「本机适配」档案（这台机器学到了什么）", lambda: cmd_adapt(_mk(a))),
         ("查问题（按症状查：发不出去 / 不回复 / 表情看不到…）", lambda: cmd_verify(_mk(a))),
         ("看最近在跟谁聊 / 看日志", lambda: _menu_sessions_logs(a)),
+        ("真值审核（素材→真值：看最可疑的那一撮）", lambda: _menu_truth(a)),
         ("低配模式（老机器卡：一键关掉吃 CPU 的特效）", lambda: _menu_lowspec(a)),
         ("开机自动启动（可选，默认不开）", lambda: _menu_autostart(a)),
         ("暂停 / 恢复机器人", lambda: _menu_pause(a)),
@@ -593,6 +679,28 @@ def menu(a) -> int:
             print("（这个操作出错了：%s）" % str(e)[:150])
             print("（可以选 8 生成反馈包，把文件发给作者。）")
         _ask("看完按回车回到菜单…", "")
+
+
+def _menu_truth(a) -> int:
+    """菜单里的"真值审核"：先给统计，再让你按序号确认/否决，或导出待审包（看图审）。"""
+    cmd_truth(_mk(a, what="stats"))
+    print("")
+    print("  1. 看最可疑的 20 条        2. 导出待审包（清单 + 放大裁剪图，**看图审**）")
+    print("  3. 确认第 N 条对           4. 判定第 N 条为错          0. 返回")
+    c = _ask("请输入数字后回车（直接回车＝0）：", "0") or "0"
+    if c == "1":
+        return cmd_truth(_mk(a, what="list", index=20))
+    if c == "2":
+        return cmd_truth(_mk(a, what="export", index=200))
+    if c in ("3", "4"):
+        # ⛔ 先让用户**看完图**再定：这里必须显式提醒"去打开 crops 图"，不给"凭字串猜"的机会
+        print("  ⚠️ 请先 `truth export` 并打开 `crops\pN.png` **看图**，再回来填序号。")
+        idx = _ask("第几条（序号）？", "")
+        if not idx or not str(idx).strip().isdigit():
+            print("  （没填有效序号，已返回。）")
+            return 0
+        return cmd_truth(_mk(a, what=("ok" if c == "3" else "no"), index=int(idx)))
+    return 0
 
 
 def _menu_sessions_logs(a) -> int:
@@ -673,6 +781,11 @@ def main(argv=None) -> int:
     sub.add_parser("doctor", help="status + adapt + check 一把跑完").set_defaults(func=cmd_doctor)
     p = sub.add_parser("verify", help="跑症状检验器（默认全部）"); p.add_argument("ids", nargs="*"); p.set_defaults(func=cmd_verify)
     p = sub.add_parser("check", help="体检"); p.set_defaults(func=cmd_check)
+    p = sub.add_parser("truth", help="真值审核（看最可疑的那一撮 / 确认 / 导出待审包）")
+    p.add_argument("what", nargs="?", default="stats",
+                   choices=("stats", "list", "show", "ok", "no", "export"))
+    p.add_argument("index", nargs="?", type=int, default=0)
+    p.set_defaults(func=cmd_truth)
     p = sub.add_parser("sessions", help="最近会话"); p.add_argument("n", nargs="?", type=int, default=10); p.set_defaults(func=cmd_sessions)
     p = sub.add_parser("logs", help="日志尾部"); p.add_argument("n", nargs="?", type=int, default=60); p.set_defaults(func=cmd_logs)
     p = sub.add_parser("cfg", help="读/写单个配置键"); p.add_argument("action", choices=("get", "set"))
