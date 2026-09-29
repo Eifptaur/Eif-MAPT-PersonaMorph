@@ -1023,6 +1023,22 @@ class Orchestrator:
             min_interval = max(30 * 60 * 1000, int(mem_cfg.get("consolidate_min_interval_ms") or 6 * 60 * 60 * 1000))
             if (time.time() * 1000) - (state.get("lastConsolidatedAt") or 0) < min_interval:
                 return
+            # ⭐ P0-3：**谷段优先**（降 Token 报告：后台记忆整理没有实时性要求 ⇒ 能等就等到谷段，
+            #   谷段价约为峰段一半，与缓存折扣乘法叠加）。⛔ 但**必须有兜底**：等超过
+            #   `consolidate_force_after_hours`（默认 24h）就不再等 —— 否则只白天开机的用户会永远不整理。
+            try:
+                from agent import offpeak as _op
+                _mem = (mem_cfg or {})
+                if _mem.get("consolidate_off_peak", True):
+                    _win = str(_mem.get("consolidate_off_peak_window") or _op.DEFAULT_WINDOW)
+                    _force_h = float(_mem.get("consolidate_force_after_hours") or 24)
+                    _waited_h = ((time.time() * 1000) - (state.get("lastConsolidatedAt") or 0)) / 3600000.0
+                    if (not _op.in_off_peak(window=_win)) and _waited_h < _force_h:
+                        log.info("记忆整理延后到谷段（%s；已等 %.1f 小时，超过 %.0f 小时就不再等）",
+                                 _op.describe(_win), _waited_h, _force_h)
+                        return
+            except Exception as e:  # noqa: BLE001
+                log.debug("谷段判定异常（照常整理，不阻塞）：%s", e)
             self._consolidating.add(chat_key)
             self._executor.submit(self._consolidate_worker, chat_key)
         except Exception as e:
@@ -1091,10 +1107,30 @@ class Orchestrator:
         self.memory.mark_consolidated(chat_key)
         log.info("[%s] 记忆整理完成：%d 位成员 + 发现 %d 位新人", chat_key, len(members), len(discovered))
 
+    def _background_api(self) -> dict:
+        """**后台任务**（记忆整理/摘要）用的模型档位。
+
+        ⛔ 口径更正（2026-09-29，降 Token 报告 P0-3）：`chat_completion(overrides=…)` 里的 `overrides`
+          是**整份 api 配置**（实现是 `api = overrides or effective_api()`），**不是"只覆盖模型"的增量**
+          —— 传 `{"model": "x"}` 会直接报"Base URL 未配置"。所以这里必须**先取整份、再改 model**。
+        配置了 `memory.consolidate_model` 就用便宜档；留空则与主模型一致（零行为变化）。
+        """
+        try:
+            from agent.llm import effective_api
+            api = dict(effective_api() or {})
+            cheap = str(((get_config() or {}).get("memory") or {}).get("consolidate_model") or "").strip()
+            if cheap:
+                api["model"] = cheap
+            return api
+        except Exception as e:  # noqa: BLE001
+            log.debug("取后台档位失败（按主模型跑）：%s", e)
+            return None
+
     def _extract_impressions(self, system: str, user: str, max_keep: int):
         try:
             resp = chat_completion([{"role": "system", "content": system},
-                                    {"role": "user", "content": user}], temperature=0.2)
+                                    {"role": "user", "content": user}], temperature=0.2,
+                                   overrides=self._background_api())
             content = str(resp.get("message", {}).get("content") or "")
             m = re.search(r"\{[\s\S]*\}", content)
             obj = json.loads(m.group(0)) if m else None

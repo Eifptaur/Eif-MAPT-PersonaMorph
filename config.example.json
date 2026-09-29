@@ -443,7 +443,12 @@
   "discover_max_members": 3,
   "share_across_groups": false,
   "shared_groups": [],
-  "summarize_on_exit": false
+  "summarize_on_exit": false,
+  "_note_consolidate": "后台记忆整理：没有实时性要求，所以最该省钱。consolidate_model 留空＝沿用主模型；填便宜档模型名则只给这类后台任务用。consolidate_off_peak=true 表示能等到谷段就在谷段跑（谷段价约峰段一半），窗口按你的供应商改。consolidate_force_after_hours 是兜底：等超过这么多小时就不再等，照常跑（防只白天开机的用户永远不整理）。",
+  "consolidate_model": "",
+  "consolidate_off_peak": true,
+  "consolidate_off_peak_window": "00:30-08:30",
+  "consolidate_force_after_hours": 24
  },
  "scoring": {
   "enabled": true,

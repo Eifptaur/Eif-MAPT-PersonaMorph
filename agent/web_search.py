@@ -140,9 +140,14 @@ def web_search(query: str) -> dict:
     if not clean:
         raise RuntimeError("查询词为空")
     cfg = get_config().get("web_search", {})
+    # ⚠️ 注意这行的折叠：**没配置（空串）会被折成 "bing"** ⇒ "默认配置"走的也是必应免费抓取，
+    #    而不是 DeepSeek 联网搜索。这正是 P0-1 想达到的效果（默认不再产生隐藏调用）。
     provider = str(cfg.get("provider") or "bing").lower()
-    # DeepSeek 联网搜索优先（复用主 API Key）；显式配置了第三方引擎（zhipu/bocha/baidu/metaso/custom）才按其用
-    if provider in ("", "bing", "google", "deepseek"):
+    # ⛔ 2026-09-29（降 Token 报告 P0-1）：**只有"没显式选引擎"或"显式选了 deepseek"才走 DeepSeek 联网**。
+    #    旧写法把 `"bing"`/`"google"` 也放进这条分支 ⇒ 用户明明配了必应，**每次搜索仍先发一次
+    #    DeepSeek 联网调用**（复用主 API Key）：那是纯隐藏开销 —— 新会话没有前缀可命中缓存，
+    #    一次约 8.8k token 全按 fresh 全价计费。验收口径：provider=bing 时该分支调用次数**归零**。
+    if provider in ("", "deepseek"):
         try:
             return _deepseek_search(clean)
         except Exception:

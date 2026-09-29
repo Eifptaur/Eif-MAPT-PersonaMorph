@@ -714,11 +714,56 @@ def _exec_read_video_url(ctx, args):
     return {"content": _image_parts(head, data_urls)}
 
 
+def _validate_send_args(messages: list, args: dict) -> str:
+    """**发送参数校验前置**（降 Token 报告 P0-2）：把"参数本身就错"这类**确定性失败**
+    挡在**碰界面之前**，返回人类可读原因；参数没问题返回空串。
+
+    为什么必须前置（省的不是这几行代码，是钱）：
+      · 参数错 → 发送层必然失败 → 失败回执回到模型 → 模型**整轮重发**（每轮 9-15k token，
+        且 fresh 部分按全价计费）⇒ 报告口径：这类重试每次 ≈9-15k，统计期 45 次失败 × 重试
+        推算是 40-67 万 token；
+      · 前置挡住后，模型拿到的是**确定性的原因**（"第 2 条是空的"），能直接改参数或放弃，
+        不需要重试整个回合。
+    ⛔ 只挡**确定错**（空内容/超长/@ 参数形状）；**不**替业务判"该不该发"（那是闸门的事）。
+    """
+    try:
+        texts = []
+        for item in (messages or []):
+            # `normalize_message_list` 之后元素是 str；防御性兼容 {"text": ...} 形状
+            t = str(item.get("text") if isinstance(item, dict) else item or "")
+            texts.append(t)
+        if not texts:
+            return "消息内容为空（messages 至少要有一条文本）"
+        if len(texts) > 20:
+            return "一次最多发 20 条（当前 %d 条）；要发更多请分几次调用" % len(texts)
+        for i, t in enumerate(texts, 1):
+            if not t.strip():
+                return "第 %d 条是空的（去掉这一条，或补上内容）" % i
+            if len(t) > 4000:
+                return ("第 %d 条太长了（%d 字，上限 4000）——拆成几条发，"
+                        "微信本身也不适合单条超长消息" % (i, len(t)))
+        au = args.get("at_user_id")
+        if au is not None and not str(au).strip():
+            return "at_user_id 传了但是空的：要 @ 人就填 wxid 或群昵称；不 @ 人就不要传这个字段"
+        rm = args.get("reply_to_message_id")
+        if rm is not None and not str(rm).strip():
+            return "reply_to_message_id 传了但是空的：要引用就填那条消息的 messageId；不引用就不要传"
+        return ""
+    except Exception as e: # noqa: BLE001
+        # 校验器自己出错**不许**把发送挡死：退回"不拦"，由发送层按原逻辑处理
+        log.debug("发送参数校验异常（按不拦处理）：%s", e)
+        return ""
+
+
 def _exec_send_message(ctx, args):
     try:
         messages = normalize_message_list(args.get("messages"))
         if not messages:
             return _err("消息内容为空")
+        _bad = _validate_send_args(messages, args or {})
+        if _bad:
+            log.info("发送参数不合格，已在碰界面前挡下（不触发重试）：%s", _bad[:120])
+            return _err("参数不合格：%s（这一类失败**不用重发**，改好参数再调用）" % _bad)
         # 引用时把被引用消息的原文 + 发送者名字带给发送层（用于定位头像/气泡，即便已滚出可视区）
         reply_text = ""
         reply_sender_name = ""
