@@ -93,23 +93,32 @@ ck("B8 表不存在也不炸", UFP.load(os.path.join(tempfile.mkdtemp(), "nope.j
 
 # ── C 自校验三态 ─────────────────────────────────────────────────────────
 print("[C] 自校验三态（放行 / 拦住 / 不判定）")
+# ⚠️ 2026-09-29：capture 现在走**带 200ms 缓存的抓帧**（同一流程里只抓一次整窗）⇒
+#   判据必须能清掉它，否则上一段缓存下来的画面会串味到下一段（曾把 C6/C8 弄红）。
+try:
+    UFP.reset_frame_cache()
+except Exception as e:  # noqa: BLE001
+    print("   （reset_frame_cache 不可用：%s）" % str(e)[:40])
 _orig_load, _orig_capture, _orig_key = UFP.load, UFP.capture, UFP.key
 FAKE_KEY = "wxTEST|adTEST|100x100|dpi96"
 UFP.key = lambda *a, **k: FAKE_KEY
 try:
     good = UFP.dhash(_icon("a"))
     UFP.load = lambda path=None: {FAKE_KEY: {"sidebar.moments": {"hash": good, "pt": [10, 10]}}}
-    UFP.capture = lambda gui, name, pts=None: {"ok": True, "hash": UFP.dhash(_icon("a"))}
+    # ⚠️ 桩要跟着 capture 的签名走：2026-09-29 给 capture 加了 img=（批量校验时复用同一帧）
+    UFP.capture = lambda gui, name, pts=None, img=None: {"ok": True, "hash": UFP.dhash(_icon("a"))}
     v1, i1 = UFP.verify(_G(), "sidebar.moments")
     ck("C1 指纹一致 ⇒ 放行", v1 is True and i1["dist"] <= UFP.MAX_DIST, i1["reason"])
 
-    UFP.capture = lambda gui, name, pts=None: {"ok": True, "hash": UFP.dhash(_icon("b"))}
+    # ⚠️ 桩要跟着 capture 的签名走：2026-09-29 给 capture 加了 img=（批量校验时复用同一帧）
+    UFP.capture = lambda gui, name, pts=None, img=None: {"ok": True, "hash": UFP.dhash(_icon("b"))}
     v2, i2 = UFP.verify(_G(), "sidebar.moments")
     ck("C2 指纹对不上 ⇒ 拦住（False，而不是 None）", v2 is False, "dist=%s" % i2["dist"])
     ck("C3 拦住的话术说清「不点」+「重新取指纹」",
        "不点" in i2["reason"] and "重新取指纹" in i2["reason"], i2["reason"][:70])
 
-    UFP.capture = lambda gui, name, pts=None: {"ok": False, "why": "取不到渲染区画面（窗口最小化）"}
+    # ⚠️ 桩要跟着 capture 的签名走：2026-09-29 给 capture 加了 img=（批量校验时复用同一帧）
+    UFP.capture = lambda gui, name, pts=None, img=None: {"ok": False, "why": "取不到渲染区画面（窗口最小化）"}
     v3, i3 = UFP.verify(_G(), "sidebar.moments")
     ck("C4 判据不可用 ⇒ 不冒充「对不上」（None 且说明原因）",
        v3 is None and "判据不可用" in i3["reason"], i3["reason"][:60])
@@ -124,6 +133,7 @@ try:
     _orig_grab = UFP._grab
     try:
         UFP._grab = lambda gui: None
+        UFP.reset_frame_cache()
         c1 = UFP.capture(_G(), "sidebar.moments", pts={"sidebar.moments": (10, 10)})
         ck("C6 抓不到画面 ⇒ 不写指纹（ok=False，理由说明）",
            c1.get("ok") is False and "取不到" in str(c1.get("why")), str(c1.get("why"))[:60])
@@ -132,6 +142,7 @@ try:
         ck("C7 画面近乎空白 ⇒ 不写指纹（不拿空白当「图标」）",
            c2.get("ok") is False and "空白" in str(c2.get("why")), str(c2.get("why"))[:60])
         UFP._grab = lambda gui: _icon("a")
+        UFP.reset_frame_cache()   # ⛔ 换了 _grab 桩就必须清帧缓存：否则会拿到上一段（空白帧）的缓存
         c3 = UFP.capture(_G(), "sidebar.moments", pts={"sidebar.moments": (24, 24)})
         ck("C8 正常画面 ⇒ 取到指纹（hash/pt/ts 齐全）",
            c3.get("ok") is True and len(c3.get("hash", "")) == 16 and c3.get("pt") and c3.get("ts"),

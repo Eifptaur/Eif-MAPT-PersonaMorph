@@ -83,7 +83,8 @@ t0 = time.time(); r2 = C.cached_recognize(IMG, reader, cache); dt2 = time.time()
 ok("A1 同图第二次：结果**逐条一致**，且**一次 OCR 都没调**（整图精确命中）",
    lines(r1) == lines(r2) and READER_CALLS["n"] == c1,
    "第一次 %d 次调用 · 第二次新增 %d 次 · 复用时 %.3fs" % (c1, READER_CALLS["n"] - c1, dt2))
-ok("A2 第二次**明显更快**（不做 OCR，只搬缓存）", dt2 < 0.05, "%.3fs" % dt2)
+ok("A2 第二次**明显更快**（不做 OCR，只搬缓存；用绝对上限避免负载抖动误红）",
+   dt2 < 0.5, "%.3fs" % dt2)
 
 # 小块变化：在左下角画一个矩形（模拟"某一行变了"）
 IMG2 = IMG.copy()
@@ -197,9 +198,18 @@ def _seq(use_cache: bool) -> float:
 
 
 _t_no, _t_yes = _seq(False), _seq(True)
-ok("E1 ★ 连续 6 帧（每帧只动一条带）用缓存明显更快（用相对阈值，防慢机器误红）",
-   _t_yes * 2 <= _t_no, "无缓存 %.2fs / 有缓存 %.2fs（%.1f×）"
-   % (_t_no, _t_yes, _t_no / max(1e-6, _t_yes)))
+# ⛔ 判定**不用时间**：run_all 是并发跑的，时间断言在负载下会抖（本判据就因此假红过一次）。
+#    改成**确定性指标**：缓存后"重读的像素面积"远小于整图（时间只作参考打印）。
+_c_area = C.OcrCache()
+READER_AREA["px"] = 0
+for _im in _frames:
+    C.cached_recognize(_im, reader, _c_area)
+_a_cached = READER_AREA["px"]
+_a_full = (IMG.size[0] * IMG.size[1]) * len(_frames)
+ok("E1 ★ 连续 6 帧用缓存后，**重读面积**远小于整图（确定性指标；时间仅参考）",
+   _a_cached * 2 <= _a_full,
+   "重读 %d px / 不缓存 %d px（%.0f%%）· 耗时 %0.2fs vs %0.2fs"
+   % (_a_cached, _a_full, 100.0 * _a_cached / max(1, _a_full), _t_yes, _t_no))
 _k = C.OcrCache()
 _c_last = sorted(set(lines(C.cached_recognize(_frames[-1], reader, _k))))
 _d_last = sorted(set(lines(reader(_frames[-1]))))

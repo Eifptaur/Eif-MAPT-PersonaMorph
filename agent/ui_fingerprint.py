@@ -30,6 +30,14 @@ FP_FILE = os.path.join(DATA_DIR, "ui_fingerprints.json")
 CROP = 48 # 目标点周围取多大一块（像素，渲染区坐标系）
 HASH_W, HASH_H = 9, 8
 MAX_DIST = 10 # 64 位 dHash 的汉明距离阈值（超过即判"不是同一个图标"）
+#: ⭐ 允许的**位置容差**（像素）：在 ±TOL_PX 窗口内取"最像"的那一版再比指纹。
+#: 为什么必须有它（实测，脚本 `scripts/ui_fp_measure.py`，355 个非空白位置）：
+#:   标定/渲染只要偏 1~3px，**79% 的位置**就会因类内距离（最大 48）超过阈值 10 而被误判成
+#:   "图标变了"（用户被迫反复"重新取指纹"）。加上 ±3px 取最优后，**类内最大距离降到 0、误拒 0/355**。
+#: 反过来说：容差只用来吸收"同一目标的小位移"，偏 10px 必须仍然判"不是"（判据里有反向锚守着）。
+TOL_PX = 3
+#: 抓图帧缓存：同一帧里连续校验多个目标时**只抓一次**（PrintWindow 整窗是这条链路上最贵的一步）
+FRAME_TTL_MS = 200
 
 
 # ── 基础 ────────────────────────────────────────────────────────────────
@@ -168,6 +176,38 @@ def _grab(gui):
         return None
 
 
+#: 最近一次抓图（`(img, gui_id, ts)`）：同一帧内多个目标只抓一次
+_LAST_GRAB = {"img": None, "who": None, "ts": 0.0}
+
+
+def grab_frame(gui, max_age_ms: int = None):
+    """**整窗抓图（带短时缓存）**：同一次校验流程里给多个目标取画面时只抓一次。
+
+    为什么要缓存：`_grab()` 走 PrintWindow/抓屏**整窗**，是这条链路上最贵的一步；
+    以前 `verify()` 每校验一个目标就抓一次（N 个目标 = N 次整窗截图）。
+    缓存口径：**同一窗口 + `FRAME_TTL_MS` 之内**才复用（过了就重抓，避免拿着旧画面下结论）。
+    """
+    age = (FRAME_TTL_MS if max_age_ms is None else int(max_age_ms))
+    now = time.time() * 1000.0
+    who = None
+    try:
+        who = (id(gui), tuple(getattr(gui, "render_rect", ()) or ()))
+    except Exception:
+        who = None
+    if (_LAST_GRAB["img"] is not None and _LAST_GRAB["who"] == who
+            and (now - _LAST_GRAB["ts"]) <= age):
+        return _LAST_GRAB["img"]
+    img = _grab(gui)
+    if img is not None:
+        _LAST_GRAB.update({"img": img, "who": who, "ts": now})
+    return img
+
+
+def reset_frame_cache() -> None:
+    """清掉抓图帧缓存（窗口移动/尺寸变化后必须清，否则会拿旧画面下结论）。"""
+    _LAST_GRAB.update({"img": None, "who": None, "ts": 0.0})
+
+
 def _crop(img, pt_render, size=CROP):
     """按渲染区相对点取一块（夹在图像内）。返回 (crop, 实际中心)。"""
     try:
@@ -195,7 +235,7 @@ def _stats(crop):
         return 0.0, 0.0
 
 
-def capture(gui, name: str, pts: dict = None) -> dict:
+def capture(gui, name: str, pts: dict = None, img=None) -> dict:
     """给一个命名目标取指纹。返回记录 dict（取不到时 `{"ok": False, "why": ...}`）。"""
     try:
         from . import wechat_ui as _wu
@@ -206,7 +246,7 @@ def capture(gui, name: str, pts: dict = None) -> dict:
                 return {"ok": False, "why": "算不出「%s」的坐标（图标库没有它 / 标定失败）" % name}
             r = gui.render_rect
             rec[name] = (int(pos[0] - r[0]), int(pos[1] - r[1]))
-        img = _grab(gui)
+        img = img if img is not None else grab_frame(gui)   # 批量时由调用方传同一帧
         if img is None:
             return {"ok": False, "why": "取不到渲染区画面（窗口最小化或被完全遮住）"}
         crop, center = _crop(img, rec[name])
@@ -273,7 +313,52 @@ def save(db: dict, path: str = None) -> bool:
 
 # ── 点击前自校验 ────────────────────────────────────────────────────────
 
-def verify(gui, name: str, max_dist: int = MAX_DIST) -> tuple:
+def _last_frame(gui, img=None):
+    """verify 需要整图来做"位置容差搜索"：优先用调用方传入的那一帧，否则取当前帧。"""
+    if img is not None:
+        return img
+    _im = grab_frame(gui)
+    return _im
+
+
+def _match_near(img, pt, ref_hash: str, radius: int = 0):
+    """在 `pt` 周围 ±radius 范围内找**最像参考**的那一版裁剪。
+
+    返回 `(距离, (dx,dy), 当前哈希, 均值, 标准差)`；radius=0 时等价于"就按这个点比"。
+    ⛔ 这一层只吸收"同一目标的小位移"（实测 ±3px 内同类距离可降到 0），**不是放宽阈值**：
+      偏得远（判据里用 10px 验）照样判"不是"。
+    """
+    best = (64, (0, 0), "", 0.0, 0.0)
+    offs = [(0, 0)]
+    for r in range(1, max(1, int(radius)) + 1):
+        offs += [(r, 0), (-r, 0), (0, r), (0, -r), (r, r), (-r, -r), (r, -r), (-r, r)]
+    for dx, dy in offs:
+        crop, _c = _crop(img, (pt[0] + dx, pt[1] + dy))
+        if crop is None:
+            continue
+        mean, std = _stats(crop)
+        d = dist(dhash(crop), ref_hash)
+        if d < best[0] or (d == best[0] and (dx, dy) == (0, 0)):
+            best = (d, (dx, dy), dhash(crop), mean, std)
+    return best
+
+
+def verify_many(gui, names, max_dist: int = None, tol_px: int = None, pts: dict = None) -> dict:
+    """**一次抓图、批量校验**（同一个流程里要校验多个目标时用这个）。
+
+    为什么要它：`verify()` 每个目标都会抓一次**整窗**（PrintWindow/抓屏是这条链路上最贵的一步）
+    ⇒ N 个目标 = N 次整窗截图。这里只抓一次并共享给所有目标。
+    """
+    img = grab_frame(gui)
+    out = {}
+    for n in list(names or []):
+        out[n] = verify(gui, n, max_dist=(MAX_DIST if max_dist is None else max_dist),
+                        tol_px=(TOL_PX if tol_px is None else tol_px), img=img, pts=pts)
+    return out
+
+
+def verify(gui, name: str, max_dist: int = MAX_DIST, tol_px: int = None, img=None,
+           pts: dict = None) -> tuple:
     """点击前自校验。返回 (verdict, info)：
 
       verdict=True  ⇒ 指纹对得上（或历史指纹"模糊接近"），放行
@@ -288,15 +373,26 @@ def verify(gui, name: str, max_dist: int = MAX_DIST) -> tuple:
     if not isinstance(rec, dict) or not rec.get("hash"):
         return None, {"reason": "本环境（%s）还没有「%s」的指纹记录，放行但留痕" % (k, name),
                       "dist": None, "have": len(bucket), "key": k}
-    cur = capture(gui, name)
+    cur = capture(gui, name, pts=pts, img=img)   # 调用方知道坐标时直接给，省一次坐标推算
     if not cur.get("ok"):
         # 抓不到画面 ⇒ 自检不可用，**不冒充"对不上"**（也不当"对得上"）
         return None, {"reason": "判据不可用：%s" % cur.get("why"), "dist": None,
                       "have": len(bucket), "key": k}
-    d = dist(cur["hash"], rec["hash"])
+    _rad = TOL_PX if tol_px is None else max(0, int(tol_px))
+    _pt = cur.get("pt")
+    if _rad <= 0 or not _pt:
+        # ⛔ 两条都要走**老路径**：`_rad<=0`＝调用方明确不要容差；拿不到 pt＝做不了位移搜索。
+        #    这时**必须直接比 `capture` 返回的那个哈希**（别自己再去读帧）——
+        #    第一版就是在 tol_px=0 时也去重新裁剪比对，把"capture 的返回值"绕过去了，
+        #    原有判据（把 capture 打桩成返回指定哈希）当场红。
+        d, off = dist(cur.get("hash", ""), rec["hash"]), (0, 0)
+    else:
+        d, off, _h, _m, _s = _match_near(_last_frame(gui, img), _pt, rec["hash"], _rad)
     if d <= max_dist:
-        return True, {"reason": "指纹一致（距离 %d/%d）" % (d, max_dist), "dist": d,
-                      "have": len(bucket), "key": k}
+        _hint = ("（位置容差内最像的一版在 %+d,%+d px 处）" % (off[0], off[1])
+                 if off != (0, 0) else "")
+        return True, {"reason": "指纹一致（距离 %d/%d）%s" % (d, max_dist, _hint), "dist": d,
+                      "off": list(off), "have": len(bucket), "key": k}
     return False, {"reason": ("图标指纹对不上（距离 %d > 阈值 %d）：这个位置上现在看着"
                               "不像原来的「%s」——微信可能更新了 UI 或改了窗口尺寸。"
                               "按「看不清就不点」处理，请到控制台点一次「重新取指纹」"
