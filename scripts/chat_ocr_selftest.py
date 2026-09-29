@@ -160,8 +160,10 @@ ck("F8 源码锚：`_band_name` 三档扫描改择优（不再第一档返回）
 ck("F9 源码锚：`_band_name` 接 `cands`（线上路径靠它择优）",
    "def _band_name(img, y_abs: int, cands=None)" in _ocr_src, "")
 # ⭐ 第一候选档＝"绿带上半行 × 绿像素全宽裸读"（2026-09-29 真机实测两例读全）
+# ⚠️ 2026-09-30 更新：调用改成**限域版** `x_max=int(_pl)`（防裁进聊天区，见 F16/F17），
+#    所以这里的字面锚同步改成不依赖 `x_max` 的写法（原锚指"这一档存在"，F17 另管限域）。
 ck("F10 源码锚：`_band_name` 有「绿带上半行整宽裸读」这一档",
-   _sm.has(_ocr_src, "_green_span(img, int(y0), int(y1))"), "")
+   _sm.has(_ocr_src, "_green_span(img, int(y0), int(y1)") and "绿带上半行整宽裸读" in _ocr_src, "")
 ck("F11 `_green_span` 与 `_green_x` 是**两个东西**（前者是绿块横界、后者是不含头像的取样窗；混用会砍掉名字开头）",
    "def _green_span(" in _ocr_src and "不含头像" in _ocr_src, "")
 # ⚠️ **诚实标注已知局限**（无候选集时纯串面择优做不到可靠——残字与"完整+时间戳残留"无法区分）：
@@ -178,6 +180,31 @@ ck("F13 反向对照：**有**候选集时完整的那份一定更高（证明�
 ck("F14 源码锚：三档循环**不再重置** `_best_*`（只允许声明一次）",
    _ocr_src.count('_best_w, _best_s = "", -1.0') == 1,
    "出现 %d 次" % _ocr_src.count('_best_w, _best_s = "", -1.0'))
+# ⛔ 回归锚（2026-09-30 发现并修）：`_green_span` **必须限域**，否则会裁进聊天区。
+#   实测：`wechat/6c29e9f4` 聊天区有一段 963px 宽的浅绿底，比列表绿底行（203px）长得多 ⇒
+#   不限域时"最长连续绿段"选中聊天区 ⇒ `_band_name` 读出聊天区英文正文
+#   `article/intertextuality-and-parallelomania`（真值 `E`）⇒ 污染 `highlight().name`。
+#   覆盖面：32 条绿带里 19 条（59%）横向越界，最严重 1378px。
+ck("F16 源码锚：`_green_span` 支持限域扫描（防裁进聊天区）",
+   "def _green_span(img, y0: int, y1: int, ratio: float = 0.5, x_max: int = 0)" in _ocr_src, "")
+ck("F17 源码锚：生产调用点 `_band_name` **传了** `x_max`（限域真的生效，不是只加了参数）",
+   _sm.has(_ocr_src, "_green_span(img, int(y0), int(y1), x_max=int(_pl))"), "")
+# 行为验证（不只看源码）：限域后横界必须落在列表区内
+try:
+    import numpy as _np
+    _gi = _np.zeros((60, 800, 3), dtype=_np.uint8)
+    _gi[:, 60:300] = (81, 167, 116)      # 列表区绿底行（宽 240）
+    _gi[:, 400:790] = (169, 212, 196)    # 聊天区更长的浅绿（宽 390）—— 更"长"，会被不限域选中
+    from PIL import Image as _Im
+    _gimg = _Im.fromarray(_gi)
+    _full = ocr._green_span(_gimg, 0, 59)
+    _bnd = ocr._green_span(_gimg, 0, 59, x_max=310)
+    ck("F18 行为验证：不限域会选中聊天区那段更长的绿（复现缺陷）",
+       _full[0] >= 380, "不限域得到 %s（应落进聊天区 400~790）" % (_full,))
+    ck("F19 行为验证：限域后横界落在列表区（修复生效）",
+       _bnd[0] < 310 and _bnd[1] < 310, "限域得到 %s（应落在 <310 的列表区）" % (_bnd,))
+except Exception as _e:
+    ck("F18/F19 `_green_span` 限域行为验证", False, "构造图失败：%r" % (_e,))
 
 # ── 1.13 相对日词**形近误读**容错（用户 2026-09-30 当面指正：`胙`是月字旁，应是日字旁的`昨`）──
 # 起因：实测报告里读出 `微信团队胙天`。`昨`=U+6628（日旁）、`胙`=U+80D9（月旁）——形近误读。

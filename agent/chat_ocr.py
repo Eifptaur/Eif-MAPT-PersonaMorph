@@ -2309,7 +2309,7 @@ def _green_x(img):
     return max(0, x1 - 130), x1
 
 
-def _green_span(img, y0: int, y1: int, ratio: float = 0.5) -> tuple:
+def _green_span(img, y0: int, y1: int, ratio: float = 0.5, x_max: int = 0) -> tuple:
     """**绿块的真实横向边界** `(x0, x1)`：在 `y0..y1` 这几行里逐列量绿占比，取占比 > `ratio` 的连续段。
 
     ⚠️ 与 `_green_x()` **不是一回事**，别混用（本轮实测踩过）：
@@ -2317,6 +2317,14 @@ def _green_span(img, y0: int, y1: int, ratio: float = 0.5) -> tuple:
         拿它当横界会**砍掉名字开头**（实测 `aaa偷啃使` → `偷啃使`）；
       · `_green_span()` ＝**绿像素实际铺到哪儿**（含头像），才是裁剪该用的边界。
     量不出（这几行几乎没有绿）⇒ 返回 `(0, 0)`，调用方据此跳过这一档（**不猜**）。
+
+    ⛔ `x_max`（>0 时生效）＝**扫描右界**，必须由调用方传"会话列表区右沿"（`pane_left`）。
+    为什么必须限域：本函数取的是"**最长连续绿段**"，一旦不限域，**右侧聊天区里那块更长的绿色**
+    （实测 `wechat/6c29e9f4`：聊天区一段 963px 宽的浅绿底，而列表绿底行只有 ~200px）
+    会被选为"绿块横界" ⇒ `_band_name` 裁到**聊天区**、读出**聊天区的英文正文**
+    （实测 `article/intertextuality-and-parallelomania`，而该行真值会话名是 `E`）⇒ 污染身份判据。
+    覆盖面实测：**32 条绿带里 19 条（59%）横向越界**，最严重越界 1378px。
+    ⇒ 默认 0（全图，保历史行为）；**生产调用点（`_band_name`）一律传 `pane_left`**。
     """
     x0 = x1 = 0
     try:
@@ -2325,7 +2333,9 @@ def _green_span(img, y0: int, y1: int, ratio: float = 0.5) -> tuple:
         _y0, _y1 = max(0, int(y0)), min(img.size[1] - 1, int(y1))
         if _y1 <= _y0:
             return 0, 0
-        sub = rgb[_y0:_y1 + 1]
+        _xm = int(x_max) if int(x_max or 0) > 0 else img.size[0]
+        _xm = max(1, min(int(_xm), img.size[0]))
+        sub = rgb[_y0:_y1 + 1, :_xm]
         r, g, b = sub[:, :, 0], sub[:, :, 1], sub[:, :, 2]
         gm = (((np.abs(r - GREEN[0]) <= GREEN_TOL) & (np.abs(g - GREEN[1]) <= GREEN_TOL)
                & (np.abs(b - GREEN[2]) <= GREEN_TOL))
@@ -2766,9 +2776,13 @@ def _band_name(img, y_abs: int, cands=None) -> str:
         #      · 绿像素全宽 ⇒ 横向不靠 `pane_left` 猜（那个值在 150% DPI 图上会偏，实测偏掉名字开头）；
         #      · 含头像也没关系 —— 头像是图形、OCR 只吐文字，实测未污染读数（整带读才带进聊天区内容）。
         #    ⛔ 但仍然**不单独采信**：只把它并进下面的择优池（与三档一起按 `_name_score` 比）。
+        #    ⛔⛔ **必须限域到 `_pl`**（2026-09-30 实测修的）：不限域时聊天区那块更长的绿底
+        #      （`6c29e9f4` 聊天区 963px vs 列表 203px）会被选为横界 ⇒ 裁出**聊天区英文正文**
+        #      （读到 `article/intertextuality-and-parallelomania`，真值是 `E`）。
+        #      32 条绿带实测 19 条（59%）越界。限域后横界 158~361（正确落在列表区）。
         _best_w, _best_s = "", -1.0
         try:
-            _gx0, _gx1 = _green_span(img, int(y0), int(y1))
+            _gx0, _gx1 = _green_span(img, int(y0), int(y1), x_max=int(_pl))
             if _gx1 - _gx0 >= 24 and _hy1 - _hy0 >= 8:
                 _gc = img.crop((_gx0, _hy0, _gx1, _hy1))
                 _gw = clean("".join(str(i[0]) for i in recognize_dual(_gc))).strip()
