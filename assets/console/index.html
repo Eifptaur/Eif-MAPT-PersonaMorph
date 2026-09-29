@@ -2606,6 +2606,33 @@ async function getJSON(url, opts){
   }
 }
 
+// ── 「不打扰」开关的两道**前端**防线（2026-09-29 现场：整份回写把没被回填的复选框写下了盘）────
+// ① `window._touchedCfg`＝用户**亲手点过**的 `data-cfg` 键（代理监听收集；程序性填表不算）；
+//    `syncFromForm` 见到这三个键且用户没亲手点过 ⇒ **跳过不收集**（保留服务端那份值）；
+// ② 覆盖 `getJSON`：给 `/api/config` 的 POST 统一带上 `_touched` 声明 —— 全站有 10 处提交点，
+//    只能在唯一入口做，逐个改必然漏。老客户端没这个字段 ⇒ 后端只审计不拦（不破坏兼容）。
+window._touchedCfg = window._touchedCfg || new Set();
+const SAFE_SWITCH_KEYS = ['wechat.background_only', 'input.allow_real_fallback', 'ui.allow_foreground'];
+document.addEventListener('change', (e)=>{
+  const el = e.target;
+  if(!el || !el.dataset || !el.dataset.cfg) return;
+  if(window._applying) return;                 // 程序性填表不算"用户改过"
+  window._touchedCfg.add(el.dataset.cfg);
+}, true);
+const _getJSONRaw = getJSON;
+getJSON = async function(url, opts){
+  if(url === '/api/config' && opts && opts.method === 'POST' && typeof opts.body === 'string'){
+    try{
+      const _o = JSON.parse(opts.body);
+      _o._touched = Array.from(window._touchedCfg);
+      opts.body = JSON.stringify(_o);
+    }catch(err){ /* 解析不了就原样提交（后端按老客户端处理） */ }
+  }
+  const _r = await _getJSONRaw(url, opts);
+  if(url === '/api/config' && opts && opts.method === 'POST') window._touchedCfg.clear();
+  return _r;
+};
+
 function getPath(obj, path){ let o=obj; for(const k of String(path).split('.')){ if(o==null) return undefined; o=o[k]; } return o; }
 function setPath(obj, path, v){ const ks=String(path).split('.'); let o=obj; for(let i=0;i<ks.length-1;i++){ if(o[ks[i]]==null) o[ks[i]]={}; o=o[ks[i]]; } o[ks[ks.length-1]]=v; }
 
@@ -2705,6 +2732,12 @@ function ttsSyncRows(){
 function syncFromForm(){
   document.querySelectorAll('[data-cfg]').forEach(el=>{
     const path = el.dataset.cfg;
+    // ⛔ 2026-09-29 现场（另一台机器）：报告里「只走后台」被关、真鼠标兜底被开 ⇒ 抢窗口/动鼠标。
+    //    查证＝**整份回写**把没被正确回填的复选框（值 undefined ⇒ checked 默认 false）写下了盘。
+    //    ⇒ 这三个"不打扰"开关：**没被用户亲手点过就不改动它**（保留服务端那份值），
+    //      只有真点过（记在 window._touchedCfg）才收集进 payload。
+    if(el.type==='checkbox' && SAFE_SWITCH_KEYS.indexOf(path) >= 0
+       && !(window._touchedCfg && window._touchedCfg.has(path))){ return; }
     if(path === 'wechat.group_name_white_list'){ setPath(cfg, path, wlList.slice()); return; }
     let v;
     if(el.type==='checkbox'){

@@ -2182,6 +2182,13 @@ def _make_handler(parent):
 
         def _rapi_config_post(self, path, data, parsed, method):
             # 原 _handle_body_request:1108
+            # ⭐ `_touched`＝**用户在这次保存里亲手点过哪些键**（前端在真点复选框时收集）。
+            #    用途：让 `config.guard_safe_switches` 拦住"没被亲手点过却要翻到不安全侧"的写入
+            #    （现场：整份回写时某个复选框没回填 ⇒ 把「只走后台」的 true 覆盖成 false）。
+            _touched = None
+            if isinstance(data, dict) and "_touched" in data:
+                _tv = data.pop("_touched")
+                _touched = [str(x) for x in _tv] if isinstance(_tv, (list, tuple, set)) else []
             try:
                 new_cfg = data if isinstance(data, dict) and data else get_config()
                 # 部分字段保存不丢段：与当前配置深合并（新值优先，缺失键保留旧值）
@@ -2200,7 +2207,24 @@ def _make_handler(parent):
                     #   `{ok:false}`，可**内存里那份已经被换掉了**——于是"这项能力实际上是开着的"，
                     #   用户却被告知没保存；重启后它又悄悄变回旧的（状态前后不一致，最难查）。
                     #   ⇒ 顺序倒过来：**先落盘、成了再换内存**（盘与内存要么一起新、要么一起旧）。
-                    save_config(new_cfg)
+                    # 把"用户亲手点过哪些键"交给写盘咽喉（守卫据此决定拦/放行）
+                    try:
+                        from . import config as _cfgmod
+                        _cfgmod._SAVE_TOUCHED["v"] = _touched
+                        _cfgmod._SAVE_TOUCHED["src"] = "console"
+                    except Exception as e: # noqa: BLE001
+                        log.debug("声明 touched 失败（按老客户端处理）：%s", e)
+                    try:
+                        save_config(new_cfg)
+                    finally:
+                        try:
+                            from . import config as _cfgmod2
+                            _cfgmod2._SAVE_TOUCHED["v"] = None
+                            _cfgmod2._SAVE_TOUCHED["src"] = ""
+                        except Exception as e: # noqa: BLE001
+                            # 清不掉声明最坏后果＝"下一次保存被当成老客户端（只审计不拦）"，
+                            # 不致命但要留痕（本仓静默点棘轮只许降）
+                            log.debug("清理 touched 声明失败（下次保存按老客户端处理）：%s", e)
                     set_config(new_cfg)
                     if parent.on_save:
                         parent.on_save(new_cfg)

@@ -954,6 +954,84 @@ def set_config(cfg: dict) -> None:
     _config_stamp = _stamp(CONFIG_FILE)
 
 
+# ── 「不打扰」硬开关：不许被"连带"翻到不安全的一侧 ─────────────────────
+# 现场（2026-09-29 群相反馈 · 另一台机器）：用户没主动关，但报告里 `wechat.background_only=False`、
+# `input.allow_real_fallback=True` ⇒ 结果抢窗口/动鼠标。查证：
+#   · 默认值、`_safe_defaults()` 一次性迁移、`config.example.json` **三者都是安全侧**；
+#   · 后端 `/api/config` 也是 `deep_merge(get_config(), data)`（提交里有才覆盖）；
+#   ⇒ 唯一能把它翻过去的形态＝**前端整份回写**：`syncFromForm()` 把页面上**所有** `[data-cfg]`
+#     收集成一份 cfg 再 POST，其中某个复选框**没被正确回填**（值 undefined ⇒ checked 默认 false）
+#     就会把磁盘上的 `true` 覆盖成 `false`。
+# ⇒ 三道防线（本函数是第二道；第一道在前端"没被亲手点过就不改动"，第三道是审计）：
+SAFE_SWITCHES = {
+    "wechat.background_only": True,     # 只走后台：安全侧＝开
+    "input.allow_real_fallback": False, # 真鼠标兜底：安全侧＝关
+    "ui.allow_foreground": False,       # 允许置前：安全侧＝关
+}
+AUDIT_PATH = os.path.join(DATA_DIR, "config_audit.jsonl")   # 翻转审计（只记键/新旧值/来源/时间）
+
+
+def _audit_flip(key: str, old, new, source: str, action: str) -> None:
+    """把一次"安全开关被改动"记进 `data/config_audit.jsonl`（**只记键、值、来源、时间**，无隐私）。"""
+    try:
+        import json as _json
+        import time as _time
+        os.makedirs(DATA_DIR, exist_ok=True)
+        line = _json.dumps({"t": _time.strftime("%Y-%m-%d %H:%M:%S"), "key": key,
+                            "old": bool(old), "new": bool(new), "src": str(source or "?"),
+                            "action": action}, ensure_ascii=False)
+        with open(AUDIT_PATH, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+        log.info("安全开关被改动[%s]：%s %s → %s（来源 %s）", action, key, bool(old), bool(new), source)
+    except Exception as e: # noqa: BLE001
+        log.debug("安全开关审计写失败（忽略）：%s", e)
+
+
+def guard_safe_switches(cfg: dict, touched=None, source: str = "unknown",
+                        cur: dict = None) -> list:
+    """拦下/记录「不打扰」开关的**非用户主动**翻转；返回 `[(key, old, new, action)]`。
+
+    · `touched`＝**用户亲手点过**的键集合（控制台在真点复选框时收集）；
+      `None`＝老客户端/Qt 没声明 ⇒ **只审计、不拦**（不破坏兼容）；
+      显式集合（可能是空集）⇒ 该键不在里面就**拦**（保持磁盘上的安全值），并审计。
+    ⛔ 只在"往不安全侧翻"时生效 —— 往**安全侧**（重新打开）永远放行。
+    """
+    out = []
+    base = cur if isinstance(cur, dict) else get_config()
+    for key, safe in SAFE_SWITCHES.items():
+        node = str(key).split(".")
+        cur_v = base
+        new_v = cfg
+        for k in node[:-1]:
+            cur_v = (cur_v or {}).get(k) if isinstance(cur_v, dict) else None
+            new_v = (new_v or {}).get(k) if isinstance(new_v, dict) else None
+        old_val = (cur_v or {}).get(node[-1]) if isinstance(cur_v, dict) else None
+        new_val = (new_v or {}).get(node[-1]) if isinstance(new_v, dict) else None
+        if new_val is None or bool(new_val) == bool(old_val):
+            continue                                  # 没提这个键 / 值没变 ⇒ 不管
+        if bool(new_val) == bool(safe):
+            _audit_flip(key, old_val, new_val, source, "applied")   # 往安全侧 ⇒ 放行（记一笔）
+            out.append((key, old_val, new_val, "applied"))
+            continue
+        _touched_set = None if touched is None else {str(x) for x in touched}
+        if _touched_set is not None and key not in _touched_set:
+            # ⛔ 没被亲手点过 ⇒ **保持磁盘值**（这就是"连带翻掉"的那一刀）
+            node_set = cfg
+            for k in node[:-1]:
+                node_set = node_set.setdefault(k, {})
+            node_set[node[-1]] = bool(old_val)
+            _audit_flip(key, old_val, new_val, source, "blocked")
+            out.append((key, old_val, new_val, "blocked"))
+        else:
+            _audit_flip(key, old_val, new_val, source, "applied")
+            out.append((key, old_val, new_val, "applied"))
+    return out
+
+
+#: 调用方（控制台路由 / Qt）在本次保存里声明的"用户亲手点过哪些键"与来源
+_SAVE_TOUCHED = {"v": None, "src": ""}
+
+
 def save_config(cfg: dict | None = None, path: str | None = None) -> None:
     """把配置**原子落盘**（tmp + `os.replace`）。
 
@@ -976,6 +1054,13 @@ def save_config(cfg: dict | None = None, path: str | None = None) -> None:
     """
     cfg = cfg or get_config()
     p = str(path or CONFIG_FILE)
+    if path is None or os.path.abspath(p) == os.path.abspath(CONFIG_FILE):
+        # ⭐ 唯一写盘咽喉上挂"不打扰开关"守卫（见 `SAFE_SWITCHES` 的说明）：
+        #    `touched=None` ⇒ 老客户端/Qt 未声明 ⇒ 只审计不拦；显式集合 ⇒ 不在集合里就拦。
+        try:
+            guard_safe_switches(cfg, touched=_SAVE_TOUCHED.get("v"), source=_SAVE_TOUCHED.get("src") or "save_config")
+        except Exception as e: # noqa: BLE001
+            log.debug("安全开关守卫跳过（不影响保存）：%s", e)
     if not persist.atomic_write_json(p, cfg, indent=2):
         raise OSError("配置落盘失败（原档未动）：%s" % p)
 

@@ -6,6 +6,9 @@
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _srcmatch as _sm
+
 try: # 控制台默认 GBK：自检里的 ✔/✘ 一旦被重定向就 UnicodeEncodeError 崩掉整条自检
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -126,6 +129,34 @@ ck("宽容判据：修复后读到的 'aaa偷啃使' 能认过", ocr.loose_match
 ck("宽容判据：修复前那两种残读认不过（反向锚）",
    (not ocr.loose_matches("aaa偷啃使用者", "L"))
    and (not ocr.loose_matches("aaa偷啃使用者", "aal日月1551")), "")
+
+print("\n── E. 第二引擎档位（PP-OCRv6 优先 / v4 回退）──")
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_src = open(os.path.join(_root, "agent", "chat_ocr.py"), encoding="utf-8").read()
+ck("E1 引擎构造 v6 优先（`from rapidocr import` 排在 v4 之前）",
+   _sm.has(_src, "from rapidocr import RapidOCR as _RapidOCR6")
+   and _src.find("from rapidocr import RapidOCR as _RapidOCR6") < _src.find("from rapidocr_onnxruntime import RapidOCR"))
+ck("E2 v4 仍作回退（v6 不可用时不至于第二引擎整体不可用）",
+   _sm.has(_src, "回退 PP-OCRv4") and _sm.has(_src, "rapidocr_onnxruntime import RapidOCR"))
+ck("E3 自举整栈离线装（v6 包不自带 omegaconf/antlr4；只装它＝假成功）",
+   _sm.has(_src, "_RAPID_PKGS") and _sm.has(_src, "整栈"))
+ck("E4 离线安装双 find-links（opencv/numpy/Pillow 在 offline/wheels）",
+   _sm.has(_src, "_extra = os.path.join") and _sm.has(_src, '"offline", "wheels"'))
+ck("E5 v6 输出与 WinRT 同构（归一成 5 元组，否则 list_rows 分组全错）",
+   _sm.has(_src, "getattr(_r, \"boxes\", None)") and _sm.has(_src, "out6.append((str(_txt)"))
+try:
+    import rapidocr as _r6pkg # noqa: F401
+    _has6 = True
+except Exception: # noqa: BLE001
+    _has6 = False
+if _has6:
+    from PIL import Image as _PImg
+    _items = ocr._rapid_recognize(_PImg.new("RGB", (240, 60), (250, 250, 250)))
+    ck("E6 行为锚：v6 档位下 `_rapid_recognize` 返回 5 元组",
+       all(len(x) == 5 for x in _items), "%d 条 · tier=%s" % (len(_items), ocr.rapidocr_status().get("tier")))
+ck("E7 随包离线轮子里带齐 v6 那一套（rapidocr + omegaconf + antlr4）",
+   all(any(fn.startswith(_p) for fn in os.listdir(os.path.join(_root, "vendor", "ocr")))
+       for _p in ("rapidocr-", "omegaconf-", "antlr4")), "")
 
 print("\n== 结论：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

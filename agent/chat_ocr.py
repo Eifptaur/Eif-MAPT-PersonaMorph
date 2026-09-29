@@ -297,7 +297,9 @@ def recognize(img, timeout=None) -> list:
 # 对同一帧重试，任一引擎给出非空结果即算数。**不是每帧双跑**（控制耗时）。
 # fail-closed 铁律不变：两引擎全挂 ⇒ 仍按"自检不可用"拒发（绝不变成"没证据也能发"）。
 
-_RAPID_PKG = "rapidocr-onnxruntime" # pip 包名（import 名是 rapidocr_onnxruntime）
+#: 自举要装的包（**按优先级**）：先新包 `rapidocr`（PP-OCRv6，自带模型），失败再退回 `rapidocr-onnxruntime`（v4，兼容老环境）
+_RAPID_PKGS = ("rapidocr", "rapidocr-onnxruntime")
+_RAPID_PKG = _RAPID_PKGS[0]   # 兼容旧调用点（单值处仍用第一个）
 _RAPID_TIMEOUT_S = 20.0 # RapidOCR 同步推理单帧上限（线程 join 硬超时）
 _RAPID_PIP_TIMEOUT = 900 # 自举 pip 单镜像上限（依赖链 ≈ 百 MB）
 _RAPID_MIRRORS = (
@@ -372,17 +374,32 @@ def _rapid_bootstrap() -> tuple:
     # ① **离线优先**：随包轮子（vendor/ocr）就地装 —— 不联网、几秒钟、可复现
     try:
         if _rapid_vendor_ready():
+            # ⛔ 必须**整栈一起装**：v6 包（`rapidocr`）自己不带 `omegaconf`/`antlr4` 等依赖，
+            #    只装它一个会得到"装上了但 import 就炸"的假成功（实测踩过）⇒ 一次把整栈装上；
+            #    失败再退到 v4（`rapidocr-onnxruntime` 依赖少、老环境更稳）。
             _rapid_log("用随包离线轮子安装（%s）" % _RAPID_VENDOR)
-            r0 = subprocess.run(
-                [_sys.executable, "-m", "pip", "install", "--no-index",
-                 "--find-links", _RAPID_VENDOR, _RAPID_PKG,
-                 "--no-warn-script-location", "--disable-pip-version-check"],
-                capture_output=True, text=True, timeout=_RAPID_PIP_TIMEOUT, creationflags=flags)
-            if r0.returncode == 0:
-                _rapid_log("离线安装成功")
-                return True, ""
-            _rapid_log("离线安装失败 rc=%s 尾行 %s"
-                       % (r0.returncode, ((r0.stdout or "") + (r0.stderr or "")).strip()[-200:]))
+            # ⛔ 还依赖 `opencv_python` / `numpy` / `Pillow` —— 它们在**另一个**轮子目录
+            #    （`offline/wheels/`，含依赖包用的那批）⇒ 两个 find-links 都要给，
+            #    否则 pip 在 --no-index 下解析不到 opencv 就直接失败（实测踩过）。
+            _links = ["--find-links", _RAPID_VENDOR]
+            _extra = os.path.join(os.path.dirname(_RAPID_VENDOR), "offline", "wheels")
+            if os.path.isdir(_extra):
+                _links += ["--find-links", _extra]
+            for _set in (list(_RAPID_PKGS), [_RAPID_PKGS[-1]]):
+                try:
+                    r0 = subprocess.run(
+                        [_sys.executable, "-m", "pip", "install", "--no-index"] + _links + list(_set) +
+                        ["--no-warn-script-location", "--disable-pip-version-check"],
+                        capture_output=True, text=True, timeout=_RAPID_PIP_TIMEOUT, creationflags=flags)
+                except Exception as e: # noqa: BLE001
+                    _rapid_log("离线安装异常（%s）：%s" % (_set[0], e))
+                    continue
+                if r0.returncode == 0:
+                    _rapid_log("离线安装成功（%s）" % "、".join(_set))
+                    return True, ""
+                _rapid_log("离线安装失败（%s）rc=%s 尾行 %s"
+                           % (_set[0], r0.returncode,
+                              ((r0.stdout or "") + (r0.stderr or "")).strip()[-200:]))
     except Exception as e: # noqa: BLE001
         _rapid_log("离线安装异常 %s: %s" % (type(e).__name__, e))
     _rapid_log("未安装，开始在线自举（依赖链约百 MB，一次性）")
@@ -468,6 +485,21 @@ def _rapid_engine():
                 _rapid_state["ok"] = False
                 _rapid_state["why"] = why
                 return None
+            # ⭐ **PP-OCRv6 优先**（2026-09-29 实测，`scripts/ocr_bench_web.py` 23 条核过的真值）：
+            #    v6 与 v4 精度持平（都是 95.7%），但**快 1.7×**（19.8s vs 32.9s / 6 张大图）；
+            #    微信真机列表两者都 21/21；合成极小字 v4 34/36、v6 33/36（同量级）。
+            #    模型**随 `rapidocr` 包自带**（PP-OCRv6_det_small / rec_small），不用联网拉 ⇒ 离线可用。
+            #    不可用（没装/加载失败）⇒ 自动回退 v4，绝不因换引擎让第二引擎整体不可用。
+            try:
+                from rapidocr import RapidOCR as _RapidOCR6
+                _rapid_state["engine"] = _RapidOCR6()
+                _rapid_state["tier"] = "v6"
+                _rapid_state["why"] = ""
+                _rapid_state["ok"] = True
+                _rapid_log("第二引擎＝PP-OCRv6（rapidocr 包自带模型）")
+                return _rapid_state["engine"]
+            except Exception as ex6: # noqa: BLE001
+                _rapid_log("PP-OCRv6 不可用（%s: %s）⇒ 回退 PP-OCRv4" % (type(ex6).__name__, ex6))
             try:
                 from rapidocr_onnxruntime import RapidOCR
                 _srv = _server_rec_path() if _want_server_rec() else None
@@ -516,8 +548,27 @@ def _rapid_recognize(img, timeout=None) -> list:
     if left <= 0.0:
         return []
 
+    _tier = str(_rapid_state.get("tier") or "mobile")
+
     def _run():
         import numpy as np
+        if _tier == "v6":
+            # v6（`rapidocr>=3`）是**对象式 API**：`r.txts / r.boxes / r.scores`；
+            # 这里把它**归一成与 WinRT/v4 同构**的 [(text,x,y,w,h)]（上层 `list_rows` 就按这个分组）
+            out6 = []
+            _r = eng(img.convert("RGB"))
+            _txts = list(getattr(_r, "txts", None) or [])
+            _boxes = getattr(_r, "boxes", None)
+            for _i, _txt in enumerate(_txts):
+                try:
+                    _b = _boxes[_i]
+                    _xs = [float(_p[0]) for _p in _b]
+                    _ys = [float(_p[1]) for _p in _b]
+                    out6.append((str(_txt), int(min(_xs)), int(min(_ys)),
+                                 int(max(_xs) - min(_xs)), int(max(_ys) - min(_ys))))
+                except Exception: # noqa: BLE001
+                    out6.append((str(_txt), 0, 0, 0, 0))   # 拿不到框 ⇒ 至少别丢文本
+            return out6
         arr = np.asarray(img.convert("RGB"))[:, :, ::-1] # PIL RGB → BGR（cv2 系模型口径）
         res, _elapse = eng(arr)
         out = []
@@ -625,6 +676,50 @@ def recognize_dual(img, timeout=None) -> list:
         if items:
             return items
     return []
+
+
+def recognize_union(img, timeout=None) -> list:
+    """**两引擎取并集**：内置 + RapidOCR 都读一遍，按归一化文本去重后合并。
+
+    ⭐ 依据（2026-09-29 实测，两份语料各测一遍）：
+      · **通用 App 界面**（网图 30 张 / 首批 29 条真值）：内置 **48.3%** → RapidOCR **65.5%** → 并集 **65.5%**（＝RapidOCR，内置零增益）；
+      · **微信会话列表**（真机 22 条）：内置 **90.9%** > RapidOCR 86.4%（且慢 10~20 倍）→ 并集 **＝内置**（RapidOCR 零增益）。
+      ⇒ **并集在两种场景都不亏**，是"不必猜场景"的那条稳妥路。
+
+    ⛔ **代价必须明说**：RapidOCR 在大图上很慢（实测整图 1080p **5.2s**、冷启 10.3s）
+      ⇒ 本函数**只给"一次性、用户看得见"的读取用**（诊断/标定/检验器/手动读一次），
+      **不要放进每笔操作的发送链**（那边仍走 `recognize_dual`：小块 + 尺寸闸）。
+    `timeout` ＝ 给第二引擎的时间预算；到点就先返回第一引擎的结果（绝不空手）。
+    """
+    first = recognize(img, timeout=timeout)
+    second = []
+    try:
+        if not blocked():
+            left = _left(_RAPID_TIMEOUT_S if timeout is None else float(timeout))
+            if left > 0:
+                second = _rapid_recognize(img, timeout=left)
+            else:
+                log.debug("并集：预算不足 ⇒ 只用内置引擎的结果")
+        else:
+            log.debug("并集：熔断/预算用尽 ⇒ 只用内置引擎的结果")
+    except Exception as e: # noqa: BLE001
+        log.debug("并集：第二引擎不可用（只返回第一引擎）：%s", e)
+    if not second:
+        return first
+    out = list(first)
+    seen = {norm(str(x[0])) for x in first if x}
+    for it in second:
+        try:
+            _txt = str(it[0])
+        except Exception as e: # noqa: BLE001
+            # 第二引擎返回了形状不对的条目：跳过它，但要留痕（本仓静默点棘轮只许降）
+            log.debug("并集：跳过形状不对的第二引擎条目（%s）：%s", type(e).__name__, e)
+            continue
+        _n = norm(_txt)
+        if _n and _n not in seen:
+            seen.add(_n)
+            out.append(it)
+    return out
 
 
 def header_box(img) -> tuple:
