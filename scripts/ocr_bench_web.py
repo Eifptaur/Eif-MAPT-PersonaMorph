@@ -150,6 +150,17 @@ def measure(verbose: bool = False):
     have = _count_imgs(WEB) + _count_imgs(LOCAL)
     print("   素材：现有 %d 张 / 目标 %d 张（网图 %d + 本机真实截图 %d）" % (
         have, TARGET_IMAGES, _count_imgs(WEB), _count_imgs(LOCAL)))
+    # ⛔ 把「素材数」与「真值覆盖数」**分开报**（修"假尺子"）：素材再多，只要核过真值（tier-1 分母）
+    #    只挂在少数几张图上，那个百分比量的依旧是那几张图 —— 上轮实测 99% 其实是「6 张图 / 31 条」量的，
+    #    与"素材 76 张"完全脱节。两个数必须同时呈现，读者才不会误以为"素材涨了、标准就更容易达标了"。
+    _cov = {}
+    for _name, *_t in CASES:
+        _cov[_name] = len(_t)
+    _n_cov = len(_cov)
+    _n_truth = sum(_cov.values())
+    print("   真值覆盖：%d/%d 张挂了核过真值（共 %d 条）—— **标准只由这 %d 张量出来**，"
+          % (_n_cov, have, _n_truth, _n_cov))
+    print("            素材数再涨，不挂真值就不会改变这个百分比（差距＝真值覆盖缺口）。")
     # ⭐ 预热：第二引擎首次调用要**加载 ONNX 模型**（实测 20~30s）⇒ 不预热的话第一档会把这一笔
     #    算进去、看起来像"每张图都慢"。预热后报的数字才是**热态**的真实代价（冷启只付一次）。
     try:

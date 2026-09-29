@@ -115,6 +115,14 @@ ok("D3 采集脚本：有内容去重 + 每张都体检 + 只在素材目录里�
    _sm.has(_h, "md5") and _sm.has(_h, "def probe(") and _sm.has(_h, "WEB"))
 ok("D4 采集脚本不碰用户素材（不读用户的微信数据目录）",
    not _sm.has(_h, "WeChat Files") and not _sm.has(_h, "wxid_"))
+# ── D5/D6：修「配额耗尽静默空转」真缺陷（旧版任何异常都 `return []`，
+#    配额用光时与"仓库没图"不可区分 ⇒ 跑 25 分钟一张没收到、无任何提示）。
+ok("D5 ★ 列树能区分「配额耗尽」与「仓库没图」（403/429 回报 None）",
+   _sm.has(_h, "urllib.error") and _sm.has(_h, "HTTPError")
+   and _sm.has(_h, "return None"), "看 `tree()` 的 HTTPError 分支")
+ok("D6 ★ 配额耗尽时**立即停机并告知**（不再静默 continue 整份清单）",
+   _sm.has(_h, "paths is None") and _sm.has(_h, "配额已耗尽"),
+   "看 main() 里对 None 的处理")
 
 print("\n素材库/标准判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

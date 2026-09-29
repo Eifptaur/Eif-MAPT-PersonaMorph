@@ -9128,24 +9128,26 @@ class WeChatAdapter:
             return False
 
     @staticmethod
-    def _scroll_to_bottom(gui):
-        """把消息列表滚回最新（底部）。"""
+    def _scroll_to_bottom(gui) -> bool:
+        """把消息列表滚回最新（底部）。**投递实现，不动真鼠标**（安全红线，见下）。
+
+        为什么必须改掉老实现（安全红线，两条桌面被清空的真实事故）：
+          · 老实现走 `gui._get_uia()` → `uia._set_cursor(cx,cy)`（`uia_driver.py:876`
+            裸 `SetCursorPos`）+ `uia._mouse_wheel`（`:884` 裸 `mouse_event(WHEEL)`）
+            —— **驱动库层这些原语不校验坐标是否在屏幕内、也不校验落点是否属于微信**。
+          · 微信窗口一旦被移到屏幕外（`GetWindowRect = (-32000,-32000,...)`），
+            `SetCursorPos` 算出的绝对坐标是巨大负数，Windows **静默夹到 (0,0)**（返回成功！），
+            于是"滚消息列表"变成"在桌面左上角按下滑动"→ 框选桌面文件 → 拖向回收站。
+          · 本函数有 **17+ 个调用点**（消息菜单 / 拍一拍 / 引用回复三条链路），
+            且是 `@staticmethod`，连 `self._real_mouse_allowed()` 都拿不到 ⇒ 零闸门。
+          故改为与 `_scroll_chat()` 同源的**投递版**（`input_backend.wheel()`，
+          发 `WM_MOUSEWHEEL` 到微信主窗口，落点在会话区中部，全程不动光标、不置前）。
+        """
         try:
-            uia = gui._get_uia()
-            if uia is None:
-                return
-            lst = uia._message_list()
-            if lst is None:
-                return
-            lr = lst.BoundingRectangle
-            cx = (lr.left + lr.right) // 2
-            cy = (lr.top + lr.bottom) // 2
-            uia._set_cursor(cx, cy)
-            for _ in range(6):
-                uia._mouse_wheel(-120)
-                time.sleep(0.12)
+            # 底 = 向下滚 = `_scroll_chat(up=False)`；多滚几格确保到底。
+            return bool(WeChatAgent._scroll_chat(gui, up=False, ticks=6))
         except Exception:
-            pass
+            return False
 
     @staticmethod
     def _avatar_blocks(img, pane_left: int, diff: int = 45):

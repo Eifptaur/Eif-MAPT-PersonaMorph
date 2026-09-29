@@ -32,6 +32,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -122,7 +123,7 @@ def hashes() -> dict:
     return out
 
 
-def tree(repo: str) -> list:
+def tree(repo: str):
     """列仓库文件树 —— **走 Python urllib 直连 GitHub API**。
 
     ⛔ 两条都试过并撞墙（2026-09-29 实测，都写在这里省得下次再撞）：
@@ -131,6 +132,15 @@ def tree(repo: str) -> list:
         `CRYPT_E_NO_REVOCATION_CHECK (0x80092012)`，**关开关也压不住**（换了层）。
     ✅ Python urllib 直连**一直是通的**（前几轮下载靠的就是它）⇒ 列树也用它。
        匿名 60 次/小时够跑一轮（30 个仓库左右）；撞到 403 就跳过这个仓库，不重试。
+
+    ⛔⛔ 返回值语义修正（本轮，修一个"静默空转"真缺陷）：
+      旧版任何异常都 `return []`，调用方 `if not paths: continue` —— **配额耗尽（403）
+       和"这个仓库确实没图"变得完全一样**。实测踩过：`--target 100` 跑了 25 分钟、
+       一张没收到（GitHub 匿名 60/小时已用光），整份仓库清单被静默跳过，**没有任何提示**。
+      ⇒ 现在分三种返回：
+        · `list`  —— 列树成功（可能为空，表示该仓库确实没图）；
+        · `None`  —— **配额耗尽/被限流**：调用方必须**立即停机并明确告知**，不再往下空转；
+        · `[]`    —— 其他异常（超时/单仓库失败）：跳过该仓库，但会打印原因。
     """
     print("  列树 %s …" % repo, flush=True)
     url = "https://api.github.com/repos/%s/git/trees/HEAD?recursive=1" % repo
@@ -140,22 +150,81 @@ def tree(repo: str) -> list:
         raw = urllib.request.urlopen(req, timeout=45, context=_ctx()).read()
         obj = json.loads(raw.decode("utf-8", "replace"))
         return [str(x.get("path")) for x in (obj.get("tree") or []) if x.get("path")]
-    except Exception as e:  # noqa: BLE001
-        print("  列树失败，跳过 %s：%s" % (repo, str(e)[:70]))
+    except urllib.error.HTTPError as e:  # noqa: PERF203
+        # 403/429 ＝ 匿名配额耗尽（或二级限流）⇒ 与"仓库没图"**必须区分**，回报 None 让上层停机
+        if int(getattr(e, "code", 0)) in (403, 429):
+            print("  ⛔ 配额耗尽/被限流（HTTP %s）：%s" % (e.code, repo), flush=True)
+            return None
+        print("  列树失败，跳过 %s：HTTP %s" % (repo, getattr(e, "code", "?")), flush=True)
         return []
+    except Exception as e:  # noqa: BLE001
+        print("  列树失败，跳过 %s：%s" % (repo, str(e)[:70]), flush=True)
+        return []
+
+
+def backfill_sources() -> int:
+    """给「磁盘有图、`_sources.json` 查不到」的孤儿图**补来源记录**（可追溯性修复）。
+
+    为什么会缺：旧版只在 `main()` 最末写一次 `_sources.json`，中途被杀（配额停机 /
+    Ctrl-C / 超时）就丢掉本轮全部来源记录（实测 17 张 gh-057..073 成了孤儿）。
+    `ocr_corpus_selftest` 的 A4「每张素材都能查到来源」把它抓了出来。
+
+    怎么补：文件名形如 `gh-<序号>-<repo末段截断>-<原名>`，`<repo末段截断>` 能对回 `REPOS`
+    里的仓库（截断到 14 字符）⇒ 据此重建 `repo`，并把文件名里剩下的部分作为 `path` 的线索。
+    ⛔ 只是"**可追溯**"级别，不是"完整原始 URL"：`path` 用文件名的原名段近似、`src` 标
+       `recovered`（诚实标注来源是回填的，不是采集时记下的）。
+    """
+    got = load_sources()
+    imgs = [f for f in sorted(os.listdir(WEB))
+            if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    # 文件名里的 repo 截断段 → 完整 repo（取 REPOS 里截断后同名者）
+    _tok2repo = {}
+    for _r, _ in REPOS:
+        _tok2repo[_r.split("/")[-1][:14].lower()] = _r
+    fixed = 0
+    for fn in imgs:
+        if fn in got:
+            continue
+        m = re.match(r"gh-\d+-(.+?)-(.+)$", fn)
+        tok = (m.group(1) if m else "").lower()
+        repo = _tok2repo.get(tok, "?/%s" % (m.group(1) if m else "unknown"))
+        got[fn] = {"repo": repo, "path": (m.group(2) if m else fn),
+                   "src": "recovered", "bytes": os.path.getsize(os.path.join(WEB, fn)),
+                   "probe": "（回填：来源为按文件名重建，非采集时记录）"}
+        fixed += 1
+    json.dump(got, io.open(SRC, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print("回填来源：补了 %d 张 · 清单现有 %d 条（磁盘图 %d 张）" % (fixed, len(got), len(imgs)))
+    still = [f for f in imgs if f not in got]
+    if still:
+        print("  仍无来源：%s" % still[:10])
+    return 0 if not still else 1
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", type=int, default=100, help="目标张数（默认 100）")
     ap.add_argument("--check-only", action="store_true", help="只体检现有素材，不下载")
+    ap.add_argument("--backfill-sources", action="store_true",
+                    help="给缺来源记录的孤儿图补来源（可追溯性修复），不下载")
     a = ap.parse_args()
+
+    if a.backfill_sources:
+        return backfill_sources()
 
     got = load_sources()
     seen = hashes()
     have = len([1 for f in os.listdir(WEB)
                 if f.lower().endswith((".png", ".jpg", ".jpeg"))])
-    print("现有可用 %d 张（目标 %d）" % (have, a.target))
+    # ⛔ 目标口径修正（本轮）：`--target` 是**素材总数**（含本机真实截图），不是 web 单目录。
+    #    原来只数 web ⇒ 已经有 16 张 `local/` 时还硬要 web 再凑够 100，
+    #    "现有 72 / 目标 100" 这个数就永远对不上（72 = web 56 + local 16）。
+    #    ⇒ 先把 `local/` 那批算进来，本轮只为**差额**采网图。
+    _local = os.path.abspath(os.path.join(os.path.dirname(WEB), "local"))
+    n_local = len([f for f in os.listdir(_local)
+                   if f.lower().endswith((".png", ".jpg", ".jpeg"))]) if os.path.isdir(_local) else 0
+    have_all = have + n_local
+    print("现有可用 %d 张（网图 %d + 本机真实截图 %d）· 目标总数 %d · 还差 %d 张"
+          % (have_all, have, n_local, a.target, max(0, a.target - have_all)))
 
     if a.check_only:
         bad = []
@@ -171,14 +240,24 @@ def main() -> int:
         return 0 if not bad else 1
 
     added = 0
+    # ⛔ 停机条件按**总素材**算（`have_all + added`）：只要 web+local 够 100 就停，
+    #    不再"web 单独够 100"（那会多采 16 张、且与已有 local 重复覆盖同一批界面类型）。
     for repo, want in REPOS:
-        if have + added >= a.target or not want:
+        if have_all + added >= a.target or not want:
             break
         # ⛔ 每个仓库开始前**重扫一遍磁盘指纹**：采集可能被中断重跑、甚至两个进程重叠，
         #    只靠进程启动时那一份快照会出现"同一张图换个名字又存一遍"（实测踩过 7 张）
         seen.clear()
         seen.update(hashes())
         paths = tree(repo)
+        # ⛔ `None` ＝ 配额耗尽/被限流：**不是**"这个仓库没图"⇒ 立即停机并明确告知，
+        #    否则就是旧版那个"静默空转 25 分钟、一张没收到"的坑（见 `tree()` docstring）。
+        if paths is None:
+            print("\n⛔ 停机：GitHub 匿名配额已耗尽（60 次/小时）⇒ 本轮到此为止，不再空转。")
+            print("   已采 %d 张（网图 %d → %d）。配额 1 小时后自动重置，届时重跑即可。"
+                  % (have_all + added, have, have + added))
+            print("   提示：想跳过等配额，可先 `--target 100` 之外的活儿（如体检/喂真值）先干。")
+            break
         if not paths:
             continue
         cand = [p for p in paths
@@ -188,7 +267,7 @@ def main() -> int:
                 and 3 < len(p) < 170]
         kept = 0
         for p in sorted(cand, key=lambda x: (len(x), x)):
-            if kept >= want or have + added >= a.target:
+            if kept >= want or have_all + added >= a.target:
                 break
             url = "https://raw.githubusercontent.com/%s/HEAD/%s" % (repo, p)
             try:
@@ -219,11 +298,20 @@ def main() -> int:
             got[fn] = {"repo": repo, "path": p, "src": url, "bytes": len(data), "probe": why}
             kept += 1
             added += 1
+            # ⛔ **增量落盘来源清单**：旧版只在 `main()` 最末 `json.dump` 一次 ⇒ 中途被杀
+            #    （配额停机/手动 Ctrl-C/超时）会让本轮已入库的图**丢掉来源记录**，变成
+            #    「磁盘有图、`_sources.json` 查不到」的孤儿（实测踩过 17 张 gh-057..073，
+            #    被 `ocr_corpus_selftest` 的 A4「每张素材都能查到来源」抓出）。
+            #    ⇒ 每收一张就写一次（便宜，且进程随时死都不会再产生孤儿）。
+            json.dump(got, io.open(SRC, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         print("  %-40s 收 %d 张（本轮累计 %d）" % (repo[:40], kept, added))
     json.dump(got, io.open(SRC, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     total = len([1 for f in os.listdir(WEB) if f.lower().endswith((".png", ".jpg", ".jpeg"))])
-    print("完成：可用素材 %d 张（本轮新增 %d）" % (total, added))
-    return 0 if total >= a.target else 1
+    # 结账也按**总素材**（web + local）报，并与 OCR 基准的口径对齐（那边也是这么数的）。
+    total_all = total + n_local
+    print("完成：素材总数 %d 张（网图 %d + 本机真实截图 %d；本轮新增网图 %d）· 目标 %d"
+          % (total_all, total, n_local, added, a.target))
+    return 0 if total_all >= a.target else 1
 
 
 if __name__ == "__main__":
