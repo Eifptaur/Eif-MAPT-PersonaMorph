@@ -26,6 +26,7 @@
     runtime\\python\\python.exe scripts\\ocr_bench_web.py --verbose
 """
 import argparse
+import json
 import os
 import sys
 import time
@@ -63,6 +64,15 @@ CASES = [
 TARGET_IMAGES = 100
 #: 识别率标准（用户把标准提到 99%）——这是**目标**，不是"现在已经达到"
 TARGET_RECALL = 0.99
+#: 素材分类：`wx-ui`＝微信界面（**这才是我们要量的**：OCR 就是读微信界面的——左侧会话列表、
+#: 聊天标题栏、消息、按钮），`other-ui`＝其他软件界面（用来防"只在自己那一类上过拟合"）。
+#: 分类来自 `_sources.json` 的 `kind` 字段（采集时写入）。
+KIND_WX = "wx-ui"
+KIND_OTHER = "other-ui"
+#: 棘轮（**分档记**）：总召回 + 微信界面专项召回，各自只许涨不许跌。
+BEST_RECALL_WX = 0.0
+
+
 #: 棘轮：历史最好读数（只许涨不许跌）。每次实测后**只往上改**。
 #: 当前记录 = 2026-09-29 实测 tier-1 28/29 = 96.6%（当时 6 张图 / 23 条核过真值）。
 BEST_RECALL = 0.966
@@ -125,19 +135,76 @@ def measure(verbose: bool = False):
                                         ("（漏：%s）" % "、".join(miss)[:50]) if miss else ""))
     r1 = ok / max(1, n)
     print("   tier-1（核过，硬指标）：%d/%d = %5.1f%%（%.1fs）" % (ok, n, 100 * r1, time.time() - t0))
-    # tier-2
+    # tier-2：⛔ **必须分引擎量，不许用"并集"** —— 真值本身就是"两个引擎都读出来了"，
+    # 拿并集去量它恒等于 100%（自证式读数，看着漂亮但零信息量，第一版就写错成这样）。
+    # 有用的读法是：**每个引擎单独**对同一批一致性真值的召回 ⇒ 才知道差距在哪、并集增益多少。
     cons = consensus_truths()
-    ok2 = n2 = 0
+    n2 = 0
+    hit = {"winrt": 0, "rapid": 0, "union": 0}
     for fn, truths in cons.items():
         im = Image.open(os.path.join(WEB, fn)).convert("RGB")
-        lines = [str(x[0]) for x in O.recognize_dual(im)]
-        for t in truths:
+        try:
+            a = [str(x[0]) for x in O.recognize(im)]
+        except Exception:  # noqa: BLE001
+            a = []
+        try:
+            b = [str(x[0]) for x in O._rapid_recognize(im)]
+        except Exception:  # noqa: BLE001
+            b = []
+        for tr in truths:
             n2 += 1
-            if any(O.norm(t) in O.norm(ln) for ln in lines):
-                ok2 += 1
-    r2 = ok2 / max(1, n2)
-    print("   tier-2（多引擎一致性，%d 张 / %d 条；**只用于引擎对比**，不当硬指标）：%5.1f%%"
-          % (len(cons), n2, 100 * r2))
+            if any(O.norm(tr) in O.norm(x) for x in a):
+                hit["winrt"] += 1
+            if any(O.norm(tr) in O.norm(x) for x in b):
+                hit["rapid"] += 1
+            if any(O.norm(tr) in O.norm(x) for x in (a + b)):
+                hit["union"] += 1
+    r2 = hit["union"] / max(1, n2)
+    print("   tier-2（多引擎一致性真值 %d 张 / %d 条；**只用于引擎对比**，不当硬指标）"
+          "：内置 %5.1f%% · RapidOCR %5.1f%% · 并集 %5.1f%%" % (
+              len(cons), n2, 100.0 * hit["winrt"] / max(1, n2),
+              100.0 * hit["rapid"] / max(1, n2), 100.0 * r2))
+    # ── 按类别分开看：**微信界面**才是我们真正要量的东西 ──────────────────
+    kinds = _kinds()
+    wx = [c for c in CASES if kinds.get(c[0]) == KIND_WX]
+    ot = [c for c in CASES if kinds.get(c[0]) == KIND_OTHER]
+    print("   素材构成：微信界面 %d 张（%s）· 其他界面 %d 张（%s）" % (
+        len(wx), ", ".join(c[0][:22] for c in wx[:3]), len(ot), ", ".join(c[0][:22] for c in ot[:3])))
+    for tag, group in (("微信界面", wx), ("其他界面", ot)):
+        if not group:
+            continue
+        k = n3 = 0
+        for name, *truths in group:
+            path = os.path.join(WEB, name)
+            if not os.path.exists(path):
+                continue
+            lines = [str(x[0]) for x in O.recognize_dual(Image.open(path).convert("RGB"))]
+            k += sum(1 for t in truths if any(O.norm(t) in O.norm(ln) for ln in lines))
+            n3 += len(truths)
+        print("   【%s】核过真值 %d/%d = %5.1f%%" % (tag, k, n3, 100.0 * k / max(1, n3)))
+    if BEST_RECALL_WX > 0 and wx:
+        _k = _n = 0
+        for name, *truths in wx:
+            _p = os.path.join(WEB, name)
+            if not os.path.exists(_p):
+                continue
+            _lines = [str(x[0]) for x in O.recognize_dual(Image.open(_p).convert("RGB"))]
+            _k += sum(1 for t in truths if any(O.norm(t) in O.norm(ln) for ln in _lines))
+            _n += len(truths)
+        print("   棘轮（微信界面）：历史最好 %5.1f%% ⇒ %s" % (
+            BEST_RECALL_WX * 100, "没退" if _k / max(1, _n) >= BEST_RECALL_WX - 1e-9 else "⚠️ 退了！"))
+
+
+def _kinds() -> dict:
+    """读 `_sources.json` 的 `kind` 字段（没标的一律当"其他界面"，不猜）。"""
+    out = {}
+    try:
+        db = json.load(open(os.path.join(WEB, "_sources.json"), encoding="utf-8"))
+        for k, v in (db or {}).items():
+            out[k] = str((v or {}).get("kind") or KIND_OTHER)
+    except Exception as e:  # noqa: BLE001
+        print("   （读素材分类失败，按其他界面算：%s）" % str(e)[:60])
+    return out
     print("   差距：tier-1 距标准还差 %5.1f 个百分点" % ((TARGET_RECALL - r1) * 100))
     if BEST_RECALL > 0:
         print("   棘轮：历史最好 %5.1f%% ⇒ %s" % (
