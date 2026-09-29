@@ -1794,8 +1794,52 @@ GREEN_TOL = 34 # 颜色容差（每通道）——库里写的 (21,172,112) 在�
 ROW_PITCH = 64 # 会话行高（名字行 + 预览行 ≈ 64px，实测 144→241→338…）
 
 
-def list_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
+#: 放大后**允许的最大高度/宽度**（像素）。超过它 `recognize` 会直接返回空（实测踩过）：
+#: `local-003/004`（1923×3750 的长截图）在 `zoom=3` 下变成 702×**11160** ⇒
+#: WinRT 直接返回 0 段（`zoom=2` 的 468×7440 还能读出 25 段）。
+#: ⛔ 所以"提高 zoom"必须配尺寸护栏 —— 否则长截图会**整张读空**（比不放大更糟）。
+_MAX_OCR_SIDE = 8000
+
+
+def _safe_resize(crop, zoom: int):
+    """按 `zoom` 放大，但**不许超过 `_MAX_OCR_SIDE`**（超了就自动降档，触底返回原图）。
+
+    为什么必须有：WinRT OCR 对超大图直接返回空，而"长截图"在真机上很常见
+    （聊天记录长图、整屏截图）。放大是"提精度"的手段，但**不能以读空为代价**。
+    降档顺序＝从 `zoom` 逐 1 递减到 1（不引入新常量，只保证"不越界"）。
+    """
+    try:
+        z = int(zoom or 1)
+        w0, h0 = crop.size
+        if w0 <= 0 or h0 <= 0:
+            return crop, 1
+        while z > 1 and (w0 * z > _MAX_OCR_SIDE or h0 * z > _MAX_OCR_SIDE):
+            z -= 1
+        if z <= 1:
+            return crop, 1
+        return crop.resize((w0 * z, h0 * z)), z
+    except Exception as e: # noqa: BLE001
+        log.debug("安全放大失败（用原图）：%s", e)
+        return crop, 1
+
+
+def list_rows(img, zoom: int = 3, pane_left: int = 0) -> list:
     """OCR 会话列表并按行聚合，返回 [{'text','y','x0','x1'}...]（按 y 升序）。
+
+    ## ⭐ 2026-09-30：`zoom` 默认 2 → 3（实测提召回，别改回 2）
+    真值召回实测（7 张真机会话列表 / 25 个"屏幕上确实完整可见"的名字，
+    `scripts/probe_zoom_effect.py`）：
+
+    | 放大档 | 召回 |
+    |---|---|
+    | `z=2`（**原默认**） | 19/25 |
+    | **`z=3`** | **22/25** ← 最好 |
+    | `z=4` | 17/25（过放大反而差） |
+    | `auto_zoom` 自选档 | 21/25 |
+
+    ⇒ 拐点在 **3**：`z=3` 比 `z=2` **多 3 个名字（+12%）**，而 `z=4` 已经掉头向下。
+    ⚠️ 与"放大反而有害"那轮结论**不矛盾**：那轮测的是"**在同一裁框下继续往上放大**"（z≥3 开始变差），
+    本轮测的是"**从 2 提到 3 这一档本身**"——两次读的是不同的自变量区间。
 
     `pane_left`＝**调用方指定的面板左沿**（0＝自己探测）。为什么要能指定：
     `detect_pane_left` 在"聊天区左列被气泡占满"时会一路扫到气泡右边（实测报 660、真值 384）
@@ -1826,8 +1870,8 @@ def list_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
         x1 = max(x0 + 40, left - 6)
         box = (x0, 30, x1, h)
         crop = img.crop(box)
-        if zoom > 1:
-            crop = crop.resize((crop.width * zoom, crop.height * zoom))
+        # ⛔ 放大必须过尺寸护栏（长截图 zoom=3 会到 11160px ⇒ 引擎直接读空，实测踩过）
+        crop, zoom = _safe_resize(crop, int(zoom or 1))
         items = recognize(crop)
         rows = []
         for text, x, y, ww, hh in items:
@@ -1886,11 +1930,14 @@ def green_score(img, y_abs: int, half: int = 7, x0: int = None, x1: int = None) 
         return 0.0
 
 
-def session_rows(img, zoom: int = 2, pane_left: int = 0) -> list:
+def session_rows(img, zoom: int = 3, pane_left: int = 0) -> list:
     """把 OCR 行聚成"会话行"：每行 = 名字行 +（可选）预览行，按 ~64px 步距归并。
 
     返回 [{'name','preview','y_name','y_abs'}...]（y_abs ＝ 名字行的图内绝对 y）。
     `pane_left` 透传给 `list_rows`（见那里的说明）。
+
+    ⚠️ `zoom=3`（2026-09-30 实测改，原来是 2）：见 `list_rows` 的 zoom 说明——
+    实测 z=3 比 z=2 在真值召回上多 3/25（19/25 → 22/25），而 z=4 反而掉回 17/25。
     """
     lines = list_rows(img, zoom=zoom, pane_left=pane_left) if pane_left else list_rows(img, zoom=zoom)
     if not lines:
