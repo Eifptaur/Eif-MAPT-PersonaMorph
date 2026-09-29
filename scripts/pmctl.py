@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
@@ -370,11 +371,184 @@ def cmd_doctor(a) -> int:
     return 0
 
 
+def _ask(prompt: str, default: str = ""):
+    """读一行输入。
+
+    ⛔ **流结束(EOF) 必须返回 `None`**，不能返回默认值 —— 否则"喂完输入的菜单"会
+       一直用默认值选第 1 项、**无限循环**（判据实测卡死在 90s 超时）。
+       回车（空输入）才回默认值。
+    """
+    try:
+        s = input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        print("")
+        return None
+    s = (s or "").strip()
+    return s if s else default
+
+
+def cmd_pack(a) -> int:
+    """**反馈包**：把"定位问题要用的东西"一次性收进一个 txt，用户只要把文件发出去。
+
+    零基础用户不需要懂日志/接口：一条命令（或菜单里一项）产出一个文件。
+    ⛔ 内容只取**状态/档案/体检摘要/日志尾部**，不做任何脱敏之外的加工；
+       落盘在 `logs/`（运行期数据，不进包）。
+    """
+    import datetime
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    out = os.path.join(ROOT, "logs", "pmctl-反馈包-%s.txt" % stamp)
+    parts = []
+    parts.append("== 群相 · 反馈包（自动生成，直接把这个文件发给作者即可）==")
+    parts.append("生成时间：%s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    try:
+        sys.path.insert(0, ROOT)
+        from agent.version import VERSION as _V
+        parts.append("产品版本：%s" % _V)
+    except Exception as e: # noqa: BLE001
+        _warn("读不到产品版本（不影响反馈包）：%s" % str(e)[:60])
+    for title, fn in (("运行状态", cmd_status), ("本机适配", cmd_adapt), ("体检", cmd_check),
+                      ("日志（尾部 60 行）", lambda _a: cmd_logs(_a))):
+        parts.append("")
+        parts.append("── %s ──" % title)
+        try:
+            buf = io.StringIO()
+            old = sys.stdout
+            sys.stdout = buf
+            try:
+                if title.startswith("日志"):
+                    _a = argparse.Namespace(**vars(a)); _a.n = 60
+                    fn(_a)
+                else:
+                    fn(a)
+            finally:
+                sys.stdout = old
+            parts.append(buf.getvalue().rstrip())
+        except SystemExit as e: # noqa: PERF203
+            parts.append("（这一项没取到：退出码 %s）" % getattr(e, "code", "?"))
+        except Exception as e: # noqa: BLE001
+            parts.append("（这一项没取到：%s）" % str(e)[:120])
+    try:
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(parts) + "\n")
+    except Exception as e: # noqa: BLE001
+        _die("反馈包写不出来（%s）。可以改用菜单里的「看运行状态」把屏幕内容复制出去。" % str(e)[:80])
+    print("已生成反馈包：")
+    print("   %s" % out)
+    print("")
+    print("   把这个文件发给作者即可（里面是版本、状态、体检和日志尾部，没有你的聊天内容）。")
+    return 0
+
+
+def _mk(a, **kw):
+    d = {"json": False, "url": getattr(a, "url", ""), "token": getattr(a, "token", ""),
+         "ids": [], "n": 10, "action": "", "key": "", "value": None, "mode": ""}
+    d.update(kw)
+    return argparse.Namespace(**d)
+
+
+def _guide() -> None:
+    print("")
+    print("说明：这个操作台不用开浏览器，也不会动你的微信；")
+    print("      它只是把产品的运行情况读出来给你看。看不懂的就选 2 或 8。")
+    print("")
+
+
+def menu(a) -> int:
+    """**中文数字菜单**（双击即用）：不需要记任何命令。"""
+    items = [
+        ("看运行状态（推荐先看这个）", lambda: cmd_status(_mk(a))),
+        ("一键体检（推荐：自动查一遍有没有问题）", lambda: cmd_check(_mk(a))),
+        ("看「本机适配」档案（这台机器学到了什么）", lambda: cmd_adapt(_mk(a))),
+        ("查问题（按症状查：发不出去 / 不回复 / 表情看不到…）", lambda: cmd_verify(_mk(a))),
+        ("看最近在跟谁聊 / 看日志", lambda: _menu_sessions_logs(a)),
+        ("低配模式（老机器卡：一键关掉吃 CPU 的特效）", lambda: _menu_lowspec(a)),
+        ("暂停 / 恢复机器人", lambda: _menu_pause(a)),
+        ("生成反馈包（出问题就选这个，把文件发作者）", lambda: cmd_pack(_mk(a))),
+    ]
+    while True:
+        print("")
+        print("==============================")
+        print(" 群相 · 无界面操作台")
+        print("  （直接按数字 + 回车就行）")
+        print("==============================")
+        for i, (title, _f) in enumerate(items, 1):
+            print("  %d. %s" % (i, title))
+        print("  0. 退出")
+        _guide()
+        c = _ask("请输入数字后回车（直接回车＝1）：", "1")
+        if os.environ.get("PMCTL_DEBUG"):
+            sys.stderr.write("[dbg] 菜单读到 %r（isatty=%s）\n" % (c, sys.stdin.isatty()))
+        if c is None:                       # 输入流结束（脚本/管道喂完）⇒ 干净退出，不许死循环
+            print("（输入结束了，退出。）")
+            return 0
+        if c in ("0", "q", "Q", "退出", "exit"):
+            print("已退出。")
+            return 0
+        if c == "?":
+            for i, (title, _f) in enumerate(items, 1):
+                print("  %d) %s" % (i, title))
+            continue
+        try:
+            idx = int(c)
+        except ValueError:
+            print("（没看懂「%s」——请输入 0 到 %d 之间的数字）" % (c, len(items)))
+            continue
+        if idx < 1 or idx > len(items):
+            print("（%s 超出范围了——请输入 0 到 %d 之间的数字）" % (c, len(items)))
+            continue
+        print("")
+        try:
+            items[idx - 1][1]()
+        except SystemExit as e: # noqa: PERF203
+            # 菜单里某个操作失败（比如服务没起/端口不对）**不许把整个菜单带崩**：
+            # `_die` 的提示已经打在屏幕上了，这里只补一句"可以继续选别的"。
+            if getattr(e, "code", 0) not in (0, None):
+                print("")
+                print("（上面这个操作没成功——按它的提示处理；也可以选 8 生成反馈包。）")
+        except Exception as e: # noqa: BLE001
+            print("（这个操作出错了：%s）" % str(e)[:150])
+            print("（可以选 8 生成反馈包，把文件发给作者。）")
+        _ask("看完按回车回到菜单…", "")
+
+
+def _menu_sessions_logs(a) -> int:
+    c = _ask("  1=最近会话   2=看日志（默认 1）：", "1")
+    if c == "2":
+        n = _ask("  看最后多少行（默认 80）：", "80")
+        try:
+            nn = max(1, min(2000, int(n)))
+        except ValueError:
+            nn = 80
+        return cmd_logs(_mk(a, n=nn))
+    n = _ask("  看最近几条（默认 10）：", "10")
+    try:
+        nn = max(1, min(200, int(n)))
+    except ValueError:
+        nn = 10
+    return cmd_sessions(_mk(a, n=nn))
+
+
+def _menu_lowspec(a) -> int:
+    print("  低配模式＝把「好看但吃 CPU」的画面特效关掉（挂件动画、波纹、自定义背景、轮询放宽）。")
+    print("  只改这几个设置，不动安全开关；关掉后随时能一键恢复。")
+    c = _ask("  1=开（老机器卡就选这个）  2=关（恢复原样）  3=先看看现在的值（默认 1）：", "1")
+    if c == "3":
+        return cmd_lowspec(_mk(a, action="show"))
+    return cmd_lowspec(_mk(a, action="on" if c != "2" else "off"))
+
+
+def _menu_pause(a) -> int:
+    c = _ask("  1=暂停（机器人先别干活）  2=恢复（继续干活）（默认 1）：", "1")
+    return cmd_pause(_mk(a, mode="pause" if c != "2" else "resume"))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="pmctl", description="不依赖图形界面的操作入口（走产品本地 API）")
     ap.add_argument("--url", default="", help="控制台地址（默认从 logs/console.url 发现）")
     ap.add_argument("--token", default="", help="访问令牌（默认从地址/配置里取）")
     ap.add_argument("--json", action="store_true", help="输出原始 JSON（给脚本用）")
+    ap.add_argument("--menu", action="store_true", help="进中文数字菜单（不给子命令时默认就是菜单）")
     sub = ap.add_subparsers(dest="cmd")
 
     sub.add_parser("status", help="运行状态").set_defaults(func=cmd_status)
@@ -393,9 +567,10 @@ def main(argv=None) -> int:
                                                                  choices=("on", "off", "show")); p.set_defaults(func=cmd_lowspec)
 
     a = ap.parse_args(argv)
-    if not getattr(a, "func", None):
-        ap.print_help()
-        return 0
+    if getattr(a, "menu", False) or not getattr(a, "func", None):
+        # ⭐ 没给子命令（例如**双击启动器**、或直接跑 pmctl.py）⇒ 进中文数字菜单：
+        #    零基础用户不需要记任何命令，按数字就行。
+        return menu(a)
     return int(a.func(a) or 0)
 
 

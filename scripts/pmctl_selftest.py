@@ -20,8 +20,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +51,10 @@ SEEN = []
 
 
 class _H(BaseHTTPRequestHandler):
+    # ⛔ 必须 HTTP/1.0 + 多线程：默认的 HTTP/1.1 keep-alive + 单线程 HTTPServer 会被
+    #    前一个连接挂住 ⇒ 后面的请求全部超时（判据实测：F2 "连不上 … timed out"）
+    protocol_version = "HTTP/1.0"
+
     def log_message(self, *a):   # 静音
         pass
 
@@ -69,6 +74,8 @@ class _H(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self):
+        if os.environ.get("PMCTL_DEBUG"):
+            sys.stderr.write("[srv] GET %s\n" % self.path)   # 调试用：看清 CLI 到底请求了什么路径
         SEEN.append(("GET", self.path, self.headers.get("Authorization", ""), None))
         p = self.path.split("?")[0]
         if p == "/api/status":
@@ -111,11 +118,30 @@ def _run(*args, timeout=90):
     return (r.stdout or "") + (r.stderr or ""), r.returncode
 
 
-srv = HTTPServer(("127.0.0.1", 0), _H)
+srv = ThreadingHTTPServer(("127.0.0.1", 0), _H)
 PORT = srv.server_address[1]
 BASE = "http://127.0.0.1:%d/" % PORT
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 print("假服务端起在 %s\n" % BASE)
+
+
+def _restart_server():
+    """换一台**全新**的假服务端（返回新 BASE）。
+
+    为什么需要：判据里跑到 F 段时已经过了十几条请求，复用同一台服务端会**连接被挂住**导致
+    后续请求超时（实测：F2 报 "连不上 … timed out"、F4 直接卡到 90s 超时）。
+    每段用干净的服务端，判据才是在验 CLI 而不是在验测试脚手架。
+    """
+    global srv, BASE, PORT
+    try:
+        srv.shutdown()
+    except Exception as e:  # noqa: BLE001
+        print("   （旧服务端关停异常，忽略：%s）" % str(e)[:60])
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _H)
+    PORT = srv.server_address[1]
+    BASE = "http://127.0.0.1:%d/" % PORT
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return BASE
 
 print("── A. 端到端（所有命令真跑一遍）──")
 out, rc = _run("status")
@@ -225,5 +251,60 @@ ok("E1 CLI 引用的 API 路径全部能在 webui 的路由表里找到",
    not missing, "找不到：" + "、".join(missing) if missing else "共 %d 条" % len(used))
 
 srv.shutdown()
+print("\n── F. 中文数字菜单（零基础：不用记命令）──")
+# ⛔ 前面 A–D 段跑了十几条子进程请求之后，这台假服务端会**不再响应**（实测 F0 探针 timed out）
+#    ⇒ 不是 CLI 的问题，是测试脚手架被用旧了。这里换一台**全新**的服务端再验菜单。
+_restart_server()
+_probe_out, _probe_rc = _run("status")
+ok("F0 探针：换新服务端后可用（这一条红了就说明下面的失败是脚手架问题，不是 CLI 问题）",
+   _probe_rc == 0 and "家人群" in _probe_out,
+   "rc=%s 尾部=%s" % (_probe_rc, _probe_out[-140:].replace(chr(10), " / ")))
+
+
+def _menu(feed, *args, url=None, timeout=90, debug=False):
+    """把按键序列喂给菜单（模拟双击后一路回车）。返回 (输出, 退出码)。
+
+    ⛔ **用临时文件当 stdin，不用 `input=` 管道**：实测（本机 Windows）用管道喂输入时，
+       子进程连**父进程里的假服务端**会 `timed out`（而 A 段不带 stdin 的子进程一切正常）
+       ⇒ 判据会假红。临时文件同样能喂输入，且不引入这个坑。
+    """
+    env = dict(os.environ)
+    if debug:
+        env["PMCTL_DEBUG"] = "1"
+    fd, path = tempfile.mkstemp(prefix="pmctl-in-", suffix=".txt")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(feed)
+        with open(path, "r", encoding="utf-8") as fin:
+            r = subprocess.run([PY, "-X", "utf8", CLI, "--url", url or BASE, "--token", "T0K"] + list(args),
+                               stdin=fin, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=timeout, env=env)
+    finally:
+        try:
+            os.remove(path)
+        except OSError as e:
+            print("   （临时输入文件没删掉：%s）" % str(e)[:50])
+    return (r.stdout or "") + (r.stderr or ""), r.returncode
+
+
+out, rc = _menu("0\n", "--menu")
+ok("F1 双击等价物：**不给子命令**就进菜单（不是打 usage/help）",
+   "无界面操作台" in out and "请输入数字" in out and rc == 0, out.splitlines()[1] if out else "")
+out, rc = _menu("1\n\n0\n", "--menu", debug=True)
+ok("F2 选 1 ⇒ 真打印运行状态（对真实 HTTP 服务端）", "2026.9.28.6" in out and "家人群" in out,
+   "命中行=%s" % ([l.strip()[:60] for l in out.splitlines()
+                 if ("错误" in l or "没成功" in l or "版本" in l or "监听" in l)][:6]))
+out, rc = _menu("abc\n99\n0\n", "--menu")
+ok("F3 乱按（abc / 99）⇒ 友好提示、**不崩**、还能继续选",
+   ("没看懂" in out or "超出范围" in out) and rc == 0, "")
+out, rc = _menu("8\n0\n", "--menu")
+ok("F4 菜单里有「生成反馈包」且能跑（零基础出问题就选它）",
+   "反馈包" in out and (".txt" in out or "没取到" in out), "")
+out, rc = _menu("1\n\n0\n", "--menu", url="http://127.0.0.1:1/")
+ok("F5 服务连不上时菜单**不进死**（提示后可继续选别的）",
+   rc == 0 and "连不上" in out and "无界面操作台" in out, "")
+ok("F6 菜单项里带**人话说明**（不出现 interface/API/token 这类词）",
+   "看运行状态（推荐先看这个）" in out and "API" not in out and "token" not in out, "")
+
 print("\npmctl 判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
