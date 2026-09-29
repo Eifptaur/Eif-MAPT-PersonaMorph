@@ -152,6 +152,33 @@ def verdict(rows_key, rows_all):
     return 0, "全部 %d 项就绪" % len(rows_all)
 
 
+def _apply_vendor_patches():
+    """依赖装完后重放 vendor 补丁（当前只有 `wechatauto/db.py` 两处页 1 判据修正）。
+
+    为什么不直接把改动写进 `runtime/.../wechatauto/db.py`：`runtime/` 是 gitignore 的，
+    重装依赖 / 换台电脑就丢了，且无痕迹。固化成安装后必调的补丁才靠得住。
+    **幂等**：已经打过就跳过；失败只提示、不改安装结论（装依赖成功与否由 pip 判）。
+    """
+    script = os.path.join(ROOT, "scripts", "_patch_wechatauto.py")
+    if not os.path.isfile(script):
+        return
+    print("-" * 52)
+    print("重放 vendor 补丁（wechatauto/db.py：页 1 判据）…")
+    try:
+        rc, tail = _run_stream([sys.executable or "py", script])
+    except Exception as e:  # noqa: BLE001 —— 补丁失败不该让装依赖整体报错
+        print("  补丁脚本没跑起来（%s），跳过。" % e)
+        return
+    if rc == 0:
+        print("  " + (tail.strip().splitlines() or ["补丁已就绪"])[-1])
+    else:
+        print("  ⚠️ 补丁返回 %s —— 手动跑一次：runtime\\python\\python.exe scripts\\_patch_wechatauto.py"
+              % rc)
+        t = "\n".join((tail or "").splitlines()[-6:])
+        if t.strip():
+            print(t)
+
+
 def main():
     print("=" * 52)
     print(" Persona Morph 依赖检查 / 安装")
@@ -216,6 +243,11 @@ def main():
     rc2, msg = verdict(rows2_key, rows2_all)
     print("-" * 52)
     print("安装命令 exit=%s。%s" % (int(last[0] or 0), msg))
+    # ⚠️ 依赖装完 **必须**重放一遍 vendor 补丁：`wechatauto-replica` 从 PyPI/离线 wheel
+    #    装回来的 `db.py` 是**原版**，不带我们那两处页 1 判据修正（详见 `_patch_wechatauto.py`）；
+    #    而 `runtime/` 是 gitignore 的 ⇒ 不打补丁的话，重装一次"消息库损坏"那条就又回来了。
+    #    幂等、失败不阻断安装结论（只是提示），所以放在 verdict 判完之后、早退之前。
+    _apply_vendor_patches()
     if rc2 != 0:
         tail20 = "\n".join((last[1] or "").splitlines()[-20:])
         if tail20.strip():
