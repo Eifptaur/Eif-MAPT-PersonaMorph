@@ -1,0 +1,114 @@
+# -*- coding: utf-8 -*-
+"""网图素材库 + OCR 标准判据。
+
+**为什么单独立一条**：素材库是"识别率"这个数字的**分母**。分母不可信（错真值 / 混进非界面图），
+后面所有优化都是自欺 —— 本轮就是这么栽过一次：30 张里 10 张不合格、真值约 30% 记错，
+把 96.6% 低报成 48.3%/65.5%。所以素材库/真值本身必须有机器门禁。
+
+四轴：
+  A. 素材：张数达标、**全部过自动体检**（内置引擎 ≥3 行）、内容去重（md5 唯一）
+  B. 真值：分两档且**口径写清** ——
+     tier-1「核过」：看原图（四象限原分辨率）逐条读出来的，硬指标 / 棘轮用它；
+     tier-2「一致性」：多引擎对同一条**互相印证**才收的自动真值，只用于**引擎对比**（口径注明，不当硬指标）
+  C. 标准：`TARGET_RECALL=0.99`（用户把标准提到 99%）＋ 棘轮 `BEST_RECALL` 只许涨不许跌
+  D. 反向锚：采集只在素材目录里写、素材不在产品包内（隐私与体积两边都要守住）
+
+跑法：`runtime\\python\\python.exe scripts\\ocr_corpus_selftest.py`
+"""
+import hashlib
+import io
+import json
+import os
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.chdir(ROOT)
+import _srcmatch as _sm # noqa: E402
+
+PASS = FAIL = 0
+
+
+def ok(name, cond, detail=""):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+    else:
+        FAIL += 1
+    print("  {} {}{}".format("OK  " if cond else "FAIL", name,
+                             "  [{}]".format(detail) if detail else ""))
+
+
+import ocr_bench_web as B # noqa: E402
+
+WEB = B.WEB
+EXTS = (".png", ".jpg", ".jpeg")
+
+print("── A. 素材库 ──")
+_files = sorted(f for f in os.listdir(WEB) if f.lower().endswith(EXTS)
+                and os.path.isfile(os.path.join(WEB, f)))
+ok("A1 素材张数达标（目标 %d 张）" % B.TARGET_IMAGES, len(_files) >= B.TARGET_IMAGES,
+   "现有 %d 张" % len(_files))
+_md5 = {}
+_dup = []
+for f in _files:
+    h = hashlib.md5(io.open(os.path.join(WEB, f), "rb").read()).hexdigest()
+    if h in _md5:
+        _dup.append("%s＝%s" % (f, _md5[h]))
+    _md5[h] = f
+ok("A2 没有重复内容（同一张图换个名字再来一遍很常见）", not _dup, "；".join(_dup[:3]))
+_src = os.path.join(WEB, "_sources.json")
+_db = {}
+if os.path.exists(_src):
+    try:
+        _db = json.load(io.open(_src, encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        ok("A3 `_sources.json` 可解析", False, str(e)[:60])
+ok("A3 `_sources.json` 可解析且登记了我方素材（可追溯来源）",
+   bool(_db) and all(k in _db for k in _files[:5]), "登记 %d 条" % len(_db))
+_no_src = [f for f in _files if f not in _db]
+ok("A4 每张素材都能查到来源（repo/path/url）—— **可追溯**才敢用",
+   len(_no_src) <= 0, "无来源 %d 张：%s" % (len(_no_src), _no_src[:3]))
+
+print("\n── B. 真值两档（口径必须写清）──")
+_t1 = list(B.CASES)
+ok("B1 tier-1「核过」真值存在且非空", bool(_t1) and all(len(c) >= 2 for c in _t1),
+   "%d 张 / %d 条" % (len(_t1), sum(len(c) - 1 for c in _t1)))
+_bad_truth = []
+for c in _t1:
+    for t in c[1:]:
+        if not str(t).strip() or len(str(t)) > 60:
+            _bad_truth.append(str(t)[:30])
+ok("B2 tier-1 真值形状正常（无空串、无超长段）", not _bad_truth, "；".join(_bad_truth[:3]))
+ok("B3 tier-1 真值对应的图**真的在素材库**里",
+   all(os.path.exists(os.path.join(WEB, c[0])) for c in _t1),
+   "缺图：%s" % [c[0] for c in _t1 if not os.path.exists(os.path.join(WEB, c[0]))][:2])
+_src_bench = io.open(os.path.join(ROOT, "scripts", "ocr_bench_web.py"), encoding="utf-8").read()
+ok("B4 ★ 口径写明：tier-1 必须「看原图核过」、tier-2 是「多引擎一致性」（自动，只用于对比）",
+   _sm.has(_src_bench, "看原图逐条核过") and _sm.has(_src_bench, "一致性"))
+ok("B5 tier-2 一致性真值**不当硬指标**（只看定级 AC 时不许引用它）",
+   _sm.has(_src_bench, "只用于") or _sm.has(_src_bench, "仅用于"))
+
+print("\n── C. 标准（99%）与棘轮 ──")
+ok("C1 标准＝99%（用户口径）", abs(float(getattr(B, "TARGET_RECALL", 0)) - 0.99) < 1e-9,
+   "TARGET_RECALL=%s" % getattr(B, "TARGET_RECALL", None))
+ok("C2 棘轮存在（记录历史最好读数，只许涨不许跌）",
+   isinstance(getattr(B, "BEST_RECALL", None), (int, float)) and getattr(B, "BEST_RECALL") > 0,
+   "BEST_RECALL=%s" % getattr(B, "BEST_RECALL", None))
+
+print("\n── D. 反向锚 ──")
+ok("D1 ★ 素材**不进产品包**（在 dev-workspace 下，打包清单扫不到）",
+   os.path.abspath(ROOT) not in os.path.abspath(WEB)
+   and "dev-workspace" in os.path.abspath(WEB).replace("\\", "/"), os.path.abspath(WEB)[-60:])
+_pack = io.open(os.path.join(ROOT, "scripts", "pack_online.py"), encoding="utf-8").read()
+ok("D2 打包脚本没有把 ocr-samples 收进去", not _sm.has(_pack, "ocr-samples"))
+_h = io.open(os.path.join(ROOT, "scripts", "ocr_corpus_harvest.py"), encoding="utf-8").read()
+ok("D3 采集脚本：有内容去重 + 每张都体检 + 只在素材目录里写",
+   _sm.has(_h, "md5") and _sm.has(_h, "def probe(") and _sm.has(_h, "WEB"))
+ok("D4 采集脚本不碰用户素材（不读用户的微信数据目录）",
+   not _sm.has(_h, "WeChat Files") and not _sm.has(_h, "wxid_"))
+
+print("\n素材库/标准判据：%d 通过 / %d 失败" % (PASS, FAIL))
+sys.exit(1 if FAIL else 0)

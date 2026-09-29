@@ -106,11 +106,32 @@ _code = code_only(_s)
 ok("C1 不碰注册表（代码里没有 winreg / HKEY_ / HKCU\…\Run —— 只看代码，不看注释里的声明）",
    (not _sm.has(_code, "winreg")) and (not _sm.has(_code, "HKEY_")) and (not _sm.has(_code, "HKCU"))
    and (not _sm.has(_code, "CurrentVersion")))
-ok("C2 不建计划任务（代码里没有 schtasks）", not _sm.has(_code.lower(), "schtasks"))
+# 老机制（`scripts` 目录下那个开机自启 .bat 用计划任务注册、要管理员）产品里本来就有 ⇒ 口径改成：
+# **只认、只删、不建**（建它交回原来那个 .bat）—— 只认一套会让「其实开着」显示成「未开启」，最误导。
+ok("C2 ★ 老计划任务只认只删、不建（/query 与 /delete 有，/create 一处都没有）",
+   _sm.has(_code, "/query") and _sm.has(_code, "/delete") and not _sm.has(_code, "/create"),
+   "task=%s" % A.LEGACY_TASK)
 ok("C3 只写「当前用户启动文件夹」（路径来自 %APPDATA% 下的 Startup）",
    _sm.has(_s, 'os.environ.get("APPDATA"') and _sm.has(_s, '"Startup"'))
 ok("C4 非 Windows 如实拒绝（不假装成功）",
    _sm.has(_s, "def supported()") and _sm.has(_s, "只做 Windows 当前用户级自启"))
+
+print("\n── C5. 老机制也要看得见 / 关得掉（否则用户以为关了其实还开着）──")
+_real_legacy, _real_rm = A._legacy_task_enabled, A._remove_legacy_task
+try:
+    A._legacy_task_enabled = lambda: True
+    _st_legacy = A.status(_tmp)
+    ok("C5a 老机制开着时，状态必须如实报「已开启（老机制）」",
+       _st_legacy.get("enabled") is True and _st_legacy.get("method") == "legacy-task",
+       str(_st_legacy.get("method")))
+    ok("C5b 人话里说清「要管理员才能关」", _sm.has(A.status_text(), "管理员"), A.status_text()[:60])
+    _rm_called = []
+    A._remove_legacy_task = lambda: (_rm_called.append(1), (True, "（判据桩）"))[1]
+    _ok_d, _why_d = A.disable(_tmp)
+    ok("C5c 关闭时一并尝试删老任务（不然「关了」是假的）",
+       _ok_d and _rm_called and _sm.has(_why_d, "判据桩"), _why_d[:50])
+finally:
+    A._legacy_task_enabled, A._remove_legacy_task = _real_legacy, _real_rm
 
 print("\n── D. 接线（前端 + 后端 + CLI/菜单）──")
 _routes = src("agent/routes.py")

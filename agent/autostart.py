@@ -24,12 +24,15 @@ log = logging.getLogger("persona-morph")
 #: 启动文件夹（当前用户）
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
                            "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-#: 运行期产物名（**在启动文件夹里生成**，仓库里当然没有它 ⇒ 这里按片段拼，
-#: 免得"入口文件必须真实存在"那条判据把它当成死指引）
 LNK_NAME = "群相." + "lnk"
 CMD_NAME = "群相" + ".cmd"
 #: 首选启动目标：包内的 `一键启动.exe`（产品的正规入口）
 LAUNCHER_EXE = "一键启动.exe"
+#: ⚠️ **老机制**（产品里原本就有）：`scripts\\开机自启.bat` 用计划任务注册，**要管理员**。
+#    两套并存时必须**互相看得见**，否则用户开了老的那套、新开关却显示"未开启"（最误导）。
+#    口径：新开关**默认只动启动文件夹**（免管理员）；老任务**只认、只删、不建**（建它要管理员，
+#    交给原来那个 .bat），状态与关闭都如实报出来。
+LEGACY_TASK = "Persona Morph"
 
 
 def _root() -> str:
@@ -67,8 +70,41 @@ def target() -> tuple:
     return "", root, "没找到可启动的入口（既没有「%s」，也没有 runtime\\python + qt_bootstrap.py）" % LAUNCHER_EXE
 
 
+def _legacy_task_enabled() -> bool:
+    """老机制（计划任务）在不在。**只查，不建** —— 建它要管理员，交给 `scripts\\开机自启.bat`。"""
+    if not supported():
+        return False
+    try:
+        r = subprocess.run(["schtasks", "/query", "/tn", LEGACY_TASK],
+                           capture_output=True, text=True, timeout=30,
+                           creationflags=0x08000000)
+        return r.returncode == 0
+    except Exception as e:  # noqa: BLE001
+        log.debug("查老的自启计划任务失败（当作没有）：%s", e)
+        return False
+
+
+def _remove_legacy_task() -> tuple:
+    """删老的计划任务（用户想关就得能真关掉）。失败**如实说**，并指向原来那个 .bat。"""
+    try:
+        r = subprocess.run(["schtasks", "/delete", "/tn", LEGACY_TASK, "/f"],
+                           capture_output=True, text=True, timeout=60,
+                           creationflags=0x08000000)
+        if r.returncode == 0:
+            return True, "（老的开机任务也一起删掉了）"
+        return False, ("（老的开机任务删不掉：%s —— 它需要管理员，"
+                       "请右键以管理员身份运行 scripts 目录里那个「取消开机自启」）"
+                       % ((r.stdout or "") + (r.stderr or "")).strip()[-80:])
+    except Exception as e:  # noqa: BLE001
+        return False, "（删老的开机任务时出错：%s）" % str(e)[:60]
+
+
 def status(dir_path: str = None) -> dict:
-    """以**文件为准**报状态（用户手动删掉快捷方式 ⇒ 这里立刻变回"未开启"）。"""
+    """以**文件/任务为准**报状态（用户手动删掉快捷方式、或删掉计划任务 ⇒ 这里立刻变回"未开启"）。
+
+    ⚠️ 两套机制都要认：我们放的启动文件夹产物（新，免管理员）＋ 老的计划任务（要管理员）
+    —— 只认一套会让"其实开着"显示成"未开启"，那是最误导用户的一种错。
+    """
     if not supported():
         return {"supported": False, "enabled": False, "method": "none", "path": "",
                 "why": "只支持 Windows（当前系统 %s）" % sys.platform}
@@ -78,8 +114,13 @@ def status(dir_path: str = None) -> dict:
             tgt, _wd, why = target()
             return {"supported": True, "enabled": True, "method": method, "path": p,
                     "target": tgt, "why": "已开启（%s；删掉这个文件即关闭）" % why}
+    if _legacy_task_enabled():
+        return {"supported": True, "enabled": True, "method": "legacy-task", "path": LEGACY_TASK,
+                "target": target()[0],
+                "why": "已开启（用的是**老机制**：计划任务「%s」，需要管理员才能关；"
+                       "点关闭会尝试删它）" % LEGACY_TASK}
     return {"supported": True, "enabled": False, "method": "none", "path": "",
-            "target": target()[0], "why": "未开启（启动文件夹里没有 %s）" % LNK_NAME}
+            "target": target()[0], "why": "未开启（启动文件夹里没有 %s，也没有老的计划任务）" % LNK_NAME}
 
 
 def _make_shortcut(lnk_path: str, target_path: str, workdir: str) -> tuple:
@@ -162,7 +203,7 @@ def enable(dir_path: str = None) -> tuple:
 
 
 def disable(dir_path: str = None) -> tuple:
-    """关闭自启（删我们放的 lnk/cmd；没开也返回 ok，说明"本来就关着"）。"""
+    """关闭自启：删我们放的产物；**老的计划任务也一并尝试删掉**（否则用户以为关了，其实还开着）。"""
     if not supported():
         return False, "这个系统不支持（没做任何改动）。"
     removed = []
@@ -173,9 +214,14 @@ def disable(dir_path: str = None) -> tuple:
                 removed.append(os.path.basename(p))
         except Exception as e:  # noqa: BLE001
             return False, "删不掉 %s（%s）⇒ 你也可以手动删掉它。" % (os.path.basename(p), str(e)[:60])
+    _tail = ""
+    if _legacy_task_enabled():
+        _ok, _tail = _remove_legacy_task()
     if removed:
-        return True, "已关闭（删掉了 %s）。" % "、".join(removed)
-    return True, "本来就是关着的（启动文件夹里没有我们的文件）。"
+        return True, "已关闭（删掉了 %s）%s" % ("、".join(removed), _tail)
+    if _tail:
+        return True, "已关闭%s" % _tail
+    return True, "本来就是关着的（启动文件夹里没有我们的文件，也没有老的计划任务）。"
 
 
 def status_text() -> str:
@@ -184,6 +230,7 @@ def status_text() -> str:
     if not st.get("supported"):
         return "开机自启：不支持（%s）" % st.get("why")
     if st.get("enabled"):
-        _how = "快捷方式" if st.get("method") == "shortcut" else "启动脚本"
+        _how = {"shortcut": "快捷方式", "cmd": "启动脚本",
+                "legacy-task": "老机制（计划任务，要管理员才能关）"}.get(st.get("method"), "已开启")
         return "开机自启：已开启（%s；位置 %s）" % (_how, st.get("path"))
     return "开机自启：未开启（%s）" % st.get("why")
