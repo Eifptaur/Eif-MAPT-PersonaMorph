@@ -2153,6 +2153,47 @@ def _green_x(img):
     return max(0, x1 - 130), x1
 
 
+def _green_span(img, y0: int, y1: int, ratio: float = 0.5) -> tuple:
+    """**绿块的真实横向边界** `(x0, x1)`：在 `y0..y1` 这几行里逐列量绿占比，取占比 > `ratio` 的连续段。
+
+    ⚠️ 与 `_green_x()` **不是一回事**，别混用（本轮实测踩过）：
+      · `_green_x()` ＝"**不含头像**的取样窗"（专为量绿占比设计，固定取面板左沿往左 144~14px），
+        拿它当横界会**砍掉名字开头**（实测 `aaa偷啃使` → `偷啃使`）；
+      · `_green_span()` ＝**绿像素实际铺到哪儿**（含头像），才是裁剪该用的边界。
+    量不出（这几行几乎没有绿）⇒ 返回 `(0, 0)`，调用方据此跳过这一档（**不猜**）。
+    """
+    x0 = x1 = 0
+    try:
+        import numpy as np
+        rgb = np.asarray(img.convert("RGB")).astype(int)
+        _y0, _y1 = max(0, int(y0)), min(img.size[1] - 1, int(y1))
+        if _y1 <= _y0:
+            return 0, 0
+        sub = rgb[_y0:_y1 + 1]
+        r, g, b = sub[:, :, 0], sub[:, :, 1], sub[:, :, 2]
+        gm = (((np.abs(r - GREEN[0]) <= GREEN_TOL) & (np.abs(g - GREEN[1]) <= GREEN_TOL)
+               & (np.abs(b - GREEN[2]) <= GREEN_TOL))
+              | ((g - r >= 12) & (g - b >= 10) & (g >= 90) & (g >= np.maximum(r, b) + 8)))
+        col = gm.mean(axis=0)
+        idx = [i for i, v in enumerate(col) if v > float(ratio)]
+        if not idx:
+            return 0, 0
+        # 只取**最长连续段**（防绿头像/绿按钮在别处贡献孤立列把边界拉飞）；
+        # 允许 ≤3 列的缝隙（抗锯齿/文字笔画会把某几列绿占比压低）。
+        segs, s, e = [], idx[0], idx[0]
+        for i in idx[1:]:
+            if (i - e) > 3:
+                segs.append((s, e))
+                s = i
+            e = i
+        segs.append((s, e))
+        x0, x1 = max(segs, key=lambda p: p[1] - p[0])
+        return int(x0), int(x1)
+    except Exception as e: # noqa: BLE001
+        log.debug("绿块横向边界量不出（按跳过处理）：%s", e)
+        return 0, 0
+
+
 def _is_green(r: int, g: int, b: int) -> bool:
     """这一像素算不算"微信活动会话行的绿底"。
 
@@ -2397,6 +2438,54 @@ def _name_plausible(s: str) -> bool:
     return not (_RE_TIMEISH.fullmatch(t) or t.isdigit())
 
 
+def _name_score(got: str, cands=None) -> float:
+    """给"某一档裁出来读到的名字"打分（**多档择优**用；`_band_name` 的排序依据）。
+
+    ⛔ 为什么必须择优：真机实测（2026-09-29，`ocr-samples/wechat/7bcf1579`，真值 `aaa偷啃使`）
+      `pane_left` 相对偏移三档扫描里，**中间档 (430,120) 先读出了残字 `aaa亻俞`**（裁框右界
+      把名字后半截掉了），而它**通过了 `_name_plausible`**（那只挡"像时间的"，不挡"被截断的"）
+      ⇒ 老逻辑 `第一档 non-empty 就 return` 把残字当结果收下，更完整的 `(300,60)` 档
+      （读出 `aaa偷啃使“．`）根本没轮到。**修法：三档都读，取分高的那一份。**
+
+    打分口径（判据要能分辨，不许恒真）：
+      · 有候选集 ⇒ 用 `best_candidate` 的 score（0.7/0.85/1.0），**这才是线上真实依据**；
+        ⛔ **认不出候选时不许直接判 0**（`best_candidate` 返回 0.0 只说明"不像候选集里的名字"，
+          不等于"这一档读数没用"）——实测踩过：`微信团队胙天` 纠不到候选集（候选集里没这个名），
+          若判 0 就整条丢空，比"带着残留时间戳返回"更糟。⇒ **回落到长度合理性打分**，
+          只是把候选集"像不像"的分数作为**加分项**叠加上去，保证"纠上了 > 纠不上 > 全空"。
+      · 无候选集 ⇒ 只用长度合理性：真名一般是 2~20 个归一化字符；**被截断的残字常偏短**
+        （`aaa亻俞` 归一化 5 字 vs 真值 7 字），并且"带时间戳/预览残留"要扣分。
+    """
+    t = clean(str(got or "")).strip()
+    if not t or not _name_plausible(t):
+        return -1.0
+    n = norm(t)
+    if not n:
+        return -1.0
+    sc = 1.0
+    L = len(n)
+    # 太长 ⇒ 多半把预览/时间戳一起圈进来了（名字不该有 20+ 字）
+    if L > 20:
+        sc -= min(0.6, 0.05 * (L - 20))
+    # 太短 ⇒ 多半被裁框截断了（`亻俞` 这种）。2 字以下重罚，3~4 字轻罚。
+    if L <= 2:
+        sc -= 0.5
+    elif L <= 4:
+        sc -= 0.15
+    # 残留标点/省略号（`“．`）＝带了旁边的字 ⇒ **轻扣**（这些字符在 `norm` 里会被洗掉，
+    # 所以必须拿**原始读数**判）。⛔ 只扣 0.1：实测踩过——扣 0.2 会把"**完整但带时间戳残留**"
+    # 打到 0.8，反而低于"**被裁残的**"（`aaa亻俞` 5 字、无残留 ⇒ 1.0）⇒ 择优选错。
+    #   而"带残留"在真机图上是**常态**（名字与时间戳同色同块、只隔空白），不能罚得比残字重。
+    if any(p in str(got) for p in ("．", "…", "·", "“", "”", "【", "】")):
+        sc -= 0.1
+    if cands:
+        # 候选集"像不像"作为**加分项**（不是替代项）：纠上了就一定能压过纠不上的那一档
+        _b, _cs, _why = best_candidate(t, cands)
+        if _b and _cs > 0:
+            sc += float(_cs)      # 距离 0⇒+1.0（总分 2.0），距离 1⇒+0.85，距离 2⇒+0.7
+    return sc
+
+
 def _band_name_box(img, y0: int, y1: int, tx0: int, tx1: int, bg) -> tuple:
     """名字那一刀的裁剪框 `(x0, y0, x1, y1)`；找不到给 `None`。
 
@@ -2486,13 +2575,16 @@ def _band_name_geo(img, y0: int, y1: int, tx0: int, tx1: int, bg) -> str:
         return ""
 
 
-def _band_name(img, y_abs: int) -> str:
+def _band_name(img, y_abs: int, cands=None) -> str:
     """绿底高亮行的名字 —— 读得出来就用，读不出给 `''`（**不许**因此否定这一行的存在）。
 
     ① **几何取名**（`_band_name_geo`）：文字列 → 行切分 → 行内取最靠左的那一段。
        名字与预览是两行、时间戳在名字行最右，按"分界线左 235~95"裁一刀会既切掉名字开头、
        又把时间戳圈进来（实测读到半个字形的 `'L'`）。
     ② 几何拿不到才退回老路（原图直读 → 整行 → 反相），保持既有容错。
+
+    `cands`＝候选集（本机真实会话名）：给了就用它来给多档读数打分（`_name_score`），
+    **取最像候选的那一份**——这是"名字被裁残"唯一的可靠解药（残字对不上任何候选，自然落选）。
     """
     try:
         y0, y1, tx0, tx1, bg = _band_geo(img, int(y_abs))
@@ -2510,13 +2602,47 @@ def _band_name(img, y_abs: int) -> str:
             log.debug("pane_left 取不到（用比例兜底）：%s", e)
         _hy0 = int(y0) if y1 else max(0, int(y_abs) - 27)
         _hy1 = int(y0) + max(8, ((int(y1) - int(y0)) // 2)) if y1 else _hy0 + 28
+        # ⭐ **第一候选档：绿带上半行 × 绿像素全宽，裸图直读**（2026-09-29 真机实测加）：
+        #    实测这一档**两例都把名字读全了**（`微信团队胙天19：55` / `aaa偷啃使“．星期日`），
+        #    优于 `pane_left` 相对偏移那三档（后者实测读到残字 `aaa亻俞`、`微信团队胙天`）。
+        #    为什么这一档更稳（三处都在裁法上，不在像素上）：
+        #      · 上半行 ⇒ 天然避开**预览行**（`[动画表情]` 那种）；
+        #      · 绿像素全宽 ⇒ 横向不靠 `pane_left` 猜（那个值在 150% DPI 图上会偏，实测偏掉名字开头）；
+        #      · 含头像也没关系 —— 头像是图形、OCR 只吐文字，实测未污染读数（整带读才带进聊天区内容）。
+        #    ⛔ 但仍然**不单独采信**：只把它并进下面的择优池（与三档一起按 `_name_score` 比）。
+        _best_w, _best_s = "", -1.0
+        try:
+            _gx0, _gx1 = _green_span(img, int(y0), int(y1))
+            if _gx1 - _gx0 >= 24 and _hy1 - _hy0 >= 8:
+                _gc = img.crop((_gx0, _hy0, _gx1, _hy1))
+                _gw = clean("".join(str(i[0]) for i in recognize_dual(_gc))).strip()
+                _gs = _name_score(_gw, cands)
+                if _gs > _best_s:
+                    _best_w, _best_s = _gw, _gs
+        except Exception as e: # noqa: BLE001
+            log.debug("绿带上半行整宽裸读失败（不影响后面的三档）：%s", e)
+        # ⭐ **三档扫描改成"多档择优"**（2026-09-29 真机实测修的）：
+        #    老逻辑 `第一档 non-empty 且 plausible 就 return` 有个致命弱点——**第一档读出的可能是残字**
+        #    （本机 `aaa偷啃使` 实测：中间档 (430,120) 先读出 `aaa亻俞`，因为它把名字后半裁掉了，
+        #      而 `_name_plausible` 只挡"像时间的"、不挡"被截断的" ⇒ 残字被当结果收下，
+        #      更完整的 (300,60) 档读出 `aaa偷啃使“．` 却没轮到）。
+        #    ⇒ 三档全读，按 `_name_score` 取分最高的一份（有候选集用 `best_candidate`，
+        #      无候选集按长度合理性）。**完全命中候选（score=1.0）才提前收工**，省预算。
+        #    ⚠️ 择优池是**共享**的（上面整宽档已经写进去了）⇒ 这里**不许再重置** `_best_*`
+        #       （踩过：重置会把整宽档白读掉）。
         for _dx0, _dx1 in ((360, 160), (430, 120), (300, 60)):
             _box = (max(0, _pl - _dx0), _hy0, max(0, _pl - _dx1), _hy1)
             if _box[2] - _box[0] < 24 or _box[3] - _box[1] < 8:
                 continue
             _w = clean("".join(str(i[0]) for i in recognize_dual(img.crop(_box)))).strip()
-            if _w and _name_plausible(_w):
-                return _w
+            _s = _name_score(_w, cands)
+            if _s > _best_s:
+                _best_w, _best_s = _w, _s
+            # 完全命中候选（`best_candidate` 距离 0 ⇒ 加分 1.0）⇒ 不必再试，省一次 OCR
+            if cands and _w and best_candidate(_w, cands)[1] >= 1.0:
+                break
+        if _best_w and _best_s > 0.0:
+            return _best_w
         if y1 and tx1:
             got = _band_name_geo(img, y0, y1, tx0, tx1, bg)
             if got and _name_plausible(got):

@@ -130,6 +130,84 @@ ck("宽容判据：修复前那两种残读认不过（反向锚）",
    (not ocr.loose_matches("aaa偷啃使用者", "L"))
    and (not ocr.loose_matches("aaa偷啃使用者", "aal日月1551")), "")
 
+print("\n── F. 绿底白字多档择优（`_name_score`；真机残字不得压过完整读数）──")
+# 真机锚点（2026-09-29，`dev-workspace/persona-morph/ocr-samples/wechat/7bcf1579`，真值 `aaa偷啃使`）：
+#   `pane_left` 相对偏移三档扫描实测读数 = ①`''` ②`aaa亻俞`（名字后半被裁掉）③`aaa偷啃使“．`（完整+时间戳残留）。
+#   老逻辑「第一档 non-empty 且 plausible 就 return」会把 ② 的**残字**当结果收下（`_name_plausible`
+#   只挡"像时间的"、不挡"被截断的"）⇒ 命中率 0/2。修法：三档全读、按 `_name_score` 择优。
+_truth = "aaa偷啃使"
+ck("F1 残字 vs 完整读数：完整的那一份分更高（否则择优无用）",
+   ocr._name_score("aaa偷啃使“．", [_truth]) > ocr._name_score("aaa亻俞", [_truth]),
+   "完整=%.3f 残字=%.3f" % (ocr._name_score("aaa偷啃使“．", [_truth]),
+                            ocr._name_score("aaa亻俞", [_truth])))
+ck("F2 反向锚：残字确实更低分（不是恒真）",
+   ocr._name_score("aaa亻俞", [_truth]) < ocr._name_score("aaa偷啃使“．", [_truth]), "")
+ck("F3 **认不出候选时不许判 0**（`微信团队胙天` 纠不到候选集，但仍是有效读数）",
+   ocr._name_score("微信团队胙天", ["文件传输助手", "演示(3)"]) > 0.0,
+   "=%.3f" % ocr._name_score("微信团队胙天", ["文件传输助手", "演示(3)"]))
+ck("F4 认不出的读数 < 认得出的读数（候选集加分确实是加分项，不是替代项）",
+   ocr._name_score("微信团队胙天", ["文件传输助手"]) < ocr._name_score("微信团队", ["微信团队"]), "")
+ck("F5 时间戳形状一律 -1（不许被择优捞回来）",
+   ocr._name_score("16:32") < 0 and ocr._name_score("1609") < 0, "")
+ck("F6 空串 -1", ocr._name_score("") < 0 and ocr._name_score("   ") < 0, "")
+ck("F7 正常名字得正分（无候选集路径不许整体失效）", ocr._name_score("微信团队") > 0.0, "")
+# 源码锚：多档扫描必须**读完三档再择优**（老逻辑是"第一档 plausible 就 return"）
+_ocr_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "agent", "chat_ocr.py"), encoding="utf-8").read()
+ck("F8 源码锚：`_band_name` 三档扫描改择优（不再第一档返回）",
+   _sm.has(_ocr_src, "_best_w, _best_s = \"\", -1.0")
+   and not _sm.has(_ocr_src, "if _w and _name_plausible(_w):\n                return _w"), "")
+ck("F9 源码锚：`_band_name` 接 `cands`（线上路径靠它择优）",
+   "def _band_name(img, y_abs: int, cands=None)" in _ocr_src, "")
+# ⭐ 第一候选档＝"绿带上半行 × 绿像素全宽裸读"（2026-09-29 真机实测两例读全）
+ck("F10 源码锚：`_band_name` 有「绿带上半行整宽裸读」这一档",
+   _sm.has(_ocr_src, "_green_span(img, int(y0), int(y1))"), "")
+ck("F11 `_green_span` 与 `_green_x` 是**两个东西**（前者是绿块横界、后者是不含头像的取样窗；混用会砍掉名字开头）",
+   "def _green_span(" in _ocr_src and "不含头像" in _ocr_src, "")
+# ⚠️ **诚实标注已知局限**（无候选集时纯串面择优做不到可靠——残字与"完整+时间戳残留"无法区分）：
+#    这条断言不是在夸功能，是**把局限钉住**，防止后人误以为"无候选集也稳"。
+#    事实：无候选集时 `aaa亻俞`（残字，5 字）得分 **不低于** `aaa偷啃使“．`（完整+残留，6 字）
+#    ⇒ 无候选集那条路（`highlight()` 纯像素）的择优**不可靠**，可靠的是候选集那条。
+ck("F12 已知局限如实记录：无候选集时残字分**不低于**「完整+残留」（⇒ 只有候选集那条路可靠）",
+   ocr._name_score("aaa亻俞") >= ocr._name_score("aaa偷啃使“．"),
+   "残字=%.3f 完整+残留=%.3f" % (ocr._name_score("aaa亻俞"), ocr._name_score("aaa偷啃使“．")))
+ck("F13 反向对照：**有**候选集时完整的那份一定更高（证明候选集才是解药）",
+   ocr._name_score("aaa偷啃使“．", ["aaa偷啃使"]) > ocr._name_score("aaa亻俞", ["aaa偷啃使"]), "")
+# ⛔ 回归锚（本轮踩过）：整宽档写进 `_best_*` 后，三档循环**不许再重置** `_best_*`
+#   （重置会把整宽档白读掉 —— 我第一版就是这么写的，`_best_w, _best_s = "", -1.0` 出现了两次）。
+ck("F14 源码锚：三档循环**不再重置** `_best_*`（只允许声明一次）",
+   _ocr_src.count('_best_w, _best_s = "", -1.0') == 1,
+   "出现 %d 次" % _ocr_src.count('_best_w, _best_s = "", -1.0'))
+
+print("\n── G. 真机绿底白字端到端（`_band_name` 走生产入口；素材不在则**跳过**，绝不假绿）──")
+# 素材：用户 2026-09-29 专供的真机微信截图（150% DPI），`dev-workspace/` 是**非版本库路径** ⇒
+# 换台机器/清过 workspace 就跑不到 ⇒ 跳过（打印「跳过」并计数，不冒充通过）。
+_WXDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                      "dev-workspace", "persona-morph", "ocr-samples", "wechat")
+_REAL = [("0af83564-b60d-4812-aa4f-3c330c6399c0.png", "微信团队"),
+         ("7bcf1579-61e9-4c80-a54a-47eb45341b53.png", "aaa偷啃使")]
+SKIP = 0
+if not (os.path.isdir(_WXDIR) and all(os.path.exists(os.path.join(_WXDIR, f)) for f, _ in _REAL)):
+    SKIP = 3
+    print("  ↷ 跳过（找不到真机素材 %s）" % _WXDIR)
+else:
+    _hit = 0
+    for _fn, _t in _REAL:
+        _im = Image.open(os.path.join(_WXDIR, _fn)).convert("RGB")
+        _bs = ocr.green_bands(_im, min_ratio=0.30, min_h=28)
+        if not _bs:
+            ck("G·%s 找到绿底高亮行" % _fn[:8], False, "green_bands 空")
+            continue
+        _g = ocr._band_name(_im, _bs[0]["y_abs"], [_t, "文件传输助手", "演示(3)"])
+        _a, _tt = ocr.norm(_g), ocr.norm(_t)
+        _ok = bool(_tt) and (_tt in _a or (len(_tt) >= 3 and ocr._edit_dist_le(_a, _tt, 1)))
+        # ⛔ 这里**不要求**读到的就是真名本身——真实场景允许"名字+时间戳残留"（`微信团队胙天`），
+        #    所以判据只问"真名有没有被读到"（这正是线上拿去比对候选集的东西）。
+        _hit += 1 if _ok else 0
+        ck("G·%s 生产入口读到真名（真值 %s）" % (_fn[:8], _t), _ok, "读到 %r" % _g)
+    ck("G·真机绿底白字命中 ≥ 1/2（裸像素那版是 0/2；这是「我方增强版行不行」的下限）",
+       _hit >= 1, "%d/2" % _hit)
+
 print("\n── E. 第二引擎档位（PP-OCRv6 优先 / v4 回退）──")
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _src = open(os.path.join(_root, "agent", "chat_ocr.py"), encoding="utf-8").read()
@@ -158,5 +236,5 @@ ck("E7 随包离线轮子里带齐 v6 那一套（rapidocr + omegaconf + antlr4�
    all(any(fn.startswith(_p) for fn in os.listdir(os.path.join(_root, "vendor", "ocr")))
        for _p in ("rapidocr-", "omegaconf-", "antlr4")), "")
 
-print("\n== 结论：%d 通过 / %d 失败 ==" % (PASS, FAIL))
+print("\n== 结论：%d 通过 / %d 失败%s ==" % (PASS, FAIL, ("（跳过 %d）" % SKIP) if SKIP else ""))
 sys.exit(1 if FAIL else 0)

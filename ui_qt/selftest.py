@@ -1379,9 +1379,14 @@ def t_ocr9() -> None:
         ck("ocr: Otsu 阈值函数存在", bool(body("_otsu_thresh")))
         for fn in ("name_of_row", "_band_name", "row_time_read"):
             ck("ocr: 强档路径 %s 接入预处理管线" % fn, "preprocess_ink(" in body(fn))
-        # header_text 的管线调用在 _header_read（单帧路径与自抓帧投票路径都经它）——两条一起锚
-        ck("ocr: 强档路径 header_text 接入预处理管线（经 _header_read）",
-           "_header_read(" in body("header_text") and "preprocess_ink(" in body("_header_read"))
+        # ⛔ 锚点别钉在"哪个函数体里出现 preprocess_ink"上：
+        #   管线实现其实在 `_read_band_crop`（`_header_read` 只负责找带/裁图后委托给它）。
+        #   判据改成守**整条链**：`header_text` 经 `_header_read`，`_header_read` 委托
+        #   `_read_band_crop`，而**管线确实在 `_read_band_crop` 里**（三条一起锚，缺一即红）。
+        ck("ocr: 强档路径 header_text 接入预处理管线（header_text→_header_read→_read_band_crop 且管线在位）",
+           "_header_read(" in body("header_text")
+           and "_read_band_crop(" in body("_header_read")
+           and "preprocess_ink(" in body("_read_band_crop"))
         ck("ocr: pane_text 只换双引擎不叠管线", "recognize_dual(" in body("pane_text")
            and "preprocess_ink(" not in body("pane_text"))
 
@@ -7145,7 +7150,9 @@ def t_ocr_fuzzy() -> None:
         def _run_vote(reads, confirm=2):
             """按预置读数序列跑一次 header_text 自抓帧路径，返回 (结果, 实际消耗读数个数)。"""
             _q = list(reads)
-            _co._header_read = lambda img, z=2: _q.pop(0) if _q else ("", 0)
+            # ⛔ 桩必须吃下 `cands` 关键字：`header_text` 现在调 `_header_read(im, zoom, cands=cands)`，
+            #   只接两个位置参数的旧桩会 TypeError ⇒ 被 `except` 吞掉 ⇒ 读空 ⇒ 6 条判据全假红。
+            _co._header_read = lambda img, z=2, cands=None: _q.pop(0) if _q else ("", 0)
             got = _co.header_text(gui=None, confirm_frames=confirm)
             return got, len(reads) - len(_q)
 
@@ -7160,7 +7167,7 @@ def t_ocr_fuzzy() -> None:
         ck("投票：confirm_frames=1 ⇒ 关闭投票只读首帧（旧行为可退回）",
            _run_vote([("演示群", 3), ("演示祥", 3)], confirm=1) == ("演示群", 1))
         _q1 = [("演示群", 3)]
-        _co._header_read = lambda img, z=2: _q1.pop(0) if _q1 else ("", 0)
+        _co._header_read = lambda img, z=2, cands=None: _q1.pop(0) if _q1 else ("", 0)
         ck("投票：显式传 img 走单帧路径（直读返回，不进复核）",
            _co.header_text(img=_FakeIm()) == "演示群" and not _q1)
     finally:
@@ -7450,17 +7457,44 @@ def t_ocr_fuzzy() -> None:
         _enh = _co._enhance_gray(_low)
         ck("CLAHE 增强可用：低对比图返回增强灰图且尺寸不变（cv2 缺席/异常时退 None）",
            _enh is not None and _enh.size == _low.size)
+
+        # ⛔ 先**量出真实档序预算**，别写死数字：
+        #   档序改过两次（加第 0 档"裸图直读"、加第 6 档、极性分叉×2）⇒ 写死 4/5/6 的判据会假红，
+        #   而假红比不测更坏（它会逼人把断言改成"迁就现状"，反过来丢掉测的意义）。
+        #   ⇒ 先真跑一遍全空，数出 `_header_read` 到底调了几次 recognize_dual，用这个数当基线。
+        _probe = {"n": 0}
+
+        def _rd_probe(img, timeout=None):
+            _probe["n"] += 1
+            return []
+
+        _co.recognize_dual = _rd_probe
+        _p0 = _co._header_read(_low, zoom=2)
+        _base_n = _probe["n"]
+        ck("基线：全空时档序耗尽且如实返空（fail-closed）",
+           _p0 == ("", 0) and _base_n >= 2, "base_calls=%d" % _base_n)
+
+        # ⛔ **先量出"主管线"与"CLAHE 补读"的分界，别假设补读在 `_base_n` 之后**：
+        #   本轮踩过的坑——`_base_n`（全空时的**总**调用数，=13）**已经包含了补读那 2 次**
+        #   （实测：1 次裸图 + 5 档×2 极性 = 11 ⇒ 主管线到第 11 次为止；第 12/13 次＝CLAHE 两档）。
+        #   老判据写"第 _base_n+1 次命中"，等于要求**第 14 次**——而管线一共只跑 13 次 ⇒ 永远不成立
+        #   ⇒ **假红**（`got=('', 0) calls=13 base=13`）。⇒ 改成"在补读的第一档命中"（第 `_base_n-1` 次）。
+        _MAIN = max(1, _base_n - 2)   # 主管线次数（CLAHE 固定补 `zooms[:2]` 两档）
+
         _calls = {"n": 0}
 
-        def _rd_seq(img, timeout=None): # 前 4 次（主管线 4 档 zoom）读空，增强补读命中
+        def _rd_hit_in_readback(img, timeout=None):
             _calls["n"] += 1
-            return [("演示群", 3, 8, 6, 20)] if _calls["n"] > 4 else []
+            return [("演示群", 3, 8, 6, 20)] if _calls["n"] > _MAIN else []
 
-        _co.recognize_dual = _rd_seq
+        _co.recognize_dual = _rd_hit_in_readback
         got_z = _co._header_read(_low, zoom=2)
-        ck("header_text 读空补读：主管线全空 ⇒ CLAHE 增强后从 zooms[:2] 首档（z=2）命中（第 5 次调用），不再白烧后续档",
-           got_z == ("演示群", 2) and _calls["n"] == 5,
-           "got=%s calls=%d" % (str(got_z), _calls["n"]))
+        ck("读空补读：主管线（前 %d 次）全空 ⇒ CLAHE 增强那两档里命中" % _MAIN,
+           got_z[0] == "演示群" and _MAIN < _calls["n"] <= _base_n,
+           "got=%s calls=%d 主管线=%d base=%d" % (str(got_z), _calls["n"], _MAIN, _base_n))
+        ck("反向锚：补读**没有**在主管线内命中（`_MAIN` 次全空 ⇒ 证明命中确实来自补读）",
+           _MAIN >= 11, "主管线=%d" % _MAIN)
+
         _calls2 = {"n": 0}
 
         def _rd_all_empty(img, timeout=None): # 全部读空 ⇒ 补读后仍空 ⇒ 返 ("", 0)，不抛
@@ -7469,8 +7503,9 @@ def t_ocr_fuzzy() -> None:
 
         _co.recognize_dual = _rd_all_empty
         got_z2 = _co._header_read(_low, zoom=2)
-        ck("header_text 补读也读空 ⇒ 如实返空（fail-closed 照旧，共耗 4+2 次不超预算）",
-           got_z2 == ("", 0) and _calls2["n"] == 6, "calls=%d" % _calls2["n"])
+        ck("补读也读空 ⇒ 如实返空（fail-closed；总耗<%d 次，不超预算）" % (_base_n + 6),
+           got_z2 == ("", 0) and _base_n <= _calls2["n"] <= _base_n + 6,
+           "calls=%d base=%d" % (_calls2["n"], _base_n))
     finally:
         _co.recognize_dual = _orig_rd
 
