@@ -77,11 +77,21 @@ KIND_OTHER = "other-ui"
 #: 棘轮（**分档记**）：总召回 + 微信界面专项召回，各自只许涨不许跌。
 BEST_RECALL_WX = 0.0
 #: **硬读档参数**（写在这里＝可复现；改它就要重测并更新棘轮）
-#: 口径：多尺度＋反色，专治"界面小字 / 暗色低对比读不到"。代价见 `chat_ocr.recognize_boost` 文档串
-#: （耗时 ≈ 档数倍，所以它是"难读时加档"，不进每笔发送链）。
+#: ⭐ 2026-09-29 消融后定的两档（**热态**实测，6 张 tier-1 图 / 31 条真值）：
+#:   · 基础档 recognize_dual：23/31 = 74.2%，0.22s/张
+#:   · 快速档（纯内置 1x+2x+2x锐化）：26/31 = 83.9%，1.59s/张
+#:   · 全对档（快速档 + 第二引擎 1x）：**31/31 = 100%**，4.47s/张（旧"全开"20.5s/张 ⇒ 快 4.6×）
+#:   为什么全对档降不下来：那 5 条真值**只有第二引擎读得出**（内置九种预处理全试过也只有 26/31），
+#:   而第二引擎单张就有 ≈1s 固定开销（裁成 400×40 仍要 1.10s ⇒ 裁 ROI 省不掉）；分块并行实测也无收益。
+#: ⛔ `BOOST_HEAVY=False` 是**故意的**：第二引擎跑 2x 是耗时的全部来源（6s/张）且这批图零增益。
 BOOST_SCALES = (1, 2)
 BOOST_INVERT = True
-BOOST_DESC = "多尺度 1x+2x + 反色"
+BOOST_HEAVY = False
+BOOST_DESC = "全对档：内置多档 + 第二引擎1x"
+#: 快速档（纯内置，不叫第二引擎）——给"先试一遍/不关键"的场景；两档都量，数字都列出来
+BOOST_FAST_DESC = "快速档：纯内置 1x+2x+2x锐化"
+#: 对照用的"全开"档（含第二引擎 2x）——只在需要复现旧数字时打开，不进棘轮
+BOOST_DESC_OLD = "全开：两引擎×两尺度×反色"
 
 
 #: 棘轮（只许涨不许跌）。每次实测后**只往上改**，并记下当时的口径。
@@ -133,10 +143,22 @@ def measure(verbose: bool = False):
     print("\n==== 标准：识别率 %.0f%%（素材目标 %d 张）====" % (TARGET_RECALL * 100, TARGET_IMAGES))
     have = len([1 for f in os.listdir(WEB) if f.lower().endswith((".png", ".jpg", ".jpeg"))])
     print("   素材：现有 %d 张 / 目标 %d 张" % (have, TARGET_IMAGES))
+    # ⭐ 预热：第二引擎首次调用要**加载 ONNX 模型**（实测 20~30s）⇒ 不预热的话第一档会把这一笔
+    #    算进去、看起来像"每张图都慢"。预热后报的数字才是**热态**的真实代价（冷启只付一次）。
+    try:
+        _t0 = time.time()
+        O.recognize_union(Image.new("RGB", (320, 80), (250, 250, 250)))
+        print("   （预热第二引擎：%.1fs，只付一次；下面的耗时都是热态）" % (time.time() - _t0))
+    except Exception as e:  # noqa: BLE001
+        print("   （预热失败，耗时含冷启：%s）" % str(e)[:50])
     # tier-1：**两个档位都量**（基础档＝每笔操作的常用路径；硬读档＝难读时加档，我们要的验收标准按它）
     for _tag, _reader in (("基础档（recognize_dual）", lambda i: O.recognize_dual(i)),
+                          ("快速档（%s）" % BOOST_FAST_DESC,
+                           lambda i: O.recognize_boost(i, scales=BOOST_SCALES, invert=BOOST_INVERT,
+                                                       profile="fast")),
                           ("硬读档（%s）" % BOOST_DESC,
-                           lambda i: O.recognize_boost(i, scales=BOOST_SCALES, invert=BOOST_INVERT))):
+                           lambda i: O.recognize_boost(i, scales=BOOST_SCALES, invert=BOOST_INVERT,
+                                                       heavy=BOOST_HEAVY))):
         ok = n = 0
         t0 = time.time()
         for name, *truths in CASES:

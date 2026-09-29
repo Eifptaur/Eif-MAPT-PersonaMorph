@@ -82,10 +82,22 @@ print("\n── D. 口径与代价必须写明白（不许把成本藏起来）�
 _src = io.open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
 ok("D1 文档串写明它**不进每笔发送链**（20s 一张的代价不能默认扛）",
    _sm.has(_src, "不进每笔发送链"))
-ok("D2 文档串写明**耗时 ≈ 档数倍**（代价要能被调用方预估）",
-   _sm.has(_src, "档数倍") or _sm.has(_src, "耗时 ≈"))
+ok("D2 文档串写明**代价**（耗时的来源与量级，调用方能预估）",
+   (_sm.has(_src, "是耗时的全部来源") or _sm.has(_src, "固定开销"))
+   and (_sm.has(_src, "≈20.5s") or _sm.has(_src, "20.5s")))
 ok("D3 倍率有上限（≤3：再大只让第二引擎更慢，实测收益趋零）",
-   _sm.has(_src, "_BOOST_SCALES") and "max(1" in _src)
+   _sm.has(_src, "1 <= int(s) <= 3") and _sm.has(_src, "max(1"))
+ok("D5 ★ 反回退锚：**默认不给放大档用第二引擎**（它是耗时的全部来源；要用必须显式 heavy=True）",
+   _sm.has(_src, "heavy: bool = False") and _sm.has(_src, "if heavy and s > 1:"))
+ok("D7 两档 profile 可跑且语义分明（fast＝纯内置 / full＝加第二引擎）",
+   _sm.has(_src, 'profile: str = ""') and _sm.has(_src, 'if _prof == "fast"')
+   and _sm.has(_src, 'elif _prof == "full"'))
+ok("D8 ★ 快档**真的不叫第二引擎**（源码锚：只有 union_base 为真时才走 recognize_union）",
+   _sm.has(_src, "if s == 1 and union_base:"))
+ok("D9 文档串记下三档实测数字（基础 23/31·快速 26/31·全对 31/31），便于后人判断「更慢值不值」",
+   _sm.has(_src, "23/31") and _sm.has(_src, "26/31") and _sm.has(_src, "31/31"))
+ok("D6 基准里的快档参数就是「默认档」（BOOST_HEAVY=False），别偷偷开全开档",
+   hasattr(B, "BOOST_HEAVY") and B.BOOST_HEAVY is False and B.BOOST_SCALES == (1, 2))
 ok("D4 基准里**两档都量**（基础档数字必须同时列出来，不许只报好看的那档）",
    _sm.has(io.open(os.path.join(ROOT, "scripts", "ocr_bench_web.py"), encoding="utf-8").read(),
            "基础档（recognize_dual）"))

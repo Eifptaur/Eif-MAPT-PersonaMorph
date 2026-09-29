@@ -726,53 +726,94 @@ def recognize_union(img, timeout=None) -> list:
 _BOOST_SCALES = (1, 2, 3)
 
 
-def recognize_boost(img, scales=None, contrast: bool = True, invert: bool = False,
+def recognize_boost(img, scales=None, contrast: bool = False, invert: bool = False,
+                    heavy: bool = False, union_base: bool = True, profile: str = "",
                     timeout=None) -> list:
-    """**硬读档**：多尺度（＋对比度增强／反色）各读一遍，**并集**返回。
+    """**硬读档**：多尺度放大档 ＋（可选）第二引擎，专治"界面小字／暗色低对比读不到"。
 
-    ## 为什么要它（实测锚点）
-    `gh-024-transmission-WI-main-screen.png`（暗色主题的状态栏）上 `Uploaded / Downloaded /
-    Ratio / 1 Transfer` **整条读不到**——原图直读时它们只有十几个像素高。这不是"匹配口径"能救的，
-    得先让字**变大／变清楚**。
+    ## 为什么需要它（实测锚点）
+    `gh-024-transmission-WI-main-screen.png`（暗色主题状态栏）上 `Uploaded / Downloaded /
+    Running Time / Remaining Time / Availability` 在原图上只有 ~7 像素高 ⇒ 直读读不到；放大后能读到。
 
-    ## 口径与代价（如实说，绝不假装免费）
-      · 每一档都是 `recognize_union`（内置＋第二引擎各一遍）⇒ **耗时 ≈ 档数倍**，而第二引擎在大图上
-        本来就是秒级 ⇒ 它**只用于"难读时加档"**（诊断 / 标定 / 检验器 / 一次性读取），
-        **不进每笔发送链**（那条链仍走 `recognize_dual`：小块 + 尺寸闸）。
+    ## ⭐ 两档（2026-09-29 消融实测后定的；别再走回头路）
+    消融口径：6 张 tier-1 图 / 31 条核过真值 / 热态计时（引擎模型已加载）。
+
+    | 档位 | 组成 | 命中 | 热态耗时 |
+    |---|---|---|---|
+    | 基础档 `recognize_dual`（不属本函数） | 内置 1x，空才叫第二引擎 | 23/31 = 74.2% | ≈0.22s/张 |
+    | **快速档** `profile="fast"` | 内置 1x ＋ 内置 2x ＋ 2x锐化（可选暗色反色） | **26/31 = 83.9%** | **≈1.6s/张** |
+    | **全对档** `profile="full"`（默认） | 快速档 ＋ **第二引擎整图 1x** | **31/31 = 100%** | **≈4.5s/张**（旧实现 ≈20.5s ⇒ 快 4.6 倍） |
+
+    `profile`：`"fast"`＝纯内置（便宜，给"先试一遍"的场景）；`"full"`＝加第二引擎（要那 5 条只有它
+    读得出的字）。**两个 profile 都能跑**，调用方按"这次读得多重要"选，别一刀切。
+
+    ### 为什么"全对档"必须叫第二引擎（这不是懒，是实测边界）
+    · 内置引擎的**九种预处理全试过**（1x / 1.5x / 2x / 3x / 2x锐化 / 2x·3x灰度对比 / 2x二值 /
+      3x反色 / 1x反色），**全加起来也只有 26/31** ⇒ 剩下 5 条**只有第二引擎读得出来**。
+    · 所以"用预处理把第二引擎替换掉"这条路**已经走到底了**，不该再重复投入。
+    · 第二引擎**是耗时的全部来源**：它单张就有 **≈1s 的固定开销**——裁成 400×40 的一条也要 1.10s
+      （整图 2.63s）⇒
+      **靠裁小 ROI 省不下来**；实用结论是"**一次读一片**"比"逐行读"划算。
+    · 多线程分块**实测无收益**（4 块并行 3.20s vs 整图 2.47s；串行 8.79s）——分块重复像素 + 核争抢
+      把收益吃掉了 ⇒ 不做。
+
+    ## 口径与代价（如实说）
       · 结果按 `norm()` 去重后**并集** ⇒ 只会比单档更多、不会更少（单调性由 `ocr_boost_selftest` 守着）。
       · 缩放档读到的框会**除回原图尺度**（调用方拿到的坐标仍在原图坐标系里），否则上层定位会整体偏移。
-      · 对比度增强用 PIL `autocontrast`（无第三方依赖）；`invert` 只在调用方明确要时做
-        （暗色主题下字浅底深，反色后更接近识别器的训练分布）。
+      · `invert`：调用方判定为**暗色界面**时才开（暗底浅字，反色更接近识别器分布）；亮色图开它是浪费。
+      · 仍是"难读时加档"，比 `recognize_dual` 贵（多读 1~4 遍）⇒ **不进每笔发送链**的热路径。
     """
     try:
         from PIL import ImageOps
+        from PIL import ImageFilter
     except Exception as e: # noqa: BLE001
         log.debug("硬读档：PIL 不可用，退回单档：%s", e)
         return recognize_union(img, timeout=timeout)
-    _want = [int(s) for s in (scales or _BOOST_SCALES) if 1 <= int(s) <= 3] or [1]
+    _prof = str(profile or "").strip().lower()
+    if _prof == "fast":
+        union_base = False
+    elif _prof == "full":
+        union_base = True
+    _want = [int(s) for s in (scales or (1, 2)) if 1 <= int(s) <= 3] or [1]
     out, seen = [], set()
+
+    def _push(items, s):
+        for it in items:
+            try:
+                txt, x, y, ww, hh = it[0], it[1], it[2], it[3], it[4]
+            except Exception as e: # noqa: BLE001
+                log.debug("硬读档：跳过形状不对的条目（%s）：%s", type(e).__name__, e)
+                continue
+            n = norm(str(txt))
+            if not n or n in seen:
+                continue
+            seen.add(n)
+            # ⛔ 坐标除回原尺度：不这么做，放大档的框会比原图大 2~3 倍，上层定位全错
+            out.append((str(txt), int(x) // s, int(y) // s, int(ww) // s, int(hh) // s))
+
     for s in sorted(set(_want)):
         try:
             w, h = img.size
             im = img if s == 1 else img.resize((max(1, w * s), max(1, h * s)), 1)  # 1=Lanczos
+            # ① 1x：并集（两引擎）＝全对档；`union_base=False` 时只走内置引擎＝快档
+            if s == 1 and union_base:
+                _push(recognize_union(im, timeout=timeout), s)
+            else:
+                _push(recognize(im, timeout=timeout), s)
+            # ② 对比度增强（**默认关**：消融显示在"1x+2x+2x锐化"之上它零增益，白花时间；
+            #    暗色/低对比的老照片类素材可由调用方显式打开）
             if contrast:
-                im = ImageOps.autocontrast(im.convert("L"), cutoff=1).convert("RGB")
-            variants = [("normal", im)]
+                _push(recognize(ImageOps.autocontrast(im.convert("L"), cutoff=1).convert("RGB"),
+                                timeout=timeout), s)
+            # ③ 锐化（内置，便宜）—— 消融里"单档最强"的一路（2x锐化 25/31，胜过 2x 的 24/31）
+            if s > 1:
+                _push(recognize(im.filter(ImageFilter.SHARPEN), timeout=timeout), s)
+            # ④ 反色（调用方判定暗色界面时才开）
             if invert:
-                variants.append(("invert", ImageOps.invert(im.convert("RGB"))))
-            for _tag, v in variants:
-                for it in recognize_union(v, timeout=timeout):
-                    try:
-                        txt, x, y, ww, hh = it[0], it[1], it[2], it[3], it[4]
-                    except Exception as e: # noqa: BLE001
-                        log.debug("硬读档：跳过形状不对的条目（%s）：%s", type(e).__name__, e)
-                        continue
-                    n = norm(str(txt))
-                    if not n or n in seen:
-                        continue
-                    seen.add(n)
-                    # ⛔ 坐标除回原尺度：不这么做，放大档的框会比原图大 2~3 倍，上层定位全错
-                    out.append((str(txt), int(x) // s, int(y) // s, int(ww) // s, int(hh) // s))
+                _push(recognize(ImageOps.invert(im.convert("RGB")), timeout=timeout), s)
+            # ⑤ 加重档：放大档也交给第二引擎（实测 6s/张，默认关）
+            if heavy and s > 1:
+                _push(_rapid_recognize(im, timeout=timeout), s)
         except Exception as e: # noqa: BLE001
             log.debug("硬读档第 %s 档失败（继续下一档）：%s", s, e)
     return out
