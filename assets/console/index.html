@@ -2471,6 +2471,10 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-ui" class="card" data-sec>
       <h2>界面适配（缩放 / 遮挡 / 主题）</h2>
       <div class="desc">这台机器的显示缩放、遮挡清理与主题。点击位置对不上时先来这里。</div>
+      <div class="row"><label>开机自动启动</label><div class="grow">
+        <input type="checkbox" id="autostartCk">
+        <span class="hint" id="autostartHint">可选：勾选后开机自动运行。是"当前用户"级（免管理员），随时取消；取消＝删掉启动文件夹里那个文件。</span>
+      </div></div>
       <div class="row"><label>显示缩放</label><div class="grow"><select data-cfg="ui.coord_scale">
         <option value="auto">按系统自动检测</option><option value="1.0">100%</option>
         <option value="1.25">125%</option><option value="1.5">150%</option>
@@ -6815,6 +6819,35 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
       }catch(e){ toast('保存失败：'+e.message); }
     });
   }
+
+  /* ⑦ 开机自启（用户可选）：走后端 `/api/autostart`。默认关，勾选才开。
+     为什么不做成 data-cfg 配置键：这是**操作系统状态**（启动文件夹里有没有那个文件），不是产品配置；
+     以文件为准、开关即生效、用户自己删掉那个文件也等价于关闭。 */
+  async function loadAutostart(){
+    const ck = $('autostartCk'); if(!ck) return;
+    try{
+      const r = await getJSON('/api/autostart');
+      const a = r.autostart || {};
+      ck.checked = !!a.enabled;
+      ck.disabled = (a.supported === false);
+      const h = $('autostartHint');
+      if(h) h.textContent = r.text || (a.supported === false ? ('这台机器不支持：' + (a.why||'')) : '');
+    }catch(e){ /* 控制台没起/接口不可用：保持默认未勾选，不打扰操作 */ }
+  }
+  (function(){
+    const ck = $('autostartCk'); if(!ck) return;
+    ck.addEventListener('change', async ()=>{
+      ck.disabled = true;
+      try{
+        const r = await getJSON('/api/autostart', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                   body: JSON.stringify({enable: !!ck.checked})});
+        toast(r.ok ? (r.message || '已设置') : ('没设置成功：' + (r.error || '未知原因')));
+      }catch(e){ toast('设置失败：' + e.message); }
+      ck.disabled = false;
+      loadAutostart();
+    });
+    loadAutostart();
+  })();
 
   /* ⑥ 逐字浮动：光标划过卡片标题时拆成字（一次拆好缓存）*/
   let lastT = 0;

@@ -1533,6 +1533,39 @@ def _make_handler(parent):
             except Exception as e:
                 self._json({"ok": False, "error": str(e)})
 
+        def _rapi_autostart_get(self, path, data, parsed, method):
+            """开机自启状态（只读）。
+
+            口径：**以文件为准**（用户手动删掉启动文件夹里那个文件 ⇒ 这里立刻变回未开启）；
+            只支持 Windows 当前用户级（免管理员），其它系统如实说 supported=False。
+            """
+            try:
+                from . import autostart as _as
+                self._json({"ok": True, "autostart": _as.status(),
+                            "text": _as.status_text()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_autostart_post(self, path, data, parsed, method):
+            """开关开机自启。请求体 `{"enable": true/false}`。
+
+            ⛔ 这是**用户显式动作**才允许改的系统状态：前端必须由用户点开关触发；
+               默认关（我们不替用户决定开机就跑）。返回里带人话说明（放哪了 / 怎么撤）。
+            """
+            try:
+                from . import autostart as _as
+                want = data.get("enable")
+                if isinstance(data.get("enabled"), bool) and want is None:
+                    want = data.get("enabled")
+                if not isinstance(want, bool):
+                    self._json({"ok": False, "error": "请求体要带 enable: true/false"}, 400)
+                    return
+                ok, why = _as.enable() if want else _as.disable()
+                self._json({"ok": bool(ok), "message": why, "autostart": _as.status(),
+                            "text": _as.status_text()})
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "error": str(e)}, 500)
+
         def _rapi_status(self, path, data, parsed, method):
             # 原 do_GET:1026
             st = parent.status_provider()

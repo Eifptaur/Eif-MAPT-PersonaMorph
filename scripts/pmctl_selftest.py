@@ -114,7 +114,8 @@ class _H(BaseHTTPRequestHandler):
 def _run(*args, timeout=90):
     # ⛔ 全局选项必须**放在子命令之前**（argparse 规矩）——放后面会直接 usage 报错（第一版踩过）
     r = subprocess.run([PY, "-X", "utf8", CLI, "--url", BASE, "--token", "T0K"] + list(args),
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=timeout, creationflags=0x08000000)
     return (r.stdout or "") + (r.stderr or ""), r.returncode
 
 
@@ -163,11 +164,14 @@ ok("A8 `logs 5` 只打印尾部 5 行", rc == 0 and "line-120" in out and "line-
 out, rc = _run("cfg", "get", "wechat.poll_interval")
 ok("A9 `cfg get` 读单键", rc == 0 and "3" in out, out.strip()[:40])
 out, rc = _run("doctor")
-ok("A10 `doctor` 三段都跑（给远程排查用）", rc == 0 and "[1/3]" in out and "[3/3]" in out, "")
+ok("A10 `doctor` 输出**固定格式诊断块**（可直接整段粘贴给作者）",
+   rc == 0 and _sm.has(out, "===== 群相诊断") and _sm.has(out, "===== 结束") and _sm.has(out, "版本:")
+   and "体检:" in out and "本机适配:" in out, out.splitlines()[0][:40] if out else "")
 
 print("\n── B. 地址发现 / 报错口径 ──")
 r = subprocess.run([PY, "-X", "utf8", CLI, "--url", "http://127.0.0.1:1/", "status"],
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                   creationflags=0x08000000)   # 不许闪控制台窗（本仓硬规则）
 o = (r.stdout or "") + (r.stderr or "")
 ok("B1 端口没人听 ⇒ 明确报错并提示 --url（不静默当成功）",
    r.returncode != 0 and "连不上" in o and "--url" in o, o.strip()[:60])
@@ -246,7 +250,8 @@ _web = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _cli = io.open(CLI, encoding="utf-8").read()
 import re
 used = sorted(set(re.findall(r'"(/api/[a-z0-9_/]+)"', _cli)))
-missing = [u for u in used if not _sm.has(_web, '"%s"' % u)]
+_routes_src = io.open(os.path.join(ROOT, "agent", "routes.py"), encoding="utf-8").read()
+missing = [u for u in used if not (_sm.has(_web, '"%s"' % u) or _sm.has(_routes_src, '"%s"' % u))]
 ok("E1 CLI 引用的 API 路径全部能在 webui 的路由表里找到",
    not missing, "找不到：" + "、".join(missing) if missing else "共 %d 条" % len(used))
 
@@ -278,7 +283,8 @@ def _menu(feed, *args, url=None, timeout=90, debug=False):
         with open(path, "r", encoding="utf-8") as fin:
             r = subprocess.run([PY, "-X", "utf8", CLI, "--url", url or BASE, "--token", "T0K"] + list(args),
                                stdin=fin, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=timeout, env=env)
+                               encoding="utf-8", errors="replace", timeout=timeout, env=env,
+                               creationflags=0x08000000)
     finally:
         try:
             os.remove(path)
@@ -297,7 +303,10 @@ ok("F2 选 1 ⇒ 真打印运行状态（对真实 HTTP 服务端）", "2026.9.2
 out, rc = _menu("abc\n99\n0\n", "--menu")
 ok("F3 乱按（abc / 99）⇒ 友好提示、**不崩**、还能继续选",
    ("没看懂" in out or "超出范围" in out) and rc == 0, "")
-out, rc = _menu("8\n0\n", "--menu")
+# ⛔ 不许写死菜单序号（后来加了"开机自动启动"那项，8→9 会让判据假红）⇒ 从菜单文字里找序号
+_menu_txt, _ = _menu("0\n", "--menu")
+_fb_ord = next((l.strip().split(".")[0].strip() for l in _menu_txt.splitlines() if "生成反馈包" in l), "8")
+out, rc = _menu("%s\n0\n" % _fb_ord, "--menu")
 ok("F4 菜单里有「生成反馈包」且能跑（零基础出问题就选它）",
    "反馈包" in out and (".txt" in out or "没取到" in out), "")
 out, rc = _menu("1\n\n0\n", "--menu", url="http://127.0.0.1:1/")

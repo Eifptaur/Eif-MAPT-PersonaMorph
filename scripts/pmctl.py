@@ -364,10 +364,92 @@ def cmd_lowspec(a) -> int:
 
 
 def cmd_doctor(a) -> int:
-    print("[1/3] 运行状态"); cmd_status(a)
-    print("\n[2/3] 本机适配"); cmd_adapt(a)
-    print("\n[3/3] 体检"); cmd_check(a)
-    print("\n（把以上整段复制给对方即可定位问题；版本号见 status。）")
+    """**诊断块**：输出一段**固定格式、可直接整段粘贴**给作者的文本。
+
+    为什么固定格式（用户要求）：反馈现场最痛的是"信息不全/格式各异" ⇒ 这里把定位问题要用的
+    东西按固定字段一次性打齐（版本/时间/机器/显示/微信/OCR/运行/本机适配/体检/检验器逐条一行），
+    用户**不需要懂**任何字段，复制整段即可。
+    `--json` 仍是原始 JSON；`--no-verify` 跳过逐条检验器（省时间）。
+    """
+    import datetime
+    st = _req(a, "/api/status")
+    tt = (a.token or "").strip()
+    base, _tok = _discover(a)
+
+    def _fmt(v, dash="未知"):
+        if v is None or v == "" or v == [] or v == {}:
+            return dash
+        if isinstance(v, bool):
+            return "是" if v else "否"
+        if isinstance(v, (list, dict)):
+            return json.dumps(v, ensure_ascii=False)
+        return str(v)
+
+    lines = ["===== 群相诊断（整段复制发给作者即可）====="]
+    lines.append("版本: %s" % _fmt(st.get("version") or st.get("ver")))
+    lines.append("时间: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    lines.append("入口: CLI pmctl（无界面）· 控制台地址: %s" % base)
+    # 机器/显示/微信/消息库：优先取本机 compat 快照（只读），拿不到就如实写"未知"
+    try:
+        sys.path.insert(0, ROOT)
+        from agent import compat as _cp
+        for ln in (_cp.lines() or []):
+            s = str(ln).strip()
+            if s.startswith("AXIS|"):
+                parts = s.split("|")
+                if len(parts) >= 5:
+                    lines.append("%s: %s" % (parts[1].strip(), parts[2].strip().replace("ok", "正常")))
+            elif s:
+                lines.append(s)
+    except Exception as e: # noqa: BLE001
+        _warn("本机兼容快照没取到（不影响其余字段）：%s" % str(e)[:60])
+        lines.append("本机快照: 未知（%s）" % type(e).__name__)
+    try:
+        sys.path.insert(0, ROOT)
+        from agent import chat_ocr as _o
+        _rs = _o.rapidocr_status()
+        lines.append("OCR: 内置引擎=%s · 第二引擎=%s" % (
+            "可用" if _o.available() else "不可用",
+            ("%s（%s）" % (_rs.get("tier"), _rs.get("why") or "可用")) if _rs.get("ok") else "不可用"))
+    except Exception as e: # noqa: BLE001
+        lines.append("OCR: 未知（%s）" % type(e).__name__)
+    lines.append("运行: 在听=%s · 暂停=%s · 监听目标=%s · 模型=%s" % (
+        _fmt(st.get("alive", st.get("running"))), _fmt(st.get("paused")),
+        _fmt(st.get("targets") or st.get("watchers")), _fmt(st.get("model"))))
+    try:
+        _ad = _req(a, "/api/verify?id=machine")
+        _rp = str(_ad.get("report") or "")
+        _keep = [l.strip() for l in _rp.splitlines()
+                 if l.strip().startswith(("机器指纹", "输入档位", "OCR", "档案", "判决"))][:6]
+        lines.append("本机适配: %s" % ("；".join(_keep) if _keep else "（空）"))
+    except SystemExit:
+        lines.append("本机适配: 取不到（服务未响应）")
+    try:
+        _ck = _req(a, "/api/selfcheck", method="POST", body={}, timeout=300.0)
+        _cs = _ck.get("checks") or []
+        _bad = [c for c in _cs if c.get("ok") is False]
+        lines.append("体检: 共 %d 项 · 通过 %d · 未通过 %d · 摘要=%s" % (
+            len(_cs), len([c for c in _cs if c.get("ok") is True]), len(_bad),
+            str(_ck.get("summary") or "")[:60]))
+        for c in _bad[:5]:
+            lines.append("   [未通过] %s：%s" % (c.get("name"), str(c.get("detail") or "")[:90]))
+    except SystemExit:
+        lines.append("体检: 取不到（服务未响应）")
+    if not getattr(a, "no_verify", False):
+        lines.append("--- 检验器（逐条一行）---")
+        try:
+            for _i, _n in _verify_ids(a):
+                _d = _req(a, "/api/verify?id=%s" % urllib.parse.quote(_i), timeout=120.0)
+                _ok = _d.get("ok")
+                lines.append("[%s] %s（%s）：%s" % (
+                    {True: "通过", False: "卡住", None: "没测到"}.get(_ok, "?"), _n, _i,
+                    str(_d.get("verdict") or "")[:50]))
+        except SystemExit:
+            lines.append("（检验器清单取不到）")
+    else:
+        lines.append("检验器: 已跳过（--no-verify）")
+    lines.append("===== 结束（以上内容不含聊天记录）=====")
+    print("\n".join(lines))
     return 0
 
 
@@ -463,6 +545,7 @@ def menu(a) -> int:
         ("查问题（按症状查：发不出去 / 不回复 / 表情看不到…）", lambda: cmd_verify(_mk(a))),
         ("看最近在跟谁聊 / 看日志", lambda: _menu_sessions_logs(a)),
         ("低配模式（老机器卡：一键关掉吃 CPU 的特效）", lambda: _menu_lowspec(a)),
+        ("开机自动启动（可选，默认不开）", lambda: _menu_autostart(a)),
         ("暂停 / 恢复机器人", lambda: _menu_pause(a)),
         ("生成反馈包（出问题就选这个，把文件发作者）", lambda: cmd_pack(_mk(a))),
     ]
@@ -543,6 +626,39 @@ def _menu_pause(a) -> int:
     return cmd_pause(_mk(a, mode="pause" if c != "2" else "resume"))
 
 
+def cmd_autostart(a) -> int:
+    """开机自启：`show` 看状态 / `on` 开 / `off` 关。
+
+    走产品自己的 `/api/autostart`（与网页控制台同一个开关），**默认关**。
+    只做**当前用户**级（启动文件夹放一个快捷方式），免管理员；关掉＝删掉那个文件。
+    """
+    if a.action == "show":
+        d = _req(a, "/api/autostart")
+        print(d.get("text") or json.dumps(d, ensure_ascii=False))
+        return 0
+    want = (a.action == "on")
+    d = _req(a, "/api/autostart", method="POST", body={"enable": want})
+    if a.json:
+        print(json.dumps(d, ensure_ascii=False, indent=1))
+    else:
+        print(d.get("message") or ("已设置" if d.get("ok") else "没设置成功"))
+        _t = d.get("text")
+        if _t:
+            print("   %s" % _t)
+    return 0 if d.get("ok") else 1
+
+
+def _menu_autostart(a) -> int:
+    print("  开机自动启动＝开机后自动运行它（**可选**，默认不开）。")
+    print("  只在**你当前的用户**下生效（不用管理员），随时可关；关掉就是删掉启动文件夹里那个文件。")
+    c = _ask("  1=开启  2=关闭  3=先看看现在的状态（默认 3）：", "3")
+    if c == "1":
+        return cmd_autostart(_mk(a, action="on"))
+    if c == "2":
+        return cmd_autostart(_mk(a, action="off"))
+    return cmd_autostart(_mk(a, action="show"))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="pmctl", description="不依赖图形界面的操作入口（走产品本地 API）")
     ap.add_argument("--url", default="", help="控制台地址（默认从 logs/console.url 发现）")
@@ -563,6 +679,8 @@ def main(argv=None) -> int:
     p.add_argument("key"); p.add_argument("value", nargs="?"); p.set_defaults(func=cmd_cfg)
     p = sub.add_parser("pause", help="暂停"); p.set_defaults(func=cmd_pause, mode="pause")
     p = sub.add_parser("resume", help="恢复"); p.set_defaults(func=cmd_pause, mode="resume")
+    p = sub.add_parser("autostart", help="开机自启（默认关；当前用户级，免管理员）")
+    p.add_argument("action", nargs="?", default="show", choices=("on", "off", "show")); p.set_defaults(func=cmd_autostart)
     p = sub.add_parser("lowspec", help="省资源预设"); p.add_argument("action", nargs="?", default="show",
                                                                  choices=("on", "off", "show")); p.set_defaults(func=cmd_lowspec)
 

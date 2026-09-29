@@ -33,6 +33,7 @@ ROUTES = {
     "/api/archive/block": ("POST",),
     "/api/archive/delete": ("POST",),
     "/api/archive/unblock": ("POST",),
+    "/api/autostart": ("GET", "POST"),   # 开机自启：GET 看状态 / POST {enable: bool} 开关（用户可选）
     "/api/balance": ("GET",),
     "/api/briefs": ("GET", "POST"),
     "/api/cloud/test": ("POST",),
@@ -292,6 +293,7 @@ HANDLERS = {
         "GET": "_rapi_open_path",
         "POST": "_rapi_open_path_post",
     },
+    "/api/autostart": {"GET": "_rapi_autostart_get", "POST": "_rapi_autostart_post"},
     "/api/pause": {
         "POST": "_rapi_pause_post",
     },
