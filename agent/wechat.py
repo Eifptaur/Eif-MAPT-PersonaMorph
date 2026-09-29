@@ -7404,7 +7404,8 @@ class WeChatAdapter:
         #   它的"第二道证据"（聊天区里出现同一 HH:MM）属于**当前开着的那个会话**——如果那个会话
         #   恰好也在这一分钟有消息，它就自己满足了 ⇒ 循环论证 ⇒ 把回复投进另一个群（真机两群
         #   最后消息只差 13 秒）。⇒ 直接返回 False（不是"是它"，也不是"不是它"）。
-        _rivals = self._same_minute_rivals(chat_id, _lt)
+        #   ⭐ 但可以先做**屏幕侧收敛**（`img` 已有就传）：绿底行唯一匹配到目标 ⇒ 冲突消失。
+        _rivals = self._same_minute_rivals(chat_id, _lt, img=img, name=self.display_name(chat_id))
         if _rivals:
             return False, ("同一分钟（%s）还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话，"
                            "改由名字/标题带那两档定论" % (_lt, "、".join(_rivals[:3])))
@@ -7555,7 +7556,8 @@ class WeChatAdapter:
             pass
         return out
 
-    def _same_minute_rivals(self, chat_id: str, hhmm: str, limit: int = 40) -> list:
+    def _same_minute_rivals(self, chat_id: str, hhmm: str, limit: int = 40,
+                            img=None, name: str = "") -> list:
         """**同一分钟内**还有哪些监听中的会话也有最后一条消息 ⇒ 返回它们的名字（不含自己）。
 
         ⛔ 这条是本项目"串群"家族的共享闸门。
@@ -7571,6 +7573,17 @@ class WeChatAdapter:
         直接投递）。
         ⇒ 口径：**这一档只在"这一分钟唯一属于目标"时才允许给结论**；有别人同分钟 ⇒ 返回它们的名字，
           调用方按"判不出"处理（fail-closed：宁可漏发，绝不发错会话），并在文案里点明是谁在抢。
+
+        ⭐ `img`（可选，调用方已有帧时传）＝**屏幕侧收敛**（2026-09-30 加）：
+          上面所有判据都只查 **DB 时间**，**完全不看屏幕** ⇒ 同分钟冲突时只能整档弃权。
+          但屏幕上**只有一个绿底行**（当前打开的那一个，实测占比 0.90~1.00 vs 其余 0.00），
+          而"机器人刚发完消息、会话还开着"⇒ 绿底行就是**它刚操作的那个会话**。
+          ⇒ 用绿底行的名字去**收敛候选**（收敛逻辑见 `_converge_by_highlight`）：
+            · 绿底行唯一匹配到**目标** ⇒ 返回 `[]`（＝没有 rival 抢，可放行）；
+            · 绿底行唯一匹配到**某个 rival** ⇒ 返回**只剩那个 rival**（判否，且点名更准）；
+            · 读不出 / 歧义 / 绿底认不出 ⇒ **原样返回全部 rivals**（fail-closed 不变）。
+          ⚠️ **只做收敛、不做放行依据**：放行仍要 `matches_strict`/`matches_fuzzy` 那几档
+            （授权口径不许因为本条被放宽）。
         """
         want = self._norm_hhmm(hhmm)
         if not want:
@@ -7593,7 +7606,84 @@ class WeChatAdapter:
                     out.append(("%s（%s）" % (_nm, ck)) if (_nm and _nm != ck) else ck)
             except Exception:
                 continue
+        # ⭐ 屏幕侧收敛（只在真有冲突、且调用方给了帧时才做；否则一字不改）
+        if out and img is not None:
+            try:
+                _conv = self._converge_by_highlight(img, chat_id, name, out)
+                if _conv is not None:
+                    log.info("同分钟冲突(%s)：绿底行收敛 ⇒ %s（原 %d 个候选）",
+                             want, ("无竞争" if not _conv else _conv), len(out))
+                    return _conv
+            except Exception as _e:
+                log.debug("同分钟冲突的绿底收敛失败（保持原样，fail-closed）: %s", _e)
         return out
+
+    def _converge_by_highlight(self, img, chat_id: str, name: str, rivals: list):
+        """同分钟冲突时，用**绿底行的名字**把候选收敛到唯一一个 ⇒ 返回收敛后的 rivals。
+
+        返回 `None` ＝**收敛不了**（调用方保持原样，fail-closed 不变）。三条硬约束：
+          ① 绿底行必须量得到（绿底带 ≤ 0.30 占比就放弃——帧糊/换主题时不许瞎猜）；
+          ② 绿底行的名字必须读得出（`highlight().name`；白字绿底本来就常读不出 ⇒ 常见退化路径）；
+          ③ 该名字与"目标 ∪ rivals"里**恰好一个**匹配（`best_candidate` 唯一最近 + 子串兜底）
+             —— 匹配到 0 个（都认不出）或 ≥2 个（歧义）⇒ 弃权。
+
+        为什么只做"收敛"不做"放行"：收敛只回答"屏幕上是哪一个"，
+        "能不能发"仍要 `matches_strict`/`matches_fuzzy`（授权口径独立，不被本条影响）。
+        """
+        from . import chat_ocr as _co
+        hl = _co.highlight(img)
+        if not hl:
+            return None                              # ① 量不到绿底行 ⇒ 弃权
+        try:
+            if float(hl.get("score") or 0.0) < 0.30:
+                return None                          # ① 绿底太弱（帧糊）⇒ 弃权
+        except Exception:
+            return None
+        got = str(hl.get("name") or "").strip()
+        if not got:
+            return None                              # ② 绿底行名字读不出 ⇒ 弃权（最常见）
+        # ③ 与"目标 ∪ rivals"做唯一匹配：先精确/子串（强），再候选集纠错（弱）
+        def _hit(target: str) -> bool:
+            t = str(target or "").strip()
+            if not t:
+                return False
+            try:
+                if _co.matches_strict(got, t):
+                    return True
+            except Exception:
+                pass
+            try:
+                if _co.matches(got, t):
+                    return True
+            except Exception:
+                pass
+            return False
+        _tgt = str(name or "").strip()
+        _hit_tgt = _hit(_tgt) if _tgt else False
+        _hit_rivals = [r for r in rivals if _hit(r.split("（", 1)[0].strip() or r)]
+        if _hit_tgt and not _hit_rivals:
+            return []                                # 绿底行＝目标 ⇒ 没有 rival 在抢
+        if len(_hit_rivals) >= 1 and not _hit_tgt:
+            # 绿底行＝某个 rival（且不是目标）⇒ 收敛到它（判否，且点名更准）
+            if len(_hit_rivals) == 1:
+                return _hit_rivals
+            return None                              # 满足多个 rival ⇒ 歧义，弃权
+        # 精确/子串都不行 ⇒ 试候选集纠错（唯一最近才认）
+        _pool = ([_tgt] if _tgt else []) + [str(r).split("（", 1)[0].strip() or str(r) for r in rivals]
+        try:
+            _best, _sc, _why = _co.best_candidate(got, _pool)
+        except Exception:
+            _best, _sc, _why = "", 0.0, ""
+        if not _best or _sc <= 0:
+            return None                              # ③ 认不出 ⇒ 弃权
+        if _tgt and _co.norm(_best) == _co.norm(_tgt):
+            return []                                # 纠到了目标 ⇒ 无竞争
+        for r in rivals:
+            _rn = str(r).split("（", 1)[0].strip() or str(r)
+            if _co.norm(_best) == _co.norm(_rn):
+                return [r]                           # 纠到唯一 rival ⇒ 收敛到它
+        return None                                  # 纠到候选集外/歧义 ⇒ 弃权
+
 
     @staticmethod
     def _file_fingerprints(name: str) -> list:

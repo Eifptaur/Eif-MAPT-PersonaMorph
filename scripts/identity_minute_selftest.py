@@ -137,6 +137,72 @@ def main():
     ok("C6 反例锚：**把这道门摘掉**，同一夹具下时间档又放行了（证明 False 是这道门给的，不是别的原因）",
        _okp2 is True and _okt2 is True, (_okt2, _whyt2, _okp2, _whyp2))
 
+    print("\n── H. 同分钟冲突：用「绿底行」做屏幕侧收敛（2026-09-30 新增）──")
+    # 起因：C 段那三档**只查 DB 时间、完全不看屏幕** ⇒ 同分钟冲突只能整档弃权。
+    # 但屏幕上**只有一个绿底行**（当前打开的那个，实测占比 0.90~1.00 vs 其余 0.00），
+    # 而"机器人刚发完消息、会话还开着" ⇒ 绿底行就是它刚操作的那个会话。
+    # 约束：**只做收敛，不做放行依据**（授权口径独立，不许因本条放宽）。
+    _ad3 = _fake_adapter()
+    # ⚠️ `display_name` 收的是**裸 wxid**（`_same_minute_rivals` 内部 `ck.split(":",1)[-1]`），
+    #    不是 `group:` 前缀的完整 chat_key —— 夹具要按真实口径写（踩过：写错前缀 ⇒ 名字取空）。
+    _nm3 = {A_ID: "测试", B_ID: "KC"}
+    _ad3.display_name = lambda cid, *a, **k: _nm3.get(str(cid).split(":", 1)[-1], "")
+    _rivals3 = _ad3._same_minute_rivals("group:" + A_ID, H_MINE)
+    ok("H0 先确认夹具确有冲突、且 rival **带上了名字**（不然 H1/H2 是空跑）",
+       len(_rivals3) == 1 and "KC" in str(_rivals3[0]) and B_ID in str(_rivals3[0]), _rivals3)
+
+    # ① 绿底行＝目标 ⇒ 冲突消失（返回 []）
+    _hl_target = {"y_abs": 100, "score": 0.97, "name": "测试"}
+    _keep_hl = CO.highlight
+    try:
+        CO.highlight = lambda img: _hl_target
+        _r = _ad3._same_minute_rivals("group:" + A_ID, H_MINE, img=object(), name="测试")
+    finally:
+        CO.highlight = _keep_hl
+    ok("H1 绿底行名字＝目标 ⇒ 收敛成「无竞争」（`[]`，时间档可给结论）", _r == [], _r)
+
+    # ② 绿底行＝某个 rival（不是目标）⇒ 收敛到只剩它（判否，且点名更准）
+    try:
+        CO.highlight = lambda img: {"y_abs": 100, "score": 0.97, "name": "KC"}
+        _r2 = _ad3._same_minute_rivals("group:" + A_ID, H_MINE, img=object(), name="测试")
+    finally:
+        CO.highlight = _keep_hl
+    ok("H2 绿底行名字＝某个 rival ⇒ 收敛到只剩它（仍判否，但点名更准）",
+       len(_r2) == 1 and "KC" in str(_r2[0]), _r2)
+
+    # ②b 绿底行名字＝rival 但 rivals 里**没有名字**（只有裸 key）⇒ 不收敛（无名字无法做身份匹配）
+    try:
+        CO.highlight = lambda img: {"y_abs": 100, "score": 0.97, "name": "KC"}
+        _r2b = _ad3._converge_by_highlight(object(), "group:" + A_ID, "测试",
+                                            ["group:" + B_ID])
+    finally:
+        CO.highlight = _keep_hl
+    ok("H2b rival 只有裸 key（无名字）⇒ **不收敛**（无名字不许拿 key 去猜）", _r2b is None, _r2b)
+
+    # ③ 绿底行名字读不出 ⇒ **原样返回**（fail-closed 不变）
+    for _tag, _hl in (("读不出（空名）", {"y_abs": 100, "score": 0.97, "name": ""}),
+                      ("绿底太弱（帧糊）", {"y_abs": 100, "score": 0.12, "name": "测试"}),
+                      ("量不到绿底行", None),
+                      ("名字是聊天区垃圾", {"y_abs": 100, "score": 0.97,
+                                     "name": "article/intertextuality-and-parallelomania"})):
+        try:
+            CO.highlight = (lambda img, _v=_hl: _v)
+            _r3 = _ad3._same_minute_rivals("group:" + A_ID, H_MINE, img=object(), name="测试")
+        finally:
+            CO.highlight = _keep_hl
+        ok("H3 %s ⇒ 不收敛，原样返回 %d 个 rival（fail-closed 不变）" % (_tag, len(_rivals3)),
+           _r3 == _rivals3, _r3)
+
+    # ④ 不传 img（老调用方式）⇒ 行为与改动前**逐字一致**（不许因为新参数改变默认）
+    _r4 = _ad3._same_minute_rivals("group:" + A_ID, H_MINE)
+    ok("H4 不传 `img` ⇒ 与改动前逐字一致（新参数不改变默认行为）", _r4 == _rivals3, _r4)
+
+    # ⑤ 反例锚：收敛结果**不许**被当成"授权放行"（`_same_minute_rivals` 返回 [] 只表示"没有别人在抢"，
+    #    "能不能发"仍要 matches_strict/matches_fuzzy —— 这两件事不许混）。
+    _WT2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    ok("H5 源码锚：收敛只改 `_same_minute_rivals` 的返回值，**不动**授权档",
+       "def _converge_by_highlight(" in _WT2 and "只做收敛、不做放行依据" in _WT2, "")
+
     print("\n── G. 内容排他：时间档给不出结论时，靠「内容排他」决定发不发（本次新增的放行依据）──")
     # 现场（真机）：两个群同一分钟都有消息 ⇒ 时间档分不出；但两个群的**正文不同** ⇒ 内容能分。
     _ad2 = _fake_adapter()
