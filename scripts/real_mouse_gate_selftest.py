@@ -220,5 +220,22 @@ ok("F3 ★ 类名引用正确（写成 `WeChatAgent` 会抛 NameError 被 except
 ok("F4 改动理由（屏外窗口→坐标被夹到 (0,0)→框选桌面文件）写进了 docstring，防后人改回去",
    _sm.has(_sb, "静默夹到") and _sm.has(_sb, "框选桌面文件"))
 
+print("== G. 同一条事故路径的**第二处**：`_uia_target_row_rect` 的翻页也不许动真鼠标 ==")
+# 它 `scroll=True` 时老代码是 `uia._set_cursor(cx,cy)` + 两次 `uia._mouse_wheel(delta)`
+#   —— 与 `_scroll_to_bottom` **同一个事故路径**（屏外窗口 → 坐标被夹到 (0,0) → 框选桌面）。
+try:
+    _ur = _ss.func_src(_WSRC, "_uia_target_row_rect")
+except Exception as e:  # noqa: BLE001
+    _ur = ""
+    print("（取 `_uia_target_row_rect` 失败：%s）" % str(e)[:60])
+_ur_code = _code_only(_ur)
+ok("G1 ★ `_uia_target_row_rect` 的**代码里**不再调用裸真鼠标原语",
+   _ur and not _sm.has(_ur_code, "_set_cursor") and not _sm.has(_ur_code, "_mouse_wheel"),
+   "看代码（docstring 里提到老实现是正常的）")
+ok("G2 ★ 它的翻页改走**投递**版（`WeChatAdapter._scroll_chat`）",
+   _sm.has(_ur, "WeChatAdapter._scroll_chat"), "应调 `_scroll_chat(gui, up=..., ticks=2)`")
+ok("G3 事故路径的说明写进了注释（防后人改回裸鼠标）",
+   _sm.has(_ur, "框选桌面文件") or _sm.has(_ur, "安全红线"))
+
 print("== 点一下也不许动鼠标判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
 sys.exit(1 if FAIL[0] else 0)

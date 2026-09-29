@@ -9083,15 +9083,18 @@ class WeChatAdapter:
                         rr = cur.BoundingRectangle
                         if rr.top > lr.top + 60 and rr.bottom < lr.bottom - 60:
                             return (rr.left, rr.top, rr.right, rr.bottom)
-                        cx = (lr.left + lr.right) // 2
-                        cy = (lr.top + lr.bottom) // 2
-                        uia._set_cursor(cx, cy)
-                        # 行偏上（目标在顶部边缘）→ 向「历史」滚（+120），让行下移到视野中部；
-                        # 行偏下 → 向「最新」滚（-120）。注意 -120=最新（scroll_to_bottom 同向）。
-                        delta = 120 if rr.top <= lr.top + 60 else -120
-                        uia._mouse_wheel(delta)
-                        time.sleep(0.15)
-                        uia._mouse_wheel(delta)
+                        # ★安全红线：这里原来是 `uia._set_cursor(cx, cy)` + 两次
+                        #   `uia._mouse_wheel(delta)`（**裸真鼠标**）。它与
+                        #   `_scroll_to_bottom` 是**同一个事故路径**：微信窗口在屏外时
+                        #   `SetCursorPos` 的巨型负坐标会被 Windows **静默夹到 (0,0)**，
+                        #   于是"把目标行滚到视野中部"变成"在桌面左上角按下滑动"
+                        #   → 框选桌面文件 → 拖向回收站（2026-09-25 / 09-28 两次）。
+                        #   故与 `_scroll_chat` 同源改成**投递**滚轮：不动光标、不置前。
+                        #   方向口径沿用原文：行偏上 → 往「历史」翻（up=True）；
+                        #   行偏下 → 往「最新」滚（up=False）。-120 与 +120 是对称的。
+                        _up = bool(rr.top <= lr.top + 60)
+                        WeChatAdapter._scroll_chat(gui, up=_up, ticks=2)
+                        time.sleep(0.4)
                         time.sleep(0.25)
                 except Exception:
                     pass
