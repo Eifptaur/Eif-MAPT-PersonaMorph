@@ -55,8 +55,12 @@ def _icon(kind="a", dx=0, dy=0):
 
 h_a = UFP.dhash(_icon("a"))
 ck("A1 同图距离 = 0", UFP.dist(h_a, h_a) == 0, h_a)
-ck("A2 位移 1px 仍算「同一图标」（距离 ≤ 阈值）",
-   0 < UFP.dist(h_a, UFP.dhash(_icon("a", 1, 0))) <= UFP.MAX_DIST,
+# ⚠️ 2026-09-29：阈值由 10 收紧到 4（依据：加"±3px 取最优"后**同类最大距离实测 0**；而 10 太松
+#    会误受"换主题"）。所以这里不再断言"原始距离 ≤ 阈值"——**1px 微移的原始距离本来就可能超阈值**，
+#    真正让"位移仍算同一图标"成立的是 **`verify` 里的位置容差搜索**（那条锚在
+#    `scripts/ui_fp_selftest.py` 的 A1/A2/A4，那里走的是真实路径）。这里只守"微移不至于面目全非"。
+ck("A2 位移 1px 后原始距离不大（判定靠位置容差，不靠阈值松）",
+   0 < UFP.dist(h_a, UFP.dhash(_icon("a", 1, 0))) <= 16,
    "dist=%d" % UFP.dist(h_a, UFP.dhash(_icon("a", 1, 0))))
 ck("A3 不同图案拉得开（距离 > 阈值）",
    UFP.dist(h_a, UFP.dhash(_icon("b"))) > UFP.MAX_DIST,

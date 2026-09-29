@@ -32,7 +32,14 @@ FP_FILE = os.path.join(DATA_DIR, "ui_fingerprints.json")
 
 CROP = 48 # 目标点周围取多大一块（像素，渲染区坐标系）
 HASH_W, HASH_H = 9, 8
-MAX_DIST = 10 # 64 位 dHash 的汉明距离阈值（超过即判"不是同一个图标"）
+#: 64 位 dHash 的汉明距离阈值（超过即判"不是同一个图标"）。
+#: ⭐ 2026-09-29 由 **10 收紧到 4**，依据是实测而不是手感：
+#:   · 加了"±3px 内取最优"之后，**同类最大距离实测 0**（`scripts/ui_fp_measure.py`，355 个非空白位置）
+#:     ⇒ 判定真正靠的是位置容差，不靠阈值松；
+#:   · 而 10 太松会**误受**：实测"同一图标换主题（浅↔深）"时距离能到 5（甚至在 (-3,0) 偏移上），
+#:     阈值 10 会把"换主题"当成"就是它" ⇒ 点下去可能点到别的控件；
+#:   · 收紧到 4 后：换主题（5）判「不是」（提示去重取一次，存成变体），同类仍是 0 ⇒ **两边都更准**。
+MAX_DIST = 4
 #: ⭐ 允许的**位置容差**（像素）：在 ±TOL_PX 窗口内取"最像"的那一版再比指纹。
 #: 为什么必须有它（实测，脚本 `scripts/ui_fp_measure.py`，355 个非空白位置）：
 #:   标定/渲染只要偏 1~3px，**79% 的位置**就会因类内距离（最大 48）超过阈值 10 而被误判成
@@ -41,6 +48,23 @@ MAX_DIST = 10 # 64 位 dHash 的汉明距离阈值（超过即判"不是同一�
 TOL_PX = 3
 #: 抓图帧缓存：同一帧里连续校验多个目标时**只抓一次**（PrintWindow 整窗是这条链路上最贵的一步）
 FRAME_TTL_MS = 200
+
+# ══════════════ 多模板（同一目标存多份指纹）══════════════
+# 为什么需要：同一环境键（版本×尺寸×DPI）下，图标还会因**主题（浅/深）、选中态、hover 态**而变样
+# ⇒ 只存一条指纹时，换个主题就判"对不上"⇒ 明明没变却拒绝点击（用户被迫反复"重新取指纹"）。
+# 但"多存几份"有反面风险：存得太松 ⇒ 什么都能过。⇒ 三条纪律（判据 V3/V4 守着）：
+#   ① 变体**有上限**；② 变体之间要**去重**（太近的不重复存）；③ **变体不许离别的目标太近**（否则等于放行别人）。
+MAX_VARIANTS = 6
+#: 变体去重：新指纹与已有变体距离 ≤ 它 ⇒ 认为是同一份，不重复存
+VAR_DUP_DIST = 2
+#: 类间保护：新指纹与**同一环境键下其他目标**的距离 ≤ 它 ⇒ **拒绝入库**（防"什么都像"）
+INTER_MIN_DIST = 8
+#: **归属余量**：本目标的最优距离必须比"别的目标的最优距离"至少近这么多才放行。
+#: 为什么必须有它（2026-09-29 实测踩坑）：光看"距离 ≤ 10"是不够的 —— 容差搜索会在 9 个偏移里
+#: **挑一个最像的**，实测"亮色图标的指纹"与"暗色主题同一位置"在 (-3,0) 偏移下距离只有 **5**
+#: ⇒ 单模板会**误受**（把换主题/换图标都当成"就是它"）。加上归属余量后，判定从"像不像"变成
+#: "**这个位置到底更像谁**"，这才是"认图标"该问的问题。
+NEAR_MARGIN = 3
 
 
 # ── 基础 ────────────────────────────────────────────────────────────────
@@ -275,10 +299,34 @@ def take(gui, names=None) -> dict:
     db = load()
     bucket = dict(db.get(k) or {})
     okn, bad = [], []
+    # 主题只判一次（整帧平均亮度），给变体打标签用；顺便**只抓一帧**给下面所有目标复用
+    _fr = None
+    _theme = "unknown"
+    try:
+        _fr = grab_frame(gui)
+        if _fr is not None:
+            _theme = theme_of(_fr)
+    except Exception as e:  # noqa: BLE001
+        log.debug("取帧判主题失败（变体标 unknown）：%s", e)
     for nm in names:
-        r = capture(gui, nm)
+        r = capture(gui, nm, img=_fr)
         if r.get("ok"):
-            bucket[nm] = r
+            # ⛔ 合并而**不是覆盖**：① 保留学到的偏移（覆盖会把学习冲掉 —— 顺手修的旧问题）；
+            #    ② 保留已有变体（换主题后重取一次，不该把浅色那份丢掉），去重后把**这次**的放主位。
+            old = bucket.get(nm)
+            old = old if isinstance(old, dict) else {}
+            rec = dict(r)
+            if old.get("learn"):
+                rec["learn"] = old["learn"]
+            _vs = [{"h": r["hash"], "label": "take", "theme": _theme, "uses": 0,
+                    "mean": r.get("mean", 0.0), "std": r.get("std", 0.0),
+                    "ts": time.strftime("%Y-%m-%d %H:%M:%S")}]
+            for v in variants_of(old):
+                if v.get("h") and dist(v["h"], r["hash"]) > VAR_DUP_DIST:
+                    _vs.append(v)
+            rec["variants"] = _vs[:MAX_VARIANTS]
+            rec["hash"] = r["hash"]          # 显式取指纹＝以这次为准（主变体）
+            bucket[nm] = rec
             okn.append(nm)
         else:
             bad.append("%s（%s）" % (nm, r.get("why")))
@@ -342,6 +390,71 @@ def _median(xs: list) -> float:
 def _mad(xs: list, med: float) -> float:
     """MAD＝中位数绝对偏差（比标准差更抗离群点：机位抖一两帧不会把结论带跑）。"""
     return _median([abs(x - med) for x in xs]) if xs else 0.0
+
+
+def variants_of(rec: dict) -> list:
+    """取一条记录的**所有指纹变体**（向下兼容：老记录只有 `hash` 字段）。"""
+    out = []
+    for v in (rec or {}).get("variants") or []:
+        if isinstance(v, dict) and v.get("h"):
+            out.append(v)
+    if not out and (rec or {}).get("hash"):
+        out = [{"h": rec["hash"], "label": "default", "uses": 0}]
+    return out
+
+
+def theme_of(img) -> str:
+    """粗判主题（浅/深）：渲染区平均亮度 < 96 ⇒ dark。只用来**标注变体**，不做判定。"""
+    try:
+        g = img.convert("L")
+        hist = g.histogram()
+        n = float(sum(hist)) or 1.0
+        mean = sum(i * c for i, c in enumerate(hist)) / n
+        return "dark" if mean < 96 else "light"
+    except Exception as e:  # noqa: BLE001
+        log.debug("判主题失败（按 unknown 标注）：%s", e)
+        return "unknown"
+
+
+def add_variant(rec: dict, h: str, label: str = "auto", theme: str = "unknown",
+                mean: float = 0.0, std: float = 0.0, others: list = None) -> dict:
+    """给记录**加一份指纹变体**（带纪律）。返回 `{"ok": bool, "why": str}`。
+
+    ⛔ 三条纪律（缺一条都可能把"多模板"变成"什么都放行"）：
+      ① 上限 `MAX_VARIANTS`：满了就淘汰**用得最少**的（主变体不算在内时优先淘汰它）；
+      ② 去重：与已有变体太近（≤ `VAR_DUP_DIST`）不重复存；
+      ③ **类间保护**：与同环境键下**其他目标**的指纹太近（≤ `INTER_MIN_DIST`）⇒ 拒绝
+         （否则这份"变体"会把别的目标也放进来）。
+    """
+    if not h or len(h) != 16:
+        return {"ok": False, "why": "指纹形状不对"}
+    vs = variants_of(rec)
+    for v in vs:
+        if dist(h, v.get("h", "")) <= VAR_DUP_DIST:
+            return {"ok": False, "why": "与已有变体几乎一样（距离 ≤ %d），不重复存" % VAR_DUP_DIST}
+    for oh in (others or []):
+        if dist(h, oh) <= INTER_MIN_DIST:
+            return {"ok": False, "why": "离别的目标太近（距离 ≤ %d）⇒ 拒绝入库（防什么都像）"
+                                      % INTER_MIN_DIST}
+    vs.append({"h": h, "label": str(label or "auto")[:24], "theme": theme, "uses": 0,
+               "mean": round(float(mean or 0), 1), "std": round(float(std or 0), 1),
+               "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+    if len(vs) > MAX_VARIANTS:
+        # 淘汰用得最少的（保留 `uses` 最大的 MAX_VARIANTS 份）
+        vs.sort(key=lambda v: -int(v.get("uses") or 0))
+        vs = vs[:MAX_VARIANTS]
+    rec["variants"] = vs
+    # 主字段 `hash` 跟着"用得最多/第一个"的变体走 —— 保证老读法（rec["hash"]）仍然工作
+    rec["hash"] = vs[0].get("h") or rec.get("hash") or ""
+    return {"ok": True, "why": "已加变体（共 %d 份）" % len(vs)}
+
+
+def variant_stats(rec: dict) -> dict:
+    """给控制台看的读数：变体份数、各自标签/主题/用过几次。"""
+    vs = variants_of(rec)
+    return {"count": len(vs), "max": MAX_VARIANTS,
+            "items": [{"label": v.get("label"), "theme": v.get("theme"),
+                       "uses": int(v.get("uses") or 0)} for v in vs]}
 
 
 def learn_offset(rec: dict, off) -> dict:
@@ -492,15 +605,41 @@ def verify(gui, name: str, max_dist: int = MAX_DIST, tol_px: int = None, img=Non
         #    （因此搜索半径可以缩小 —— 校正量已经在搜索窗口里了，免得重复扫一遍）
         _pt = [_pt[0] + _learn[0], _pt[1] + _learn[1]]
         _rad = max(1, int(_rad) - max(abs(_learn[0]), abs(_learn[1])))
+    _vs = variants_of(rec)          # ⭐ 多模板：跨变体取**最小**距离（命中任一即算对得上）
+    _hit_v = None
+    _d_other = None
     if _rad <= 0 or not _pt:
         # ⛔ 两条都要走**老路径**：`_rad<=0`＝调用方明确不要容差；拿不到 pt＝做不了位移搜索。
         #    这时**必须直接比 `capture` 返回的那个哈希**（别自己再去读帧）——
         #    第一版就是在 tol_px=0 时也去重新裁剪比对，把"capture 的返回值"绕过去了，
         #    原有判据（把 capture 打桩成返回指定哈希）当场红。
-        d, off = dist(cur.get("hash", ""), rec["hash"]), (0, 0)
+        _cur = cur.get("hash", "")
+        d = min((dist(_cur, v.get("h", "")) for v in _vs), default=64)
+        _hit_v = next((v for v in _vs if dist(_cur, v.get("h", "")) == d), None)
+        off = (0, 0)
     else:
-        d, off, _h, _m, _s = _match_near(_last_frame(gui, img), _pt, rec["hash"], _rad)
-    if d <= max_dist:
+        _frame = _last_frame(gui, img)
+        d, off, _h, _m, _s = 64, (0, 0), "", 0.0, 0.0
+        for v in _vs:
+            dd, oo, hh, mm, ss = _match_near(_frame, _pt, v.get("h", ""), _rad)
+            if dd < d:
+                d, off, _h, _m, _s, _hit_v = dd, oo, hh, mm, ss, v
+        # ⭐ **最近邻归属**：同一环境键下的**其他目标**里，最像的那份有多像？
+        #    本目标必须比它至少近 NEAR_MARGIN 才放行（否则"这一小片到底更像谁"没有答案）。
+        try:
+            for _onm, _orec in (bucket or {}).items():
+                if _onm == name or not isinstance(_orec, dict):
+                    continue
+                for _ov in variants_of(_orec):
+                    _op = _orec.get("pt") if isinstance(_orec.get("pt"), (list, tuple)) else _pt
+                    _od = _match_near(_frame, list(_op), _ov.get("h", ""), _rad)[0]
+                    if _d_other is None or _od < _d_other:
+                        _d_other = _od
+        except Exception as e:  # noqa: BLE001
+            log.warning("算最近邻归属失败（本次按旧判据放行，但留痕）：%s", e)
+            _d_other = None
+    _too_close = (_d_other is not None and d + NEAR_MARGIN > _d_other)
+    if d <= max_dist and not _too_close:
         # ⭐ 学习：只记**通过校验**的样本；写盘节流（别每次点击都落盘）
         try:
             learn_offset(rec, off)
@@ -522,18 +661,33 @@ def verify(gui, name: str, max_dist: int = MAX_DIST, tol_px: int = None, img=Non
                 save(_db)
         except Exception as e:  # noqa: BLE001
             log.warning("记录偏移样本失败（不影响本次校验，但学习会丢）：%s", e)
-        _hint = ("（位置容差内最像的一版在 %+d,%+d px 处）" % (off[0], off[1])
-                 if off != (0, 0) else "")
+        try:
+            if isinstance(_hit_v, dict):
+                _hit_v["uses"] = int(_hit_v.get("uses") or 0) + 1   # 用过就加分，淘汰时保"常用"的
+        except Exception as e:  # noqa: BLE001
+            log.debug("累加变体使用次数失败（不影响判定）：%s", e)
+        _lab = ""
+        if isinstance(_hit_v, dict) and _hit_v.get("label"):
+            _lab = "（命中变体「%s」%s）" % (_hit_v.get("label"),
+                                           ("/" + str(_hit_v.get("theme"))) if _hit_v.get("theme") else "")
+        _hint = _lab + ("（位置容差内最像的一版在 %+d,%+d px 处）" % (off[0], off[1])
+                        if off != (0, 0) else "")
         if _learn != (0, 0):
             _hint += "（已按学到的偏移 %+d,%+d 校正，搜索半径收窄到 %d）" % (
                 _learn[0], _learn[1], _rad)
         return True, {"reason": "指纹一致（距离 %d/%d）%s" % (d, max_dist, _hint), "dist": d,
                       "off": list(off), "learn": list(_learn), "have": len(bucket), "key": k}
-    return False, {"reason": ("图标指纹对不上（距离 %d > 阈值 %d）：这个位置上现在看着"
+    if _too_close:
+        return False, {"reason": ("这个位置更像**别的目标**（本目标最近距离 %d，别的目标 %d，"
+                                  "要求至少近 %d）⇒ 不点。若确认外观确实变了，请到控制台"
+                                  "「重新取指纹」；若主题/DPI 变了，重取一次即可存成新变体"
+                                  % (d, _d_other, NEAR_MARGIN)),
+                       "dist": d, "d_other": _d_other, "have": len(bucket), "key": k}
+    return False, {"reason": ("图标指纹对不上（距离 %d > 阈值 %d，最近的其他目标 %s）：这个位置上现在看着"
                               "不像原来的「%s」——微信可能更新了 UI 或改了窗口尺寸。"
                               "按「看不清就不点」处理，请到控制台点一次「重新取指纹」"
-                              % (d, max_dist, name)),
-                   "dist": d, "have": len(bucket), "key": k}
+                              % (d, max_dist, "-" if _d_other is None else _d_other, name)),
+                   "dist": d, "d_other": _d_other, "have": len(bucket), "key": k}
 
 
 def hits() -> dict:
