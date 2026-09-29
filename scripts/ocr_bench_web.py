@@ -67,6 +67,65 @@ CASES = [
      "Expiration", "Search (Ctrl+F)"),
 ]
 
+
+def _human_from_store():
+    """从 `truth_store` 取**人核过**的真值（`source=human`），按图分组。
+
+    为什么需要这座桥（★修"假尺子"的结构性根因）：
+      · `CASES` 是**写死**的 6 张图 / 31 条真值。不管素材涨到多少张、`truth_store` 里
+        人核过多少条，tier-1 分母**永远只有这 6 张** —— 于是"99% 标准"其实一直拿这 6 张在量。
+      · 而 `local_truth_feed.py` 产出的候选、`pmctl truth ok` 确认的条目，进的是
+        `truth_store`（`human` 层），**从来没接回基准** ⇒ 人看图核完也没用。
+      ⇒ 本函数把 `human` 层读出来，`_all_cases()` 再把它**并进** `CASES`。
+        这样"人核过多少，硬指标就拿多少量" —— 确认候选才真的把尺子做大。
+    去重口径：同一张图、同一条字串（`O.norm` 归一后）只留一份，避免与写死的 CASES 重复计数。
+    """
+    try:
+        from agent import truth_store as _TS
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    try:
+        for it in _TS.truths(kind="ocr_text", human_only=True):
+            ref = str(it.get("ref") or "").strip()
+            val = str(it.get("value") or "").strip()
+            if not ref or not val:
+                continue
+            out.setdefault(ref, []).append(val)
+    except Exception:  # noqa: BLE001
+        return {}
+    return out
+
+
+def _all_cases():
+    """`CASES` + 真值库里**人核过**的条目合并后的完整 tier-1 用例集（去重）。
+
+    合并规则：同图同串（归一后）只留一条；`CASES` 里已有的以 `CASES` 为准（人工写死的更可信）。
+    返回 `[(图名, 真值...), ...]`，并按图名排序（顺序稳定 ⇒ 输出可比）。
+    """
+    merged = {}
+    for entry in CASES:
+        name, *truths = entry
+        merged.setdefault(name, [])
+        for t in truths:
+            if all(O.norm(t) != O.norm(x) for x in merged[name]):
+                merged[name].append(t)
+    for ref, vals in _human_from_store().items():
+        # `ref` 是素材文件名（truth_store 里 `kind=ocr_text` 的 `ref` 即图名）
+        merged.setdefault(ref, [])
+        for t in vals:
+            if all(O.norm(t) != O.norm(x) for x in merged[ref]):
+                merged[ref].append(t)
+    # 丢掉"没有真值"和"图不存在"的条目（图不存在 = 素材被删，不该进分母）
+    out = []
+    for name in sorted(merged):
+        if not merged[name]:
+            continue
+        if not os.path.exists(_path_of(name)):
+            continue
+        out.append((name, *merged[name]))
+    return out
+
 #: 素材库目标张数（用户要求扩到 100 张）
 TARGET_IMAGES = 100
 #: 识别率标准（用户把标准提到 99%）——这是**目标**，不是"现在已经达到"
@@ -154,7 +213,7 @@ def measure(verbose: bool = False):
     #    只挂在少数几张图上，那个百分比量的依旧是那几张图 —— 上轮实测 99% 其实是「6 张图 / 31 条」量的，
     #    与"素材 76 张"完全脱节。两个数必须同时呈现，读者才不会误以为"素材涨了、标准就更容易达标了"。
     _cov = {}
-    for _name, *_t in CASES:
+    for _name, *_t in _all_cases():
         _cov[_name] = len(_t)
     _n_cov = len(_cov)
     _n_truth = sum(_cov.values())
@@ -179,7 +238,7 @@ def measure(verbose: bool = False):
                                                        heavy=BOOST_HEAVY))):
         ok = n = 0
         t0 = time.time()
-        for name, *truths in CASES:
+        for name, *truths in _all_cases():
             path = _path_of(name)
             if not os.path.exists(path):
                 continue
@@ -236,9 +295,10 @@ def measure(verbose: bool = False):
         len(cons), n2, hit["both"], hit["only_winrt"], hit["only_rapid"], hit["neither"]))
     # ── 按类别分开看：**微信界面**才是我们真正要量的东西 ──────────────────
     kinds = _kinds()
-    wx = [c for c in CASES if kinds.get(c[0]) == KIND_WX]
-    ot = [c for c in CASES if kinds.get(c[0]) == KIND_OTHER]
-    lo = [c for c in CASES if kinds.get(c[0]) == KIND_LOCAL]
+    _cases = _all_cases()
+    wx = [c for c in _cases if kinds.get(c[0]) == KIND_WX]
+    ot = [c for c in _cases if kinds.get(c[0]) == KIND_OTHER]
+    lo = [c for c in _cases if kinds.get(c[0]) == KIND_LOCAL]
     print("   素材构成：微信界面 %d 张（%s）· 其他界面 %d 张（%s）" % (
         len(wx), ", ".join(c[0][:22] for c in wx[:3]), len(ot), ", ".join(c[0][:22] for c in ot[:3])))
     if lo:
@@ -324,7 +384,8 @@ def main():
     print("网图基准（不使用用户素材）· 目录 %s" % WEB)
     ok = n = 0
     per = []
-    for name, *truths in CASES:
+    # 只跑**网图**（`web/` 下）那部分用例；本机真实截图另行统计（走 `measure()` 的分类）。
+    for name, *truths in [c for c in _all_cases() if os.path.exists(os.path.join(WEB, c[0]))]:
         path = _path_of(name)
         if not os.path.exists(path):
             print("（跳过：找不到 %s）" % name)

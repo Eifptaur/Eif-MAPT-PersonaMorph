@@ -96,6 +96,16 @@ ok("B4 ★ 口径写明：tier-1 必须「看原图核过」、tier-2 是「多�
    _sm.has(_src_bench, "看原图逐条核过") and _sm.has(_src_bench, "一致性"))
 ok("B5 tier-2 一致性真值**不当硬指标**（只看定级 AC 时不许引用它）",
    _sm.has(_src_bench, "只用于") or _sm.has(_src_bench, "仅用于"))
+# ── B6/B7：★ 修「假尺子」的结构性根因 —— tier-1 分母过去只来自写死的 `CASES`（6 张 / 31 条），
+#    `truth_store` 里人核过的条目**从来没接回基准** ⇒ 人看图核完也没用。
+#    现在 `_all_cases()` 把 `human` 层并进 `CASES`：人核过多少，硬指标就拿多少量。
+ok("B6 ★ tier-1 分母**接到真值库**（人核过的会自动进基准，不再是写死的 6 张）",
+   _sm.has(_src_bench, "def _all_cases(") and _sm.has(_src_bench, "_human_from_store(")
+   and _sm.has(_src_bench, "human_only=True"),
+   "看 `_all_cases()` / `_human_from_store()`")
+ok("B7 ★ 量召回走的是合并后的用例集（不是裸 `CASES`，否则桥白接）",
+   _sm.has(_src_bench, "for name, *truths in _all_cases()"),
+   "看 `measure()` 与 `main()` 的迭代对象")
 
 print("\n── C. 标准（99%）与棘轮 ──")
 ok("C1 标准＝99%（用户口径）", abs(float(getattr(B, "TARGET_RECALL", 0)) - 0.99) < 1e-9,
