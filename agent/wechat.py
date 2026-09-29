@@ -2180,14 +2180,117 @@ class WeChatAdapter:
             return ""
         return self._nick_map.get(str(wxid), str(wxid))
 
+    def _db_max_seq_only(self, wxid: str):
+        """只读「最新序号」：让 SQLite 聚合 `MAX(sort_seq)`，**不排序、不读消息体**。
+
+        为什么不用 `get_messages(limit=1)`（2026-09-30 收编朋友的 `wechatauto` 侧实现）：
+          · `get_messages` 走 `_shard_rows(tables, "")` ⇒ **把整表每行都读出来**
+            （含 `message_content` / `compress_content` / `packed_info_data` 这些大 BLOB），
+            再 `rows.sort()` 全排一遍、最后才切 `[:limit]`；
+          · 而监听侧每轮会对**上百个目标**各调一次 `latest_seq_ex()` ⇒ 这一处是最吃 IO 的热点。
+          ⇒ `MAX()` 是一次线性扫描、只吐一个标量，且**完全不碰大 BLOB**。
+        **跨分片**：逐个分片取 MAX 再比大小（用 `replica_adapter.message_conns`，
+        1.1.x 自动退化成单分片 —— 不像有些实现直接摸 `db._msg_conns` 私有 API）。
+        返回 int（没消息 ⇒ 0）；**拿不到返回 None**（调用方务必回退旧路径，不许拿 0 冒充）。
+        """
+        db = getattr(self, "_db", None)
+        if db is None:
+            return None
+        try:
+            from . import replica_adapter as _ra
+            conns = _ra.message_conns(db, self._bare_key(wxid))
+        except Exception: # noqa: BLE001
+            return None
+        if not conns:
+            return None      # ⚠️ 空列表 ≠ 0：可能只是这版库没有分片 API ⇒ 交回旧路径
+        best = 0
+        _ok_any = False      # ★至少有一个分片**真的答上来**了（否则不许拿 0 冒充"最新是 0"）
+        try:
+            for conn, table in conns:
+                try:
+                    _r = conn.execute("SELECT MAX(sort_seq) FROM %s" % table).fetchone()
+                    _ok_any = True          # 这句没抛 ⇒ 这个分片答上来了（哪怕 MAX 是 NULL）
+                    if _r and _r[0] is not None:
+                        _v = int(_r[0])
+                        if _v > best:
+                            best = _v
+                except Exception: # noqa: BLE001
+                    continue     # 单个分片坏了不影响其它分片（与库内既有容错口径一致）
+            # ⛔ **所有分片都读失败 ⇒ 返回 None，绝不返回 0**：0 会被监听侧当"库里最新是 0"
+            #    写进水位 ⇒ 从最旧历史重放（正是 `latest_seq_ex` 那条 P1 事故）。fail-closed。
+            return best if _ok_any else None
+        except Exception: # noqa: BLE001
+            return None
+        finally:
+            try:
+                _ra.close_all([c for c, _ in conns])
+            except Exception: # noqa: BLE001
+                pass
+
+    def _db_recent_rows(self, wxid: str, limit: int = 25):
+        """读某个会话**最近 limit 条**（跨分片，新的在前）。返回 list[dict]；拿不到返回 None。
+
+        与 `_db_messages` 的分工：`_db_messages` 走库的 `get_messages`（**公开**、稳）；
+        本函数是为**快路径回读**准备的（`already_sent_recently` 每次发送都要调）——
+        跨分片各取 topN 后合并，避免把整表塞进内存再全排。
+        **拿不到一律返回 None** ⇒ 调用方回退旧路径，**绝不用空列表冒充"确实没有消息"**
+        （那会把"读不出来"变成"没发出去" ⇒ 重发 ⇒ 群里两条一样的话）。
+        """
+        db = getattr(self, "_db", None)
+        if db is None:
+            return None
+        try:
+            limit = max(1, int(limit or 1))
+        except Exception: # noqa: BLE001
+            limit = 25
+        try:
+            from . import replica_adapter as _ra
+            conns = _ra.message_conns(db, self._bare_key(wxid))
+        except Exception: # noqa: BLE001
+            return None
+        if not conns:
+            return None
+        _conv = getattr(db, "_msg_row_to_dict", None)
+        if not callable(_conv):
+            return None      # 库结构变了 ⇒ 不猜，交回旧路径
+        rows = []
+        try:
+            for conn, table in conns:
+                try:
+                    rows += list(conn.execute(
+                        "SELECT * FROM %s ORDER BY sort_seq DESC LIMIT ?" % table,
+                        (limit,)).fetchall())
+                except Exception: # noqa: BLE001
+                    continue     # 单分片坏 ⇒ 跳过，其它分片照读
+            rows.sort(key=lambda r: r["sort_seq"], reverse=True)
+            return [_conv(r) for r in rows[:limit]]
+        except Exception: # noqa: BLE001
+            return None
+        finally:
+            try:
+                _ra.close_all([c for c, _ in conns])
+            except Exception: # noqa: BLE001
+                pass
+
     def latest_seq_ex(self, wxid: str) -> tuple:
-        """读「这个会话在库里的最新序号」，**把「读失败」与「确实没有消息」分开**。
+        """读「这个会话在库里的最新序号」，**把「读失败」与「确实没有消息」分开」。
 
         ⛔ （审计 a（P1）**）：`latest_seq` 读失败时返回 0，而监听侧
         把它当**起点**写进水位（`wm.set(key, 0)`）⇒ **水位 0 ⇒ 从最旧历史重放**
         （审计实测：群 A 441 条，首捞竟是 **14.1 天前**那 50 条）⇒ 机器人对着两周前的老话回，
         而且 0 水位**永不自愈**。⇒ 返回 `(ok, seq, why)`：`ok=False` 时调用方**绝不许拿 seq 当水位**。
+
+        ⚡ 2026-09-30 收编朋友的快路径：**先试 `_db_max_seq_only`**（`MAX(sort_seq)`，
+        不排序、不读大 BLOB），拿不到（`None`）才回退 `_db_messages`。
+        本函数被监听循环按上百个目标反复调用，是全链路最热的读库点。
+        两条都读不出来 ⇒ 照旧 `ok=False`（fail-closed，不许拿 0 冒充）。
         """
+        try:
+            _fast = self._db_max_seq_only(wxid)
+        except Exception: # noqa: BLE001
+            _fast = None
+        if _fast is not None:
+            return True, int(_fast), ""
         try:
             msgs = self._db_messages(wxid, limit=1)
             return True, (int(msgs[0]["sort_seq"]) if msgs else 0), ""

@@ -236,6 +236,103 @@ def main():
     ok("③ 正常读但没有新消息 ⇒ `poll_new_messages` 回空列表（与 None 分开）",
        _ad_ok.poll_new_messages("g", 0) == [])
 
+    # ── 快路径（2026-09-30 收编朋友的 wechatauto 侧）：`MAX(sort_seq)` 不排序、不读大 BLOB ──
+    #   `latest_seq_ex` 被监听循环按上百个目标反复调，是全链路最热的读库点。
+    #   判据要点：①快路径命中就不碰旧路；②快路径拿不到（None）**必须回退**旧路；
+    #             ③两条都读不出来仍然 ok=False（fail-closed 不被快路径改坏）。
+    class _ShardConn(object):
+        """够用的假 sqlite 连接：只支持 `MAX(sort_seq)` 那一条查询。"""
+
+        def __init__(self, mx, boom=False):
+            self.mx = mx
+            self.boom = boom
+            self.closed = False
+            self.sqls = []
+
+        def execute(self, sql, params=()):
+            self.sqls.append(sql)
+            if self.boom:
+                raise RuntimeError("分片坏了（夹具）")
+            assert "MAX(sort_seq)" in sql, "快路径只许发 MAX(sql) 这一条，实发：%s" % sql
+            return self
+
+        def fetchone(self):
+            return (self.mx,)
+
+        def close(self):
+            self.closed = True
+
+    class _FastDB(object):
+        """假库：有 `_msg_conns` ⇒ `replica_adapter` 走 1.2.x 跨分片支路。"""
+
+        def __init__(self, conns):
+            self._conns = conns
+            self.get_messages_called = 0
+
+        def _msg_conns(self, user):
+            return list(self._conns)
+
+        def get_messages(self, *a, **k):
+            self.get_messages_called += 1
+            return [{"sort_seq": 999999}]      # 旧路"真值"，用来分辨到底走了哪条
+
+    _c1, _c2 = _ShardConn(100), _ShardConn(4242)
+    _fdb = _FastDB([(_c1, "msg_0"), (_c2, "msg_1")])
+    _ad_f = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_f._db, _ad_f._cap = _fdb, {}
+    _okf, _seqf, _whyf = _ad_f.latest_seq_ex("g")
+    ok("⑤ 快路径：跨分片取 `MAX(sort_seq)` 的**最大值**（100/4242 ⇒ 4242）",
+       _okf is True and _seqf == 4242, (_okf, _seqf))
+    ok("⑤ 快路径命中 ⇒ **完全不碰**旧路 `get_messages`（这才是快的意义）",
+       _fdb.get_messages_called == 0, "旧路被调 %d 次" % _fdb.get_messages_called)
+    ok("⑤ 快路径用完**关连接**（不留悬挂句柄）", _c1.closed and _c2.closed)
+
+    # 反向：快路径**拿不到**（没有 _msg_conns）⇒ 必须回退旧路，不许把 ok 判死
+    class _NoShardDB(object):
+        def __init__(self):
+            self.get_messages_called = 0
+
+        def get_messages(self, *a, **k):
+            self.get_messages_called += 1
+            return [{"sort_seq": 777}]
+
+    _ndb = _NoShardDB()
+    _ad_n = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_n._db, _ad_n._cap = _ndb, {}
+    _okn, _seqn, _ = _ad_n.latest_seq_ex("g")
+    ok("⑥ 快路径不可用（没有分片 API）⇒ **回退**旧路并读成功（不误判失败）",
+       _okn is True and _seqn == 777 and _ndb.get_messages_called >= 1,
+       (_okn, _seqn, "旧路被调 %d 次" % _ndb.get_messages_called))
+
+    # 反向：快路径**分片全坏** ⇒ 回退旧路也坏 ⇒ 仍然 ok=False（fail-closed 没被快路径改坏）
+    class _FastBoomDB(object):
+        def _msg_conns(self, user):
+            return [(_ShardConn(0, boom=True), "msg_0")]
+
+        def get_messages(self, *a, **k):
+            raise RuntimeError("消息库读不出来（夹具·快路径回退后）")
+
+    _ad_fb = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_fb._db, _ad_fb._cap, _ad_fb._ls_warn_at = _FastBoomDB(), {}, 0
+    _okfb, _seqfb, _whyfb = _ad_fb.latest_seq_ex("g")
+    ok("⑦ 快路径与旧路**都读不出来** ⇒ 仍 ok=False（fail-closed 不被快路径改坏）",
+       _okfb is False and _seqfb == 0 and bool(_whyfb), (_okfb, _seqfb))
+
+    # 轻量：`_db_recent_rows` 拿不到一律 None（**绝不用 [] 冒充"确实没有消息"**）
+    _ad_nr = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_nr._db = _NoShardDB()      # 无 _msg_conns
+    ok("⑧ `_db_recent_rows` 快路径不可用 ⇒ 回 **None**（不是 []，否则会当成没发出去而重发）",
+       _ad_nr._db_recent_rows("g", 25) is None)
+    # 分片 API 在、但库没有 `_msg_row_to_dict` ⇒ 也不猜，回 None
+    class _NoConvDB(object):
+        def _msg_conns(self, user):
+            return [(_ShardConn(50), "msg_0")]
+
+    _ad_nc = _wx.WeChatAdapter.__new__(_wx.WeChatAdapter)
+    _ad_nc._db = _NoConvDB()
+    ok("⑧ 库结构变了（无 `_msg_row_to_dict`）⇒ 回 None（不猜）",
+       _ad_nc._db_recent_rows("g", 25) is None)
+
     ok("④ 三处「定起点」都走 `latest_seq_ex`（源码），且全文件**没有**把 0 写进水位",
        "wm.set(_key0, _seq0)" in _pm and "wm.set(_k, _seqn)" in _pm
        and "wm.set(chat_key, _seqp)" in _pm

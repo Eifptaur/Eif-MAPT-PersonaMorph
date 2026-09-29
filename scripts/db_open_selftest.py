@@ -237,21 +237,23 @@ try:
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 
-# ── F 段（2026-09-30 收编朋友的 wechatauto/db.py）：页 1 模式**以磁盘事实为准** ──
-#  症状（正对应上面那几个"打不开消息库"）：48B(key+salt) 候选**也可能来自全加密库**，
-#  旧写法只看密钥长度 ⇒ 照"明文头模式"保留前 16 字节**密文 salt** ⇒ 解出的页 1
-#  没有 `SQLite format 3\0` 头 ⇒ 该候选被误判不可用 / hitm "file is not a database
-#  / 数据库合并失败"。修法：页 1 前 16 字节**是不是明文 SQLite 头**，是则保留、
-#  不是则自己补一个标准头。判据逐例钉死这条分叉（**不依赖真库、不读真密钥**）。
+# ── F 段（2026-09-30）：页 1 模式**以磁盘事实为准** —— 修「file is not a database / 数据库合并失败」──
+#  症状／根因见 `agent/replica_adapter.py::fix_page1_plaintext_header`（那里有完整来龙去脉）。
+#  ⚠️ **机制澄清（重要）**：我方 **不是**改 site-packages 里那个 db.py ——
+#     那份文件重装依赖/更新就会被覆盖（`runtime/` 还是 gitignore 的）。正解是
+#     `replica_adapter.fix_page1_plaintext_header()` 在**进程内**替换库模块里的函数，
+#     由 `_init_db` 在读库之前调 `ensure_compat_patches()` 装上。
+#  ⇒ 所以 F 段测的是**这个运行时补丁**：装上后的行为 + 「没装补丁时确实是坏的」的灵敏度对照。
+from agent import replica_adapter as _ra # noqa: E402
 from wechatauto import db as _wadb # noqa: E402
 
-print("── F. 页 1 解密模式以磁盘事实为准（收编朋友的 db.py）──")
+print("── F. 页 1 模式以磁盘事实为准（运行时补丁，不改 vendored 文件）──")
 _SQLITE_HDR = b"SQLite format 3\x00"
 
 
 def _mk_page1(first16: bytes) -> bytes:
     """造一页 4096B 的第 1 页：前 16 字节用给定值，其余是密文/IV 占位。"""
-    _pg = bytearray(b"\xAB" * _wadb.PAGE_SZ)
+    _pg = bytearray(b"\xab" * _wadb.PAGE_SZ)
     _pg[:16] = first16
     return bytes(_pg)
 
@@ -259,75 +261,47 @@ def _mk_page1(first16: bytes) -> bytes:
 _K32 = b"K" * 32
 _K48 = b"K" * 48
 
+# ⚠️ 必须在装补丁**之前**取一份原始实现（补丁装过之后 `_wadb._decrypt_page` 就是我们的了）
+_orig_dec = _wadb._decrypt_page
+_st = _ra.ensure_compat_patches()
+ok("兼容补丁装上了（`ensure_compat_patches`）",
+   ("page1" in str(_st)) or (_st in ("patched", "skip:already")), str(_st)[:90])
+
 # ① 48B 候选 + 磁盘上是**明文头** ⇒ 保留原明文头（真·明文头库）
 _r1 = _wadb._decrypt_page(_K48, _mk_page1(_SQLITE_HDR), 1)
-ok("48B 候选 + 磁盘是明文头 ⇒ 解出页 1 仍带 SQLite 头", _r1[:16] == _SQLITE_HDR,
-   repr(_r1[:16]))
+ok("48B 候选 + 磁盘是明文头 ⇒ 解出页 1 仍带 SQLite 头", _r1[:16] == _SQLITE_HDR, repr(_r1[:16]))
 
 # ② ★48B 候选 + 磁盘上是**密文 salt**（全加密库被误当明文头模式）⇒ 必须自己补标准头
-_r2 = _wadb._decrypt_page(_K48, _mk_page1(b"\xCD" * 16), 1)
-ok("★48B 候选 + 磁盘是密文 salt ⇒ 仍补出标准 SQLite 头（旧写法此处会缺失）",
-   _r2[:16] == _SQLITE_HDR, repr(_r2[:16]))
+_r2 = _wadb._decrypt_page(_K48, _mk_page1(b"\xcd" * 16), 1)
+ok("★48B 候选 + 磁盘是密文 salt ⇒ 仍补出标准 SQLite 头", _r2[:16] == _SQLITE_HDR, repr(_r2[:16]))
 
 # ③ 32B 候选（全加密库主路径）⇒ 自己补标准头
-_r3 = _wadb._decrypt_page(_K32, _mk_page1(b"\xEF" * 16), 1)
+_r3 = _wadb._decrypt_page(_K32, _mk_page1(b"\xef" * 16), 1)
 ok("32B 候选 ⇒ 页 1 补标准 SQLite 头", _r3[:16] == _SQLITE_HDR, repr(_r3[:16]))
 
 # ④ 第 2 页及以后**不套页 1 规则**（前 16 字节是密文，不该被塞头）
 _r4 = _wadb._decrypt_page(_K32, _mk_page1(_SQLITE_HDR), 2)
-ok("第 2 页不受页 1 规则影响（不许被塞 SQLite 头）", _r4[:16] != _SQLITE_HDR,
-   repr(_r4[:16]))
+ok("第 2 页不受页 1 规则影响（不许被塞 SQLite 头）", _r4[:16] != _SQLITE_HDR, repr(_r4[:16]))
 
 # ⑤ 尾部 reserve 区必须补回 80 字节（IV16+HMAC64），否则 sqlite 解析错位
 ok("页 1/2 尾部 reserve 均补满 80B", len(_r1) == _wadb.PAGE_SZ and len(_r4) == _wadb.PAGE_SZ,
    "%d / %d" % (len(_r1), len(_r4)))
 
-# ⑥ 源码级：页 1 判据必须读 `page[:16]`（磁盘事实），不许只按 `len(key)==48` 分叉
-_dbsrc = open(os.path.join("runtime", "python", "Lib", "site-packages", "wechatauto",
-                           "db.py"), encoding="utf-8").read()
-_fd = _dbsrc.split("def _decrypt_page(")[1][:900]
-ok("源码：页 1 模式判据用 page[:16]（磁盘事实）", "page[:16] == b\"SQLite format 3\\x00\"" in _fd)
-ok("源码：解密后统一要求满配头（`pt[:16]` + `pt[16:18]`），不再只按 48B 分叉",
-   "pt[:16] != b\"SQLite format 3\\x00\"" in _dbsrc and "pt[16:18] != b\"\\x01\\x01\"" in _dbsrc)
+# ⑥ ★**灵敏度**：补丁前的实现必须**真的**会把密文当明文头（否则整段判据是恒真的摆设）
+_old = _ra.original_decrypt_page() or _orig_dec
+ok("★灵敏度：**补丁前**的实现把密文 salt 当明文头（首 16 字节不是魔数）⇒ 判据真能红",
+   _old(_K48, _mk_page1(b"\xcd" * 16), 1)[:16] != _SQLITE_HDR,
+   repr(_old(_K48, _mk_page1(b"\xcd" * 16), 1)[:16]))
+ok("灵敏度对照：补丁前遇到真·明文头也照旧保留（不是把两路都改坏）",
+   _old(_K48, _mk_page1(_SQLITE_HDR), 1)[:16] == _SQLITE_HDR)
 
-# ⑦ 可复现性（★这条最容易被忽略却最要命）：`runtime/` 是 gitignore 的 ⇒ 直接改那里的 db.py
-#    **换台电脑 / 重装依赖就丢**。所以修法必须固化成"安装后重放的补丁"。
-#    这里钉三件事：补丁脚本在、对 wheel 原版**能打上**、且**幂等**（打第二遍不出错也不改字节）。
-import subprocess as _sp # noqa: E402
-import zipfile as _zip # noqa: E402
-
-_PATCHER = os.path.join("scripts", "_patch_wechatauto.py")
-_WHEEL = os.path.join("offline", "wheels", "wechatauto_replica-1.2.2.2-py3-none-any.whl")
-ok("补丁脚本存在（把改动固化下来，不靠改 vendored 文件）", os.path.isfile(_PATCHER))
-
-if os.path.isfile(_PATCHER) and os.path.isfile(_WHEEL):
-    _TGT = os.path.join("runtime", "python", "Lib", "site-packages", "wechatauto", "db.py")
-    _keep = open(_TGT, "rb").read() if os.path.isfile(_TGT) else None
-    try:
-        # 还原成 wheel 原版（模拟"全新安装"）
-        _orig = _zip.ZipFile(_WHEEL).read("wechatauto/db.py")
-        open(_TGT, "wb").write(_orig)
-        _rc1 = _sp.run([sys.executable, _PATCHER], capture_output=True).returncode
-        _after = open(_TGT, "rb").read()
-        ok("对 wheel 原版跑补丁 ⇒ 退出码 0", _rc1 == 0, "rc=%s" % _rc1)
-        ok("补丁后 ≠ wheel 原版（确实改了东西）", _after != _orig)
-        # 幂等：再打一遍，字节不许变
-        _rc2 = _sp.run([sys.executable, _PATCHER], capture_output=True).returncode
-        ok("补丁**幂等**：再打一遍字节不变", _rc2 == 0 and open(_TGT, "rb").read() == _after,
-           "rc=%s" % _rc2)
-        # 打完补丁的函数行为与固定版一致（48B+密文salt 也要补出标准头）
-        _ns = {}
-        _src2 = open(_TGT, encoding="utf-8").read()
-        _fn2 = _src2[_src2.index("def _decrypt_page("):_src2.index("def _looks_like_text")]
-        exec("from wechatauto.db import _aes_cbc_decrypt\n"
-             "from wechatauto.db import PAGE_SZ, RESERVE_SZ\n" + _fn2, _ns)
-        _pg = bytearray(b"\xAB" * 4096)
-        _pg[:16] = b"\xCD" * 16
-        ok("补丁产物行为正确（48B+密文salt ⇒ 补出标准头）",
-           _ns["_decrypt_page"](b"K" * 48, bytes(_pg), 1)[:16] == _SQLITE_HDR)
-    finally:
-        if _keep is not None:
-            open(_TGT, "wb").write(_keep)
+# ⑦ 接线：`_init_db` 必须在**读库之前**装补丁（不然库自己先坏在模式上）
+_wxa = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
+ok("接线：`_init_db` 在读库之前调 `ensure_compat_patches()`",
+   "_ra_cp.ensure_compat_patches()" in _wxa)
+ok("补丁实现**不改 vendored 文件**（进程内替换；`runtime/` 是 gitignore 的，改文件必丢）",
+   "不改 site-packages 里的文件" in open(os.path.join("agent", "replica_adapter.py"),
+                                          encoding="utf-8").read())
 
 print("\n打不开消息库判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
