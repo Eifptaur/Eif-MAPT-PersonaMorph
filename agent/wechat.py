@@ -9145,7 +9145,9 @@ class WeChatAdapter:
         """
         try:
             # 底 = 向下滚 = `_scroll_chat(up=False)`；多滚几格确保到底。
-            return bool(WeChatAgent._scroll_chat(gui, up=False, ticks=6))
+            # ⚠️ 类名是 `WeChatAdapter`（不是 `WeChatAgent`）——写错会抛 NameError 被
+            #    下面的 `except` 吞掉，变成"静默滚不动"（正是本文件一直在防的那类假绿）。
+            return bool(WeChatAdapter._scroll_chat(gui, up=False, ticks=6))
         except Exception:
             return False
 

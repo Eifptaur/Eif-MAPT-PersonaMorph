@@ -160,5 +160,65 @@ ok("E2 真鼠标档有光标还原帮手（`_cursor_restore`）", _sm.has(_SRC, 
 ok("E3 红线违例的现场写进了注释（不然下一个人会顺手改回去）",
    _sm.has(_SRC, "真机四项复测") and _sm.has(_SRC, "(1564,1144)"))
 
+print("== F. 反向锚：`_scroll_to_bottom` 不许再退回裸真鼠标（★安全红线，桌面清空事故路径）==")
+_WSRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+# 取 `_scroll_to_bottom` 的函数正文（按 AST，别用 find——函数一搬家就切错）
+try:
+    import _srcslice as _ss
+    _sb = _ss.func_src(_WSRC, "_scroll_to_bottom")
+except Exception as e:  # noqa: BLE001
+    _sb = ""
+    print("（取 `_scroll_to_bottom` 失败：%s）" % str(e)[:60])
+
+
+def _code_only(seg: str) -> str:
+    """去掉函数里的 **docstring 与 `#` 注释**，只留可执行代码。
+
+    为什么 F1 需要它：`_scroll_to_bottom` 的 docstring **故意写明了**老实现用的
+    `_set_cursor`/`_mouse_wheel`（讲清为什么改、防后人改回去）—— 直接对整段做
+    `has("_set_cursor")` 会被**注释自证**为红（判据太钝）。判"有没有真调用"必须看代码。
+
+    ⛔ 这里踩过一个坑，记下来防后人再踩：`_srcslice.func_src()` 返回的段落**本身带缩进、
+    且**第一行就是 `def` 行**（它是某个类里的方法，原文缩进 4 格）。若再"整体缩进 4 格 +
+    套一层 `def _f():`"去解析，得到的是**嵌套函数** —— 外层 `_f` 的 `body[0]` 是内层
+    `_scroll_to_bottom`（`FunctionDef`），**不是 docstring**，于是剥 docstring 那步空转，
+    `unparse` 出来照样带着 `_set_cursor`/`_mouse_wheel` 两个词 ⇒ F1 恒红、纯属误报。
+    正解：**把段落当成一个模块直接 `ast.parse`**（带 4 格缩进的 `def` 会触发
+    `IndentationError`，先按 `textwrap.dedent` 归一），再在**真正的函数节点**上剥 docstring。
+    """
+    import ast as _ast
+    import textwrap as _tw
+    try:
+        _mod = _ast.parse(_tw.dedent(seg))
+    except Exception:  # noqa: BLE001
+        return seg
+    _fn = None
+    for _n in _ast.walk(_mod):
+        if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                           _ast.ClassDef)):
+            _fn = _n # 段落就是单个函数/类：取那个定义节点
+            break
+    if _fn is None:
+        return _ast.unparse(_mod)
+    # 丢掉首句 docstring（要剥的是**函数自己**的，不是外层包装的）
+    if (_fn.body and isinstance(_fn.body[0], _ast.Expr)
+            and isinstance(getattr(_fn.body[0], "value", None), _ast.Constant)
+            and isinstance(_fn.body[0].value.value, str)):
+        _fn.body = _fn.body[1:]
+    return _ast.unparse(_fn)
+
+
+_sb_code = _code_only(_sb)
+ok("F1 ★ `_scroll_to_bottom` 的**代码里**不再调用裸真鼠标原语（`_set_cursor`/`_mouse_wheel`）",
+   _sb and not _sm.has(_sb_code, "_set_cursor") and not _sm.has(_sb_code, "_mouse_wheel"),
+   "看 `agent/wechat.py::_scroll_to_bottom` 的代码（docstring 里提到老实现是正常的）")
+ok("F2 ★ 它走**投递**版（复用 `_scroll_chat`，发 WM_MOUSEWHEEL，不动光标）",
+   _sm.has(_sb, "_scroll_chat"), "应调 `WeChatAdapter._scroll_chat(...)`")
+ok("F3 ★ 类名引用正确（写成 `WeChatAgent` 会抛 NameError 被 except 吞成静默滚不动）",
+   _sm.has(_sb, "WeChatAdapter._scroll_chat") and not _sm.has(_sb, "WeChatAgent._scroll_chat"),
+   "类名是 WeChatAdapter")
+ok("F4 改动理由（屏外窗口→坐标被夹到 (0,0)→框选桌面文件）写进了 docstring，防后人改回去",
+   _sm.has(_sb, "静默夹到") and _sm.has(_sb, "框选桌面文件"))
+
 print("== 点一下也不许动鼠标判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
 sys.exit(1 if FAIL[0] else 0)
