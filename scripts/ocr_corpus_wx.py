@@ -91,6 +91,15 @@ def _get(url: str, timeout: int = 45, referer: str = "") -> bytes:
     h = {"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
     if referer:
         h["Referer"] = referer
+    # ⛔ **中文直链必须百分号编码**：图片直链里常带中文文件名（维基/搜索结果的图就是），
+    #    不编码会在发请求时抛 `'ascii' codec can't encode characters`（实测：一批图全因此失败，
+    #    而且报错看起来像"下载失败"，很容易被当成网络问题糊过去）。只编码要编码的字符，
+    #    保留 URL 语法字符（`:/?&=%#` 等），免得把合法 URL 编坏。
+    try:
+        from urllib.parse import quote
+        url = quote(str(url), safe=":/?&=%#[]@!$'()*+,;~")
+    except Exception as e:  # noqa: BLE001
+        print("    （URL 编码失败，按原样请求：%s）" % str(e)[:40], flush=True)
     return urllib.request.urlopen(urllib.request.Request(url, headers=h),
                                  timeout=timeout, context=_ctx()).read()
 

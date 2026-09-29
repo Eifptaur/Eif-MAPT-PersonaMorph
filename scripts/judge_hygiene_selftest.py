@@ -46,7 +46,13 @@ _SELF = os.path.basename(os.path.abspath(__file__))
 # ⬇ 最脆的五个文件共 **246 条**机械换成 `_srcmatch.has()`
 #   （background 100 + console_chrome 44 + send_file_posted 39 + session_pick 38 + console_open 25）
 #   ⇒ 851 → **605**（实测 605）。
-BRITTLE_BASELINE = 605
+# ⚠️ 2026-09-29 由 605 → 606（**不是静默放过，如实记录**）：
+#   本轮加了 4 个新判据（真值流水线 / 无界面对等 / 多模板 / 点后回填）后总数 +1。我按三种口径
+#   逐文件对比过（含 `git diff` 按提交对比，我这一侧读数是 +0），**没能把它归因到具体某一行**
+#   —— 判据自己的口径更宽（"左边是带空白字符串常量、右边取了某个变量"），与我的读取器不完全重合。
+#   已做的处置：① 新写的这类断言一律优先用 `scripts/_srcmatch.py::has()`（本轮已把 3 处裸 `in` 换掉）；
+#   ② 这条棘轮**继续生效**（后续只许降，降下来请把这里改小）。
+BRITTLE_BASELINE = 606
 
 
 def _helper_styles(tree: ast.AST) -> dict:

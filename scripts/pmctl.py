@@ -5,8 +5,17 @@
 ## 为什么有它
 现场（2026-09-29 群相反馈 · 另一台机器）：**AMD ASP2400 这类无独显的老 CPU** 上，
 浏览器/WebView2 版的网页控制台"卡到不能用" ⇒ 用户在低配服务器上**根本没有可用的操作界面**。
-但产品本来就有一套完整 HTTP API（84 条路由，网页控制台只是它的一个前端）
+但产品本来就有一套完整 HTTP API（**109 条 `/api/` 路由**，网页控制台只是它的一个前端）
 ⇒ 这个 CLI 直接调那套 API：**不开浏览器、不跑 WebView2、不画任何界面**，纯文本进纯文本出。
+
+## ⚠️ 能力边界（**如实说，不追求 1:1**）
+控制台有 109 条路由、这里 19 条命令 ⇒ **两者不是完全等价**，分成三类：
+  · **这两边都能做**：状态/体检/日志/配置/启停/自启/低配/症状自查/会话/接入诊断/标定/指纹/反馈/真值审核；
+  · **只有图形界面做得舒服**（**本质需要屏幕**）：看图表与记忆图谱、拖拽挂件与背景裁剪、
+    点屏幕取点的可视化标定、上传/预览图片（角色图/气泡图/背景）、进度条那种实时观感；
+    ⇒ 这些**不做命令行版**（硬做只会更难用）；无界面的正解是把结果**落成文件**：
+     体检报告、反馈包、待审真值包（`truth export`）都是这么给的。
+  · **已落成文件、命令行也能拿到**：体检报告 · 反馈包（`pack`）· 待审真值包（`truth export`）。
 
 ## 用法（全部命令都不需要图形界面）
     python scripts/pmctl.py status              # 运行状态 / 监听目标 / 引擎 / OCR 档位
@@ -18,6 +27,13 @@
     python scripts/pmctl.py logs 80             # 日志尾部 80 行
     python scripts/pmctl.py cfg get wechat.poll_interval
     python scripts/pmctl.py cfg set wechat.poll_interval 6
+    python scripts/pmctl.py wechat diag         # 接入诊断（连不上微信时先看这个）
+    python scripts/pmctl.py fingerprint take    # 重取图标指纹（换了主题/DPI）
+    python scripts/pmctl.py calibrate           # 重新标定（点不准）
+    python scripts/pmctl.py truth list 20       # 真值审核：看最可疑的 20 条
+    python scripts/pmctl.py truth export        # 导出待审包（清单 + 放大裁剪图，看图审）
+    python scripts/pmctl.py pack                # 反馈包（一个 txt，直接发作者）
+    python scripts/pmctl.py feedback "问题描述"  # 直接提反馈（发不出去会如实报错）
     python scripts/pmctl.py pause / resume
     python scripts/pmctl.py lowspec on|off|show # **省资源预设**（低配机器用这个）
     python scripts/pmctl.py doctor              # status+adapt+check 一把跑完（远程排查用）
@@ -291,6 +307,104 @@ def cmd_truth(a) -> int:
         return 0
     _die("不认识的子命令：%s（可用：stats / list / show / ok / no / export）" % what)
     return 2
+
+
+def cmd_wechat(a) -> int:
+    """**接入诊断 / 数据库目录**（无界面机器上"连不上微信"时的第一条路）。
+
+    子命令：`diag`（逐行诊断，默认）· `dir`（看/设聊天文件目录）· `recheck`（重新检测）。
+    """
+    what = str(getattr(a, "what", "") or "diag").lower()
+    if what == "dir":
+        d = _req(a, "/api/wechat/dir")
+        if not d.get("ok"):
+            _die("读不到微信目录设置：%s" % (d.get("error") or d))
+        r = d.get("result") if isinstance(d.get("result"), dict) else d
+        _kv("微信聊天文件目录", [(k, v) for k, v in r.items() if not isinstance(v, (dict, list))][:8])
+        print("  改目录：控制台「微信」面板，或 `cfg set wechat.dir <路径>`（改完 `wechat recheck`）。")
+        return 0
+    # ⛔ 只有 `/api/wechat/recheck` 与 `/api/wechat/dir` 两条真路由（我第一版猜了个 `/api/wechat`，
+    #    被 `pmctl_selftest` 的 E1「CLI 引用的路径必须在路由表里」当场抓住）⇒ diag 就走 recheck。
+    path = "/api/wechat/recheck"
+    d = _req(a, path, timeout=120.0)
+    if a.json:
+        print(json.dumps(d, ensure_ascii=False, indent=1))
+        return 0
+    rep = d.get("report") or d.get("result") or d
+    if isinstance(rep, dict):
+        for k, v in list(rep.items())[:16]:
+            print("  %-22s %s" % (k, str(v)[:70]))
+    else:
+        print(str(rep).strip()[:2000])
+    print("")
+    print("  ⚠️ 哪一行写着「卡住」，就照那一行写的做（详见 README「出问题怎么办」第 1 条）。")
+    return 0 if d.get("ok", True) else 1
+
+
+def cmd_fingerprint(a) -> int:
+    """**图标指纹**（点之前"对不上就不点"的依据）：看状态 / 取指纹 / 清指纹。
+
+    子命令：`status`（默认）· `take`（重取）· `forget [key]`（清掉，换环境后用）。
+    """
+    what = str(getattr(a, "what", "") or "status").lower()
+    if what == "take":
+        d = _req(a, "/api/ui_fingerprint/take", timeout=180.0)
+        if not d.get("ok"):
+            _die("取指纹失败：%s" % (d.get("error") or d))
+        r = d.get("result") or {}
+        _okn = len(r.get("ok") or [])
+        _bad = list(r.get("failed") or [])
+        print("已取指纹：成功 %d 个" % _okn)
+        if _bad:
+            print("  失败 %d 个：%s" % (len(_bad), "；".join(str(x) for x in _bad)[:160]))
+        print("  环境键：%s" % r.get("key"))
+        return 0
+    if what == "forget":
+        k = str(getattr(a, "index", "") or "")
+        body = {"key": k} if k else {}
+        d = _req(a, "/api/ui_fingerprint/forget", "POST", body)
+        if not d.get("ok"):
+            _die("清指纹失败：%s" % (d.get("error") or d))
+        print("已清指纹：%s" % (d.get("result") or "-"))
+        return 0
+    d = _req(a, "/api/ui_fingerprint/take")       # GET 只看状态（不重取）
+    _kv("图标指纹", [("本环境有没有记录", "看下面 status" if d.get("ok") else d.get("error"))])
+    print("  取指纹：`fingerprint take`；清掉：`fingerprint forget`。")
+    print("  说明：指纹是「点之前先比一眼」的依据，对不上就不点（宁可漏点也不点错）。")
+    return 0
+
+
+def cmd_calibrate(a) -> int:
+    """重新标定（比例算错会点到别处；标定完**自动取一次指纹**）。"""
+    d = _req(a, "/api/ui/recalibrate", "POST", {}, timeout=180.0)
+    if not d.get("ok"):
+        _die("标定失败：%s（微信窗口要先恢复显示、别最小化）" % (d.get("error") or d))
+    r = d.get("result") or {}
+    print("标定完成：%s" % (str(r)[:200] if r else "已提交"))
+    d2 = _req(a, "/api/ui_fingerprint/take", timeout=180.0)
+    print("  顺带取指纹：%s" % ("成功 %d 个" % len((d2.get("result") or {}).get("ok") or [])
+                              if d2.get("ok") else d2.get("error")))
+    return 0
+
+
+def cmd_feedback(a) -> int:
+    """**提反馈**（无界面机器上出问题的正路）：把内容连同兼容性摘要发出去；发不出去会**如实报错**。"""
+    txt = str(getattr(a, "text", "") or "").strip()
+    if not txt:
+        txt = _ask("请简述问题（回车取消）：", "")
+    if not txt:
+        print("（没填内容，已取消。）")
+        return 0
+    d = _req(a, "/api/feedback/submit", "POST",
+             {"type": str(getattr(a, "kind", "") or "问题反馈"), "content": txt}, timeout=90.0)
+    if not d.get("ok"):
+        # ⛔ 发不出去**如实说**，并把内容留在屏幕上让用户自己保存（不留假成功）
+        print("❌ 没发出去：%s" % (d.get("error") or d))
+        print("   内容已保留在下面，可复制保存：")
+        print("   %s" % txt)
+        return 1
+    print("✅ 已提交反馈（%s）" % str(d.get("result") or "ok")[:80])
+    return 0
 
 
 def cmd_check(a) -> int:
@@ -634,6 +748,8 @@ def menu(a) -> int:
         ("开机自动启动（可选，默认不开）", lambda: _menu_autostart(a)),
         ("暂停 / 恢复机器人", lambda: _menu_pause(a)),
         ("生成反馈包（出问题就选这个，把文件发作者）", lambda: cmd_pack(_mk(a))),
+        ("接入诊断 / 重新标定 / 取指纹（连不上或点不准）", lambda: _menu_fixwechat(a)),
+        ("直接提反馈（连反馈包都懒得生成时）", lambda: cmd_feedback(_mk(a))),
     ]
     while True:
         print("")
@@ -679,6 +795,24 @@ def menu(a) -> int:
             print("（这个操作出错了：%s）" % str(e)[:150])
             print("（可以选 8 生成反馈包，把文件发给作者。）")
         _ask("看完按回车回到菜单…", "")
+
+
+def _menu_fixwechat(a) -> int:
+    """菜单里的"接入/标定/指纹"三连：无界面机器上最常用的救急动作。"""
+    print("")
+    print("  1. 接入诊断（连不上微信：先看这个）      2. 看/改聊天文件目录")
+    print("  3. 重新标定（点不准）                    4. 重取图标指纹（换了主题/DPI）")
+    print("  0. 返回")
+    c = _ask("请输入数字后回车（直接回车＝0）：", "0") or "0"
+    if c == "1":
+        return cmd_wechat(_mk(a, what="diag"))
+    if c == "2":
+        return cmd_wechat(_mk(a, what="dir"))
+    if c == "3":
+        return cmd_calibrate(_mk(a))
+    if c == "4":
+        return cmd_fingerprint(_mk(a, what="take"))
+    return 0
 
 
 def _menu_truth(a) -> int:
@@ -781,6 +915,19 @@ def main(argv=None) -> int:
     sub.add_parser("doctor", help="status + adapt + check 一把跑完").set_defaults(func=cmd_doctor)
     p = sub.add_parser("verify", help="跑症状检验器（默认全部）"); p.add_argument("ids", nargs="*"); p.set_defaults(func=cmd_verify)
     p = sub.add_parser("check", help="体检"); p.set_defaults(func=cmd_check)
+    p = sub.add_parser("wechat", help="接入诊断 / 数据库目录（连不上微信时先看这个）")
+    p.add_argument("what", nargs="?", default="diag", choices=("diag", "dir", "recheck"))
+    p.set_defaults(func=cmd_wechat)
+    p = sub.add_parser("fingerprint", help="图标指纹：看状态 / 重取 / 清掉")
+    p.add_argument("what", nargs="?", default="status", choices=("status", "take", "forget"))
+    p.add_argument("index", nargs="?", default="")
+    p.set_defaults(func=cmd_fingerprint)
+    p = sub.add_parser("calibrate", help="重新标定（标定完自动取一次指纹）")
+    p.set_defaults(func=cmd_calibrate)
+    p = sub.add_parser("feedback", help="提反馈（发不出去会如实报错并保留内容）")
+    p.add_argument("text", nargs="?", default="")
+    p.add_argument("--kind", default="问题反馈")
+    p.set_defaults(func=cmd_feedback)
     p = sub.add_parser("truth", help="真值审核（看最可疑的那一撮 / 确认 / 导出待审包）")
     p.add_argument("what", nargs="?", default="stats",
                    choices=("stats", "list", "show", "ok", "no", "export"))
@@ -794,6 +941,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("resume", help="恢复"); p.set_defaults(func=cmd_pause, mode="resume")
     p = sub.add_parser("autostart", help="开机自启（默认关；当前用户级，免管理员）")
     p.add_argument("action", nargs="?", default="show", choices=("on", "off", "show")); p.set_defaults(func=cmd_autostart)
+    p = sub.add_parser("pack", help="生成反馈包（出一个 txt，直接发作者）")
+    p.set_defaults(func=cmd_pack)
     p = sub.add_parser("lowspec", help="省资源预设"); p.add_argument("action", nargs="?", default="show",
                                                                  choices=("on", "off", "show")); p.set_defaults(func=cmd_lowspec)
 
