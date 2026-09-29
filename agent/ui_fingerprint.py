@@ -19,9 +19,12 @@ import ctypes
 import hashlib
 import io
 import json
+import logging
 import os
 import time
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data")
@@ -313,6 +316,109 @@ def save(db: dict, path: str = None) -> bool:
 
 # ── 点击前自校验 ────────────────────────────────────────────────────────
 
+# ══════════════ 偏移学习（把"素材/实跑"变成准确率的第一步）══════════════
+# ⛔ 口径先说清：**指纹比对是"查表"，不是"学习"** —— 素材再多，也只是多了几张截图，
+#    不会自己变准。要变准必须有**闭环**：把每次校验实测到的"最像的一版偏了多少"累计起来，
+#    学出**系统性偏移**（标定误差、主题/DPI 造成的整体位移），下次直接从校正后的位置开始找。
+#    这是本模块里**第一个真正的学习环**；它只影响"从哪儿开始找"，**不放松任何判定**。
+#: 至少观测这么多次才敢"学"（少样本一律不应用 —— 别把两三帧的抖动当规律）
+LEARN_MIN_N = 8
+#: 稳健离散度上限（MAD＝中位数绝对偏差）：超过它说明是**抖动**而不是系统性偏移
+LEARN_STABLE_MAD = 1.5
+#: 偏移小于这个像素数不值得校正（1px 无关紧要，校正反而增加复杂度）
+LEARN_MIN_PX = 2
+#: 校正上限（安全）：绝不把"从哪儿开始找"挪出这么多像素
+LEARN_MAX_PX = 8
+
+
+def _median(xs: list) -> float:
+    s = sorted(xs)
+    n = len(s)
+    if not n:
+        return 0.0
+    return float(s[n // 2]) if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def _mad(xs: list, med: float) -> float:
+    """MAD＝中位数绝对偏差（比标准差更抗离群点：机位抖一两帧不会把结论带跑）。"""
+    return _median([abs(x - med) for x in xs]) if xs else 0.0
+
+
+def learn_offset(rec: dict, off) -> dict:
+    """把**一次通过校验的实测偏移**记进 `rec["learn"]`（原地更新并返回 learn 段）。
+
+    ⛔ 只允许记"通过校验"的样本：对不上的样本里，那个 offset 是**乱找出来的**，不是标定误差，
+       记进去会把学习带偏（判据 L7 守着）。
+    """
+    try:
+        dx, dy = int(off[0]), int(off[1])
+    except Exception:
+        return rec.get("learn") or {}
+    if abs(dx) > TOL_PX or abs(dy) > TOL_PX:
+        return rec.get("learn") or {}      # 超出容差范围的样本本身可疑，不参与学习
+    lr = rec.get("learn")
+    if not isinstance(lr, dict):
+        lr = {"xs": [], "ys": []}
+    xs, ys = list(lr.get("xs") or []), list(lr.get("ys") or [])
+    xs.append(dx)
+    ys.append(dy)
+    # 有界：只留最近 64 次（环境变了要能跟上，而不是被古老样本钉住）
+    lr["xs"], lr["ys"] = xs[-64:], ys[-64:]
+    lr["n"] = len(lr["xs"])
+    lr["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    rec["learn"] = lr
+    return lr
+
+
+def learned_shift(rec: dict):
+    """学到的**系统性偏移** `(dx, dy)`；样本不够 / 不稳 / 太小 ⇒ `(0, 0)`（不校正）。"""
+    lr = rec.get("learn") if isinstance(rec, dict) else None
+    if not isinstance(lr, dict):
+        return (0, 0)
+    xs, ys = list(lr.get("xs") or []), list(lr.get("ys") or [])
+    if len(xs) < LEARN_MIN_N or len(ys) < LEARN_MIN_N:
+        return (0, 0)                      # 样本不够 ⇒ 不学（防抖）
+    mx, my = _median(xs), _median(ys)
+    if _mad(xs, mx) > LEARN_STABLE_MAD or _mad(ys, my) > LEARN_STABLE_MAD:
+        return (0, 0)                      # 离散度大 ⇒ 是抖动，不是系统性偏移
+    if max(abs(mx), abs(my)) < LEARN_MIN_PX:
+        return (0, 0)                      # 太小，不值得校正
+    cap = LEARN_MAX_PX
+    return (int(max(-cap, min(cap, round(mx)))), int(max(-cap, min(cap, round(my)))))
+
+
+def learn_stats(rec: dict) -> dict:
+    """给控制台看的读数：样本数、学到的偏移、离散度。"""
+    lr = rec.get("learn") if isinstance(rec, dict) else None
+    if not isinstance(lr, dict):
+        return {"n": 0, "shift": [0, 0], "mad": [0.0, 0.0], "applied": False}
+    xs, ys = list(lr.get("xs") or []), list(lr.get("ys") or [])
+    mx, my = _median(xs), _median(ys)
+    sh = learned_shift(rec)
+    return {"n": len(xs), "shift": list(sh), "median": [mx, my],
+            "mad": [round(_mad(xs, mx), 2), round(_mad(ys, my), 2)],
+            "applied": sh != (0, 0)}
+
+
+def reset_learning(key_str: str = None, name: str = None) -> dict:
+    """清掉学习到的偏移（换环境/换微信版本后重来）。不给参数＝全清。"""
+    db = load()
+    n = 0
+    for k, bucket in list(db.items()):
+        if not isinstance(bucket, dict):
+            continue
+        if key_str and k != key_str:
+            continue
+        for nm, rec in list(bucket.items()):
+            if name and nm != name:
+                continue
+            if isinstance(rec, dict) and rec.pop("learn", None) is not None:
+                n += 1
+    if n:
+        save(db)
+    return {"cleared": n}
+
+
 def _last_frame(gui, img=None):
     """verify 需要整图来做"位置容差搜索"：优先用调用方传入的那一帧，否则取当前帧。"""
     if img is not None:
@@ -380,6 +486,12 @@ def verify(gui, name: str, max_dist: int = MAX_DIST, tol_px: int = None, img=Non
                       "have": len(bucket), "key": k}
     _rad = TOL_PX if tol_px is None else max(0, int(tol_px))
     _pt = cur.get("pt")
+    _learn = learned_shift(rec)
+    if _learn != (0, 0) and _pt:
+        # ⭐ 学到的系统性偏移：把"从哪儿开始找"挪到校正后的位置
+        #    （因此搜索半径可以缩小 —— 校正量已经在搜索窗口里了，免得重复扫一遍）
+        _pt = [_pt[0] + _learn[0], _pt[1] + _learn[1]]
+        _rad = max(1, int(_rad) - max(abs(_learn[0]), abs(_learn[1])))
     if _rad <= 0 or not _pt:
         # ⛔ 两条都要走**老路径**：`_rad<=0`＝调用方明确不要容差；拿不到 pt＝做不了位移搜索。
         #    这时**必须直接比 `capture` 返回的那个哈希**（别自己再去读帧）——
@@ -389,10 +501,34 @@ def verify(gui, name: str, max_dist: int = MAX_DIST, tol_px: int = None, img=Non
     else:
         d, off, _h, _m, _s = _match_near(_last_frame(gui, img), _pt, rec["hash"], _rad)
     if d <= max_dist:
+        # ⭐ 学习：只记**通过校验**的样本；写盘节流（别每次点击都落盘）
+        try:
+            learn_offset(rec, off)
+            _now = time.time()
+            if _now - float(rec.get("_learn_saved") or 0) > 5.0:
+                rec["_learn_saved"] = _now
+                # ⛔ 写盘要**重新 load 再改再存**：`verify` 里原来只有 `bucket` 这个局部名，
+                #    我第一版写了 `db[k] = bucket` ⇒ `NameError: db` —— 还被下面的 `log.debug`
+                #    静默吞掉，表现为"校验全过、学习一个样本都没落盘"（判据 L10 当场抓到）。
+                #    ⇒ 这里用重载写法，并把失败日志提到 **warning**（这类错不许静默）。
+                _db = load()
+                if not isinstance(_db, dict):
+                    _db = {}
+                _b = _db.get(k)
+                if not isinstance(_b, dict):
+                    _b = dict(bucket)
+                _b[name] = rec
+                _db[k] = _b
+                save(_db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("记录偏移样本失败（不影响本次校验，但学习会丢）：%s", e)
         _hint = ("（位置容差内最像的一版在 %+d,%+d px 处）" % (off[0], off[1])
                  if off != (0, 0) else "")
+        if _learn != (0, 0):
+            _hint += "（已按学到的偏移 %+d,%+d 校正，搜索半径收窄到 %d）" % (
+                _learn[0], _learn[1], _rad)
         return True, {"reason": "指纹一致（距离 %d/%d）%s" % (d, max_dist, _hint), "dist": d,
-                      "off": list(off), "have": len(bucket), "key": k}
+                      "off": list(off), "learn": list(_learn), "have": len(bucket), "key": k}
     return False, {"reason": ("图标指纹对不上（距离 %d > 阈值 %d）：这个位置上现在看着"
                               "不像原来的「%s」——微信可能更新了 UI 或改了窗口尺寸。"
                               "按「看不清就不点」处理，请到控制台点一次「重新取指纹」"
