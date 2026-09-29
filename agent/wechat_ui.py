@@ -25,7 +25,7 @@ import time
 from typing import Callable
 
 from . import persist
-from .config import DATA_DIR
+from .config import DATA_DIR, get_config   # get_config：点后回填要读 settle/probe 开关
 
 log = logging.getLogger("persona-morph")
 
@@ -200,6 +200,45 @@ def icon_pos(name: str, gui) -> tuple | None:
         return None
 
 
+def _note_click_effect(gui, name: str, before) -> str:
+    """**点后回填**：点完再看一眼"效果发生了没有"，并记进点击账本。返回一句人话（串在结果后面）。
+
+    ⛔ 三条纪律：
+      ① **只观测、不改判定**：探针结果不参与"点击成功/失败"的结论（本轮先攒数据，
+         等样本够了再做"点后自愈"）；任何异常都吞掉并留痕，绝不让它影响主流程。
+      ② **必须清帧缓存再抓**：`grab_frame` 有 200ms 复用 ⇒ 不清就会拿**同一帧**跟自己比，
+         那样永远判"没变"（假阴性）。
+      ③ **判不了就说判不了**：抓不到画面 ⇒ 记 `unknown`，**不进成功率的分子/分母**。
+    """
+    try:
+        from . import click_effect as _ce
+        from . import click_ledger as _cl
+        from . import ui_fingerprint as _ufp
+        settle = 0.35
+        try:
+            cfg = get_config() or {}
+            settle = float(((cfg.get("ui") or {}).get("click_effect_settle_s")) or settle)
+            if ((cfg.get("ui") or {}).get("click_effect_probe") is False):
+                return ""
+        except Exception as e:  # noqa: BLE001
+            log.debug("读点击回填配置失败（用默认）：%s", e)
+        time.sleep(max(0.05, settle))
+        _ufp.reset_frame_cache()
+        after = _ufp.grab_frame(gui)
+        verdict, info = _ce.probe(before, after)
+        oc = "ok" if verdict is True else ("fail" if verdict is False else "unknown")
+        try:
+            _key = _ufp.key(gui)
+        except Exception as e:  # noqa: BLE001
+            log.debug("取环境键失败（账本按空键记）：%s", e)
+            _key = ""
+        _cl.record(_key, name, oc, info.get("reason", ""))
+        return "；点后：%s" % info.get("reason", "")
+    except Exception as e:  # noqa: BLE001
+        log.warning("点后回填失败（不影响点击结果）：%s", e)
+        return ""
+
+
 def hit(name: str, gui, right: bool = False, retries: int = 3) -> tuple:
     """瞬移点击图标库元素（闭环：**指纹自校验** + 命中窗口校验 + 重试）。返回 (ok, msg)。
 
@@ -227,9 +266,17 @@ def hit(name: str, gui, right: bool = False, retries: int = 3) -> tuple:
                 return False, info.get("reason") or ("「%s」图标指纹对不上，已停止点击" % name)
         except Exception:
             pass
+        # ⭐ 点前抓一帧：留给"点后回填"做对比（抓不到就记"判不了"，不硬判）
+        _before = None
+        try:
+            from . import ui_fingerprint as _ufp_b
+            _before = _ufp_b.grab_frame(gui)
+        except Exception as e:  # noqa: BLE001
+            log.debug("点前抓帧失败（点后只能记「判不了」）：%s", e)
         ok2, why2 = ui_adapt.click(gui, pos[0] - gui.origin_x, pos[1] - gui.origin_y, right=right)
         if ok2:
-            return True, "已点击 %s" % name
+            _note = _note_click_effect(gui, name, _before)
+            return True, "已点击 %s%s" % (name, _note)
         time.sleep(0.6)
     return False, "点击 %s 失败（重试 %d 次）：%s" % (name, retries, why2 or "")
 
