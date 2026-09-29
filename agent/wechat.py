@@ -5030,9 +5030,16 @@ class WeChatAdapter:
                      _bo.breaker("switch_chat").fails, _back)
         return _r
 
+    @_idn_txn_scope
     def _switch_chat_posted_impl(self, chat_id: str, gui=None, name: str = None,
                                  confirm_s: float = 8.0):
         """**投递版切会话**：库的**只读** OCR 定位会话行 → **投递点击**那一行 → **OCR 按名字确认**已打开。
+
+        ⚠️ 事务边界**贴在实现体上**（2026-09-30 修 D4 覆盖面）：`switch_chat_posted`
+           那层也有 `@_idn_txn_scope`，但它是**兄弟方法**——真正的 `chat_is_open`
+           调用点在本函数里。只靠外层包 ⇒ 任何直连 impl 的调用方（现在只有 L5017
+           一处、将来可能更多）会**绕过事务**，正是 D4 判据要防的形态。
+           两层都贴是**安全的**：`_idn_txn_scope` 嵌套只多清一次缓存（见其 docstring）。
 
         为什么需要：投递（L5）不切会话；而真实路径（L0）会真点真敲、被别的窗口挡住就失败，实测 `open_chat`
         三次重试全败、`send_text` 耗 140.7s 才返回失败。这条链**全程不碰真实鼠标、不打扰你（可能短暂置前约 1~3 秒后自动还回）**。
