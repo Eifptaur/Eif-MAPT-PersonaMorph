@@ -728,7 +728,7 @@ _BOOST_SCALES = (1, 2, 3)
 
 def recognize_boost(img, scales=None, contrast: bool = False, invert: bool = False,
                     heavy: bool = False, union_base: bool = True, profile: str = "",
-                    timeout=None) -> list:
+                    use_cache: bool = False, timeout=None) -> list:
     """**硬读档**：多尺度放大档 ＋（可选）第二引擎，专治"界面小字／暗色低对比读不到"。
 
     ## 为什么需要它（实测锚点）
@@ -769,6 +769,14 @@ def recognize_boost(img, scales=None, contrast: bool = False, invert: bool = Fal
     except Exception as e: # noqa: BLE001
         log.debug("硬读档：PIL 不可用，退回单档：%s", e)
         return recognize_union(img, timeout=timeout)
+    # ⭐ 同图缓存（`use_cache=True`）：同一张截图在一次流程里会被读多次（定位行/确认标题/找按钮/
+    #    复核对象），打开它后**整图未变＝0 次 OCR**，只变了一条横带＝只重读那一带。
+    #    默认关：缓存是"跨调用"的状态，该由调用方按场景决定（判据见 `ocr_cache_selftest`）。
+    if use_cache:
+        from . import ocr_cache as _oc
+        return _oc.cached_recognize(img, lambda _im: recognize_boost(
+            _im, scales=scales, contrast=contrast, invert=invert, heavy=heavy,
+            union_base=union_base, timeout=timeout))
     _prof = str(profile or "").strip().lower()
     if _prof == "fast":
         union_base = False
