@@ -26,6 +26,12 @@
 
 ## 正确性纪律（缓存最容易在这里出事）
 - **只缓存"成功的读数"**：读空/被熔断（fail-closed）时**不得写入**，否则会把"这次没读到"钉成长期结论。
+  ⚠️ **例外（实测补的，别再删）**：整图读取**成功**时，某条带里**本来就没有文字**（纯背景带）
+  属于"读成功且此处无字"，**必须归档**（`put_tile(..., trusted_empty=True)`）——
+  它是**可信结论**而非读失败。不归档的话这条带**每帧都会再读一遍**：871×547 的真实截图
+  7 条带里有 3 条纯背景 ⇒ **每帧固定重读 47% 面积**（A4 实测从红到绿的完整归因）。
+  安全性由"**键是内容**"兜底：带内容一变（哪怕只是**从无字变成有字**）哈希就不同 ⇒ 必 miss，
+  所以归档空带**不可能**把"已被删掉的文字"钉死（B1b 专门守这条）。
 - **键是内容，不是时间**：所以**不存在"过期数据"**——内容变了就必然不命中（这也是不设 TTL 的原因）。
 - **有界**：块与整图都是 LRU，条目上限可设；内存不会随截图张数无限涨。
 - **线程安全**：读写都在一把锁里（产品里监听线程与发送线程都会读同一张图）。
@@ -136,8 +142,18 @@ class OcrCache:
             self.hits_tile += 1
             return list(it)
 
-    def put_tile(self, h: str, items):
-        if not items:
+    def put_tile(self, h: str, items, trusted_empty: bool = False):
+        """归档一条块的读数。
+
+        ⛔ **空结果默认不入缓存**（fail-closed / "这次没读到"不许被钉死）—— 这是原来的纪律，保留。
+        ✅ 但有一类"空"是**可信的**：**整图读取成功**时，某个块里**本来就没有文字**（纯背景带）。
+           它不是"读失败"，是"读成功且此处无字"。若不归档它，这条带**每帧都会再读一遍**
+           ⇒ A4 实测抓到：871×547 的图有 3/7 条带永远没有完整文字，**每帧固定重读 47% 面积**。
+           ⇒ 所以调用方在"整图成功读取"这条路径上，可以传 `trusted_empty=True` 显式归档空块。
+           ⚠️ 纪律没变松：只有**上游读取确实成功**（如已经拿到非空整图结果）时才允许传这个标记；
+           纯空读（整图都没读到东西）**绝不许**走这条路（fail-closed 由 `put_full` 把着门）。
+        """
+        if not items and not trusted_empty:
             return
         with self._lock:
             self._tiles[h] = list(items)
@@ -208,7 +224,10 @@ def cached_recognize(img, reader, cache: OcrCache = None) -> list:
         # ⛔ 这一步**必须有**：首次读取（或大改）走整图路径时，若只写整图缓存、不写横带，
         #   后续帧就永远没有横带可复用 ⇒ 缓存退化成"只能整图精确命中"（判据 A4/A5 当场抓到：
         #   `tiles: 0` 而 `misses_tile` 一直在涨）。补写横带，下一帧才能只重读变化的那条。
-        _fill_tiles(c, img, tiles, [(str(i[0]), i[1], i[2], i[3], i[4]) for i in items])
+        # ✅ `trusted_empty=True`：整图读**成功了**（要么拿到字、要么整体无字且被 `put_full` 拦下），
+        #   所以"这条带里没字"是**可信结论**而不是读失败 ⇒ 必须归档，否则每条纯背景带每帧重读。
+        _fill_tiles(c, img, tiles, [(str(i[0]), i[1], i[2], i[3], i[4]) for i in items],
+                    trusted_empty=True)
         for txt, x, y, ww, hh in items:
             n = str(txt)
             if n not in seen:
@@ -216,9 +235,11 @@ def cached_recognize(img, reader, cache: OcrCache = None) -> list:
                 out.append((n, x, y, ww, hh))
         return out
     # 合并成"行/列带"后逐带读（带之间最多 2 次引擎调用，避免第二引擎固定开销被重复付）
+    read_ok_boxes = []
     for box in _merge_boxes(miss_boxes):
         crop = img.crop(box)
         items = reader(crop)
+        read_ok_boxes.append(box)
         x0, y0 = box[0], box[1]
         for txt, x, y, ww, hh in items:
             n = str(txt)
@@ -227,7 +248,15 @@ def cached_recognize(img, reader, cache: OcrCache = None) -> list:
             seen.add(n)
             out.append((n, x + x0, y + y0, ww, hh))
     # 把"这次读过的块"写进缓存（块内容 → 该块范围内的文字，坐标转回相对块）
-    _fill_tiles(c, img, tiles, out)
+    # ✅ 可信空归档的**边界**：只有**完全落在这次成功读取的矩形内**的块，才能把"空"当可信结论。
+    #   跨在读取矩形边上的块（只读到一半）**不许**归档空 —— 它另一半根本没被读过。
+    _fill_tiles(c, img, tiles, out, trusted_empty=False)
+    for th, (x0, y0), (tw, thh) in tiles:
+        if any(bx0 <= x0 and by0 <= y0 and (x0 + tw) <= bx1 and (y0 + thh) <= by1
+               for (bx0, by0, bx1, by1) in read_ok_boxes):
+            c.put_tile(th, [(str(t), x - x0, y - y0, ww, hh) for (t, x, y, ww, hh) in out
+                            if x0 <= x and y0 <= y and (x + ww) <= (x0 + tw) and (y + hh) <= (y0 + thh)],
+                       trusted_empty=True)
     return out
 
 
@@ -263,10 +292,13 @@ def _merge_boxes(boxes: list) -> list:
     return merged
 
 
-def _fill_tiles(c: OcrCache, img, tiles: list, items: list):
-    """把**已读到的整图坐标结果**按块归档（这样下一帧只有变化的块会 miss）。"""
+def _fill_tiles(c: OcrCache, img, tiles: list, items: list, trusted_empty: bool = False):
+    """把**已读到的整图坐标结果**按块归档（这样下一帧只有变化的块会 miss）。
+
+    `trusted_empty=True` 时**空块也归档**（"读成功且此处无字"）——理由见 `OcrCache.put_tile`
+    的文档：不归档的话，没有完整文字的那些带**每帧都会重读**（A4 实测固定重读 47% 面积）。
+    """
     for th, (x0, y0), (tw, thh) in tiles:
         sub = [(str(t), x - x0, y - y0, ww, hh) for (t, x, y, ww, hh) in items
                if x0 <= x and y0 <= y and (x + ww) <= (x0 + tw) and (y + hh) <= (y0 + thh)]
-        if sub:
-            c.put_tile(th, sub)
+        c.put_tile(th, sub, trusted_empty=trusted_empty)
