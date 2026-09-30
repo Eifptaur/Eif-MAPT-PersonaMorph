@@ -299,6 +299,15 @@ def pane_left_for(img, cross_check: bool = True) -> int:
             val = 0
     # ⭐ 绿带纠偏：老口径**偏小**这一侧原来没人管（它只修"过冲"）——
     #   实测 1121×1091 深色帧：老口径 291 / 绿底行右边界 443 ⇒ 小 152px。
+    #   ⛔ **但要钳位**：绿底行的右边界若接近整幅宽，那多半不是"会话列表右沿"，
+    #   而是**聊天区里的绿色气泡/图片**（实测有一帧给出 532/631，导致 pl+10 超过图宽 ⇒
+    #   后续 `crop` 直接抛 "right < left"）⇒ 只在它落在"合理的列表宽度"内才采信。
+    try:
+        _w = int(img.size[0])
+    except Exception:
+        _w = 0
+    if _gx and _w and _gx >= int(_w * 0.80):
+        _gx = 0
     if _gx and val and abs(int(val) - _gx) > 60:
         try:
             import logging as _lg
@@ -310,6 +319,15 @@ def pane_left_for(img, cross_check: bool = True) -> int:
         val = _gx
     elif _gx and not val:
         val = _gx
+    # ⛔ **最后一道钳位**：面板左沿不可能超过整幅宽的 85%（会话列表再宽也不会占满）。
+    #   实测踩到：某一帧 `pl` 贴近图宽 ⇒ 调用方 `crop(pl+10, …)` 直接抛 "right < left"
+    #   ⇒ 整条链崩。这里统一钳回比例兜底，保证"任何下游 +dx 都不会越界"。
+    try:
+        _w2 = int(img.size[0])
+        if _w2 and int(val) > int(_w2 * 0.85):
+            val = int(_w2 * PANE_LEFT_REL)
+    except Exception:
+        pass
     try:
         img._pm_pane_left = int(val) # 同一帧只算一次（同一对象被十几个函数各调一遍）
     except Exception:

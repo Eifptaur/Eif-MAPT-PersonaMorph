@@ -64,20 +64,97 @@ def title_band_y(img, pl, x_lo_off=15, x_hi_frac=0.42,
     return None
 
 
+def _row_bg_and_ink(img, y, xs):
+    """该行的 (背景色众数, 墨点数)。背景＝众数（文字只占少数像素）。"""
+    px = img.load()
+    c = Counter()
+    for x in xs:
+        r, g, b = px[x, y][:3]
+        c[(r // 16 * 16, g // 16 * 16, b // 16 * 16)] += 1
+    bg = c.most_common(1)[0][0]
+    ink = 0
+    for x in xs:
+        r, g, b = px[x, y][:3]
+        if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) > 90:
+            ink += 1
+    return bg, ink
+
+
+def detect_title_band_y(img, pl, x_lo_off=15, x_hi_frac=0.42,
+                        ink_min_pts=2, pad=6, h_frac=0.075):
+    """**当帧实测**标题带的 y 范围 ⇒ `(y0, y1)`；定不出给 None。
+
+    ⛔ 为什么不靠"绝对墨量"（2026-09-30 两次实测教训）：
+      深色帧的标题可能是**单字母 `E`** ⇒ 全行只有 2~5 个墨点。
+      "墨占比 ≥0.02"、"连续 4 行 ≥3 点"这类**绝对阈值判据必然失败**
+      （实测都抓到了 y≈128~219 的**消息区第一条消息**）。
+      ⇒ 改用「**先限定范围，再在范围内找第一个有墨的行**」。
+
+    范围怎么定（**色差**，用户提示的方向）：
+      · 逐行算聊天区左半段的**背景色众数**，找从上往下**第一个明显变化**的 y = `y_edge`；
+      · `y_edge` **上方很暗**（亮度 < 80）⇒ 深色主题：上方就是标题带 ⇒ 范围 = `[0, y_edge]`；
+      · `y_edge` **上方是中等灰**（80~210）⇒ 浅色主题：上方是**窗口控制区** ⇒
+        范围 = `[y_edge, y_edge + h_frac*h]`（控制区下面是标题带；下界只能估，故给得宽松）。
+    """
+    w, h = img.size
+    x0 = max(0, min(w - 1, pl + x_lo_off))
+    x1 = min(w, pl + int(w * x_hi_frac))
+    if x1 - x0 < 30:
+        return None
+    step = max(1, (x1 - x0) // 110)          # 密采样：单字母标题只有十几个像素宽
+    xs = list(range(x0, x1, step))
+    y_scan = min(h, int(h * 0.30))
+    seq = []
+    for y in range(0, y_scan):
+        bg, ink = _row_bg_and_ink(img, y, xs)
+        seq.append((y, bg, ink))
+    if len(seq) < 20:
+        return None
+
+    # ① 找第一个"背景色明显变化"的 y（用亮度差，避免逐通道比较被噪声带偏）
+    def _lum(c):
+        return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+    y_edge, bg_above = None, None
+    for i in range(3, len(seq) - 3):
+        a = _lum(seq[i - 3][1])
+        b = _lum(seq[i + 3][1])
+        if abs(b - a) > 18:
+            y_edge, bg_above = seq[i][0], seq[i - 3][1]
+            break
+
+    # ② 定范围
+    if y_edge is None:
+        y_lo, y_hi = 0, int(h * 0.12)        # 找不到边 ⇒ 保守取顶部一小段
+    elif _lum(bg_above) < 80:
+        y_lo, y_hi = 0, y_edge               # 深色：上方＝标题带
+    else:
+        y_lo, y_hi = y_edge, min(h, y_edge + int(h * h_frac))  # 浅色：上方＝控制区
+
+    # ③ 范围内从上往下找**第一个有墨的行** ⇒ 标题
+    for y, bg, ink in seq:
+        if y < y_lo or y > y_hi:
+            continue
+        if ink >= ink_min_pts:
+            return (max(y_lo, y - pad), min(h, y + pad + max(8, int(h * 0.018))))
+    return None
+
+
 def main():
+    """**量化验证**：新方法（色差定范围＋范围内首个墨行）vs 旧常量 `BAND_PX` 的
+    标题 OCR 非空率 —— 命中标题的判据就是"裁出来的带能 OCR 出东西"（与目标直接相关）。"""
     from PIL import Image
     from agent import chat_header as CH
+    from agent import chat_ocr as CO
     _args = [a for a in sys.argv[1:] if not a.startswith("-")]
     _base = os.path.join(_ROOT, "报告", "ocr瓶颈-20260930", "多尺寸样本")
     _dirs = ([os.path.join(_base, _args[0])] if _args
-             else sorted(glob.glob(os.path.join(_base, "sizes-*")))[-2:])
+             else sorted(d for d in glob.glob(os.path.join(_base, "sizes-*"))
+                         if os.path.isdir(d)))
+    _all = {"new_ok": 0, "old_ok": 0, "n": 0}
     for _d in _dirs:
-        if not os.path.isdir(_d):
-            print("⛔ 目录不存在：%s" % _d)
-            continue
         rows = [json.loads(l) for l in open(os.path.join(_d, "samples.jsonl"), encoding="utf-8")]
+        _new = _old = _tot = 0
         print("=== %s" % os.path.basename(_d))
-        n = 0
         for r in rows:
             if not r.get("png"):
                 continue
@@ -92,13 +169,32 @@ def main():
             if w < 500:
                 continue
             pl = CH.pane_left_for(img)
-            ty = title_band_y(img, pl)
-            tb = r.get("title_box") or [None, None, None, None]
-            print("  %-11s pl=%-5d 墨段y=%-13s 采集器框y=%s~%s 标题OCR=%r"
-                  % ("%dx%d" % (w, h), pl, str(ty), tb[1], tb[3], (r.get("title") or "")[:14]))
-            n += 1
-            if n >= 10:
-                break
+            # 新：色差定范围 + 范围内首个墨行
+            ty = detect_title_band_y(img, pl)
+            _tn = ""
+            if ty:
+                _c = img.crop((max(0, pl + 10), ty[0], min(w, pl + int(w * 0.40)), ty[1]))
+                _c = _c.resize((_c.width * 2, _c.height * 2))
+                _tn = "".join(str(x[0]) for x in CO.recognize_dual(_c)).strip()
+            # 旧：BAND_PX（dx=10, y=38, w=340, h=56）
+            _c2 = img.crop((max(0, pl + 10), 38, min(w, pl + 10 + 340), 94))
+            _c2 = _c2.resize((_c2.width * 2, _c2.height * 2))
+            _to = "".join(str(x[0]) for x in CO.recognize_dual(_c2)).strip()
+            _tot += 1
+            _new += 1 if _tn else 0
+            _old += 1 if _to else 0
+            if _tot <= 12:
+                print("  %-11s pl=%-5d 新y=%-13s 新OCR=%-16r 旧OCR=%r"
+                      % ("%dx%d" % (w, h), pl, str(ty), _tn[:16], _to[:16]))
+        print("  ⇒ 本目录 %d 帧：新方法标题OCR非空 %d (%.0f%%) · 旧常量 %d (%.0f%%)"
+              % (_tot, _new, 100.0 * _new / max(1, _tot), _old, 100.0 * _old / max(1, _tot)))
+        _all["new_ok"] += _new
+        _all["old_ok"] += _old
+        _all["n"] += _tot
+    print("=" * 74)
+    print("⇒ 合计 %d 帧：新 **%d (%.0f%%)** · 旧 %d (%.0f%%)"
+          % (_all["n"], _all["new_ok"], 100.0 * _all["new_ok"] / max(1, _all["n"]),
+             _all["old_ok"], 100.0 * _all["old_ok"] / max(1, _all["n"])))
     return 0
 
 
