@@ -333,5 +333,27 @@ ck("E7 随包离线轮子里带齐 v6 那一套（rapidocr + omegaconf + antlr4�
    all(any(fn.startswith(_p) for fn in os.listdir(os.path.join(_root, "vendor", "ocr")))
        for _p in ("rapidocr-", "omegaconf-", "antlr4")), "")
 
+# ── K. `content_match` 的整体相似度兜底**必须带够长公共块下界**（2026-09-30 实测修）──
+# 起因：`content_match` 主路要"针的 8/10/12/16 字**非低熵确切片段**在 pane 里命中"，
+#   可它最后一行原来是裸的 `sm.ratio() > 0.5` ⇒ **没有任何 8 字命中**时整体相似就放行
+#   ＝把 8 字门槛整个绕过去。实测构造例（最长公共块只有 3 字、ratio=0.514）能判 True：
+#     pane='甲群刚才说的那句话内容野群说的完全不相干的一句' vs needle='乙群说的是完全不同的一句'
+#   这条宽度**两个方向都在用**：正向判"内容像目标"⇒ 过宽＝误放宽（危险）；
+#   反向判"别家正文在聊天区"⇒ 过宽＝误判不排他（漏发）。
+#   ★ 收紧依据（scripts/probe_content_match_width.py，真实库 6989 组跨会话对）：
+#     纯靠 ratio 兜底单独捞上来的 **0 组**、收紧到 6 字**挡掉 0 组**（零代价）。
+print("\n── K. `content_match` 相似度兜底的下界 ──")
+ck("K1 ★构造例：最长公共块仅 3 字（ratio=0.514）的两句**毫无关系**的话 ⇒ 不许判 True",
+   ocr.content_match("甲群刚才说的那句话内容野群说的完全不相干的一句",
+                     "乙群说的是完全不同的一句") is False, "")
+ck("K2 源码锚：`ratio() > 0.5` 必须与 `blk.size >= 6` 同时成立（不许裸用）",
+   _sm.has(_src, "sm.ratio() > 0.5 and blk.size >= 6"))
+ck("K3 正例锚：真有一段够长的公共话 ⇒ **仍**判 True（收紧不许把正常匹配砍死）",
+   ocr.content_match("前情提要：今天开会时间是下午三点整",
+                     "今天开会时间是下午三点整，请准时") is True, "")
+ck("K4 反例锚：8 字确切片段命中这条主路**不受影响**（兜底只在主路全落空时才走）",
+   ocr.content_match("随便什么前缀 甲群刚才说的那句话内容 后缀",
+                     "甲群刚才说的那句话内容") is True, "")
+
 print("\n== 结论：%d 通过 / %d 失败%s ==" % (PASS, FAIL, ("（跳过 %d）" % SKIP) if SKIP else ""))
 sys.exit(1 if FAIL else 0)

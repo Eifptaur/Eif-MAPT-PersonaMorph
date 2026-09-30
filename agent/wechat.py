@@ -7188,10 +7188,10 @@ class WeChatAdapter:
             if not _pn:
                 return False, "聊天区读不到字 ⇒ 无法做排他性核对"
             _mine = {str(x).strip().lower() for x in (self.recent_texts(chat_id) or [])}
-            for _ck in self._monitored_chat_ids():
-                if _ck == chat_id:
-                    continue
-                for _nd in (self.recent_texts(_ck.split(":", 1)[-1]) or []):
+
+            def _hits_other(_ck):
+                """这一家的正文有没有出现在聊天区？是 ⇒ 返回说明串；否 ⇒ `None`。"""
+                for _nd in (self.recent_texts(str(_ck).split(":", 1)[-1]) or []):
                     _s = str(_nd or "").strip()
                     if len(_s) < 6:
                         continue # 太短 ⇒ 不构成证据
@@ -7204,8 +7204,8 @@ class WeChatAdapter:
                         #   ⇒ 判不了（fail-closed），宁可漏发。
                         try:
                             if _co.content_match(pane, _s):
-                                return False, ("别的会话正文与目标**逐字雷同**且出现在聊天区（%r…，来自 %s）"
-                                               "⇒ 判不了，不放行" % (_s[:14], _ck))
+                                return ("别的会话正文与目标**逐字雷同**且出现在聊天区（%r…，来自 %s）"
+                                        "⇒ 判不了，不放行" % (_s[:14], _ck))
                         except Exception:
                             pass
                         continue
@@ -7213,11 +7213,65 @@ class WeChatAdapter:
                         if _co.low_entropy(_co.norm_alnum(_s)):
                             continue
                         if _co.content_match(pane, _s):
-                            return False, ("聊天区里出现了**别的会话**的正文（%r…，来自 %s）"
-                                           % (_s[:14], _ck))
+                            return ("聊天区里出现了**别的会话**的正文（%r…，来自 %s）"
+                                    % (_s[:14], _ck))
                     except Exception:
                         continue
-            return True, "聊天区里没有别的监听会话的正文（内容排他）"
+                return None
+
+            _tgt_bare = self._bare_key(chat_id)
+            try:
+                _mon = self._monitored_chat_ids()
+            except Exception:
+                _mon = []
+            _mon_bares = set()
+            for _ck in _mon:
+                _b = self._bare_key(_ck)
+                _mon_bares.add(_b)
+                if _b == _tgt_bare:
+                    continue
+                _why = _hits_other(_b)
+                if _why:
+                    return False, _why
+
+            # ⭐⭐ 参照集**必须含「名单外」**（B2 的同构缺口，2026-09-30 实测修）：
+            #   `_monitored_chat_ids()` 只给"白名单∩群列表＋私聊目标"⇒ **名单外**的会话
+            #   根本不在参照集里，它的正文再像也"看不见" ⇒ 判「排他」⇒ 放行。
+            #   实测（`scripts/probe_exclusive_blindspot.py`，改前 4 通过/3 失败）：
+            #     野群与目标**逐字雷同**且在聊天区 ⇒ 仍判「排他」✗
+            #     野群与目标正文不同、但出现在聊天区   ⇒ 仍判「排他」✗
+            #     扩集拿不到                            ⇒ 仍判「排他」✗
+            #   ⇒ 这条放宽分支（时间档给不出结论时由"内容排他"定论）本是为修
+            #     「用户想发也发不出去」加的，但它**依赖参照集完整**才敢说"没有别人"。
+            try:
+                _want = self._norm_hhmm(self._last_time_hhmm(chat_id))
+            except Exception:
+                _want = ""
+            try:
+                _all = self._all_chat_last_hhmm() or {}
+            except Exception:
+                _all = {}
+            if not _all:
+                # ⛔ 与 `_row_time_conflict` 的空集口径同一条原则：
+                #   **「没有别人」这类最强结论，必须配最强证据。** 扩集拿不到 ⇒ 名单外
+                #   有没有人在说话**根本没查过** ⇒ 不许把"看不见"当"干净"。
+                return False, ("全量会话查不到（`_all_chat_last_hhmm` 为空）⇒ 无法确认名单外"
+                               "有没有人在说话 ⇒ 不许判「排他」")
+            _extra = 0
+            for _bid, _hh in _all.items():
+                _b = str(_bid)
+                if _b == _tgt_bare or _b in _mon_bares:
+                    continue
+                # 同分钟才可能跟目标争；`_want` 拿不到时**不筛**（宁可多查几家，不能漏）
+                if _want and self._norm_hhmm(_hh) != _want:
+                    continue
+                _extra += 1
+                _why = _hits_other(_b)
+                if _why:
+                    return False, _why
+            if _extra:
+                log.debug("排他核对：参照集补进 %d 个**名单外**会话", _extra)
+            return True, ("聊天区里没有别的会话的正文（内容排他；参照集含名单外 %d 个）" % _extra)
         except Exception as e:
             return False, "排他性核对异常（%s）" % type(e).__name__
 

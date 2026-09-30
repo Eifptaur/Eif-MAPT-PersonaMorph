@@ -354,11 +354,42 @@ def main():
 
     print("\n── G. 内容排他：时间档给不出结论时，靠「内容排他」决定发不发（本次新增的放行依据）──")
     # 现场（真机）：两个群同一分钟都有消息 ⇒ 时间档分不出；但两个群的**正文不同** ⇒ 内容能分。
+    # ⚠️ 夹具前提（2026-09-30 收紧后新增）：判「排他」**必须先确认门槛** ——
+    #   `_pane_excludes_others` 现在要求 `_all_chat_last_hhmm()` **非空**（＝名单外查过了）
+    #   才敢说"没有别人"。老夹具没桩它 ⇒ 扩集拿不到 ⇒ 一律不排他 ⇒ G1 曾经 FAIL。
+    #   ⇒ 这里显式桩成"今天只有目标有消息"（最简的"名单外确实没人"情形）。
     _ad2 = _fake_adapter()
+    _ad2._all_chat_last_hhmm = lambda: {A_ID: H_MINE}
     _ex_a, _why_a = _ad2._pane_excludes_others(
         "group:" + A_ID, "甲群刚才说的那句话内容")
     ok("G1 聊天区只有目标群的正文 ⇒ **排他**（这一支是「这就能发」的依据）",
        _ex_a is True, _why_a)
+    # G1b ★★对称锚：**同一夹具，只把扩集桩成空** ⇒ 不许判「排他」
+    #   （「没有别人」是最强结论 ⇒ 名单外没查过就不配说；与 `_row_time_conflict`
+    #    的空 rivals 口径是同一条原则）
+    _ad2b = _fake_adapter()
+    _ad2b._all_chat_last_hhmm = lambda: {}
+    _ex_ab, _why_ab = _ad2b._pane_excludes_others(
+        "group:" + A_ID, "甲群刚才说的那句话内容")
+    ok("G1b ★扩集拿不到 ⇒ **不许**判「排他」（同一夹具只差扩集 ⇒ 证明 G1 的 True 是"
+       "「名单外查过了」换来的）", _ex_ab is False and _ex_a is True, _why_ab)
+    # G1c ★★名单外缺口：野群（**不在白名单**）的正文出现在聊天区 ⇒ 不许判「排他」
+    _WILD_ID = "66000000111@chatroom"
+    _ad2c = _fake_adapter()
+    _ad2c._all_chat_last_hhmm = lambda: {A_ID: H_MINE, _WILD_ID: H_MINE}
+    _base_rt = _ad2c.recent_texts
+
+    def _rt_wild(cid, *a, **k):
+        if str(cid).split(":", 1)[-1] == _WILD_ID:
+            return ["野群说的完全不相干的一句"]
+        return _base_rt(str(cid).split(":", 1)[-1])
+
+    _ad2c.recent_texts = _rt_wild
+    _ex_ac, _why_ac = _ad2c._pane_excludes_others(
+        "group:" + A_ID, "甲群刚才说的那句话内容\n野群说的完全不相干的一句")
+    ok("G1c ★名单外缺口：**野群**（不在白名单）的正文出现在聊天区 ⇒ 不许判「排他」"
+       "（老实现参照集只有白名单 ⇒ 看不见它 ⇒ 会误判排他 ⇒ 放行）",
+       _ex_ac is False and _WILD_ID in str(_why_ac), _why_ac)
     _ex_b, _why_b = _ad2._pane_excludes_others(
         "group:" + A_ID, "另外这里是 乙群说的是完全不同的一句")
     ok("G2 聊天区里出现**别的监听会话**的正文 ⇒ **不排他**（判否，宁可漏发）",

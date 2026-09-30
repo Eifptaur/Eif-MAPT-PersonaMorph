@@ -3042,10 +3042,27 @@ def content_match(pane: str, needle: str) -> bool:
         seg = a[blk.a:blk.a + blk.size]
         if blk.size >= MIN_HIT and not low_entropy(seg):
             return True
-        return sm.ratio() > 0.5
+        # ⛔ **整体相似度兜底必须带一个「够长的公共块」下界**（2026-09-30 实测加）：
+        #   原来是裸的 `sm.ratio() > 0.5` ⇒ **没有任何 8 字命中**时，只要两串整体相似就放行
+        #   ＝把「要一个 8/10/12/16 字**非低熵确切片段**」这道门槛整个绕过去。
+        #   实测能构造出触发例（`scripts/probe_content_match_width.py` 的构造例）：
+        #     pane   = '甲群刚才说的那句话内容野群说的完全不相干的一句'
+        #     needle = '乙群说的是完全不同的一句'
+        #     ⇒ 最长公共块只有 **3 字**（"说的"/"完全" 这类零散词），ratio=0.514 > 0.5 ⇒ 判 True
+        #     可这两句**毫无关系**。
+        #   这条宽度是**两个方向都在用**的：正向判"聊天区内容像目标"⇒ 过宽＝**误放宽**（危险方向）；
+        #   反向判"别家正文在聊天区"⇒ 过宽＝误判不排他（漏发）。
+        #   ★ 为什么是"且 blk≥6"而不是直接删掉：真实语料实测（同一探针，**6989 组跨会话对**）
+        #     —— 纯靠 ratio 兜底单独捞上来的 **0 组**；判 True 的 76 组**最长公共块全部 ≥ 8 字**
+        #     （都是真转发/套话，判 True 本来就有理）⇒ **收紧到 6 字挡掉 0 组，零代价**。
+        #     保留 6 字下界是为了不丢"OCR 错字把 8 字块打散到 6~7 字"的容错能力
+        #     （注释上面那条"容 OCR 错字的兜底"讲的就是这个需求）。
+        return sm.ratio() > 0.5 and blk.size >= 6
     except TypeError: # 老版本 difflib 没有 autojunk 参数
         import difflib
-        return difflib.SequenceMatcher(None, a, b).ratio() > 0.5
+        _sm = difflib.SequenceMatcher(None, a, b)
+        _bk = _sm.find_longest_match(0, len(a), 0, len(b))
+        return _sm.ratio() > 0.5 and _bk.size >= 6
 
 
 def best_partial(pane: str, needle: str) -> tuple:
