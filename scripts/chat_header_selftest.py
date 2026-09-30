@@ -555,6 +555,36 @@ ck("K5 源码锚：`detect_band_y0` 带 `pol` 参数，且深色档**直接早�
 ck("K6 源码锚：`fingerprint` 把极性传进 `_raw`（两处调用都传）",
    "_raw(box, _pol)" in _src_h and "_raw(_box_wide, _pol)" in _src_h, "")
 
+print("\n[L] 面板左沿的第三来源：绿底行右边界（2026-09-30，由用户提示）")
+# 起因：`pane_left_for` 原来只覆盖"过冲"这一侧（老口径 > 结构锚 + 80 ⇒ 改用结构锚），
+#   但它也会**偏小** —— 实测深色窄窗 1121x1091：老口径给 291，而绿底行右边界是 443（差 152px）。
+# 用户提示："凭绿色带你就能判断面板左沿的起始点"。
+
+
+def _frame_with_green(has_green=True):
+    im = Image.new("RGB", (1200, 800), (35, 35, 36))          # 深色底（模拟深色主题）
+    d = ImageDraw.Draw(im)
+    d.rectangle([300, 0, 1200, 800], fill=(245, 245, 245))    # 右侧浅色（让老口径有白列可找）
+    if has_green:
+        d.rectangle([160, 120, 400, 217], fill=(77, 163, 110)) # 实测绿底的颜色
+    return im
+
+
+_g = _frame_with_green(True)
+_r = ch.detect_green_right(_g)
+ck("L1 能测出绿底行的右边界（合成帧真值 400，容差 6px）", abs(_r - 400) <= 6, "测得 %d" % _r)
+ck("L2 没有绿底行 ⇒ 返回 0（不瞎猜）", ch.detect_green_right(_frame_with_green(False)) == 0,
+   str(ch.detect_green_right(_frame_with_green(False))))
+_src_l = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
+_seg = _src_l.split("def detect_green_right(")[1].split("def pane_left_for(")[0]
+ck("L3 ★性能锚：`detect_green_right` **不许**调 `chat_ocr.green_bands`"
+   "（实测它逐像素扫全图 ⇒ 单帧 5.7s，而这是热路径；改成粗采样后 0.005s）",
+   "green_bands(" not in _seg, "")
+ck("L4 源码锚：绿带纠偏带 **>60px 阈值**（不是无条件覆盖 —— 实测 1886x1421 两者只差 2px 时不许动）",
+   "abs(int(val) - _gx) > 60" in _src_l, "")
+ck("L5 源码锚：`detect_green_right` 有帧级缓存（同一帧被十几个函数各调一遍）",
+   "_pm_green_right" in _seg, "")
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

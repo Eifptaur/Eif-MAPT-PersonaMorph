@@ -151,6 +151,95 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
         return 0
 
 
+def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
+    """**当前会话行（绿底高亮）的右边界 x** —— 用它定"会话列表右沿"（≈面板左沿）。
+
+    ⛔ 为什么加它（2026-09-30，由用户提示："凭绿色带你就能判断面板左沿的起始点"）
+      `pane_left_for` 原来的两个来源只覆盖了一个失效方向：
+        · 老口径（连续白列）会**过冲**（气泡占满聊天区左列）⇒ 用结构锚修；
+        · 但它也会**不足**（实测 1121×1091 深色帧：老口径给 **291**，而绿底行右边界是 **443**
+          ⇒ 小 **152px**）—— 这一侧原来没有任何来源纠正。
+      而**绿底是会话行的底色**，它天然"从会话列表左沿一直铺到列表右沿" ⇒
+      **右边界 ≈ 面板左沿**（只差一条分隔线的几像素）。实测另一组：1886×1421 时
+      绿底右边界 425 vs 老口径 427（差 2px）⇒ 两者一致，说明这个来源**不与老口径冲突**，
+      只在老口径失效时救场。
+
+    只取**最上面那个带里 score 最高**的一行（＝当前打开的那个会话行），
+    并在该行内取**最长连续绿段**的右端 —— 避免把左侧绿色头像、右侧绿色图标并进来。
+    拿不到就返回 0（调用方退回原逻辑）。
+    """
+    try:
+        v = getattr(img, "_pm_green_right", None)
+        if v is not None:
+            return int(v)          # ⭐ 帧级缓存：pane_left_for 是热路径，同一帧会被调很多次
+    except Exception:
+        pass
+    try:
+        g = img.convert("RGB")
+        w, h = g.size
+        if w < 80 or h < 40:
+            return 0
+        px = g.load()
+
+        def _is_green(x, y):
+            r, gg, b = px[x, y][:3]
+            return gg > r + 18 and gg > b + 12 and gg > 90
+
+        # ① 找"哪一行是绿底行"——**取绿点数最多的那一行**（argmax），不用"占比超阈值"：
+        #    ⛔ 实测踩过两次：
+        #      · 用 `chat_ocr.green_bands` ⇒ 它逐像素扫全图 ⇒ 单帧 **5.7 秒**（热路径不可接受）；
+        #      · 用"左半段绿点占比 ≥0.55" ⇒ 实拍帧里绿底只占 x≈160~400（而左半段取到 0.6w）
+        #        ⇒ 占比仅 0.36 ⇒ **永远判不出**（返回 0）。
+        #    ⇒ 改为 argmax（绿底行必然是"绿点绝对数最多"的行），并限左半段以避免聊天区干扰。
+        _xlim = int(w * 0.60)
+        _step_x = max(1, _xlim // 64)
+
+        def _row_hits(y):
+            h_ = 0
+            for x in range(0, _xlim, _step_x):
+                if _is_green(x, y):
+                    h_ += 1
+            return h_
+
+        _best_y, _best_hit = -1, 0
+        for y in range(0, int(h * 0.85), 4):
+            _h0 = _row_hits(y)
+            if _h0 > _best_hit:
+                _best_hit, _best_y = _h0, y
+        # 该行绿点太少 ⇒ 没有绿底行（例如当前没打开任何会话）
+        if _best_y < 0 or _best_hit < 4:
+            return 0
+        # 以这一行为中心，向上/下扩成"连续够绿"的带
+        _thr = int(_best_hit * 0.6)
+        _b0 = _b1 = _best_y
+        while _b0 - 4 >= 0 and _row_hits(_b0 - 4) >= _thr:
+            _b0 -= 4
+        while _b1 + 4 < h and _row_hits(_b1 + 4) >= _thr:
+            _b1 += 4
+        if (_b1 - _b0) < 8:
+            _b0, _b1 = max(0, _best_y - 10), min(h - 1, _best_y + 10)
+
+        # ② 带内逐列判绿 ⇒ 取**最长连续段**的右端（避免左侧绿色头像把范围拉偏）
+        _ystep = max(2, (_b1 - _b0) // 10)
+        _best_r = 0
+        for x in range(0, w):
+            hit = 0
+            for y in range(_b0, _b1 + 1, _ystep):
+                if _is_green(x, y):
+                    hit += 1
+            if hit >= 2 and x > _best_r:
+                _best_r = x
+        # 只在"这一段够长"时才认（避免几像素的绿点）
+        _ret = int(_best_r) if _best_r > int(w * 0.10) else 0
+        try:
+            img._pm_green_right = int(_ret)
+        except Exception:
+            pass
+        return _ret
+    except Exception:
+        return 0
+
+
 def pane_left_for(img, cross_check: bool = True) -> int:
     """**本帧的面板左沿（唯一入口）**：老口径与结构锚交叉校验，结果挂在图像对象上只算一次。
 
@@ -182,6 +271,14 @@ def pane_left_for(img, cross_check: bool = True) -> int:
             alt = int(detect_pane_left_alt(img) or 0)
         except Exception:
             alt = 0
+    # ⭐ 第三来源：**绿底行（当前会话高亮）的右边界**（2026-09-30，用户提示）
+    #   它天然贴着"会话列表右沿"，且**不依赖主题/气泡**。只在它与上面的结果
+    #   **差得远**（>60px）时才采用 ⇒ 不改动本来正确的帧（实测 1886×1421 两者只差 2px）。
+    _gx = 0
+    try:
+        _gx = int(detect_green_right(img) or 0)
+    except Exception:
+        _gx = 0
     val = 0
     if left and alt and left > alt + 80:
         val = alt
@@ -200,6 +297,19 @@ def pane_left_for(img, cross_check: bool = True) -> int:
             val = int(img.size[0] * PANE_LEFT_REL)
         except Exception:
             val = 0
+    # ⭐ 绿带纠偏：老口径**偏小**这一侧原来没人管（它只修"过冲"）——
+    #   实测 1121×1091 深色帧：老口径 291 / 绿底行右边界 443 ⇒ 小 152px。
+    if _gx and val and abs(int(val) - _gx) > 60:
+        try:
+            import logging as _lg
+            _lg.getLogger("persona-morph").info(
+                "面板左沿：老口径 %s 与绿底行右边界 %s 差 %dpx ⇒ 改用绿带（第三来源）",
+                val, _gx, abs(int(val) - _gx))
+        except Exception:
+            pass
+        val = _gx
+    elif _gx and not val:
+        val = _gx
     try:
         img._pm_pane_left = int(val) # 同一帧只算一次（同一对象被十几个函数各调一遍）
     except Exception:
