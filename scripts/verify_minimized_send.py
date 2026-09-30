@@ -23,6 +23,15 @@
    `--send` 才真发；收件人默认 **`filehelper`（文件传输助手，发给你自己）** —— 最安全。
    想换收件人必须显式给 `--chat`，并在输出里留痕。
 
+⛔ **前置闸（2026-09-30 实测加，很重要）**
+  `data/paused.flag` / `data/stopped.flag` 是**文件级真相**（见 `agent/control.py`）：
+  用户按过「停止/暂停」后，`send_text` 会**直接**返回 `(False, "机器人已停止 ⇒ 这条不发")`。
+  ⇒ 那种情况下本脚本报 **BLOCKED（退出码 3）且不写任何结论** ——
+    因为"被停止闸拦住"**不是**"最小化发不出去"的证据。
+    （实测踩过：当时窗口确实最小化，若不核查就会把结论记成「最小化场景未发出去」⇒
+      等于把 `unknown` 误写成 `no`，**比不测更糟**。）
+  ⇒ 本脚本**绝不删**这两个 flag：那是**用户的安全控制**，不是脚本能改的状态。
+
 用法
   # 1) 先看计划（不发送，安全）
   ./runtime/python/python.exe -u scripts/verify_minimized_send.py
@@ -107,12 +116,50 @@ def main():
         _before = "<取不到: %s>" % str(_e)[:40]
     print("▸ 发送前该会话最后一条时间 = %r" % (_before,))
 
+    # ── 3b) ⛔⛔ **前置闸：机器人是不是处于「已停止/已暂停」**（2026-09-30 实测加）──
+    #   实测踩到：`send_text` 返回 `(False, '机器人已停止 ⇒ 这条不发')` ——
+    #   而当时**窗口确实是最小化** ⇒ 若不核查，就会把这条记成
+    #   「最小化场景**没发出去**」⇒ 写进 `version_matrix` 就成了
+    #   **把"没测成"写成"测失败"**（`unknown` → `no`）—— 比不测更糟。
+    #   真相：`data/stopped.flag` / `data/paused.flag` 两个**文件级真相**在拦
+    #   （见 `agent/control.py`；本机实测它们分别落于 2026-09-29 20:57 / 21:02，
+    #    即**用户昨天按的停止**，与本脚本无关）。
+    #   ⇒ **本脚本绝不触碰这两个 flag**（那是用户的安全控制，不是我们能改的状态）；
+    #     只**如实报告**并给出恢复方法。
+    _halt = ""
+    try:
+        from agent.control import halt_reason as _halt_fn
+        _halt = str(_halt_fn() or "")
+    except Exception as _e:
+        _halt = ""
+        print("  ⚠️ 读不到 control 的停止状态（%s）⇒ 结论里要标注这一点" % type(_e).__name__)
+    if _halt:
+        print("  ⛔ 前置未满足：**机器人处于停止/暂停状态** ⇒ %s" % _halt)
+        print("     ⇒ 这不是「最小化不能发」，而是**发送链的前置闸拦住了**（与窗口状态无关）。")
+        print("     ⇒ 恢复方法：在界面上点「继续/运行」（会移除 data/paused.flag / data/stopped.flag）；")
+        print("        本脚本**不会**替你删这两个文件 —— 那是你的安全控制。")
+    else:
+        print("  ✓ 前置闸通过：机器人未处于停止/暂停状态")
+
     if not a.send:
         print(_HR * 74)
         print("== DRY-RUN：**没有发送任何消息** ==")
+        if _halt:
+            print("   ⚠️ 注意：当前处于停止/暂停 ⇒ 即便加 `--send` 也会被前置闸拒发（结论无效）。")
         print("   确认无误后加 `--send` 真跑（会产生一条真实消息，默认只发给你自己的 filehelper）。")
         print(_HR * 74)
         return 0
+
+    if _halt:
+        print(_HR * 74)
+        print("== ⛔ BLOCKED：前置未满足，**本次没发、也没法给出结论** ==")
+        print("   原因：%s" % _halt)
+        print("   ⇒ 请在界面上恢复运行后重跑；**不要**把这次结果当成「最小化能不能发」的答案。")
+        print(_HR * 74)
+        print("▸ 若要落库，请先恢复运行再测；本次**不写**任何结论：")
+        print('  （例：恢复运行后重跑 --send，再取它打印的证据行）')
+        print(_HR * 74)
+        return 3
 
     # ── 4) 真发 ──
     print(_HR * 74)
