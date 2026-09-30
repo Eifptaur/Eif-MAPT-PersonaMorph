@@ -418,6 +418,35 @@ def main():
     ok("D6 `check` 同时报 幅度 与 形状（日志里能看出是哪一条拦的）",
        _sm.has(_TEXT_CH, '"cos": cos', "形状一致性"))
 
+    # ── D7 ★★「共享瓶颈」收口锚（2026-09-30）──
+    # 为什么单列：`_monitored_chat_ids()`（＝白名单∩群列表＋私聊目标）是**一处病根、多处病症** ——
+    #   §11 修了 `_same_minute_rivals` 的 rival 候选集、§14 修了 `_pane_excludes_others`
+    #   的排他参照集，**两处都是"参照集只有白名单"** ⇒ 同一个函数当参照集。
+    #   所以修完这两处之后，必须**把它的所有调用点扫一遍**确认清干净。
+    #   第三个调用点是 `_known_chat_names`（撞名源，4 个调用点）—— 审查结论：**它本来就是全量**，
+    #   取的 `_db_chat_names()` ＝ `_groups`（微信库**全量**群）∪ `_nick_map`（全量昵称）
+    #   ∪ 监听会话展示名 ⇒ 白名单只是**补一小部分**、不是主体 ⇒ **无盲区、不需要修**。
+    #   ⇒ 这条断言把"它不走白名单"锁住：将来若有人把它改成 `_monitored_chat_ids()` 打头，
+    #     撞名源就会出现和 §11/§14 一样的盲区（名字撞车检不出来 ⇒ `matches_strict` 放宽）。
+    _adD = WeChatAdapter.__new__(WeChatAdapter)
+    _adD._groups = [{"name": "野群名X", "wxid": "66000000111@chatroom"}]
+    _adD._nick_map = {"wxid_p": "野友Y"}
+    _adD._seen_names = {"屏幕见过的野名Z": 1}
+    _adD._monitored_chat_ids = lambda: []        # ← **白名单故意留空**
+    _adD.display_name = lambda *a, **k: ""
+    try:
+        _names_d = _adD._known_chat_names()
+    except Exception as _eD:
+        _names_d = ["<_known_chat_names 异常: %s>" % _eD]
+    _hit_all = all(x in (_names_d or []) for x in ("野群名X", "野友Y", "屏幕见过的野名Z"))
+    ok("D7 ★收口锚：**白名单为空**时 `_known_chat_names` 仍含全量群名 ∪ 昵称 ∪ 屏幕见过的名"
+       "（⇒ 撞名源没有 §11/§14 那种「名单外看不见」的盲区，无需修）", _hit_all, _names_d)
+    ok("D7b 源码锚：`_db_chat_names` 的主体是 `_groups` / `_nick_map`，"
+       "`_monitored_chat_ids()` 只作补充",
+       "_groups" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0]
+       and "_nick_map" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0]
+       and "_monitored_chat_ids()" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0], "")
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")
