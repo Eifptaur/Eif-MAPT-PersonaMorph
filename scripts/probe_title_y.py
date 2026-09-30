@@ -117,11 +117,14 @@ def detect_title_band_y(img, pl, x_lo_off=5, x_hi_frac=0.22,
     # ① 找第一个"背景色明显变化"的 y（用亮度差，避免逐通道比较被噪声带偏）
     def _lum(c):
         return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+    # ⛔ 阈值必须降到 **12**：实测**深色主题的标题带与消息区只差 16 个亮度单位**
+    #   （背景 (32,32,32) → (48,48,48)），原来写 18 ⇒ **深色帧全部判不出**（返回 None）；
+    #   而浅色差 112（(112,112,120) → (248,248,248)）⇒ 降到 12 后两边都能检出。
     y_edge, bg_above = None, None
     for i in range(3, len(seq) - 3):
         a = _lum(seq[i - 3][1])
         b = _lum(seq[i + 3][1])
-        if abs(b - a) > 18:
+        if abs(b - a) > 12:
             y_edge, bg_above = seq[i][0], seq[i - 3][1]
             break
 
