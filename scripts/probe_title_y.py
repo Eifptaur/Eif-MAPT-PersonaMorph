@@ -106,7 +106,10 @@ def detect_title_band_y(img, pl, x_lo_off=5, x_hi_frac=0.22,
     #   标题的**左端**紧贴面板左沿（实测 pl+27）⇒ 只需扫 `[pl+5, pl+0.22w]`。
     step = max(1, (x1 - x0) // 110)          # 密采样：单字母标题只有十几个像素宽
     xs = list(range(x0, x1, step))
-    y_scan = min(h, int(h * 0.30))
+    # ⛔ y 扫描上限从 0.30h 放宽到 **0.45h**：实测有一批帧（942x1358、1419x1109、
+    #   1721x1109…）的"色差边"落在 0.30h **之外** ⇒ 整段背景同色（跨度 0）⇒ 判不出。
+    #   而标题带不可能占到窗口一半 ⇒ 0.45h 足够且不会误吞消息区（后面还有范围+首个墨行两道约束）。
+    y_scan = min(h, int(h * 0.45))
     seq = []
     for y in range(0, y_scan):
         bg, ink = _row_bg_and_ink(img, y, xs)
@@ -130,7 +133,7 @@ def detect_title_band_y(img, pl, x_lo_off=5, x_hi_frac=0.22,
 
     # ② 定范围
     if y_edge is None:
-        y_lo, y_hi = 0, int(h * 0.12)        # 找不到边 ⇒ 保守取顶部一小段
+        y_lo, y_hi = 0, int(h * 0.16)        # 找不到边 ⇒ 保守取顶部一小段（标题必然在窗口顶部那一带）
     elif _lum(bg_above) < 80:
         y_lo, y_hi = 0, y_edge               # 深色：上方＝标题带
     else:
