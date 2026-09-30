@@ -523,6 +523,38 @@ if fp1:
 else:
     print("  INFO 这次没抓到（微信窗口不可见/未开）——不算失败")
 
+print("\n[K] 深色主题适配（2026-09-30 修根因）")
+# 起因：`fingerprint` 只数**暗点**（浅底深字假设）⇒ 深色主题下剖面平坦 ⇒ 空指纹
+#   ⇒ `check()` 报 `no_capture`（文案却写"抓不到窗口画面（最小化/收进托盘/被遮挡）"，
+#     把人一路带偏到"最小化"上）⇒ 投递档永远确认不了目标会话 ⇒ **发不出去**。
+# 修法（"先判极性，再取对应提取方式"）：浅色数暗点 / 深色数亮点；
+#   且 `detect_band_y0` 在深色下**不做**"找全宽深色横条"的扫描 —— 那条横条是**浅色主题特有**的，
+#   深色下"整行都是深色"恒真 ⇒ 扫描必然给出错误 y0（实测偏到 y=143，真值 ≈90）。
+
+
+def _mono(bg, fg, size=(1139, 890)):
+    im = Image.new("L", size, bg)
+    d = ImageDraw.Draw(im)
+    d.rectangle([int(size[0] * 0.30), 44, int(size[0] * 0.72), 92], fill=fg) # 模拟一段"文字块"
+    return im
+
+
+_dark_m, _light_m = _mono(26, 235), _mono(246, 24)
+ck("K1 深底浅字 ⇒ detect_polarity 判 dark",
+   ch.detect_polarity(_dark_m) == "dark", ch.detect_polarity(_dark_m))
+ck("K2 浅底深字 ⇒ detect_polarity 判 light",
+   ch.detect_polarity(_light_m) == "light", ch.detect_polarity(_light_m))
+_fd = ch.fingerprint(_dark_m)
+ck("K3 ★深色图**能**提出指纹（改前恒 0 条 ⇒ check 报 no_capture ⇒ 发不出去）",
+   len(_fd) > 0, "条数=%d" % len(_fd))
+ck("K4 回归锚：浅色窗口的指纹照旧能提出（浅色路径不许被改坏）",
+   len(ch.fingerprint(fake_window("文件传输助手"))) > 0, "")
+_src_h = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
+ck("K5 源码锚：`detect_band_y0` 带 `pol` 参数，且深色档**直接早退**（不做「找深色横条」扫描）",
+   'max_y0: int = None, pol: str = "light"' in _src_h and 'if pol == "dark":' in _src_h, "")
+ck("K6 源码锚：`fingerprint` 把极性传进 `_raw`（两处调用都传）",
+   "_raw(box, _pol)" in _src_h and "_raw(_box_wide, _pol)" in _src_h, "")
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

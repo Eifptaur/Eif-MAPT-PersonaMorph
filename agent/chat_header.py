@@ -223,7 +223,7 @@ def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> t
 
 
 def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int = None,
-                   max_y0: int = None) -> int:
+                   max_y0: int = None, pol: str = "light") -> int:
     """在渲染区顶部找那条**全宽深色横条**（微信自绘标题条），把文字带放到它**下方**。
 
     ⛔ `BAND_PX` 的 `y0=38` 是**固定物理像素**，
@@ -246,6 +246,16 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
     try:
         if default_y0 is None:
             default_y0 = BAND_PX[1]
+        # ⭐⭐ **深色主题：不做这个扫描，直接用固定 y0**（2026-09-30 实测修，这是根因的第二层）
+        #   本函数找的是"连续 ≥4 行**整行都是深色**"的横条 —— 而那条横条是**浅色主题特有的**
+        #   （浅底上压着一条深色自绘标题条）。**深色主题下深色与背景融为一体** ⇒
+        #   "整行都是深色"**恒真** ⇒ 扫描必然给出**错误**的 y0（实测被判到 y=143，
+        #   而真实标题带在 y≈90）⇒ 带子落到聊天区的空白背景上 ⇒ 提取不出墨 ⇒ 空指纹 ⇒
+        #   `check()` 仍报 `no_capture`。
+        #   ⚠️ 这里**不能"镜像"成去找亮色横条** —— 深色主题下根本没有那条横条，镜像没有对象。
+        #   正确做法就是在深色档**跳过自适应**、用兜底固定像素（`BAND_PX[1]`）。
+        if pol == "dark":
+            return int(default_y0)
         g = img.convert("L")
         w, h = g.size
         x0, x1 = max(0, int(x0)), min(int(w), int(x1))
@@ -301,16 +311,54 @@ def band_box(img, pane_left_rel=None, band_px=None, pane_left_px: int = 0,
     box = crop_box(img.size, pane_left_rel, band_px, pane_left_px=pl)
     if not _auto:
         return box
+    # ⭐ 极性在这里判**一次**，两处调用都带上：深色主题 ⇒ `detect_band_y0` 直接返回固定 y0
+    #   （判据：用**整幅**的中位数 —— 深色主题整幅偏暗，比只看初始带子稳）。
+    _pol = detect_polarity(img)
     if wide:
         _h = int(img.size[1])
-        y0 = detect_band_y0(img, box[0], box[2],
+        y0 = detect_band_y0(img, box[0], box[2], pol=_pol,
                             max_scan=max(96, int(_h * 0.30)), max_y0=max(72, int(_h * 0.30)))
     else:
-        y0 = detect_band_y0(img, box[0], box[2])
+        y0 = detect_band_y0(img, box[0], box[2], pol=_pol)
     if y0 != int(box[1]):
         box = crop_box(img.size, pane_left_rel,
                        (BAND_PX[0], y0, BAND_PX[2], BAND_PX[3]), pane_left_px=pl)
     return box
+
+
+def detect_polarity(img, box=None) -> str:
+    """这块区域是**浅底深字**（`"light"`）还是**深底浅字**（`"dark"`）？
+
+    `box` 不给就用整幅。判据：**背景占多数** ⇒ 看灰度**中位数**落在哪半边
+    （浅色主题背景近白、深色主题背景近黑；文字只占少数像素，不足以挪动中位数）。
+    任何异常 ⇒ 一律 `"light"`（＝历史行为，保证浅色路径逐字不变）。
+
+    ⛔ 为什么需要它（2026-09-30 实测的根因）：`fingerprint()` 原来只数**暗点**，
+      是"浅底深字"的硬假设 ⇒ 深色主题下剖面平坦 ⇒ 返回空 ⇒ `check()` 报 `no_capture`
+      （文案却写"抓不到窗口画面（最小化/收进托盘/被遮挡）"，把人往"最小化"上带偏）
+      ⇒ 投递档永远确认不了目标会话 ⇒ 发不出去。
+    本函数就是"**先判极性，再取对应提取方式**"里的那第一步。
+    """
+    try:
+        if not hasattr(img, "size"):
+            return "light"
+        sub = img.convert("L").crop(box) if box else img.convert("L")
+        w, h = sub.size
+        if w < 4 or h < 4:
+            return "light"
+        px = sub.load()
+        step_x = max(1, w // 64)
+        step_y = max(1, h // 48)
+        vals = []
+        for x in range(0, w, step_x):
+            for y in range(0, h, step_y):
+                vals.append(px[x, y])
+        if not vals:
+            return "light"
+        vals.sort()
+        return "dark" if vals[len(vals) // 2] < 128 else "light"
+    except Exception:
+        return "light"
 
 
 def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_left_px: int = 0) -> list:
@@ -341,7 +389,17 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
         if not pl and _auto:
             pl = pane_left_for(img)
 
-        def _raw(bx) -> list:
+        def _raw(bx, pol: str = "light") -> list:
+            """逐列墨点密度剖面。`pol="light"` ＝数**暗点**（浅底深字）；`pol="dark"` ＝数**亮点**。
+
+            ⛔ 为什么必须分极性（2026-09-30 实测的根因）：老实现只数暗点（`px < DARK`），
+              那是"浅底深字"的假设。**深色主题**下背景本身就是暗的 ⇒ 每一列都是暗点 ⇒
+              剖面近乎平坦 ⇒ 被 `_norm` 的平坦检查判成"没内容" ⇒ `fingerprint` 返回 **空**
+              ⇒ `check()` 报 `no_capture`（文案还说"抓不到窗口画面（最小化/收进托盘/被遮挡）"，
+              **把人一路带偏到"最小化"上去**）⇒ 投递档永远确认不了目标会话 ⇒ 发不出去。
+              实测证据：同一张深色渲染区图，`fingerprint(原图)=0 条`、
+              `fingerprint(invert 后)=64 条、极差 255（满幅）`。
+            """
             sub = img.convert("L").crop(bx)
             w, h = sub.size
             if w < bins or h < 4:
@@ -356,8 +414,13 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
                 for x in range(x0, x1):
                     for y in range(0, h, step):
                         tot += 1
-                        if px[x, y] < DARK:
-                            dark += 1
+                        if pol == "dark":
+                            # 深底浅字 ⇒ "墨"是**亮**的那部分（阈值取镜像位，与浅色档对称）
+                            if px[x, y] > (255 - DARK):
+                                dark += 1
+                        else:
+                            if px[x, y] < DARK:
+                                dark += 1
                 out.append(dark / float(max(1, tot)))
             return out
 
@@ -381,7 +444,13 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
         #   那条自绘深色标题条**下方** —— 固定 y0 在真机上会压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档
         # 永远学不到参照（详见 `detect_band_y0`）。 起见 `band_box`（唯一实现）。
         _y0 = int(box[1])
-        fp = _norm(_raw(box))
+        # ⭐⭐ **先判极性，再取对应提取方式**（2026-09-30 修根因）：
+        #   浅色主题 ⇒ 数暗点（历史行为，逐字不变）；深色主题 ⇒ 数亮点。
+        #   不判极性的话，深色下剖面平坦 ⇒ `_norm` 判"没内容"⇒ 空指纹 ⇒ `no_capture`。
+        _pol = detect_polarity(img, box)
+        if _pol != "light":
+            log.info("会话头指纹：这个区域判为**深色主题**（灰度中位数在暗侧）⇒ 改按「亮点」提取")
+        fp = _norm(_raw(box, _pol))
         if not _auto:
             return fp
         if fp and not degenerate_reason(fp) and min(fp) == 0:
@@ -393,7 +462,7 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
         #   只有当它给出**更干净**的结果（非空、非退化、min==0）才采用，否则维持第一次。只回退一次。
         _box_wide = band_box(img, pane_left_rel, band_px, pane_left_px=pl, wide=True)
         if int(_box_wide[1]) != _y0:
-            _fp2 = _norm(_raw(_box_wide))
+            _fp2 = _norm(_raw(_box_wide, _pol))
             if _fp2 and not degenerate_reason(_fp2) and min(_fp2) == 0:
                 return _fp2
         return fp
