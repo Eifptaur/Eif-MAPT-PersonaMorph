@@ -203,6 +203,40 @@ def main():
     ok("H5 源码锚：收敛只改 `_same_minute_rivals` 的返回值，**不动**授权档",
        "def _converge_by_highlight(" in _WT2 and "只做收敛、不做放行依据" in _WT2, "")
 
+    # ⑥ ★★放宽方向的反例（2026-09-30 收紧「匹配」口径）：绿底行只是**包含**目标名 ⇒ **不许**返回 []
+    #   老实现 `_hit` 是 `matches_strict(...) 或 matches(...)`，而 `matches` 是"互相包含即算"
+    #   （它的设计用途是"找行"）⇒ 这四个场景**全部**被误判成"绿底行＝目标" ⇒ 返回 `[]`
+    #   ＝"没有 rival 在抢" ⇒ 把竞争告警**丢掉** ⇒ 下游给 `decided=True`「确定是它」⇒ 可能发错。
+    #   实测（scripts/probe_converge_overwide.py）：改前 10 通过 / **4 失败**（就是下面这四条），
+    #   改后 10/0 ⇒ 把这四条固化进回归，别再退回去。
+    for _tag6, _name6, _got6 in (
+            ("名字含目标（测试机器人）", "测试", "测试机器人"),
+            ("撞名群（测试2）", "测试", "测试2"),
+            ("目标名是子串（公测测试组）", "测试", "公测测试组"),
+            ("单字目标「E」+「Editor」", "E", "Editor")):
+        try:
+            CO.highlight = (lambda img, _v=_got6: {"y_abs": 100, "score": 0.97, "name": _v})
+            _r6 = _ad3._converge_by_highlight(object(), "group:" + A_ID, _name6,
+                                              ["KC（group:%s）" % B_ID])
+        finally:
+            CO.highlight = _keep_hl
+        ok("H6 ★反例：绿底行「%s」≠ 目标「%s」（只是包含）⇒ **不许**返回 []"
+           "（丢掉 rival 告警 ＝ 放宽方向）" % (_got6, _name6), _r6 != [], _r6)
+
+    # ⑦ 与 H6 对称：绿底行**完全相等**时**必须**仍能收敛成"无竞争"（不许因收紧而全盘失效）
+    try:
+        CO.highlight = lambda img: {"y_abs": 100, "score": 0.97, "name": "测试"}
+        _r7 = _ad3._converge_by_highlight(object(), "group:" + A_ID, "测试",
+                                          ["KC（group:%s）" % B_ID])
+    finally:
+        CO.highlight = _keep_hl
+    ok("H7 ★正例锚：绿底行**完全相等**于目标 ⇒ 仍收敛成 []（收紧只砍「模糊包含」那一支，"
+       "不许把正常的也砍掉）", _r7 == [], _r7)
+
+    # ⑧ 源码锚：`_hit` 只认授权档口径
+    ok("H8 源码锚：`_converge_by_highlight` 的匹配只用 `matches_strict`（授权档），不再用 `matches`",
+       "return bool(_co.matches_strict(got, t))" in _WT2, "")
+
     print("\n── I. B2 修正：候选集扩到**全量会话** + 「唯一」只在全量时才算数（2026-09-30 新增）──")
     # 起因：`_monitored_chat_ids()` 只给"白名单∩群列表＋私聊目标" ⇒ **名单外的会话看不见**。
     # 实测（scripts/probe_b2_realdata.py，本机真库）：碰撞窗口里含"名单外"会话占 **99%~100%**。

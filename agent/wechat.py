@@ -7757,8 +7757,14 @@ class WeChatAdapter:
         返回 `None` ＝**收敛不了**（调用方保持原样，fail-closed 不变）。三条硬约束：
           ① 绿底行必须量得到（绿底带 ≤ 0.30 占比就放弃——帧糊/换主题时不许瞎猜）；
           ② 绿底行的名字必须读得出（`highlight().name`；白字绿底本来就常读不出 ⇒ 常见退化路径）；
-          ③ 该名字与"目标 ∪ rivals"里**恰好一个**匹配（`best_candidate` 唯一最近 + 子串兜底）
+          ③ 该名字与"目标 ∪ rivals"里**恰好一个**匹配
              —— 匹配到 0 个（都认不出）或 ≥2 个（歧义）⇒ 弃权。
+        ⭐⭐ **"匹配"的口径是不对称的**（2026-09-30 实测后收紧，见下方 ③ 处注释）：
+             · 想说「**无竞争**」（`[]`）⇒ 必须 `matches_strict`（**完全相等**）；
+             · 想说「**是某个 rival**」（`[r]`）⇒ 精确相等，或候选集模糊纠错（唯一最近）都行。
+           理由：`[]` 是这一档**最大的放宽**（把竞争告警丢掉），必须配最强证据；
+           而"换成某个 rival"仍非空 ⇒ 不放宽。老实现两条路都用 `matches`（互相包含）
+           ⇒ 「测试机器人」也会被判成「测试」⇒ 误丢掉告警（四个场景实测全踩，见该探针）。
 
         为什么只做"收敛"不做"放行"：收敛只回答"屏幕上是哪一个"，
         "能不能发"仍要 `matches_strict`/`matches_fuzzy`（授权口径独立，不被本条影响）。
@@ -7775,33 +7781,43 @@ class WeChatAdapter:
         got = str(hl.get("name") or "").strip()
         if not got:
             return None                              # ② 绿底行名字读不出 ⇒ 弃权（最常见）
-        # ③ 与"目标 ∪ rivals"做唯一匹配：先精确/子串（强），再候选集纠错（弱）
+        # ③ 与"目标 ∪ rivals"做唯一匹配
+        #
+        # ⛔⛔ **只用授权档口径 `matches_strict`，绝不用 `matches`**（2026-09-30 实测修的）：
+        #   老实现是 `matches_strict(...) 或 matches(...)`，而 `matches` 是"**互相包含即算**"
+        #   （它的设计用途是"找行"——容忍"名字＋预览＋时间"那种整行文本）。
+        #   用在这里 ⇒ **只要绿底行读出的名字包含目标名，就判"绿底行＝目标" ⇒ 返回 `[]`**
+        #   ＝"没有 rival 在抢" ⇒ 把竞争告警**丢掉** ⇒ 下游 `_row_time_conflict` 给
+        #   `decided=True`「确定是它」⇒ **可能发错会话**。
+        #   实测四个场景全部踩中（`scripts/probe_converge_overwide.py`，改前 10 通过/4 失败）：
+        #     目标「测试」＋绿底行「测试机器人」/「测试2」/「公测测试组」 ⇒ 都误判成"无竞争"
+        #     目标单字「E」＋绿底行「Editor」（`matches` 的 `len(name)==1` 走 `startswith`）⇒ 同上
+        #   ⇒ 这是**放宽方向**的漏洞。收敛是在**削减告警**，必须比"找行"更保守 ——
+        #     而 `matches_strict` 的文档本来就写明：「凡"能不能发 / 是不是这个会话"的判定，
+        #     只许用本函数」。
+        #   ⚠️ 务实性已核：`hl["name"]` 来自 `_band_name()`，那是**专门裁名字区**的实现
+        #     （上半行避开预览行、行内取第一段避开时间戳）⇒ 读出来的就是名字本身，
+        #     拿"完全相等"去比是合适的。读数带残字时 strict 会失败 ⇒ **只是不收敛**
+        #     （fail-closed，方向安全），不会放宽。
         def _hit(target: str) -> bool:
             t = str(target or "").strip()
             if not t:
                 return False
             try:
-                if _co.matches_strict(got, t):
-                    return True
+                return bool(_co.matches_strict(got, t))
             except Exception:
-                pass
-            try:
-                if _co.matches(got, t):
-                    return True
-            except Exception:
-                pass
-            return False
+                return False
         _tgt = str(name or "").strip()
         _hit_tgt = _hit(_tgt) if _tgt else False
         _hit_rivals = [r for r in rivals if _hit(r.split("（", 1)[0].strip() or r)]
         if _hit_tgt and not _hit_rivals:
-            return []                                # 绿底行＝目标 ⇒ 没有 rival 在抢
+            return []                                # 绿底行＝目标（**完全相等**）⇒ 没有 rival 在抢
         if len(_hit_rivals) >= 1 and not _hit_tgt:
             # 绿底行＝某个 rival（且不是目标）⇒ 收敛到它（判否，且点名更准）
             if len(_hit_rivals) == 1:
                 return _hit_rivals
             return None                              # 满足多个 rival ⇒ 歧义，弃权
-        # 精确/子串都不行 ⇒ 试候选集纠错（唯一最近才认）
+        # 精确相等都不行 ⇒ 试候选集纠错（唯一最近才认）
         _pool = ([_tgt] if _tgt else []) + [str(r).split("（", 1)[0].strip() or str(r) for r in rivals]
         try:
             _best, _sc, _why = _co.best_candidate(got, _pool)
@@ -7809,8 +7825,13 @@ class WeChatAdapter:
             _best, _sc, _why = "", 0.0, ""
         if not _best or _sc <= 0:
             return None                              # ③ 认不出 ⇒ 弃权
-        if _tgt and _co.norm(_best) == _co.norm(_tgt):
-            return []                                # 纠到了目标 ⇒ 无竞争
+        # ⛔ **纠到目标也不许返回 `[]`**（不对称设计，2026-09-30）：
+        #   返回 `[]` 是这一档**最大的放宽**（"没有别人在抢"）⇒ 只有**完全相等**才配。
+        #   "模糊纠错纠到了目标"只是"相对最像"，把它当成"确定是目标"会让上面那四个
+        #   场景借 `best_candidate` 的模糊性**绕过** strict 这道门（实测确实会）。
+        #   ⇒ 模糊只允许做"收敛到某个 rival"（换靶，仍非空 ⇒ 不放宽），不允许说"无竞争"。
+        #   与 `_row_time_conflict` 里"空 rivals 必须全量扩集成功才算数"是同一个哲学：
+        #   **"唯一/空"这类最强结论，必须配最强证据。**
         for r in rivals:
             _rn = str(r).split("（", 1)[0].strip() or str(r)
             if _co.norm(_best) == _co.norm(_rn):
