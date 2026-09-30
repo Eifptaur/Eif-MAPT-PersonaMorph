@@ -80,7 +80,7 @@ def _row_bg_and_ink(img, y, xs):
     return bg, ink
 
 
-def detect_title_band_y(img, pl, x_lo_off=15, x_hi_frac=0.42,
+def detect_title_band_y(img, pl, x_lo_off=5, x_hi_frac=0.22,
                         ink_min_pts=2, pad=6, h_frac=0.075):
     """**当帧实测**标题带的 y 范围 ⇒ `(y0, y1)`；定不出给 None。
 
@@ -101,6 +101,9 @@ def detect_title_band_y(img, pl, x_lo_off=15, x_hi_frac=0.42,
     x1 = min(w, pl + int(w * x_hi_frac))
     if x1 - x0 < 30:
         return None
+    # ⛔ 扫描区**必须收窄**（2026-09-30 实测）：取到 0.42w 时会把**聊天区右上角的图标**
+    #   （x≈890，y=16~32）圈进来 ⇒ "第一个墨行"命中的是图标而不是标题（标题在 x≈470、y=76~88）。
+    #   标题的**左端**紧贴面板左沿（实测 pl+27）⇒ 只需扫 `[pl+5, pl+0.22w]`。
     step = max(1, (x1 - x0) // 110)          # 密采样：单字母标题只有十几个像素宽
     xs = list(range(x0, x1, step))
     y_scan = min(h, int(h * 0.30))
