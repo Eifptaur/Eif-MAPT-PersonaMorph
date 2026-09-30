@@ -7040,7 +7040,7 @@ class WeChatAdapter:
                           % title[:18])
         return None, "文件卡标题的显著片段没出现在聊天区（%r）" % title[:18]
 
-    def _row_time_conflict(self, chat_id: str, gui=None):
+    def _row_time_conflict(self, chat_id: str, gui=None, img=None):
         """**活动行时间**与目标会话"最后一条消息时间"是否**对不上** ⇒ `(conflict, 说明, decided)`。
 
         ⚠️ 为什么必须有：那台机器上 filehelper 与「E」的**首条内容逐字相同**
@@ -7093,7 +7093,7 @@ class WeChatAdapter:
                 return True, "活动行（y=%s）时间 %s ≠ 目标最后一条消息时间 %s" % (_hy, _ht, _lt), True, True
             # ⛔ 时间相同时**先问"这一分钟是不是只有它"**——两个会话同一分钟都有消息时，
             #   这一档给不出结论（`decided=False`），调用方按"判不了就不放行"处理（见 chat_identity_ok）。
-            _rivals = self._same_minute_rivals(chat_id, _lt)
+            _rivals = self._same_minute_rivals(chat_id, _lt, img=img)
             if _rivals:
                 return (False, "同一分钟还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话"
                         % "、".join(_rivals[:3]), False, False)
@@ -7243,7 +7243,10 @@ class WeChatAdapter:
         try:
             from . import chat_ocr as _co
             _tok = _co.begin_window(_co.SEND_WINDOW_S) # 内容级核对整段共用 OCR 总预算（④）
-            pane = _co.pane_text(_co.capture_best(gui=gui or self._get_gui(), frames=3), limit=400)
+            # ⭐ 保留帧本身（`_pane_img`）：同一档里 `_pane_time_hits` 需要它做**屏幕侧收敛**
+            #   （绿底行）—— 老实现只留了 OCR 文字、把帧丢了 ⇒ 三档里只有它不享受收敛。
+            _pane_img = _co.capture_best(gui=gui or self._get_gui(), frames=3)
+            pane = _co.pane_text(_pane_img, limit=400)
             if _co.budget_out(_tok):
                 # OCR 预算用尽 ⇒ 这一条**自检不可用**：按"拿不到证据"返回（调用方 fail-closed，不发）
                 return None, "OCR 预算用尽（判据不可用）：内容级核对没跑完，按「拿不到证据」处理"
@@ -7281,7 +7284,7 @@ class WeChatAdapter:
                             return True, ("聊天区内容像目标（%r…）＋ %s ⇒ 双档互证，放行"
                                           % (nd[:16], str(_so_why)[:80]))
                         #    两个会话内容逐字相同时，内容闸会同时放行两个目标 ⇒ 用"只有一个活动行"把它分开）。
-                        _cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict(chat_id, gui=gui)
+                        _cf, _cfwhy, _cdec, _ccmp = self._row_time_conflict(chat_id, gui=gui, img=_pane_img)
                         if _cf:
                             return False, ("【可重试】聊天区内容像目标（%r…），但**活动行时间对不上**（%s）⇒ 判否："
                                            "同屏两个会话内容雷同时，以活动行为准" % (nd[:16], _cfwhy))
@@ -7374,7 +7377,7 @@ class WeChatAdapter:
             #   `昨天20：17昨天20：36`），文字早滚出视口 ⇒ 上面所有"文字类"证据全部落空 ⇒
             #   明明点对了会话却 fail-closed **拒发**（用户看到的就是"点对了却不发图"）。
             #   而**时间戳读得到** ⇒ 拿它做"屏幕 × DB"两个独立来源的比对，只支持相对日与今天的裸 HH:MM。
-            _ok_pt, _why_pt, _pt_hits = self._pane_time_hits(chat_id, pane)
+            _ok_pt, _why_pt, _pt_hits = self._pane_time_hits(chat_id, pane, img=_pane_img)
             if _ok_pt:
                 return True, _why_pt
             # 🔴 最后一档＝**纯屏幕证据**：
@@ -7453,7 +7456,7 @@ class WeChatAdapter:
         return False, ("高亮行时间 %s 与目标一致，但聊天区里没有同一时刻、该时刻在列表里也不唯一（%d 行）"
                        % (_ht, _n))
 
-    def _pane_time_hits(self, chat_id: str, pane: str, limit: int = 20) -> tuple:
+    def _pane_time_hits(self, chat_id: str, pane: str, limit: int = 20, img=None) -> tuple:
         """聊天区里的**消息时间**对得上目标会话最近 N 条吗？→ `(ok, 说明, 命中列表)`。
 
         为什么单列一档：内容级复核要求"聊天区里出现目标会话最近的**文本**"，
@@ -7461,6 +7464,12 @@ class WeChatAdapter:
         文字早滚出视口 ⇒ 文字类证据全落空 ⇒ 明明点对了会话却 fail-closed 拒发。
         ⇒ 用**时间**当独立证据：屏幕上的时间戳 × 库里那条消息的时间，两个来源对得上就算。
         只认相对日（今天/昨天/前天）与今天的裸 `HH:MM`；显式日期（9月17日）**不猜** —— 宁可给不出证据。
+
+        ⭐ `img`（2026-09-30 补）：透传给 `_same_minute_rivals` 做**屏幕侧收敛** ——
+          不传的话这一档永远拿不到"绿底行"这条证据 ⇒ 三档里只有这一档不享受收敛（不一致）。
+          ⚠️ 光传 `img` 还不够：`_converge_by_highlight` 判"绿底行＝目标 ⇒ 无竞争"那一条
+          **要 `name` 非空**（否则只能走"绿底行＝某 rival"这一支 ⇒ rivals 仍非空 ⇒ 收益减半）。
+          ⇒ 与标杆 `_active_row_time_ok`（`img=img, name=self.display_name(chat_id)`）**同口径**。
         """
         import datetime as _dt
         import re as _re
@@ -7490,7 +7499,8 @@ class WeChatAdapter:
             _t0 = float(rows[0].get("create_time") or 0)
             if _t0 > 1e12:
                 _t0 = _t0 / 1000.0
-            _rivals = self._same_minute_rivals(chat_id, time.strftime("%H:%M", time.localtime(_t0)))
+            _rivals = self._same_minute_rivals(chat_id, time.strftime("%H:%M", time.localtime(_t0)),
+                                               img=img, name=self.display_name(chat_id))
         except Exception:
             _rivals = []
         if _rivals:

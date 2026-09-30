@@ -276,6 +276,23 @@ def main():
     ok("I8 源码锚：结果缓存 60s（与 `_monitored_chat_ids` 同口径）",
        "_allch_cache" in _WT2, "")
 
+    print("\n── J. 三档都享受屏幕侧收敛（`img` 全链路透传，2026-09-30 新增）──")
+    # 起因：`_pane_time_hits` / `_row_time_conflict` 调 `_same_minute_rivals` 时**不传帧**
+    # ⇒ 三档里只有它们拿不到"绿底行"这条证据 ⇒ 同一个判据在三处强度不一致。
+    ok("J1 `_pane_time_hits` 声明了 `img` 参数",
+       "def _pane_time_hits(self, chat_id: str, pane: str, limit: int = 20, img=None)" in _WT2, "")
+    ok("J2 `_pane_time_hits` 把 `img` 透传给 `_same_minute_rivals`",
+       "_same_minute_rivals(chat_id, time.strftime(\"%H:%M\", time.localtime(_t0))," in _WT2
+       and "img=img)" in _WT2, "")
+    ok("J3 `_row_time_conflict` 声明了 `img` 参数",
+       "def _row_time_conflict(self, chat_id: str, gui=None, img=None)" in _WT2, "")
+    ok("J4 `_row_time_conflict` 把 `img` 透传给 `_same_minute_rivals`",
+       "_same_minute_rivals(chat_id, _lt, img=img)" in _WT2, "")
+    ok("J5 `chat_identity_ok` **保留了帧变量**（不再只留 OCR 文字）",
+       "_pane_img = _co.capture_best(" in _WT2 and "pane = _co.pane_text(_pane_img" in _WT2, "")
+    ok("J6 `chat_identity_ok` 两处调用都带上 `_pane_img`",
+       _WT2.count("img=_pane_img") >= 2, "img=_pane_img ×%d" % _WT2.count("img=_pane_img"))
+
     print("\n── G. 内容排他：时间档给不出结论时，靠「内容排他」决定发不发（本次新增的放行依据）──")
     # 现场（真机）：两个群同一分钟都有消息 ⇒ 时间档分不出；但两个群的**正文不同** ⇒ 内容能分。
     _ad2 = _fake_adapter()
