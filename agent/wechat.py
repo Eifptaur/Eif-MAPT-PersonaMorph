@@ -7097,6 +7097,21 @@ class WeChatAdapter:
             if _rivals:
                 return (False, "同一分钟还有别的会话也有消息（%s）⇒ 时间档分不出是哪个会话"
                         % "、".join(_rivals[:3]), False, False)
+            # ⚠️ **"唯一"只有在候选集是全量时才算数**（B2 修正，2026-09-30）：
+            #   `rivals=[]` 的语义取决于候选集多大 ——
+            #     · 全量扩集**成功** ⇒ `[]` ＝真"这一分钟只有目标" ⇒ 可以给"确定是它"（True,True）；
+            #     · 全量扩集**拿不到**（DB 读失败/索引反查失败）⇒ `[]` 只等于"**白名单内**没冲突"
+            #       ⇒ 名单外还有没有别人**没查过** ⇒ 不许滑到"确定是它"，只能"判不了"。
+            #   实测依据：碰撞窗口里含"名单外"会话的占 99%~100%（probe_b2_realdata.py）⇒
+            #   候选集不全时 `[]` 的"唯一"含义**基本是假的**。
+            _full_ok = False
+            try:
+                _full_ok = bool(self._all_chat_last_hhmm())
+            except Exception:
+                _full_ok = False
+            if not _full_ok:
+                return (False, "同一分钟只有目标（**白名单内**）——但全量会话查不到 ⇒ "
+                        "名单外是否有人没验证 ⇒ 时间档仍分不出", False, False)
             return False, "", True, True
         except Exception:
             return False, "判据异常", False, False
@@ -7556,6 +7571,80 @@ class WeChatAdapter:
             pass
         return out
 
+    def _all_chat_last_hhmm(self) -> dict:
+        """**全量会话**的"最后一条消息 HH:MM" ⇒ `{裸id: "HH:MM"}`（只含今天的）。
+
+        ⛔ 为什么必须另开一条（B2 修正，2026-09-30）：`_monitored_chat_ids()` 只会给出
+        **白名单 ∩ 群列表 ＋ 私聊目标** ⇒ 名单外的会话**根本不进候选集**。
+        而实测（`scripts/probe_b2_realdata.py`，本机真实库）：
+          碰撞窗口里含"名单外"会话的比例 = **99%~100%**（账号一 73/74、账号二 3/3）。
+        ⇒ 也就是说：**一旦两个会话同分钟都有消息，现有实现几乎必然"看不见"竞争者** ⇒
+          返回 `[]` ⇒ 三个消费者全部朝"放宽"滑 ⇒ 可能把回复发进另一个会话。
+
+        **实现口径**（性能已实测，`scripts/probe_b2_allchats_perf.py`）：
+          · 逐张 `Msg_*` 表取 `MAX(create_time)` —— 只读标量、**不碰大 BLOB**；
+            本机 50 张表实测 **34.8ms**（`sort_seq` 有索引）。
+          · **不走** `list_message_chats()`（它对每表 `count(*)` ⇒ 更慢）。
+          · 结果缓存 60 秒（与 `_monitored_chat_ids` 同口径）；表名 → 裸 id 用 DB 的
+            md5 反查索引（`_build_md5_index`），拿不到就**跳过该表**（不猜）。
+        **任何异常都退化成空 dict**（调用方按"扩集失败"处理，fail-closed 不变）。
+        """
+        _now = time.time()
+        _c = getattr(self, "_allch_cache", None)
+        if _c and (_now - float(_c[0])) < 60.0:
+            return dict(_c[1])
+        out = {}
+        try:
+            _db = getattr(self, "_db", None)
+            if _db is None:
+                return {}
+            _md5idx = {}
+            try:
+                _md5idx = dict(_db._build_md5_index() or {})
+            except Exception as _e:
+                log.debug("md5 反查索引拿不到（全量扩集会退化）: %s", _e)
+            _today = time.localtime().tm_yday
+            for _rel in (_db._message_dbs() or []):
+                _conn = None
+                try:
+                    _conn = _db._open(_rel)
+                    _tabs = [r[0] for r in _conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+                    ).fetchall()]
+                    for _tb in _tabs:
+                        _md5 = _tb[4:] if _tb.startswith("Msg_") else ""
+                        _bid = _md5idx.get(_md5)
+                        if not _bid:
+                            continue # 反查不到 ⇒ 不猜（宁可漏，不冒充）
+                        try:
+                            _v = _conn.execute('SELECT MAX(create_time) FROM "%s"' % _tb).fetchone()[0]
+                        except Exception:
+                            continue
+                        if not _v:
+                            continue
+                        _v = int(_v)
+                        if _v > 10 ** 10:
+                            _v //= 1000
+                        _lt = time.localtime(_v)
+                        if _lt.tm_yday == _today:
+                            out[str(_bid)] = time.strftime("%H:%M", _lt)
+                except Exception as _e2:
+                    log.debug("全量扩集读分片失败（%s）: %s", _rel, _e2)
+                finally:
+                    try:
+                        if _conn is not None:
+                            _conn.close()
+                    except Exception:
+                        pass
+        except Exception as _e:
+            log.debug("全量扩集失败（退化成空，fail-closed）: %s", _e)
+            out = {}
+        try:
+            self._allch_cache = (_now, dict(out))
+        except Exception:
+            pass
+        return out
+
     def _same_minute_rivals(self, chat_id: str, hhmm: str, limit: int = 40,
                             img=None, name: str = "") -> list:
         """**同一分钟内**还有哪些监听中的会话也有最后一条消息 ⇒ 返回它们的名字（不含自己）。
@@ -7584,28 +7673,62 @@ class WeChatAdapter:
             · 读不出 / 歧义 / 绿底认不出 ⇒ **原样返回全部 rivals**（fail-closed 不变）。
           ⚠️ **只做收敛、不做放行依据**：放行仍要 `matches_strict`/`matches_fuzzy` 那几档
             （授权口径不许因为本条被放宽）。
+
+        ⭐⭐ **候选集扩到"全量会话"**（B2 修正，2026-09-30）：
+          老实现只在 `_monitored_chat_ids()`（＝白名单∩群列表＋私聊目标）里找 ⇒ **名单外的
+          会话同分钟有消息也看不见**。实测危害（`scripts/probe_b2_realdata.py`，本机真库）：
+          碰撞窗口里含"名单外"会话的占 **99%~100%** ⇒ 漏检 ⇒ `[]` ⇒ 三个消费者朝"放宽"滑。
+          ⇒ 现在候选集 ＝ `_monitored_chat_ids()` **∪** `_all_chat_last_hhmm()`（全量）。
+          ⚠️ 全量侧拿不到裸 id（md5 反查失败）的表**直接跳过**，不猜；两条路都拿不到 ⇒
+            退化成原行为（fail-closed 不变）。
         """
         want = self._norm_hhmm(hhmm)
         if not want:
             return []
         out = []
+        _seen = set()
+        def _push(_bid, _ck):
+            _s = str(_bid or "")
+            if not _s or _s in _seen:
+                return
+            _seen.add(_s)
+            _nm = ""
+            try:
+                _nm = str(self.display_name(_s) or "").strip()
+            except Exception:
+                _nm = ""
+            out.append(("%s（%s）" % (_nm, _ck)) if (_nm and _nm != _ck) else _ck)
+        _tgt_bare = self._bare_key(chat_id)
         try:
             _ids = self._monitored_chat_ids()[:max(1, int(limit))]
         except Exception:
-            return []
+            _ids = []
+        _mon_bares = set()
         for ck in _ids:
-            if ck == chat_id:
+            _b = self._bare_key(ck)
+            _mon_bares.add(_b)
+            if _b == _tgt_bare:
                 continue
             try:
-                if self._norm_hhmm(self._last_time_hhmm(ck)) == want:
-                    _nm = ""
-                    try:
-                        _nm = str(self.display_name(ck.split(":", 1)[-1]) or "").strip()
-                    except Exception:
-                        _nm = ""
-                    out.append(("%s（%s）" % (_nm, ck)) if (_nm and _nm != ck) else ck)
+                if self._norm_hhmm(self._last_time_hhmm(_b)) == want:
+                    _push(_b, ck)
             except Exception:
                 continue
+        # ⭐ B2 修正：全量会话侧（补上"名单外"）
+        try:
+            _all = self._all_chat_last_hhmm() or {}
+        except Exception:
+            _all = {}
+        _extra = 0
+        for _bid, _hh in _all.items():
+            _b = str(_bid)
+            if _b == _tgt_bare or _b in _mon_bares:
+                continue # 目标自己 / 已在白名单侧查过 ⇒ 不重复
+            if self._norm_hhmm(_hh) == want:
+                _push(_b, _b)
+                _extra += 1
+        if _extra:
+            log.info("同分钟冲突(%s)：全量扩集补进 %d 个**名单外**会话（老实现会漏检）", want, _extra)
         # ⭐ 屏幕侧收敛（只在真有冲突、且调用方给了帧时才做；否则一字不改）
         if out and img is not None:
             try:

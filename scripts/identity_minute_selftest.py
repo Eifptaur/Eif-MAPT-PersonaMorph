@@ -203,6 +203,79 @@ def main():
     ok("H5 源码锚：收敛只改 `_same_minute_rivals` 的返回值，**不动**授权档",
        "def _converge_by_highlight(" in _WT2 and "只做收敛、不做放行依据" in _WT2, "")
 
+    print("\n── I. B2 修正：候选集扩到**全量会话** + 「唯一」只在全量时才算数（2026-09-30 新增）──")
+    # 起因：`_monitored_chat_ids()` 只给"白名单∩群列表＋私聊目标" ⇒ **名单外的会话看不见**。
+    # 实测（scripts/probe_b2_realdata.py，本机真库）：碰撞窗口里含"名单外"会话占 **99%~100%**。
+    # ⇒ 修法二（扩集）治本、修法三（空集不许当"唯一"）治标。
+    _C_ID = "66000000111@chatroom"   # ← **不在白名单里**的群（B2 的关键角色）
+    _ad4 = _fake_adapter()
+    _nm4 = {A_ID: "测试", B_ID: "KC", _C_ID: "野群"}
+    _ad4.display_name = lambda cid, *a, **k: _nm4.get(str(cid).split(":", 1)[-1], "")
+    # 全量侧：只有"野群"与本分钟同时间（目标 A 也在本分钟，但它自己不算 rival）
+    _ad4._all_chat_last_hhmm = lambda: {_C_ID: H_MINE}
+
+    # I1 扩集**生效**：名单外的"野群"被补进候选（老实现会漏掉它）
+    _r4 = _ad4._same_minute_rivals("group:" + A_ID, H_MINE)
+    ok("I1 扩集生效：**名单外**的同分钟会话被补进候选（老实现只查白名单 ⇒ 漏检）",
+       any(_C_ID in str(x) for x in _r4) and len(_r4) >= 2, _r4)
+
+    # I2 扩集**不重复**：白名单侧的 rival（KC）不会被全量侧再加一遍
+    _dup = [str(x) for x in _r4]
+    ok("I2 扩集不重复：白名单侧已有的 rival 不被全量侧再加一遍",
+       len(_dup) == len(set(_dup)), _dup)
+
+    # I3 全量侧**拿不到**（DB 读失败）⇒ 退化成老行为（仍是 fail-closed，不许崩）
+    _ad5 = _fake_adapter()
+    _ad5.display_name = lambda cid, *a, **k: _nm4.get(str(cid).split(":", 1)[-1], "")
+    _ad5._all_chat_last_hhmm = lambda: {}
+    _r5 = _ad5._same_minute_rivals("group:" + A_ID, H_MINE)
+    ok("I3 全量侧拿不到 ⇒ 退化成「只看白名单」，且仍是 fail-closed（不崩、不误放）",
+       len(_r5) == 1 and B_ID in str(_r5[0]), _r5)
+
+    # I4 ★修法三：**全量扩集成功** + 本分钟**确实只有目标** ⇒ `decided=True`（这回是诚实的）
+    #    ⚠️ 夹具要点：必须让"白名单侧"和"全量侧"**都没有**同分钟会话 —— 否则 is4 会因
+    #       "真有 rival" 而返回 decided=False（那是正确行为，不是 bug）。踩过这个坑。
+    _ad6 = WeChatAdapter.__new__(WeChatAdapter)
+    _ad6._db = _FakeDB({A_ID: [time_now_floor()], "wxid_solo": [time_now_floor() - 7 * 60]})
+    _ad6.cfg = {"wechat": {"group_name_white_list": ["测试"]}}
+    _ad6._mon_cache = None
+    _ad6.list_groups = lambda: [{"name": "测试", "wxid": A_ID}]
+    _ad6.list_private_targets = lambda: [{"name": "独聊", "wxid": "wxid_solo"}]
+    _ad6.display_name = lambda cid, *a, **k: _nm4.get(str(cid).split(":", 1)[-1], "")
+    _ad6._all_chat_last_hhmm = lambda: {A_ID: H_MINE, "wxid_else": "16:00"}  # 别人都不在本分钟
+    # ⚠️ 夹具必须给 `_gui` + 桩掉 `_get_gui`：草稿行兜底分支会调 `_get_gui()`，
+    #    不桩就会去构造**真 GUI**（踩过：日志里冒出真 WeChatGUI 初始化）
+    _ad6._gui = None
+    _ad6._get_gui = lambda *a, **k: None
+    with _stub_ocr(pane=""):
+        _cf, _why, _dec, _cmp = _ad6._row_time_conflict("group:" + A_ID)
+    ok("I4 全量扩集**成功** + 本分钟只有目标 ⇒ `decided=True`（「确定是它」这回是诚实的）",
+       _dec is True, "%s / %s" % (_dec, _why))
+
+    # I5 ★修法三的反面：**全量扩集拿不到** ⇒ 不许说"确定是它"，只能 decided=False
+    _ad7 = WeChatAdapter.__new__(WeChatAdapter)
+    _ad7._db = _FakeDB({A_ID: [time_now_floor()], "wxid_solo": [time_now_floor() - 7 * 60]})
+    _ad7.cfg = {"wechat": {"group_name_white_list": ["测试"]}}
+    _ad7._mon_cache = None
+    _ad7.list_groups = lambda: [{"name": "测试", "wxid": A_ID}]
+    _ad7.list_private_targets = lambda: [{"name": "独聊", "wxid": "wxid_solo"}]
+    _ad7.display_name = lambda cid, *a, **k: _nm4.get(str(cid).split(":", 1)[-1], "")
+    _ad7._all_chat_last_hhmm = lambda: {}   # ← 扩集失败（白名单侧也无冲突）
+    _ad7._gui = None
+    _ad7._get_gui = lambda *a, **k: None
+    with _stub_ocr(pane=""):
+        _cf7, _why7, _dec7, _cmp7 = _ad7._row_time_conflict("group:" + A_ID)
+    ok("I5 ★扩集**拿不到** ⇒ 空 rivals 不许当「唯一」，`decided=False`（fail-closed 收紧）",
+       _dec7 is False, "%s / %s" % (_dec7, _why7))
+
+    # I6 行为验证：`_all_chat_last_hhmm` 真的走 DB（不是空壳）——源码锚
+    ok("I6 源码锚：`_all_chat_last_hhmm` 逐表 `MAX(create_time)`（不碰大 BLOB）",
+       "def _all_chat_last_hhmm(" in _WT2 and "MAX(create_time)" in _WT2, "")
+    ok("I7 源码锚：全量侧**拿不到裸 id 就跳过**（不拿 md5 冒充会话）",
+       "反查不到 ⇒ 不猜" in _WT2, "")
+    ok("I8 源码锚：结果缓存 60s（与 `_monitored_chat_ids` 同口径）",
+       "_allch_cache" in _WT2, "")
+
     print("\n── G. 内容排他：时间档给不出结论时，靠「内容排他」决定发不发（本次新增的放行依据）──")
     # 现场（真机）：两个群同一分钟都有消息 ⇒ 时间档分不出；但两个群的**正文不同** ⇒ 内容能分。
     _ad2 = _fake_adapter()
