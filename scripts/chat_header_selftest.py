@@ -585,6 +585,25 @@ ck("L4 源码锚：绿带纠偏带 **>60px 阈值**（不是无条件覆盖 —�
 ck("L5 源码锚：`detect_green_right` 有帧级缓存（同一帧被十几个函数各调一遍）",
    "_pm_green_right" in _seg, "")
 
+# ── L6/L7 越界钳位（2026-09-30 自己引入又修掉的边界 bug）──
+# 症状：某帧的面板左沿贴近图宽 ⇒ 调用方 `crop(pl+10, …)` 抛 "right < left" ⇒ 整条链崩。
+# 修法：① `detect_green_right` 右边界 ≥ 80% 宽时不采信（那多半是聊天区里的绿色气泡/图片）；
+#       ② `pane_left_for` 收尾把结果钳在 ≤85% 宽（保证任何下游 +dx 都不越界）。
+def _wide_green_frame():
+    im = Image.new("RGB", (1000, 700), (35, 35, 36))
+    d = ImageDraw.Draw(im)
+    d.rectangle([60, 150, 950, 240], fill=(77, 163, 110))   # 绿色几乎铺满整幅宽（模拟气泡/图片）
+    return im
+
+
+_pw = _frame_with_green(False)
+ck("L6 ★越界锚：`pane_left_for` 的结果**不许超过整幅宽的 85%**"
+   "（实测踩过：某帧 pl 贴近图宽 ⇒ 下游 crop 抛 right<left ⇒ 链崩）",
+   ch.pane_left_for(_wide_green_frame()) <= int(1000 * 0.85),
+   "pl=%d" % ch.pane_left_for(_wide_green_frame()))
+ck("L7 源码锚：两处钳位都在（绿带 80% 不采信 ＋ 收尾 85% 回退比例兜底）",
+   "int(_w * 0.80)" in _src_l and "int(_w2 * 0.85)" in _src_l, "")
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)
