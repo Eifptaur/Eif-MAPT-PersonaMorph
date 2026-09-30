@@ -293,6 +293,31 @@ def main():
     ok("J6 `chat_identity_ok` 两处调用都带上 `_pane_img`",
        _WT2.count("img=_pane_img") >= 2, "img=_pane_img ×%d" % _WT2.count("img=_pane_img"))
 
+    # ⚠️ J1~J6 **全是源码锚**（字符串匹配）—— 源码里"写了 img=img"不等于"行为真的收敛了"。
+    #    按本项目的判据纪律，源码锚必须配**行为验证 + 反例锚**。下面 J7~J9 就是那条腿。
+    # 夹具：KC 与目标同分钟（真 rival），绿底行名字＝**目标**⇒ 应收敛成「无竞争」。
+    _ad9 = _fake_adapter()
+    _nm9 = {A_ID: "测试", B_ID: "KC"}
+    _ad9.display_name = lambda cid, *a, **k: _nm9.get(str(cid).split(":", 1)[-1], "")
+    _keep_hl9 = CO.highlight
+    try:
+        CO.highlight = lambda img: {"y_abs": 100, "score": 0.97, "name": "测试"}
+        with _stub_ocr(pane=H_MINE):
+            # 带帧（真实调用形态：`chat_identity_ok` 现在传 `_pane_img`）
+            _ok9, _w9, _h9 = _ad9._pane_time_hits("group:" + A_ID, H_MINE, img=object())
+            # 不带帧（老调用形态）—— 同一夹具、同一帧来源，只差这一个参数
+            _ok9n, _w9n, _h9n = _ad9._pane_time_hits("group:" + A_ID, H_MINE)
+    finally:
+        CO.highlight = _keep_hl9
+    ok("J7 ★行为：传帧+名字 ⇒ 绿底行＝目标 ⇒ 收敛成「无竞争」⇒ **这一档真能给结论**",
+       _ok9 is True, "%s / %s" % (_ok9, _w9))
+    ok("J8 ★反例锚：**同一夹具不传帧** ⇒ 收敛不生效 ⇒ 这一档拿不到结论"
+       "（证明 J7 的 True 是透传带来的，不是夹具本来就通）",
+       _ok9n is False and _ok9 is True, "%s / %s" % (_ok9n, _w9n))
+    ok("J9 源码锚：`_pane_time_hits` 调 `_same_minute_rivals` 时**同时**传了 `name`"
+       "（只传 img 的话收敛器走不到「绿底行＝目标 ⇒ 无竞争」那一条，收益减半）",
+       "img=img, name=self.display_name(chat_id))" in _WT2, "")
+
     print("\n── G. 内容排他：时间档给不出结论时，靠「内容排他」决定发不发（本次新增的放行依据）──")
     # 现场（真机）：两个群同一分钟都有消息 ⇒ 时间档分不出；但两个群的**正文不同** ⇒ 内容能分。
     _ad2 = _fake_adapter()
