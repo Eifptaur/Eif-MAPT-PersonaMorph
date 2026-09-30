@@ -64,6 +64,44 @@ def _win_state(gui):
     return (_x0 < _MIN_XY or _y0 < _MIN_XY), _rr
 
 
+def _verdict(ok, hit, msg, scene, rr):
+    """把 (send_text 返回, 库回读) 判成 status + evidence。
+
+    ⛔⛔ **不许把"条件不完整"判成 `no`**（2026-09-30 实测后的硬口径）：
+      实测（前置闸通过后真跑，耗时 26.4s）返回的是
+        「投递档确认不了目标会话（会话头三态=**no_ref**，投递切会话也没成）
+          ⇒ 按最高目标不退回真鼠标」
+      而日志里写明了两条依赖：
+        · `no_ref` ＝ **缺该尺寸的会话头参照** —— 参照要在**窗口可见时**学，最小化时学不了；
+        · 「搜索框路线没成（找不到搜索入口）」＝ 切会话也要**从标题带截图读**。
+      ⇒ 这三点（缺参照 / 需切会话 / 真鼠标未开）都是**前置条件**，不是"能力不行"。
+        把它们记成 `no` 就等于**用一次条件不全的实验否掉一个能力** —— 与 §21 同一类错误。
+      ⇒ 只在**没有任何"条件缺失"信号**时，才给 `no`；否则一律 `unknown` + 原始原因。
+    """
+    _HINTS = (
+        ("no_ref", "缺该尺寸的会话头参照（要在**窗口可见时**学一次才有）"),
+        ("投递档确认不了目标会话", "投递档缺身份证据"),
+        ("搜索框路线没成", "切会话要先截图找搜索入口（最小化时不可用）"),
+        ("不退回真鼠标", "真鼠标兜底默认关（`input.allow_real_fallback`）"),
+        ("allow_real_fallback", "真鼠标兜底默认关"),
+        ("no_capture", "抓不到画面"),
+    )
+    _why = ""
+    for _k, _d in _HINTS:
+        if _k in str(msg):
+            _why += "· " + _d + "；"
+    if ok and hit:
+        return ("ok", "【%s】场景：send_text=True 且库回读到本次文本；窗口 render_rect=%s" % (scene, rr))
+    if hit and not ok:
+        return ("partial", "库回读命中但 send_text=False —— 真发出去了，但**判据本身**要查")
+    if ok and not hit:
+        return ("partial", "send_text=True 但库回读未命中 —— 可信度不足（可能假成功）")
+    if _why:
+        return ("unknown", "【%s】**未测成（前置条件不完整）**：%s 原始返回：%s"
+                % (scene, _why, str(msg)[:120]))
+    return ("no", "【%s】未发出去且**无'条件缺失'信号**：%s" % (scene, str(msg)[:120]))
+
+
 def main():
     ap = argparse.ArgumentParser(description="验证「微信最小化时仍能发送」（默认 dry-run）")
     ap.add_argument("--send", action="store_true", help="真的发送（不加则只打印计划）")
