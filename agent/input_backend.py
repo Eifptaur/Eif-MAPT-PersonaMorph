@@ -450,7 +450,11 @@ class MessageBackend(InputBackend):
             _ct.memmove(p, buf, len(buf))
             _k32.GlobalUnlock(h)
             self._wake(hwnd)
-            _post(int(hwnd), WM_DROPFILES, int(h), 0)
+            # ⛔  是 （ctypes 的 c_void_p 对象）⇒ **不能直接 **
+            #   （那会拿到对象地址、数值超范围 ⇒ ，实测踩过）。
+            #   必须先 cast 成句柄再取值。
+            _hval = _ct.cast(h, _ct.c_void_p).value
+            _post(int(hwnd), WM_DROPFILES, int(_hval or 0), 0)
             return True, ""
         except Exception as e:
             return False, "投递 WM_DROPFILES 失败：%s: %s" % (type(e).__name__, e)
