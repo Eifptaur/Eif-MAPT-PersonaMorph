@@ -15,6 +15,7 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
@@ -22,6 +23,7 @@ os.environ["WX_NO_UI_POP"] = "1" # 本自检全程不许弹任何窗口（后面
 
 from agent import notify_ui as NU # noqa: E402
 from agent import version_gate as VG # noqa: E402
+from _srcslice import func_src as _fsrc # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -265,10 +267,16 @@ print("── D. 版本门弹窗：**已整体停用**（能跨版本运行 ⇒ 
 #   而现场反馈"上面的选项都有问题、点了程序没法正常跑" ⇒ 弹窗＝纯风险源。
 ok("★ 反向锚：`_pending_enabled` 还在（被删掉 ⇒ 本行必红）",
    "def _pending_enabled()" in GSRC)
-ok("★ 默认是**停用**（函数末尾 `return False`，不是 True）",
-   "return False" in GSRC.split("def _pending_enabled()", 1)[-1].split("def ", 1)[0])
-ok("pending() 里真的调了它（不是写了没人用）", "_pending_enabled()" in GSRC.split("def pending(")[1])
-_pbody = GSRC.split("def pending(", 1)[1].split("\ndef ", 1)[0]
+# ⚠ 取函数体一律用 **AST 锚定的 `func_src`**，不要用「按 def 行做文本切片」的写法 ——
+#   文本切片会在"docstring/注释里提到同名函数"时命中注释（本文件 T21 那次就踩过：
+#   `pending()` 的 docstring 里写了 `_pending_enabled()` ⇒ 首个匹配在注释上 ⇒ 判据假红）。
+_pen_src = _fsrc(GSRC, "_pending_enabled")          # ⟵ 已含 docstring
+_pen_code = _pen_src.split('"""', 2)[-1] if '"""' in _pen_src else _pen_src
+ok("★ 默认是**停用**（函数体里 `return False`，不是 True）",
+   "return False" in _pen_code)
+_pnd_src = _fsrc(GSRC, "pending")
+ok("pending() 里真的调了它（不是写了没人用）", "_pending_enabled()" in _pnd_src)
+_pbody = _pnd_src
 # ⚠ 必须**剥掉 docstring**再比：docstring 里也写着 `_pending_enabled()`，
 #   不剥的话首个匹配命中注释，判据会**假红**（本行第一次就踩了这个坑）。
 # ⚠ 找不到时必须**记 FAIL**，不许抛 ValueError —— 判据崩掉不进计数，

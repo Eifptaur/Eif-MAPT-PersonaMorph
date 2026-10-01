@@ -40,6 +40,7 @@ except Exception:
 from agent import chat_header as CH # noqa: E402
 from agent import chat_ocr as CO # noqa: E402
 from agent.wechat import WeChatAdapter # noqa: E402
+from _srcslice import func_src as _fsrc # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -442,11 +443,12 @@ def main():
     _hit_all = all(x in (_names_d or []) for x in ("野群名X", "野友Y", "屏幕见过的野名Z"))
     ok("D7 ★收口锚：**白名单为空**时 `_known_chat_names` 仍含全量群名 ∪ 昵称 ∪ 屏幕见过的名"
        "（⇒ 撞名源没有 §11/§14 那种「名单外看不见」的盲区，无需修）", _hit_all, _names_d)
+    # ⚠ 用 AST 锚定的 `func_src` 取函数体，**不要**用「按 def 行做文本切片」的写法 ——
+    #   文本切片会被"docstring/注释里提到同名函数"骗到（真踩过）。
+    _dbnames = _fsrc(_WT2, "_db_chat_names")
     ok("D7b 源码锚：`_db_chat_names` 的主体是 `_groups` / `_nick_map`，"
        "`_monitored_chat_ids()` 只作补充",
-       "_groups" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0]
-       and "_nick_map" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0]
-       and "_monitored_chat_ids()" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0], "")
+       "_groups" in _dbnames and "_nick_map" in _dbnames and "_monitored_chat_ids()" in _dbnames, "")
 
     print("\n== E 段：内容级复核的『针』必须能在屏幕上出现 ==")
     # 起因（用户反馈 2026-09-30）：某机器上库里 `content` 回的是 `wxid_xlpcj6tvoiz` / `5640103193` /

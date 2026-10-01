@@ -14,6 +14,7 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
 sys.path.insert(0, ROOT)
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -576,7 +577,11 @@ ck("L1 能测出绿底行的右边界（合成帧真值 400，容差 6px）", ab
 ck("L2 没有绿底行 ⇒ 返回 0（不瞎猜）", ch.detect_green_right(_frame_with_green(False)) == 0,
    str(ch.detect_green_right(_frame_with_green(False))))
 _src_l = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
-_seg = _src_l.split("def detect_green_right(")[1].split("def pane_left_for(")[0]
+from _srcslice import func_src as _fsrc # noqa: E402
+# ⚠ 用 AST 锚定的 `func_src` 取函数体，**不要**用「按 def 行做文本切片」的写法 ——
+#   文本切片会被"注释里提到同名函数"骗到（本文件 T21 那次就踩过：docstring 里
+#   写了 `_pending_enabled()` ⇒ 首个匹配命中注释 ⇒ 判据假红）。
+_seg = _fsrc(_src_l, "detect_green_right")
 ck("L3 ★性能锚：`detect_green_right` **不许**调 `chat_ocr.green_bands`"
    "（实测它逐像素扫全图 ⇒ 单帧 5.7s，而这是热路径；改成粗采样后 0.005s）",
    "green_bands(" not in _seg, "")
@@ -632,19 +637,34 @@ ck("M3 推论一致：列表不可见 ⇒ `can_switch_chat=False`；可见 ⇒ T
    _st_v["can_switch_chat"] is True and _st_h["can_switch_chat"] is False, "")
 ck("M4 推论一致：无论列表是否可见，`can_send_if_open` 都为 True（发送只依赖聊天区）",
    _st_v["can_send_if_open"] is True and _st_h["can_send_if_open"] is True, "")
-# ⭐ 右边界上界 = **60%w**（**实测标定**）：真绿底右端最大 0.559w（列表被拉宽时）；
-#   聊天区绿元素要么左端偏右（>0.5w），要么右端≈1.0。⛔ 我一度收到 45% ⇒ 误杀了
-#   `1826x978`（右端 0.559）这类正常帧 ⇒ 阈值必须实测标定。
+# ⭐ 右边界判据 **2026-10-01 改（T21）**：**不再用"占窗口比例"**，改用**结构性判据**。
+#
+# ⛔ 旧判据（"右端 ≥0.60w ⇒ 判 0"）**误杀了合法帧**，实测证据（全量 112 帧）：
+#     · `frame-027`（1121w）与 `frame-028`（1760w）的绿段**是同一段 `90~1087`**
+#       ⇒ 占窗口 0.970w / 0.618w ⇒ **旧判据把后者误杀**（列表明明可见、绿底完整）。
+#     ★ 真因：**会话列表宽度是固定像素（≈1000px），不随窗口等比缩放**
+#       ⇒ 用"占窗口比例"判"绝对固定宽度的列表"，**窗口一宽必然误杀**（方法错，非阈值没调好）。
+# ✅ 新判据（结构）：**绿底右端紧邻的须是"列表外的纯色背景"**；
+#    若右端之后**还接着明显绿色**（＝绿块铺到图右缘、左端还不靠左）⇒ 才判"聊天区绿元素"。
 _im_ok2 = Image.new("RGB", (1000, 400), (245, 245, 245))
 _d2b = ImageDraw.Draw(_im_ok2)
 _d2b.rectangle([10, 100, 550, 190], fill=(77, 163, 110))      # 0.55w（真绿底可到 0.559）⇒ 应保留
 ck("M5a 绿带右端 0.55w（列表被拉宽）⇒ **仍要保留**（别误杀正常帧）",
    ch.detect_green_right(_im_ok2) == 550, "实得 %s" % ch.detect_green_right(_im_ok2))
-_im_wide = Image.new("RGB", (1000, 400), (245, 245, 245))
-_dw = ImageDraw.Draw(_im_wide)
-_dw.rectangle([10, 100, 620, 190], fill=(77, 163, 110))       # 0.62w ⇒ 超过 60% ⇒ 应被钳掉
-ck("M5b 绿带右端 0.62w（≈满幅的聊天区绿元素）⇒ 返回 0",
-   ch.detect_green_right(_im_wide) == 0, "实得 %s" % ch.detect_green_right(_im_wide))
+# ★ 新 M5b：**右端 0.62w ＋ 其后是纯色背景** ⇒ **必须认**（这是 T21 抓到的真实误杀场景：
+#   frame-028 就是 1760×1358 下绿段 90~1087、占 0.618w、右侧纯深灰，列表明明可见）
+#   旧判据在这里返回 0 ⇒ **本行是 T21 的回归锚**：谁把比例上界加回来，这行立刻变红。
+_im_062 = Image.new("RGB", (1000, 400), (245, 245, 245))
+_d62 = ImageDraw.Draw(_im_062)
+_d62.rectangle([90, 100, 620, 190], fill=(77, 163, 110))      # 0.62w，**右侧是纯背景** ⇒ 应认（＝列表外沿）
+ck("M5b★ 绿带右端 0.62w 但**右侧是纯色背景** ⇒ **认**（T21 真实误杀场景，旧判据在此返回 0）",
+   ch.detect_green_right(_im_062) == 620, "实得 %s" % ch.detect_green_right(_im_062))
+# ★ 新 M5c：**绿块一直铺到图像右缘**（右侧没有纯色背景）⇒ 这才是"绿底延伸到聊天区"的特征 ⇒ 判 0
+_im_edge = Image.new("RGB", (1000, 400), (245, 245, 245))
+_de = ImageDraw.Draw(_im_edge)
+_de.rectangle([600, 100, 999, 190], fill=(77, 163, 110))      # 左端 0.60w（不靠左）+ 铺到右缘 ⇒ 聊天区绿元素
+ck("M5c★ 绿带**铺到图像右缘**且左端不靠左 ⇒ 返回 0（拦聊天区绿元素）",
+   ch.detect_green_right(_im_edge) == 0, "实得 %s" % ch.detect_green_right(_im_edge))
 _im_ok = Image.new("RGB", (1000, 400), (245, 245, 245))
 _dw2 = ImageDraw.Draw(_im_ok)
 _dw2.rectangle([10, 100, 380, 190], fill=(77, 163, 110))      # 0.38w（典型列表宽度）⇒ 应保留
