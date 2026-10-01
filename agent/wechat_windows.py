@@ -516,3 +516,143 @@ def send_to_popup(chat_name: str, text: str, *, timeout_s: float = 6.0,
         return out
     out.update(step="sent", detail="已投递并点发送；输入框已清空（绿占比 %.3f）" % r2)
     return out
+
+
+def send_file_to_popup(chat_name: str, paths, *, is_image: bool = False,
+                       timeout_s: float = 8.0, dry_run: bool = False) -> dict:
+    """⚠️ **【已停用 / 重复实现】发图片/文件请改用项目既有链** —— 保留仅为记录踩坑过程。
+
+    ⛔ **为什么停用（2026-10-01，报告 §68）**：
+      1. **重复实现**：项目里早有成品，功能比这里完整得多 ——
+         `wechat.send_image()` / `send_image_posted()` / `send_file_posted()`，
+         以及表情链 `tools._exec_send_emoji()` + `emoticon.py`。
+         它们已经解决：剪贴板放置（静态图走 CF_DIB、**动图走 CF_HDROP**）、
+         **右键菜单「粘贴」**、投递点发送、**DB 回读**、失败退回真实路径等。
+      2. **用了已判死的通道**：本函数走 `input_backend.paste()`（`WM_PASTE`），
+         而项目 `wechat.py` 里早已用现场实测**把这条路判死**：
+            "投递的消息**不携带修饰键状态** ⇒ 组合键退化成字面字母 v（实测冒出 `vvaavv`；五种变体全败）
+             ⇒ 改走**微信自己的动作路径：输入框右键 →「粘贴」菜单项**（全程投递，不需修饰键）
+             ⇒ 实测这条**真能把图放进输入框**（缩略图出现、发送按钮变绿）。"
+         ⇒ 本函数实测"卡片没进输入框"，**与该结论完全一致**。
+
+    ✅ **正确用法**：要发图片/文件，**调用 `wechat.send_image()` / `send_file_posted()`**；
+       "独立弹窗"这条线**只需负责"把目标定位/确认到独立弹窗"**（读窗口标题 → 拿 hwnd），
+       **发送动作本身复用既有链**。
+
+    以下为原始实现（仅作记录，勿在新代码中调用）——
+    """
+    """向独立弹窗发**图片/文件** ⇒ `{ok, step, detail, clipboard, ...}`。
+
+    ⭐ 通道选择（2026-10-01 查清，报告 §67）
+      微信是 Qt 应用 ⇒ 用 **OLE 拖放（`IDropTarget`）**，**不认老式 `WM_DROPFILES`**
+      ⇒ 投 `WM_DROPFILES` 会被**静默丢弃**（实测"返回 True 却无效果"）
+      ⇒ 所以**文件/图片走 `剪贴板 + WM_PASTE`** —— 这也正是项目原本的设计
+        （`clipboard.py` 文件头写的就是这条）。
+
+    ⛔ **必须用 `clipboard_guard` 包住**：写剪贴板会**覆盖用户正在复制的内容**。
+       当天已实际发生过一次冲突（用户粘贴出来的成了我们的测试文字，§64）。
+       ⇒ 发完**立刻还回去**（`guard` 在退出时自动恢复；异常也恢复）。
+
+    `is_image=True` ⇒ 走 `set_image`（CF_DIB）；否则走 `set_files`（CF_HDROP）。
+    `dry_run=True` ⇒ 只把东西贴进输入框、**不点发送**，随后清空（用于验收）。
+    """
+    out = {"ok": False, "step": "", "detail": "", "hwnd": 0, "chat": chat_name}
+    if isinstance(paths, str):
+        paths = [paths]
+    paths = [str(p) for p in (paths or [])]
+    if not paths:
+        out.update(step="args", detail="没有文件路径")
+        return out
+
+    hit = find_chat_window(chat_name)
+    hwnd = int(hit.get("hwnd") or 0)
+    if not hwnd:
+        out.update(step="locate", detail="按标题找不到窗口；候选=%s" % hit.get("candidates"))
+        return out
+    out["hwnd"] = hwnd
+    out["title"] = hit.get("title")
+
+    try:
+        from agent import input_backend as IB
+        from agent import clipboard as CB
+        be = IB.select_backend()
+    except Exception as e:
+        out.update(step="imports", detail="依赖导入失败：%s" % str(e)[:80])
+        return out
+
+    def _content():
+        im, _m = grab_window(hwnd, physical=False)
+        return (content_ratio(im)[0] if im else -1.0), im
+
+    base, _im0 = _content()
+    if base < 0:
+        out.update(step="grab", detail="抓图失败")
+        return out
+    out["content_before"] = round(base, 2)
+
+    # ★ 备份用户剪贴板 → 写我们的内容 → 粘贴 → 恢复
+    guard = CB.clipboard_guard()
+    guard.__enter__()
+    try:
+        w = CB.set_image(paths[0]) if is_image else CB.set_files(paths)
+        out["clipboard_set"] = str(w)
+        if not (w and w[0]):
+            out.update(step="clipboard", detail="写剪贴板失败：%s" % str(w))
+            return out
+        try:
+            pr = be.paste(hwnd)          # WM_PASTE（内部自带 _wake）
+        except Exception as e:
+            out.update(step="paste", detail="投递 WM_PASTE 异常：%s" % str(e)[:80])
+            return out
+        out["paste_ret"] = str(pr)
+        import time as _t
+        t0 = _t.time()
+        after = base
+        while _t.time() - t0 < float(timeout_s):
+            after, _imA = _content()
+            if abs(after - base) > 0.3:      # 卡片出现 ⇒ 内容占比变化
+                break
+            _t.sleep(0.3)
+        out["content_after"] = round(after, 2)
+        if abs(after - base) <= 0.3:
+            out.update(step="verify_pasted",
+                       detail="粘贴后内容占比未变（%.2f→%.2f）⇒ 卡片没进输入框" % (base, after))
+            return out
+        out["ok"] = True
+        out["step"] = "pasted"
+
+        if dry_run:
+            # 清空卡片（退格/Delete）—— 文件卡片用退格可删
+            try:
+                for _ in range(3):
+                    be.keys(hwnd, [0x23]); _t.sleep(0.12)
+                    be.keys(hwnd, [0x08] * 20); _t.sleep(0.18)
+                    be.keys(hwnd, [0x2E]); _t.sleep(0.12)
+            except Exception:
+                pass
+            out["detail"] = "dry_run：卡片已进入输入框，已清空，**未点发送**"
+            return out
+
+        # 点「发送」（比例位置）
+        try:
+            import ctypes as _ct
+            import ctypes.wintypes as _wt
+            rct = _wt.RECT()
+            _user32.GetWindowRect(hwnd, _ct.byref(rct))
+            _im, _m2 = grab_window(hwnd, physical=False)
+            sx = int(rct.left + _im.size[0] * SEND_BTN_REL[0])
+            sy = int(rct.top + _im.size[1] * SEND_BTN_REL[1])
+            out["click_ret"] = str(be.click(hwnd, (sx, sy), press_ms=120))
+            out["click_pt"] = (sx, sy)
+        except Exception as e:
+            out.update(step="click_send", detail="点发送异常：%s" % str(e)[:80])
+            return out
+        _t.sleep(1.5)
+        fin, _ = _content()
+        out["content_final"] = round(fin, 2)
+        out.update(step="sent", detail="已粘贴并点发送；内容占比 %.2f→%.2f" % (base, after))
+        return out
+    finally:
+        # ★ 无论如何都还用户剪贴板
+        guard.__exit__(None, None, None)
+        out["clipboard"] = guard.result[1] if isinstance(guard.result, tuple) else str(guard.result)
