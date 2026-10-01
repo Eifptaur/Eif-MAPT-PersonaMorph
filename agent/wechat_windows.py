@@ -247,3 +247,75 @@ def content_ratio(img) -> tuple:
             if not (abs(r - bg[0]) <= 14 and abs(g - bg[1]) <= 14 and abs(b - bg[2]) <= 14):
                 keep += 1
     return 100.0 * keep / max(1, n), bg, 100.0 * bgn / tot
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 独立弹窗内的两个关键控件（**比例坐标**，跨尺寸稳定）
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: 「发送」按钮中心的**比例位置**（实测标定，图 1182×970；见报告 §56）
+SEND_BTN_REL = (0.938, 0.948)
+#: 输入框内可点的位置（避开工具栏与发送键）：中点偏上
+INPUT_REL = (0.50, 0.85)
+#: 输入框矩形（比例）
+INPUT_BOX_REL = (0.019, 0.789, 0.981, 0.974)
+
+
+def is_green_px(p, d: int = 20) -> bool:
+    """这个像素是不是"绿"（用于判**发送键是否激活**）。"""
+    try:
+        r, g, b = p[0], p[1], p[2]
+    except Exception:
+        return False
+    return (g > r + d) and (g > b + d)
+
+
+def send_button_green(img, rel=SEND_BTN_REL) -> bool:
+    """**「发送」键是否已激活（变绿）** ⇒ 等价于"输入框里确实有字"。
+
+    ⛔ 为什么用它（2026-10-01 用户给出 + 实测确认）：
+      用户："**只有你输入框里面有文字的时候，它才会变成绿色**"。
+      实测（未输入时）：按钮区域取到 `(214,214,214)/(236,236,236)` ⇒ 灰；
+      绿色参照（用户发的绿气泡）= `(175,239,165)` ⇒ `is_green_px` = True。
+      ⇒ 于是判据成立：**灰 ⇒ 没输进去；绿 ⇒ 字已在输入框**。
+    ★这是**投递键盘"是否真的打进去了"的唯一可靠确认**（比 OCR 回读输入框更快更稳，
+      因为"发送"二字在禁用态对比度极低、OCR 读不到，见报告 §56.3）。
+    ⇒ **用法**：投递输入后**轮询这个函数**，变绿才算成功；不变绿就重试或改真实键盘。
+    """
+    try:
+        w, h = img.size
+        x, y = int(w * rel[0]), int(h * rel[1])
+        # 取 3×3 邻域的中位（避免正好落在"发送"二字上）
+        vals = []
+        for dy in (-4, 0, 4):
+            for dx in (-4, 0, 4):
+                xx, yy = min(max(x + dx, 0), w - 1), min(max(y + dy, 0), h - 1)
+                vals.append(img.getpixel((xx, yy))[:3])
+        vals.sort(key=lambda c: (c[0] + c[1] + c[2]))
+        return is_green_px(vals[len(vals) // 2])          # 中位
+    except Exception:
+        return False
+
+
+def rel_to_px(img_or_size, rel):
+    """比例 ⇒ 图上像素（供换算到客户区/屏幕坐标用）。"""
+    try:
+        w, h = img_or_size.size
+    except AttributeError:
+        w, h = img_or_size
+    return int(w * rel[0]), int(h * rel[1])
+
+
+def popup_controls(scale: float = 1.0) -> dict:
+    """独立弹窗两个控件的**逻辑坐标**比例说明（供点击用）。
+
+    `grab_window(physical=True)` 给的是**物理像素图** ⇒ 图上坐标除以 `scale` 才是**逻辑坐标**，
+    再加窗口客户区在屏幕上的原点，即得**屏幕坐标**（注意 `GetWindowRect` 也是逻辑像素，两者自洽）。
+    """
+    return {
+        "send_btn_rel": SEND_BTN_REL,
+        "input_rel": INPUT_REL,
+        "input_box_rel": INPUT_BOX_REL,
+        "scale": float(scale),
+        "note": "图上坐标 / scale = 逻辑坐标；逻辑坐标 + 窗口左上角(逻辑) = 屏幕坐标",
+    }
