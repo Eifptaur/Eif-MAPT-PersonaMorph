@@ -270,31 +270,62 @@ def is_green_px(p, d: int = 20) -> bool:
     return (g > r + d) and (g > b + d)
 
 
-def send_button_green(img, rel=SEND_BTN_REL) -> bool:
+#: 「发送」按钮的**采样矩形**（比例，围绕按钮中心稍放大，确保覆盖"键"而不越界）
+SEND_BTN_BOX_REL = (0.895, 0.925, 0.980, 0.970)
+
+
+def send_button_green(img, box=SEND_BTN_BOX_REL, min_ratio: float = 0.18) -> bool:
     """**「发送」键是否已激活（变绿）** ⇒ 等价于"输入框里确实有字"。
 
-    ⛔ 为什么用它（2026-10-01 用户给出 + 实测确认）：
-      用户："**只有你输入框里面有文字的时候，它才会变成绿色**"。
-      实测（未输入时）：按钮区域取到 `(214,214,214)/(236,236,236)` ⇒ 灰；
-      绿色参照（用户发的绿气泡）= `(175,239,165)` ⇒ `is_green_px` = True。
-      ⇒ 于是判据成立：**灰 ⇒ 没输进去；绿 ⇒ 字已在输入框**。
-    ★这是**投递键盘"是否真的打进去了"的唯一可靠确认**（比 OCR 回读输入框更快更稳，
-      因为"发送"二字在禁用态对比度极低、OCR 读不到，见报告 §56.3）。
-    ⇒ **用法**：投递输入后**轮询这个函数**，变绿才算成功；不变绿就重试或改真实键盘。
+    ⛔ 为什么用它（2026-10-01 用户给出 + 实测）：
+      用户："**只有你输入框里面有文字的时候，它才会变成绿色**；
+            变绿的话，**那个字会变成白色**；没发的时候两个灰比较接近，字只比键深一点"。
+      实测（未输入）：按钮区域 `(214,214,214)`（字） / `(236,236,236)`（键）⇒ 都灰；
+      绿色参照（用户发的绿气泡）= `(175,239,165)`。
+
+    ⚠️ **为什么不是"取中心像素的中位色"**（我第一版就错了）：
+      激活态是「**绿底 + 白字**」⇒ 中心像素可能正好落在**白字**上 ⇒ 中位色判绿会**漏判**。
+      ⇒ 改成 **统计矩形内"绿像素"的占比**（`>= min_ratio` 才算激活）。
+      这样"绿底白字"里绿仍占多数，"灰底灰字"里几乎没有绿 ⇒ 两侧都稳。
+
+    ★这是**投递键盘"是否真的打进去了"的可靠确认**（比 OCR 回读输入框更快更稳：
+      禁用态"发送"二字对比度极低、`pane_text` 实测返回空，见报告 §56.3）。
+    ⇒ **用法**：投递输入后**轮询本函数**，变绿才算成功；不变绿就重试或改真实键盘。
     """
     try:
         w, h = img.size
-        x, y = int(w * rel[0]), int(h * rel[1])
-        # 取 3×3 邻域的中位（避免正好落在"发送"二字上）
-        vals = []
-        for dy in (-4, 0, 4):
-            for dx in (-4, 0, 4):
-                xx, yy = min(max(x + dx, 0), w - 1), min(max(y + dy, 0), h - 1)
-                vals.append(img.getpixel((xx, yy))[:3])
-        vals.sort(key=lambda c: (c[0] + c[1] + c[2]))
-        return is_green_px(vals[len(vals) // 2])          # 中位
+        x0, y0 = int(w * box[0]), int(h * box[1])
+        x1, y1 = int(w * box[2]), int(h * box[3])
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(w, max(x1, x0 + 1)), min(h, max(y1, y0 + 1))
+        n = green = 0
+        step = max(1, (x1 - x0) // 24)
+        for yy in range(y0, y1, step):
+            for xx in range(x0, x1, step):
+                n += 1
+                if is_green_px(img.getpixel((xx, yy))[:3]):
+                    green += 1
+        return bool(n) and (float(green) / n >= float(min_ratio))
     except Exception:
         return False
+
+
+def send_button_green_ratio(img, box=SEND_BTN_BOX_REL) -> float:
+    """返回采样矩形内的**绿像素占比**（诊断用；正常态≈0，激活态应显著>0）。"""
+    try:
+        w, h = img.size
+        x0, y0 = max(0, int(w * box[0])), max(0, int(h * box[1]))
+        x1, y1 = min(w, int(w * box[2])), min(h, int(h * box[3]))
+        n = green = 0
+        step = max(1, (x1 - x0) // 24)
+        for yy in range(y0, y1, step):
+            for xx in range(x0, x1, step):
+                n += 1
+                if is_green_px(img.getpixel((xx, yy))[:3]):
+                    green += 1
+        return (float(green) / n) if n else 0.0
+    except Exception:
+        return 0.0
 
 
 def rel_to_px(img_or_size, rel):
