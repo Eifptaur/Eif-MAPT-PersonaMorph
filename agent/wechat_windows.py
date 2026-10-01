@@ -157,6 +157,43 @@ if __name__ == "__main__":
 # 抓图（**必须按 DPI 倍率建位图** —— 这是踩过一个大坑后定下来的）
 # ─────────────────────────────────────────────────────────────────────────────
 
+#: **本进程是否已设 DPI 感知**（我们自己设的 ⇒ 可靠记录）。
+#: ⛔ 为什么需要这个标志（2026-10-01，T16）：`window_scale()` 乘以 `dpi/96` 的**前提**是
+#:   "`GetWindowRect` 返回逻辑像素"。一旦进程设了 DPI 感知，`GetWindowRect` **已经是物理像素**，
+#:   再乘一次就会**双重放大**（实测：1182x971 的窗被抓成 1773x1456）。
+#: ⇒ 所以 `grab_window` 必须**按这个标志决定是否乘**，语义是"**保证图是物理像素**"。
+_DPI_AWARE = False
+
+
+def set_dpi_aware() -> bool:
+    """进程级设 DPI 感知（`PER_MONITOR_AWARE_V2`，失败退 `SetProcessDPIAware`）。
+
+    **设与不设的区别**（实测）：
+      · 不设：`GetWindowRect` 返回**逻辑（虚拟化）坐标**（如 788x647）⇒ 图需乘 scale 才是物理像素；
+      · 已设：`GetWindowRect` 直接返回**物理像素**（如 1182x971）⇒ **不能再乘**。
+    ⇒ 一旦设置，**全项目的"逻辑像素"假设都要同步核对**（尤其位图尺寸与点击坐标换算），
+      所以本函数**不主动在 import 时调用** —— 由调用方明确选择时机（避免"只改一半"）。
+    """
+    global _DPI_AWARE
+    if _DPI_AWARE:
+        return True
+    try:
+        _user32.SetProcessDpiAwarenessContext(_ct.c_void_p(-4))     # PER_MONITOR_AWARE_V2
+        _DPI_AWARE = True
+    except Exception:
+        try:
+            _user32.SetProcessDPIAware()
+            _DPI_AWARE = True
+        except Exception:
+            _DPI_AWARE = False
+    return _DPI_AWARE
+
+
+def dpi_aware() -> bool:
+    """当前进程是否已设 DPI 感知（决定"GetWindowRect 是物理还是逻辑"）。"""
+    return bool(_DPI_AWARE)
+
+
 def window_scale(hwnd: int) -> float:
     """窗口的 DPI 缩放倍率（`GetDpiForWindow/96`）；取不到则退回 1.0。
 
@@ -194,7 +231,13 @@ def grab_window(hwnd: int, physical: bool = True, flag: int = 2):
     lw, lh = int(r.right - r.left), int(r.bottom - r.top)
     if lw <= 0 or lh <= 0:
         return None, {"err": "窗口尺寸异常", "logical": (lw, lh)}
-    sc = window_scale(hwnd) if physical else 1.0
+    # ⭐ **语义：保证图是物理像素**（见 `_DPI_AWARE` 的说明）：
+    #   已设感知 ⇒ GetWindowRect 已是物理 ⇒ sc=1.0（**不再乘，否则双重放大**）；
+    #   未设感知 ⇒ GetWindowRect 是逻辑 ⇒ sc=dpi/96。
+    if physical:
+        sc = 1.0 if _DPI_AWARE else window_scale(hwnd)
+    else:
+        sc = 1.0
     w, h = max(1, int(lw * sc)), max(1, int(lh * sc))
     hdc = _user32.GetWindowDC(hwnd)
     mdc = _G32.CreateCompatibleDC(hdc)
@@ -221,7 +264,8 @@ def grab_window(hwnd: int, physical: bool = True, flag: int = 2):
     _G32.DeleteObject(bmp)
     _G32.DeleteDC(mdc)
     _user32.ReleaseDC(hwnd, hdc)
-    return img, {"ok": bool(ok), "logical": (lw, lh), "scale": sc, "physical_size": (w, h)}
+    return img, {"ok": bool(ok), "logical": (lw, lh), "scale": sc, "physical_size": (w, h),
+                 "dpi_aware": bool(_DPI_AWARE)}
 
 
 def content_ratio(img) -> tuple:
