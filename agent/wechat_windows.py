@@ -274,7 +274,7 @@ def is_green_px(p, d: int = 20) -> bool:
 SEND_BTN_BOX_REL = (0.895, 0.925, 0.980, 0.970)
 
 
-def send_button_green(img, box=SEND_BTN_BOX_REL, min_ratio: float = 0.18) -> bool:
+def send_button_green(img, box=SEND_BTN_BOX_REL, min_ratio: float = 0.30) -> bool:
     """**「发送」键是否已激活（变绿）** ⇒ 等价于"输入框里确实有字"。
 
     ⛔ 为什么用它（2026-10-01 用户给出 + 实测）：
