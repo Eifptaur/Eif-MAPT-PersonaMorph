@@ -439,7 +439,19 @@ class MessageBackend(InputBackend):
             buf = bytes(hdr) + raw
             GMEM_MOVEABLE, GMEM_ZEROINIT = 0x0002, 0x0040
             _k32 = _ct.windll.kernel32
-            _k32.GlobalAlloc.restype = _wt.HGLOBAL
+            # ⭐ 必须显式声明 argtypes/restype（照 clipboard.py 的既有正确写法）：
+            #   只写 restype 而不写 argtypes 时，flags/size 会按默认 c_int 解释，
+            #   返回值也可能是被截断的 32 位值（实测见过 668401672 = 0x27d70008），
+            #   于是把"残缺句柄"投给 WM_DROPFILES，目标进程拿不到有效 HDROP。
+            #   另：restype = c_void_p 时返回值本身就是 int（不是 c_void_p 对象），
+            #   所以 _post 直接传 int(h) 即可，不要 ct.cast(h, c_void_p)
+            #   （那会 ArgumentError: argument 1: TypeError，实测踩过）。
+            _k32.GlobalAlloc.argtypes = [_ct.c_uint, _ct.c_size_t]
+            _k32.GlobalAlloc.restype = _ct.c_void_p
+            _k32.GlobalLock.argtypes = [_ct.c_void_p]
+            _k32.GlobalLock.restype = _ct.c_void_p
+            _k32.GlobalUnlock.argtypes = [_ct.c_void_p]
+            _k32.GlobalFree.argtypes = [_ct.c_void_p]
             h = _k32.GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, len(buf))
             if not h:
                 return False, "GlobalAlloc 失败"
@@ -450,11 +462,8 @@ class MessageBackend(InputBackend):
             _ct.memmove(p, buf, len(buf))
             _k32.GlobalUnlock(h)
             self._wake(hwnd)
-            # ⛔  是 （ctypes 的 c_void_p 对象）⇒ **不能直接 **
-            #   （那会拿到对象地址、数值超范围 ⇒ ，实测踩过）。
-            #   必须先 cast 成句柄再取值。
-            _hval = _ct.cast(h, _ct.c_void_p).value
-            _post(int(hwnd), WM_DROPFILES, int(_hval or 0), 0)
+            # h 已是 int（见上面 restype 的说明）⇒ 直接传；不要 cast。
+            _post(int(hwnd), WM_DROPFILES, int(h or 0), 0)
             return True, ""
         except Exception as e:
             return False, "投递 WM_DROPFILES 失败：%s: %s" % (type(e).__name__, e)
