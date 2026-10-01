@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
@@ -446,6 +447,40 @@ def main():
        "_groups" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0]
        and "_nick_map" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0]
        and "_monitored_chat_ids()" in _WT2.split("def _db_chat_names(")[1].split("def _known_chat_names(")[0], "")
+
+    print("\n== E 段：内容级复核的『针』必须能在屏幕上出现 ==")
+    # 起因（用户反馈 2026-09-30）：某机器上库里 `content` 回的是 `wxid_xlpcj6tvoiz` / `5640103193` /
+    # `wxid_ahg40` 这类**内部 ID**（不是消息正文）⇒ 被当成"内容级核对的针"去聊天区找 ⇒ **永远找不到**
+    # ⇒ 复核判"不是这个会话" ⇒ **整批拒发、sent 始终 0**（现场："它试的 6 条全是 wxid 串"）。
+    try:
+        from agent.wechat import _looks_like_internal_id as _lid
+        from agent.wechat import WeChatAdapter as _WCA
+
+        for _s, _want in (("wxid_xlpcj6tvoiz", True), ("5640103193", True), ("wxid_ahg40", True),
+                          ("4489***@chatroom", True), ("d41d8cd98f00b204e9800998ecf8427e", True)):
+            ok("E1 内部 ID 应被剔出（不当针）：%r" % _s, _lid(_s) is _want, "实得 %s" % _lid(_s))
+        for _s in ("PM-putback-2592", "@蓝色大肥鱼 你是", "在的 别刷了", "[文件/链接/卡片]",
+                   "2qqwq", "W0verify-75482", "下午3点开会", "hello world"):
+            ok("E2 真文本**不许**被误剔：%r" % _s, _lid(_s) is False, "实得 %s" % _lid(_s))
+
+        # ⛔ **类完整性锚**（防"在类内部插入 0 缩进函数把类截断"这类事故 —— 实测踩过：
+        #   helper 用 0 缩进插在 class 内 ⇒ 该类后续方法全变成模块级函数 ⇒
+        #   `WeChatAdapter` 上直接没有 `recent_texts` ⇒ 只有跑真机才暴露）
+        for _m in ("recent_texts", "chat_identity_ok", "send_text", "switch_chat_posted", "_db_messages"):
+            ok("E3 类完整性：`WeChatAdapter.%s` 必须存在（防类被截断）" % _m, hasattr(_WCA, _m))
+
+        import re as _re
+        _src_w = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+        # 判据：helper 必须是**模块级**（行首零缩进）。⚠️ 不要求"在第一个 class 之前" ——
+        #   实测它在第二个 class 之前也是合法的模块级定义（功能正常）；
+        #   真正要防的是"缩进在类内"（那才会截断类）。
+        _m = _re.search(r"(?m)^def _looks_like_internal_id\(", _src_w)
+        _indented = _re.search(r"(?m)^\s+def _looks_like_internal_id\(", _src_w)
+        ok("E4 源码锚：`_looks_like_internal_id` 必须是**模块级**（行首零缩进）"
+           "—— 缩进在类内且非方法写法会截断类",
+           bool(_m) and not _indented, "行首定义=%s 缩进定义=%s" % (bool(_m), bool(_indented)))
+    except Exception as _eE:
+        ok("E 段执行", False, "%s: %s" % (type(_eE).__name__, str(_eE)[:80]))
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

@@ -409,6 +409,34 @@ def _hold_end() -> None:
         pass
 
 
+# ── 模块级小工具（**必须放在类外**：放在类内且用 0 缩进会把类截断，导致该类后续方法全部变成模块级函数）──
+def _looks_like_internal_id(s: str) -> bool:
+    """这个串像不像**内部标识**（wxid / 纯数字 / 群 id / 纯 hex），而不是"能在屏幕上看到的正文"？
+
+    为什么要它（2026-09-30 用户反馈实测）：某些机器上库里 `content` 回的是 `wxid_xxx`、
+    `5640103193`、`xxx@chatroom` 这类**内部 ID**。它们**不可能出现在聊天区的可见文本里**，
+    一旦被当成"内容级核对的针"，结果必然是"找不到" ⇒ 复核判否 ⇒ **整批拒发、sent 始终 0**。
+
+    判据刻意保守（宁可漏剔，不可误剔真文本）：
+      · `wxid_` 前缀；· 含 `@chatroom` / `@openim`；· 纯数字且 ≥6 位；
+      · 纯 [0-9a-f] 且 ≥12 位（md5/hex id）。
+    真文本几乎不可能命中（中文、带空格标点的句子一律不含）。
+    """
+    t = (s or "").strip().lower()
+    if not t:
+        return False
+    if t.startswith("wxid_"):
+        return True
+    if "@chatroom" in t or "@openim" in t:
+        return True
+    _core = t.replace("-", "").replace("_", "")
+    if _core.isdigit() and len(_core) >= 6:
+        return True
+    if len(_core) >= 12 and all(ch in "0123456789abcdef" for ch in _core):
+        return True
+    return False
+
+
 class _HoldDown(object):
     """上下文管理器：**进块开始摁住微信，出块停**（想不想上来无所谓，上来的瞬间按回去）。"""
 
@@ -6970,6 +6998,14 @@ class WeChatAdapter:
         try:
             for r in (self._db_messages(chat_id, limit=max(int(limit), 1)) or []):
                 c = str(r.get("content") or "").strip()
+                # ⛔ **内部 ID 不是"能在屏幕上看到的文本"** ⇒ 一律不能当"针"。
+                #   实测（用户反馈 2026-09-30）：某机器上 `content` 字段回的是
+                #     `wxid_xlpcj6tvoiz` / `5640103193` / `wxid_ahg40` 这类**内部标识**（不是消息正文），
+                #   而 `chat_identity_ok` 把它当"针"去聊天区找 ⇒ **永远找不到** ⇒
+                #   判"内容级复核说不是这个会话" ⇒ **整批拒发、sent 始终 0**（现场："它试的 6 条全是 wxid 串"）。
+                #   原则与下面的"方括号占位符不是内容"一致：**针必须有可能出现在屏幕上**。
+                if _looks_like_internal_id(c):
+                    continue
                 # ⚠️ 图片/文件/引用这类消息的 content 是**原始报文**：有的以 `<msg` 开头，有的以
                 # `<?xml version="1.0"?>` 开头（只判 `<msg` 会漏掉后者 ⇒ 指纹表
                 #    被 6 条 XML 塞满、把「2qqwq」这类真文本挤出 keep 名额 ⇒ 身份闸对**正确**的会话也判否）。
