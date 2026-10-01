@@ -219,16 +219,38 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
         if (_b1 - _b0) < 8:
             _b0, _b1 = max(0, _best_y - 10), min(h - 1, _best_y + 10)
 
-        # ② 带内逐列判绿 ⇒ 取**最长连续段**的右端（避免左侧绿色头像把范围拉偏）
+        # ② 带内逐列判绿 ⇒ 取**最长连续绿段**，并对它做**两条**约束：
+        #    · 「必须从左侧起铺」：会话列表的绿底是**整行底色**，从列表左沿一直铺到列表右沿
+        #      ⇒ 它的左端必然靠左（实测 1121x1091：x=30~443，左端≈0.03w）。
+        #      而**聊天区里的绿色元素**（绿色气泡/图片）左端会在半幅之后 ⇒ 用这条把它们排除。
+        #      ⛔ 实测踩过：仅凭"右边界 < 80% 宽"挡不住 —— 日志里出现过
+        #      「绿底行右边界 1009/1020 ⇒ 改用绿带」，而它们在 2265 宽的图里只占 0.45w，
+        #      其实是聊天区的绿色元素，却通过了旧钳位 ⇒ 面板左沿被改错。
+        #    · 「段要够长」：几像素的绿点不算。
         _ystep = max(2, (_b1 - _b0) // 10)
-        _best_r = 0
+        _runs, _cur, _start = [], 0, 0
         for x in range(0, w):
             hit = 0
             for y in range(_b0, _b1 + 1, _ystep):
                 if _is_green(x, y):
                     hit += 1
-            if hit >= 2 and x > _best_r:
-                _best_r = x
+            if hit >= 2:
+                if _cur == 0:
+                    _start = x
+                _cur += 1
+            else:
+                if _cur:
+                    _runs.append((_start, x - 1))
+                _cur = 0
+        if _cur:
+            _runs.append((_start, w - 1))
+        if not _runs:
+            return 0
+        _bl, _best_r = max(_runs, key=lambda t: t[1] - t[0])      # 最长段
+        if _bl > int(w * 0.15):                                   # ⭐ 必须从左侧起铺
+            return 0
+        if (_best_r - _bl) < int(w * 0.10):                       # 段要够长
+            return 0
         # 只在"这一段够长"时才认（避免几像素的绿点）
         _ret = int(_best_r) if _best_r > int(w * 0.10) else 0
         try:
