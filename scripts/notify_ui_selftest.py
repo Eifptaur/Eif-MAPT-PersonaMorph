@@ -259,22 +259,56 @@ try:
 finally:
     NU.find_console_window, NU.foreground, NU.open_console = _real_find, _real_fg, _real_open
 
-print("── D. 接线：新开单才弹 + 判据/无人值守能关掉 ──")
-ok("弹窗在后台线程里跑（不挡住 /api/status）",
-   "threading.Thread(target=_run, daemon=True" in GSRC)
-ok("失败只写日志、不影响开单", "待决单弹窗失败（不影响开单）" in GSRC)
-ok("WX_NO_UI_POP=1 能关掉弹窗", 'os.environ.get("WX_NO_UI_POP") == "1"' in GSRC)
+print("── D. 版本门弹窗：**已整体停用**（能跨版本运行 ⇒ 弹窗是纯风险源）──")
+# 背景：2026-10-01 用户决策 —— "**如果能跨版本运行，这个弹窗直接删掉**"。
+#   `check()` 四条返回 allow **全为 True** ⇒ 不点单子照常发 ⇒ 弹窗不拦发送，
+#   而现场反馈"上面的选项都有问题、点了程序没法正常跑" ⇒ 弹窗＝纯风险源。
+ok("★ 反向锚：`_pending_enabled` 还在（被删掉 ⇒ 本行必红）",
+   "def _pending_enabled()" in GSRC)
+ok("★ 默认是**停用**（函数末尾 `return False`，不是 True）",
+   "return False" in GSRC.split("def _pending_enabled()", 1)[-1].split("def ", 1)[0])
+ok("pending() 里真的调了它（不是写了没人用）", "_pending_enabled()" in GSRC.split("def pending(")[1])
+_pbody = GSRC.split("def pending(", 1)[1].split("\ndef ", 1)[0]
+# ⚠ 必须**剥掉 docstring**再比：docstring 里也写着 `_pending_enabled()`，
+#   不剥的话首个匹配命中注释，判据会**假红**（本行第一次就踩了这个坑）。
+# ⚠ 找不到时必须**记 FAIL**，不许抛 ValueError —— 判据崩掉不进计数，
+#   在回归里会被当成"没跑到"，等于把红灯藏起来（反向锚第 2 次就踩了这个坑）。
+_pcode = _pbody.split('"""', 2)[-1]
+
+
+def _after_check(txt):
+    try:
+        return txt.index("_pending_enabled()") > txt.index("st = check(capability")
+    except ValueError:
+        return False
+
+
+ok("停用是**在 check() 之后**才返回的 ⇒ 告警/台账不受影响", _after_check(_pcode))
+# 旧行为（弹窗在后台线程跑 / WX_NO_UI_POP 能关）的静态判据保留：代码不能删，
+# 因为 `_pop_ui` 仍可能被「配置恢复」「手动打开」调用。
+ok("弹窗代码仍在（恢复开关一开就能用）：后台线程跑", "threading.Thread(target=_run, daemon=True" in GSRC)
+ok("弹窗代码仍在：失败只写日志、不影响开单", "待决单弹窗失败（不影响开单）" in GSRC)
+ok("弹窗代码仍在：WX_NO_UI_POP=1 仍能关掉", 'os.environ.get("WX_NO_UI_POP") == "1"' in GSRC)
 import tempfile # noqa: E402
 from agent import pending_decisions as PD # noqa: E402
 _tmp = tempfile.mkdtemp(prefix="nu-judge-")
 try:
     PD.DECISIONS_PATH = os.path.join(_tmp, "pd.json")
-    r5 = VG.pending(wechat="9.9.9", adapter="1.1.1") # 新开单（弹窗被 WX_NO_UI_POP 关掉）
-    ok("新开单时报「已按 WX_NO_UI_POP 关掉弹窗」",
-       isinstance(r5.get("pop"), dict) and "WX_NO_UI_POP" in str(r5["pop"].get("skipped") or ""), str(r5.get("pop")))
-    r6 = VG.pending(wechat="9.9.9", adapter="1.1.1") # 第二遍：同一对版本不再开单、也不弹
-    ok("同一对版本第二次不再弹", r6.get("created") is False and bool((r6.get("pop") or {}).get("skipped")),
-       str(r6.get("pop")))
+    r5 = VG.pending(wechat="9.9.9", adapter="1.1.1") # 未实测版本 × 未实测版本
+    ok("未实测版本 ⇒ **不开单、不弹窗**（created=False）", r5.get("created") is False, str(r5.get("created")))
+    ok("未实测版本 ⇒ **既不弹窗也不报错**（没有 pop / error 字段）",
+       "pop" not in r5 and "error" not in r5, "pop=%r error=%r" % (r5.get("pop"), r5.get("error")))
+    ok("停用时如实说明原因（可追溯，不是静默）",
+       "停用" in str(r5.get("disabled") or ""), str(r5.get("disabled"))[:48])
+    ok("★ 最要紧的一条：**停用后 check() 仍 allow=True ⇒ 发送不受影响**",
+       bool((r5.get("status") or {}).get("allow")) is True,
+       "level=%s allow=%s" % ((r5.get("status") or {}).get("level"), (r5.get("status") or {}).get("allow")))
+    r6 = VG.pending(wechat="9.9.9", adapter="1.1.1") # 第二遍：结果必须与第一遍一致
+    ok("同一对版本第二遍仍不开单、行为稳定",
+       r6.get("created") is False and bool(r6.get("disabled")), str(r6.get("disabled"))[:48])
+    import json as _json # noqa: E402
+    _empty = (not os.path.exists(PD.DECISIONS_PATH)) or (_json.load(open(PD.DECISIONS_PATH, encoding="utf-8")) in ({}, []))
+    ok("★ 停用后**台账里一张单子都没写**（真没开单，不是开了不弹）", _empty)
 finally:
     import shutil # noqa: E402
     shutil.rmtree(_tmp, ignore_errors=True)

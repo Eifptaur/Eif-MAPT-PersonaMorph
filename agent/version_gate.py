@@ -487,11 +487,23 @@ def _pop_ui(item: dict) -> dict:
 def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
     """返回 `{needed, item, created, status}`：门没过就保证有一张待决单（幂等）。
 
-    **新开单**时顺手让 Persona Morph 自己把弹窗切出来（不打扰你（可能短暂置前约 1~3 秒后自动还回），见 `_pop_ui`）。
+    ⛔★ **本函数默认已停用开单与弹窗**（2026-10-01 用户决策，见 `_pending_enabled()`）：
+      理由——① **我方本来就"能跨版本运行"**：`check()` 的四条返回 `allow` **全为 True**
+        （`no_measured` / `no_measured_local` / `warn` / `ok`），也就是说**不点这张单子、程序照常发**；
+      ② 但**这张单子会跳出来**，而**上面的选项被现场反馈"都有问题、点了程序没法正常跑"**
+        ⇒ **一个"不拦发送、却可能被误点坏"的弹窗，是纯风险源**；
+      ③ 现场反馈（朋友，微信 4.1.15.13）："**只能选'什么都不做'，不然程序就不能正常运行**"。
+      ⇒ 处置：**不再开单、不再弹窗**；`check()` 的告警与控制台台账**照旧保留**
+        （"版本未实测"这件事仍然被记录，只是不再打断用户）。
+
+    需要恢复时：`config.version_gate.pending_enabled = true`（或改 `_pending_enabled`）。
     """
     st = check(capability, wechat=wechat, adapter=adapter)
     if st.get("level") == "ok" and st.get("allow"):
         return {"needed": False, "item": None, "created": False, "status": st}
+    if not _pending_enabled():
+        return {"needed": False, "item": None, "created": False, "status": st,
+                "disabled": "版本门待决单已停用（能跨版本运行；告警仍进台账与控制台）"}
     try:
         from . import pending_decisions as pd
         item, created = pd.ensure_version_decision(st.get("wechat"), st.get("adapter"),
@@ -500,6 +512,24 @@ def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> di
         return {"needed": True, "item": item, "created": created, "status": st, "pop": pop}
     except Exception as e:
         return {"needed": True, "item": None, "created": False, "status": st, "error": str(e)}
+
+
+def _pending_enabled() -> bool:
+    """版本门**待决单/弹窗**是否启用。**默认 False（停用）**。
+
+    ⛔ 默认停用的理由见 `pending()` 的 docstring：能跨版本运行（`allow` 恒 True）
+      ⇒ 弹窗不拦发送；而现场反馈"上面的选项都有问题、点了程序没法正常跑"
+      ⇒ **弹窗＝纯风险源**（用户 2026-10-01 决策："如果能跨版本运行，这个弹窗直接删掉"）。
+    恢复办法：`config.version_gate.pending_enabled = true`。
+    """
+    try:
+        from .config import get_config
+        vg = (get_config() or {}).get("version_gate") or {}
+        if "pending_enabled" in vg:
+            return bool(vg.get("pending_enabled"))
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def option_availability(item: dict | None, status: dict | None = None) -> dict:
