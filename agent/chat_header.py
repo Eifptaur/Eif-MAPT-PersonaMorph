@@ -834,8 +834,21 @@ def ref_sizes(chat_id: str, path: str = None) -> list:
 
 
 # ── 与微信窗口对接 ─────────────────────────────────────────────────────
-def _print_window(hwnd, flags: int = 2):
-    """`PrintWindow(PW_RENDERFULLCONTENT)` 取窗口**自身画面**（遮挡也拿得到）。失败返回 None。"""
+def _print_window(hwnd, flags: int = 2, physical: bool = False):
+    """`PrintWindow(PW_RENDERFULLCONTENT)` 取窗口**自身画面**（遮挡也拿得到）。失败返回 None。
+
+    ⚠️ **`physical=False`（默认）会缺右下角**（2026-10-01 实测，报告 §52/§53）：
+       `GetWindowRect` 返回的是**逻辑像素**（已按 DPI 折算），而窗口按**物理像素**渲染
+       ⇒ 用逻辑尺寸建位图时，`PrintWindow` **只画得出左上角约 1/scale² 的区域**
+       （本机 DPI=144 ⇒ scale=1.5 ⇒ 只用上 ≈44% 的画布），其余留底色。
+       实测：独立窗"内容像素占比" 逻辑尺寸 **1.98%** → 物理尺寸 **11.12%**（正常 8~20%）。
+
+    **为什么默认仍保持旧行为**：项目里几乎所有判据都是**按图的比例**算的
+       （`pane_left/w`、绿底占比、`band_box` 的 `y/h`…）⇒ 等比缺一块时**比例不变**
+       ⇒ 旧行为"看起来一直是对的"；但**绝对像素类判据**（`H_LO/H_HI` 那种区间、`BAND_PX`）
+       会在切 `physical=True` 后**全部 ×scale** ⇒ 必须逐个核对后才能切。
+    ⇒ 因此目前**只在探针/新路径（如独立窗链路）用 `physical=True`**，主路径待验证后再切。
+    """
     try:
         import ctypes
         from ctypes import wintypes
@@ -843,7 +856,16 @@ def _print_window(hwnd, flags: int = 2):
         u32, g32 = ctypes.windll.user32, ctypes.windll.gdi32
         r = wintypes.RECT()
         u32.GetWindowRect(int(hwnd), ctypes.byref(r))
-        w, h = int(r.right - r.left), int(r.bottom - r.top)
+        lw, lh = int(r.right - r.left), int(r.bottom - r.top)
+        _sc = 1.0
+        if physical:
+            try:
+                _dpi = int(u32.GetDpiForWindow(int(hwnd)) or 0)
+                if _dpi > 0:
+                    _sc = float(_dpi) / 96.0
+            except Exception:
+                _sc = 1.0
+        w, h = int(lw * _sc), int(lh * _sc)
         if w <= 0 or h <= 0:
             return None
         hdc = u32.GetWindowDC(int(hwnd))
