@@ -317,6 +317,20 @@ class SendQueue:
                 log.warning("风险闸门拦下出站消息（%s/%s）：%s", _v.level, _v.code, _v.message)
                 raise _risk.RiskBlocked(_v)
 
+        # 拟人节奏：**发之前**按真人时间分布等一等（**只慢，不拦**）。
+        # ⛔ 顺序很关键：先过 `risk`（判"发不发"）再走本层（判"多慢发"）——
+        #    反过来的话，被拦下的消息也白等了一次间隔。
+        # ⛔ 本层**不改变"消息最终会发出去"**这个事实，所以默认开；
+        #    `risk` 的频率阈值默认 0（用户自控"发不发"）——两者口径不冲突，
+        #    见 `agent/rhythm.py` 模块 docstring。
+        try:
+            from . import rhythm as _rhythm
+            _waited = _rhythm.gate("send_text")
+            if _waited >= 1.0:
+                log.info("拟人节奏：出站前等待 %.1fs（%s）", _waited, _rhythm.profile().name)
+        except Exception as _e:   # noqa: BLE001 节奏层出任何问题都不许挡住发送
+            log.debug("拟人节奏层跳过（%s）", _e)
+
         sent = []
         failed = []
         # 程序级自动引用：新一段对话开始 + 概率命中 → 引用对方最近一句话
@@ -415,6 +429,14 @@ class SendQueue:
         _v = _risk.check(chat_key, "[图片]")
         if not _v.allowed:
             raise _risk.RiskBlocked(_v)
+        # 拟人节奏：**只慢，不拦**（顺序：先 risk 判"发不发"，再本层判"多慢发"）
+        try:
+            from . import rhythm as _rhythm
+            _waited = _rhythm.gate("send_image")
+            if _waited >= 1.0:
+                log.info("拟人节奏：出站前等待 %.1fs（图片，%s）", _waited, _rhythm.profile().name)
+        except Exception as _e:   # noqa: BLE001
+            log.debug("拟人节奏层跳过（%s）", _e)
         with self._lock, self.wechat.fg_hold():
             self._check_rate(chat_key)
             time.sleep(rand_int(600, 1500) / 1000.0)

@@ -288,6 +288,13 @@
   "dup_window_seconds": 120,
   "dup_min_len": 8
  },
+ "rhythm": {
+  "enabled": true,
+  "profile": "gentle",
+  "gap_min_seconds": null,
+  "gap_max_seconds": null,
+  "burst": null
+ },
  "poke": {
   "reply_probability": 0.9,
   "cooldown_seconds": 1800,
