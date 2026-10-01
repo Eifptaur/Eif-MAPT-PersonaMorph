@@ -604,6 +604,46 @@ ck("L6 ★越界锚：`pane_left_for` 的结果**不许超过整幅宽的 85%**"
 ck("L7 源码锚：两处钳位都在（绿带 80% 不采信 ＋ 收尾 85% 回退比例兜底）",
    "int(_w * 0.80)" in _src_l and "int(_w2 * 0.85)" in _src_l, "")
 
+print("\n[M] 布局自检：`layout_state` —— 会话列表是否被微信隐藏（2026-10-01）")
+# 起因（用户给出规则 + 两张同机"临界点"对照图）：窗口宽度不足以同时放下
+# 「最小会话列表 + 最小聊天区」时，微信会**自己把会话列表隐藏**（只剩侧栏+聊天区）。
+# ⚠️ 而那两张图**总宽只差 1px（875 vs 876）却状态相反** ⇒ 宽度**不能**用来判断
+#    （全量 130 帧里"可见/不可见"的宽度也重叠）⇒ 必须当帧看布局特征。
+# ⇒ 判据：`list_visible ⇔ detect_green_right(img) != 0`（会话列表显示时，当前会话行必有绿底）。
+
+
+def _frame_with_list(visible=True, w=1200, h=800):
+    """合成帧：`visible=True` 时画一条**从左侧起铺**的绿底行（模拟会话列表的选中行）。"""
+    im = Image.new("RGB", (w, h), (245, 245, 245))
+    d = ImageDraw.Draw(im)
+    d.rectangle([0, 0, int(w * 0.38), h], fill=(235, 235, 235))   # 会话列表底（灰）
+    d.rectangle([int(w * 0.38), 0, w, h], fill=(250, 250, 250))   # 聊天区（更白）
+    if visible:
+        d.rectangle([20, 150, int(w * 0.36), 240], fill=(77, 163, 110))   # 绿底行（从左起铺）
+    return im
+
+
+_st_v = ch.layout_state(_frame_with_list(True))
+_st_h = ch.layout_state(_frame_with_list(False))
+ck("M1 有绿底行（从左侧起铺）⇒ 判「列表可见」", _st_v["list_visible"] is True, str(_st_v["green_right"]))
+ck("M2 无绿底行 ⇒ 判「列表不可见」（窄窗隐藏 / 或没打开会话）",
+   _st_h["list_visible"] is False, str(_st_h["green_right"]))
+ck("M3 推论一致：列表不可见 ⇒ `can_switch_chat=False`；可见 ⇒ True",
+   _st_v["can_switch_chat"] is True and _st_h["can_switch_chat"] is False, "")
+ck("M4 推论一致：无论列表是否可见，`can_send_if_open` 都为 True（发送只依赖聊天区）",
+   _st_v["can_send_if_open"] is True and _st_h["can_send_if_open"] is True, "")
+# ⭐ 内部钳位：绿带右边界 ≥45%w ⇒ 判为"聊天区绿元素"、返回 0
+_im_wide = Image.new("RGB", (1000, 400), (245, 245, 245))
+_dw = ImageDraw.Draw(_im_wide)
+_dw.rectangle([10, 100, 460, 190], fill=(77, 163, 110))       # 0.46w（超过 0.45）⇒ 应被钳掉
+ck("M5 绿带右边界 ≥45%幅宽 ⇒ 判为聊天区绿元素、返回 0（防「绿气泡/图片」被当成列表）",
+   ch.detect_green_right(_im_wide) == 0, "实得 %s" % ch.detect_green_right(_im_wide))
+_im_ok = Image.new("RGB", (1000, 400), (245, 245, 245))
+_dw2 = ImageDraw.Draw(_im_ok)
+_dw2.rectangle([10, 100, 380, 190], fill=(77, 163, 110))      # 0.38w（列表宽度内）⇒ 应保留
+ck("M6 绿带右边界在列表宽度内（0.38w）⇒ 正常返回",
+   ch.detect_green_right(_im_ok) == 380, "实得 %s" % ch.detect_green_right(_im_ok))
+
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
     print("失败项：%s" % BAD)

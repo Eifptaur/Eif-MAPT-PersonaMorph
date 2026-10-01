@@ -251,6 +251,13 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
             return 0
         if (_best_r - _bl) < int(w * 0.10):                       # 段要够长
             return 0
+        # ⭐ **右边界不得超过 50% 幅宽** —— 实测会话列表宽度只占 **0.168~0.407 w**，
+        #   超过 0.45 说明抓到的是**聊天区里的绿色元素**（绿气泡/图片）。
+        #   ⛔ 这条原来只写在 `pane_left_for` 里（且阈值 80%）⇒ 直接调用本函数的消费者
+        #   仍会拿到 857 / 1009 / 1087 这类值（实测 858x556 那帧是 857≈0.999w、
+        #   1760x1358 是 1087≈0.618w、2105x1325 是 1009≈0.479w）⇒ 收紧到 50%。
+        if _best_r >= int(w * 0.45):
+            return 0
         # 只在"这一段够长"时才认（避免几像素的绿点）
         _ret = int(_best_r) if _best_r > int(w * 0.10) else 0
         try:
@@ -355,6 +362,62 @@ def pane_left_for(img, cross_check: bool = True) -> int:
     except Exception:
         pass
     return int(val)
+
+
+def layout_state(img, pane_left: int = 0) -> dict:
+    """**当前帧是哪种布局** —— 以及由此推出的"哪些操作可行"。
+
+    ⛔ 为什么必须有它（2026-10-01 用户给出规则 + 两张"临界点"对照图后确立）
+      微信窗口**宽度不足以同时放下"最小会话列表 + 最小聊天区"时，会自己把会话列表隐藏**
+      （只剩左侧头像栏 + 聊天区）；再继续缩则压缩聊天区。用户实测的两张同机图：
+        · 列表隐藏 (875×926)：`pane_left`=227（**0.259 w，其实是"侧栏右沿"**），绿底行【无】
+        · 列表显示 (876×926)：`pane_left`=330（**0.377 w，"列表右沿"**），绿底行【330】
+      ⇒ **两张图总宽只差 1px 却状态相反** ⇒ **"宽度阈值"不是全局常数**（随 DPI/字号/版本，
+        甚至在临界附近受调整历史影响）⇒ **绝不能靠宽度判断，必须当帧看布局特征。**
+
+    ★判据（唯一、且经两张临界图验证）：
+      `list_visible ⇔ detect_green_right(img) != 0`
+      —— 会话列表一旦显示，"当前打开的那个会话行"必有绿底；列表隐藏则绿底无从存在。
+      ⚠️ 注意 `pane_left_for` 在两种布局下**都给一个看起来很正常的数**（0.26w / 0.38w），
+         **含义却不同**：列表可见 ⇒ 列表右沿；列表隐藏 ⇒ 侧栏右沿。
+         ⇒ 所以**不能靠 `pane_left` 的数值区分布局**，必须看绿底行。
+
+    返回 dict：
+      `list_visible`(bool) · `pane_left`(int，含义随 list_visible 变) · `reason`(str)
+      `can_switch_chat`(bool) —— 列表不可见就**不可能**切会话（没有列表可点）
+      `can_send_if_open`(bool) —— 只要目标会话已打开，**列表隐藏也照样能发**
+                                 （发送只依赖聊天区：输入框 + 发送键）
+    """
+    try:
+        w = int(img.size[0])
+    except Exception:
+        w = 0
+    _gx = 0
+    try:
+        _gx = int(detect_green_right(img) or 0)
+    except Exception:
+        _gx = 0
+    if not pane_left:
+        try:
+            pane_left = int(pane_left_for(img) or 0)
+        except Exception:
+            pane_left = 0
+    _vis = _gx != 0
+    if _vis:
+        _why = ("会话列表**可见**：绿底行右边界 = %d（占比 %.3f w）⇒ 面板左沿含义=列表右沿"
+                % (_gx, (_gx / w) if w else 0))
+    else:
+        _why = ("会话列表**不可见**（窄窗被微信隐藏）：没有绿底行 ⇒ "
+                "面板左沿含义=侧栏右沿（≈%.3f w）；此时**不能切会话**，"
+                "但目标会话若已打开**仍可发送**" % ((pane_left / w) if w else 0))
+    return {
+        "list_visible": _vis,
+        "pane_left": int(pane_left),
+        "green_right": _gx,
+        "can_switch_chat": _vis,
+        "can_send_if_open": True,          # 发送只依赖聊天区
+        "reason": _why,
+    }
 
 
 def crop_box(size, pane_left_rel=None, band_px=None, pane_left_px: int = 0) -> tuple:
