@@ -98,6 +98,18 @@ def _enum_pids(image_name: str) -> list:
     return pids
 
 
+def strip_unread_suffix(title: str) -> str:
+    """剥掉标题尾部的未读计数（实测独立窗标题形如 `aaa偷啃使用者 (3)`）。
+
+    ⛔ 为什么必须有它（2026-10-01 实测）：独立会话窗的标题**带未读数** ——
+       `GetWindowText` 拿到的是 `aaa偷啃使用者 (3)` 而不是 `aaa偷啃使用者`。
+       而主窗标题**不带**（实测 `群deepseek`）。⇒ 直接精确比对会**匹配失败**。
+    判据：只剥**末尾**的 ` (纯数字)`（会话名本身可能含括号 ⇒ 不能全局替换）。
+    """
+    import re as _re
+    return _re.sub(r"\s*[（(]\s*\d+\s*[)）]\s*$", "", (title or "").strip())
+
+
 def find_chat_window(name: str, exact: bool = True) -> dict:
     """按**会话名**找窗口 ⇒ `{hwnd, title, exact, candidates}`；找不到给 `hwnd=0`。
 
@@ -105,11 +117,13 @@ def find_chat_window(name: str, exact: bool = True) -> dict:
        所以本函数会**同时命中主窗与独立窗**；调用方按需选（想"不影响主窗"就优先取非主窗）。
     """
     wins = [w for w in list_wechat_windows() if w["title"].strip()]
+    _want = (name or "").strip()
     if exact:
-        hit = [w for w in wins if w["title"].strip() == (name or "").strip()]
+        # ⭐ 两边都剥掉未读计数后缀再比（独立窗标题带 `(3)`、主窗不带）
+        hit = [w for w in wins if strip_unread_suffix(w["title"]) == _want]
     else:
-        n = (name or "").strip().lower()
-        hit = [w for w in wins if n and n in w["title"].strip().lower()]
+        n = _want.lower()
+        hit = [w for w in wins if n and n in strip_unread_suffix(w["title"]).lower()]
     if not hit:
         return {"hwnd": 0, "title": "", "exact": bool(exact),
                 "candidates": [w["title"] for w in wins]}
