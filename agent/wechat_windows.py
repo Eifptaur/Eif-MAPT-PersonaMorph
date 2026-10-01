@@ -29,6 +29,7 @@ import ctypes as _ct
 import ctypes.wintypes as _wt
 
 _user32 = _ct.windll.user32
+_G32 = _ct.windll.gdi32
 
 #: 微信主窗 + 独立会话窗的类名（实测 4.1.15.8 都是它）
 WECHAT_QT_CLASS = "Qt51514QWindowIcon"
@@ -150,3 +151,99 @@ def main():
 if __name__ == "__main__":
     import sys
     sys.exit(main())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 抓图（**必须按 DPI 倍率建位图** —— 这是踩过一个大坑后定下来的）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def window_scale(hwnd: int) -> float:
+    """窗口的 DPI 缩放倍率（`GetDpiForWindow/96`）；取不到则退回 1.0。
+
+    ⛔ **为什么必须按它建位图**（2026-10-01 实测，报告 §52）：
+      `GetWindowRect` 返回的是**逻辑像素**（已按 DPI 折算），而窗口**按物理像素渲染**。
+      用逻辑尺寸的位图去接 `PrintWindow` ⇒ **只画得出左上角约 1/scale² 的区域**，其余留底色。
+      实测（本机 DPI=144 ⇒ scale=1.5）：
+        · 逐字节地看"内容像素占比"（＝除背景色以外的像素比例）
+        独立窗 逻辑尺寸位图 → **1.98%**；物理尺寸位图 → **11.12%**（正常窗口约 8~20%）
+        · 主窗因内容多（37%）**掩盖了这个 bug** —— 所以"主窗一直能用"不等于"抓法是对的"。
+      ⇒ **凡抓图，位图一律用 `逻辑尺寸 × window_scale()`**。
+    """
+    try:
+        dpi = _user32.GetDpiForWindow(hwnd)
+        if dpi and dpi > 0:
+            return float(dpi) / 96.0
+    except Exception:
+        pass
+    return 1.0
+
+
+def grab_window(hwnd: int, physical: bool = True, flag: int = 2):
+    """抓某窗口 ⇒ `(PIL.Image | None, meta)`；**按 DPI 倍率建位图**（见 `window_scale`）。
+
+    `meta` 含 `logical`(GetWindowRect 的逻辑尺寸) / `scale` / `physical_size`，
+    供调用方把"图上像素"换算回"逻辑/客户区坐标"（`逻辑 = 图上 / scale`）。
+    """
+    try:
+        from PIL import Image  # noqa: F401
+    except Exception:
+        return None, {"err": "PIL 不可用"}
+    r = _RECT()
+    _user32.GetWindowRect(hwnd, _ct.byref(r))
+    lw, lh = int(r.right - r.left), int(r.bottom - r.top)
+    if lw <= 0 or lh <= 0:
+        return None, {"err": "窗口尺寸异常", "logical": (lw, lh)}
+    sc = window_scale(hwnd) if physical else 1.0
+    w, h = max(1, int(lw * sc)), max(1, int(lh * sc))
+    hdc = _user32.GetWindowDC(hwnd)
+    mdc = _G32.CreateCompatibleDC(hdc)
+    bmp = _G32.CreateCompatibleBitmap(hdc, w, h)
+    _G32.SelectObject(mdc, bmp)
+    ok = _user32.PrintWindow(hwnd, mdc, flag)
+
+    class _BMIH(_ct.Structure):
+        _fields_ = [("biSize", _ct.c_uint32), ("biWidth", _ct.c_long), ("biHeight", _ct.c_long),
+                    ("biPlanes", _ct.c_ushort), ("biBitCount", _ct.c_ushort),
+                    ("biCompression", _ct.c_uint32), ("biSizeImage", _ct.c_uint32),
+                    ("biXPelsPerMeter", _ct.c_long), ("biYPelsPerMeter", _ct.c_long),
+                    ("biClrUsed", _ct.c_uint32), ("biClrImportant", _ct.c_uint32)]
+    bi = _BMIH()
+    bi.biSize = _ct.sizeof(_BMIH)
+    bi.biWidth = w
+    bi.biHeight = -h
+    bi.biPlanes = 1
+    bi.biBitCount = 32
+    buf = _ct.create_string_buffer(w * h * 4)
+    _G32.GetDIBits(mdc, bmp, 0, h, buf, _ct.byref(bi), 0)
+    from PIL import Image as _I
+    img = _I.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+    _G32.DeleteObject(bmp)
+    _G32.DeleteDC(mdc)
+    _user32.ReleaseDC(hwnd, hdc)
+    return img, {"ok": bool(ok), "logical": (lw, lh), "scale": sc, "physical_size": (w, h)}
+
+
+def content_ratio(img) -> tuple:
+    """图上"除背景以外"的像素占比（%）+ 主色 + 主色占比 —— **抓图质量体检**。
+
+    用途：实测"逻辑尺寸位图"会掉到 1~2%、"物理尺寸位图"回到 8~20% ⇒
+     ⇒ **任何抓图改动都该用这个数验收**，而不是"看起来有图就行"。
+    """
+    from collections import Counter
+    px = img.load()
+    w, h = img.size
+    c = Counter()
+    for y in range(0, h, 2):
+        for x in range(0, w, 2):
+            r, g, b = px[x, y][:3]
+            c[(r // 8 * 8, g // 8 * 8, b // 8 * 8)] += 1
+    tot = sum(c.values()) or 1
+    bg, bgn = c.most_common(1)[0]
+    keep = n = 0
+    for y in range(0, h, 3):
+        for x in range(0, w, 3):
+            r, g, b = px[x, y][:3]
+            n += 1
+            if not (abs(r - bg[0]) <= 14 and abs(g - bg[1]) <= 14 and abs(b - bg[2]) <= 14):
+                keep += 1
+    return 100.0 * keep / max(1, n), bg, 100.0 * bgn / tot
