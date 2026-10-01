@@ -359,11 +359,25 @@ class MessageBackend(InputBackend):
         return True, ""
 
     def send_text(self, hwnd: int, text: str) -> tuple:
-        """逐字投递 `WM_CHAR`。实测：不点输入框、不预设焦点也能进框（提交由调用方点发送按钮）。"""
+        """逐字投递 `WM_CHAR`（提交由调用方点发送按钮）。
+
+        ⛔ **必须先 `_wake`**（2026-10-01 实测，报告 §62）：
+          用户提示"独立窗与主窗的投递方式应该差不多" ⇒ 顺着查发现 `click()` / `wheel()` 都调了
+          `self._wake()`，**只有 `send_text()` 漏了**。
+          独立窗（双击会话出来的单窗）上实测四组合：
+            · 顶层窗 + `_wake` 后投 `WM_CHAR`      ⇒ **绿占比 0.59／0.63 ⇒ 字进去了 ✅**
+            · 顶层窗（**不 `_wake`**）投 `WM_CHAR`  ⇒ 绿占比 0.0000 ⇒ **字没进去** ❌
+            · 渲染子窗（`find_render_child`）+ `_wake` ⇒ 0.0000 ⇒ 不过
+            · 渲染子窗 + 单独投 `WM_ACTIVATE`       ⇒ 0.0000 ⇒ 不过
+          ⇒ **结论：目标＝顶层窗；但发字符前必须先伪激活**。
+          （主窗上"不唤醒也能进"是既有实测，与"独立窗需要唤醒"并不矛盾 ——
+            独立窗创建后可能从未被激活过，故必须补这一步。）
+        """
         if not hwnd:
             return False, "窗口句柄为空"
         if not text:
             return False, "文本为空"
+        self._wake(int(hwnd))
         for ch in str(text):
             _post(int(hwnd), WM_CHAR, ord(ch), 1)
         return True, ""
