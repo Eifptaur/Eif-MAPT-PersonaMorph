@@ -2300,6 +2300,64 @@ class WeChatAdapter:
             except Exception: # noqa: BLE001
                 pass
 
+    def already_sent_recently(self, chat_id: str, text: str, window_s: float = 120.0,
+                              limit: int = 25):
+        """**发之前**从消息库回读：这条内容在 `window_s` 秒内是不是**已经发出去过了**？
+
+        ⇒ 返回 **`True`（已发过）/ `False`（确实没发过）/ `None`（读不出来）**。
+
+        ⛔ **`None` 绝不许当 `False` 用**（这是本函数存在的全部理由）：
+          `_db_recent_rows` 的注释已写明 —— 拿不到库时**必须返回 None 让调用方回退旧路径**，
+          "**绝不用空列表冒充'确实没有消息'**"（那会把"读不出来"变成"没发出去" ⇒ **重发** ⇒
+          群里两条一样的话，正是用户截图里「早上好呀！」连发两次的形态）。
+          ⇒ 所以三态语义必须一路传下去，**调用方拿到 None 时按"不知道"处理，不得据此放行重发**。
+
+        ★与 `sender.py::_DEDUP_WINDOW_S`（20 秒同会话去重）的**分工**：
+          · **那一层**靠"本进程最近自述 + 20 秒窗" ⇒ 防"**同一轮被重跑**"，**不读库**、快；
+          · **本函数**靠"从消息库回读" ⇒ 防"**重试间隔超过 20 秒后的重发**"（那一层兜不住），
+            也防"**跨进程/重启后重发**"。
+          ⇒ 两层互补，不是重复实现；`_db_recent_rows` 的注释原本就写着"`already_sent_recently`
+            每次发送都要调"，但**该函数此前并不存在**（只有注释与底层读法）⇒ 本次补齐（P0-7）。
+
+        ⚠️ 匹配口径＝**完全相等**（保守）：宁可漏拦（发出去一条重复的），
+          也不要误拦（把一条不重复的内容当重复丢掉）。**不做模糊/子串匹配。**
+        """
+        t = str(text or "").strip()
+        if not t:
+            return False
+        try:
+            wxid = self._bare_key(chat_id) if hasattr(self, "_bare_key") else chat_id
+        except Exception:  # noqa: BLE001
+            wxid = chat_id
+        rows = None
+        try:
+            rows = self._db_recent_rows(wxid, limit=limit)
+        except Exception:  # noqa: BLE001
+            rows = None
+        if rows is None:
+            return None            # ⛔ 读不出来 ⇒ 三态里的 None，交由调用方决定
+        try:
+            import time as _t
+            since = _t.time() - float(window_s)
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                if not r.get("self"):          # 只看**自己发的**
+                    continue
+                raw_ts = r.get("ts") or 0
+                try:
+                    ts = float(str(raw_ts))
+                    ts = ts / 1000.0 if ts > 1e11 else ts   # 毫秒/秒都容忍
+                except Exception:  # noqa: BLE001
+                    ts = 0.0
+                if ts and ts < since:          # 太老 ⇒ 不看（列表已按新→旧排，但保险起见继续）
+                    continue
+                if str(r.get("text") or "").strip() == t:
+                    return True
+            return False
+        except Exception:  # noqa: BLE001
+            return None
+
     def latest_seq_ex(self, wxid: str) -> tuple:
         """读「这个会话在库里的最新序号」，**把「读失败」与「确实没有消息」分开」。
 
