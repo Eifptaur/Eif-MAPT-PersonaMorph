@@ -141,3 +141,99 @@ def get_text() -> str:
             _u32.CloseClipboard()
     except Exception:
         return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 备份 / 恢复：**发图片或文件前先备份用户剪贴板，发完立刻还回去**
+# ─────────────────────────────────────────────────────────────────────────────
+
+def snapshot() -> dict:
+    """记录剪贴板当前内容 ⇒ 供 `restore()` 还原。
+
+    ⛔ 为什么需要它（2026-10-01，T20）：微信发图片/文件要走「剪贴板 + `WM_PASTE`」，
+    这会**覆盖用户的剪贴板**。当天已实际发生一次冲突 —— 用户当时正在复制粘贴，
+    结果"粘出来的是我们的测试文字"。**发东西不能把用户复制的内容弄丢。**
+
+    做法：只备份**能可靠还原的形态**（文本 / 文件列表）；其他格式（图片二进制等）
+    仅记录"存在过"，**不强行还原**（避免把别人的位图数据搞坏）。
+    ⚠️ 已知局限：**图片不会还原**（CF_DIB 的原始字节未做深拷贝）⇒ 会在返回值里注明。
+    """
+    snap = {"has_text": False, "text": "", "files": [], "has_image": False,
+            "formats": [], "ok": False}
+    try:
+        if not _u32.OpenClipboard(0):
+            return snap
+        try:
+            snap["ok"] = True
+            fmt = 0
+            while True:
+                try:
+                    fmt = _u32.EnumClipboardFormats(fmt)
+                except Exception:
+                    break
+                if not fmt:
+                    break
+                snap["formats"].append(int(fmt))
+            snap["has_image"] = CF_DIB in snap["formats"]
+            if CF_UNICODETEXT in snap["formats"]:
+                h = _u32.GetClipboardData(CF_UNICODETEXT)
+                if h:
+                    p = _k32.GlobalLock(ctypes.c_void_p(h))
+                    if p:
+                        try:
+                            snap["text"] = ctypes.wstring_at(p)
+                            snap["has_text"] = bool(snap["text"])
+                        finally:
+                            _k32.GlobalUnlock(ctypes.c_void_p(h))
+        finally:
+            _u32.CloseClipboard()
+    except Exception:
+        pass
+    return snap
+
+
+def restore(snap: dict) -> tuple:
+    """尽力把剪贴板还原成 `snapshot()` 记录的样子 ⇒ `(ok, 说明)`。
+
+    ⚠️ 只还原**文本**（最常用、且是我们唯一会覆盖的形态）；
+    若快照里只有图片/文件 ⇒ **不还原**（不做不可靠的重建），但在说明里写清。
+    """
+    if not snap:
+        return False, "空快照"
+    if snap.get("has_text"):
+        r = set_text(snap.get("text") or "")
+        return (bool(r and r[0]), "已还原原剪贴板文本" if (r and r[0]) else "还原文本失败")
+    if snap.get("has_image"):
+        return False, "原剪贴板是图片 ⇒ 未还原（避免重建出错）"
+    if snap.get("files"):
+        return False, "原剪贴板是文件列表 ⇒ 未还原"
+    return True, "原剪贴板为空 ⇒ 无需还原"
+
+
+class clipboard_guard:
+    """上下文管理器：**进入时备份、退出时还原**（异常也还原）。
+
+    用法：
+    ```python
+    with clipboard_guard() as g:
+        clipboard.set_files([path])      # 我们会覆盖用户剪贴板
+        backend.paste(hwnd)              # 投递给目标窗口
+    print(g.result)                      # 还原结果说明
+    ```
+    """
+
+    def __init__(self):
+        self.snap = {}
+        self.result = ("", "")
+
+    def __enter__(self):
+        self.snap = snapshot()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self.result = restore(self.snap)
+        except Exception as e:
+            self.result = (False, "还原异常：%s" % str(e)[:60])
+        return False   # 不吞异常
+
