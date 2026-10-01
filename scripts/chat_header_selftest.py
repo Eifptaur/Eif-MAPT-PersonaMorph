@@ -632,17 +632,30 @@ ck("M3 推论一致：列表不可见 ⇒ `can_switch_chat=False`；可见 ⇒ T
    _st_v["can_switch_chat"] is True and _st_h["can_switch_chat"] is False, "")
 ck("M4 推论一致：无论列表是否可见，`can_send_if_open` 都为 True（发送只依赖聊天区）",
    _st_v["can_send_if_open"] is True and _st_h["can_send_if_open"] is True, "")
-# ⭐ 内部钳位：绿带右边界 ≥45%w ⇒ 判为"聊天区绿元素"、返回 0
+# ⭐ 右边界上界 = **60%w**（**实测标定**）：真绿底右端最大 0.559w（列表被拉宽时）；
+#   聊天区绿元素要么左端偏右（>0.5w），要么右端≈1.0。⛔ 我一度收到 45% ⇒ 误杀了
+#   `1826x978`（右端 0.559）这类正常帧 ⇒ 阈值必须实测标定。
+_im_ok2 = Image.new("RGB", (1000, 400), (245, 245, 245))
+_d2b = ImageDraw.Draw(_im_ok2)
+_d2b.rectangle([10, 100, 550, 190], fill=(77, 163, 110))      # 0.55w（真绿底可到 0.559）⇒ 应保留
+ck("M5a 绿带右端 0.55w（列表被拉宽）⇒ **仍要保留**（别误杀正常帧）",
+   ch.detect_green_right(_im_ok2) == 550, "实得 %s" % ch.detect_green_right(_im_ok2))
 _im_wide = Image.new("RGB", (1000, 400), (245, 245, 245))
 _dw = ImageDraw.Draw(_im_wide)
-_dw.rectangle([10, 100, 460, 190], fill=(77, 163, 110))       # 0.46w（超过 0.45）⇒ 应被钳掉
-ck("M5 绿带右边界 ≥45%幅宽 ⇒ 判为聊天区绿元素、返回 0（防「绿气泡/图片」被当成列表）",
+_dw.rectangle([10, 100, 620, 190], fill=(77, 163, 110))       # 0.62w ⇒ 超过 60% ⇒ 应被钳掉
+ck("M5b 绿带右端 0.62w（≈满幅的聊天区绿元素）⇒ 返回 0",
    ch.detect_green_right(_im_wide) == 0, "实得 %s" % ch.detect_green_right(_im_wide))
 _im_ok = Image.new("RGB", (1000, 400), (245, 245, 245))
 _dw2 = ImageDraw.Draw(_im_ok)
-_dw2.rectangle([10, 100, 380, 190], fill=(77, 163, 110))      # 0.38w（列表宽度内）⇒ 应保留
-ck("M6 绿带右边界在列表宽度内（0.38w）⇒ 正常返回",
+_dw2.rectangle([10, 100, 380, 190], fill=(77, 163, 110))      # 0.38w（典型列表宽度）⇒ 应保留
+ck("M6 绿带右边界在典型列表宽度内（0.38w）⇒ 正常返回",
    ch.detect_green_right(_im_ok) == 380, "实得 %s" % ch.detect_green_right(_im_ok))
+# ⭐ 左端约束：从更右侧起铺的绿段 ⇒ 判为"聊天区绿元素"（实测 0.740 / 0.518 那两帧）
+_im_right = Image.new("RGB", (1000, 400), (245, 245, 245))
+_dw3 = ImageDraw.Draw(_im_right)
+_dw3.rectangle([600, 100, 900, 190], fill=(77, 163, 110))     # 左端 0.60w ⇒ 不从左侧起铺
+ck("M7 绿段左端 0.60w（不从左侧起铺）⇒ 返回 0（拦聊天区绿元素）",
+   ch.detect_green_right(_im_right) == 0, "实得 %s" % ch.detect_green_right(_im_right))
 
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:
