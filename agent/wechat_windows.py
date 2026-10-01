@@ -66,7 +66,7 @@ def list_wechat_windows(image_name: str = "Weixin.exe") -> list:
         _user32.GetClassNameW(hwnd, cls, 256)
         title = _ct.create_unicode_buffer(512)
         _user32.GetWindowTextW(hwnd, title, 512)
-        r = _RECT()
+        r = _wt.RECT()
         _user32.GetWindowRect(hwnd, _ct.byref(r))
         out.append({
             "hwnd": int(hwnd), "pid": int(pid.value), "cls": cls.value,
@@ -188,8 +188,9 @@ def grab_window(hwnd: int, physical: bool = True, flag: int = 2):
         from PIL import Image  # noqa: F401
     except Exception:
         return None, {"err": "PIL 不可用"}
-    r = _RECT()
-    _user32.GetWindowRect(hwnd, _ct.byref(r))
+    _wt_rect = _wt.RECT()
+    _user32.GetWindowRect(hwnd, _ct.byref(_wt_rect))
+    r = _wt_rect
     lw, lh = int(r.right - r.left), int(r.bottom - r.top)
     if lw <= 0 or lh <= 0:
         return None, {"err": "窗口尺寸异常", "logical": (lw, lh)}
