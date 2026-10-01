@@ -72,6 +72,81 @@ def outbound_gate_status() -> dict:
             "dedup_window_s": _DEDUP_WINDOW_S}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# P0-10 第二条闸：**内心独白** 与 **原始 XML**（工具调用格式泄漏）
+#   来源：`报告/完整计划-20260930/...v2.md` §7 P0-10（朋友版 `sender.py` 有这两条拦截）
+#   为什么要它：两类内容都不该出现在群里 ——
+#     · **内心独白**：模型把"思考过程"写进括号/标签，被当成消息发出去（社死级）；
+#     · **原始 XML**：模型的**原生工具调用格式**（`<tool_call>` / `<function=…>` / `<invoke …>`）
+#       泄漏进消息正文 —— 用户看到的是机器码，且暴露内部实现。
+#   ✅ 策略＝**保守**：只拦"**整段就是**"这类（如整句被 `（心想：…）` 包住、整段以 `<tool_call>` 开头）；
+#      正文里**提到**"思考"/尖括号**不拦**（否则会误杀正常内容）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: 内心独白的**标记词**（出现在句首/括号开头才算）
+_THOUGHT_MARKERS = ("心想", "内心独白", "内心的想法", "我的想法是", "思考过程",
+                    "thinking:", "thinking：", "reasoning:", "reasoning：", "<thinking>")
+#: 整段"只有一个括号包裹的独白"或"整段以标记词开头"
+_THOUGHT_LEAD_RE = re.compile(
+    r"^[\s（(【\[]*(?:我)?(?:心想|内心独白|内心的想法|思考过程|想法)\s*[:：]?", re.I)
+_THOUGHT_TAG_RE = re.compile(r"^\s*<\s*(?:thinking|reasoning|thought)\b[^>]*>", re.I)
+#: 原始 XML / 工具调用格式（整段以这些标签开头即判泄漏）
+_RAW_XML_RE = re.compile(
+    r"^\s*<\s*(?:tool_call|tool_calls|tool_use|tool_result|function|function_call|functions|"
+    r"invoke|parameter|antml|result|output)\b", re.I)
+#: 模型特殊 token 形态（如 `<|im_start|>` / `<|tool▁calls▁begin|>`）
+_RAW_TOKEN_RE = re.compile(r"^\s*<\|[A-Za-z_\u2581\s]{2,40}\|>")
+
+
+def _is_thought_leak(text: str) -> str:
+    """这句是不是**内心独白泄漏**？命中返回原因，否则空串。"""
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    if _THOUGHT_TAG_RE.match(t):
+        return "内心独白（thinking 标签）"
+    if _THOUGHT_LEAD_RE.match(t):
+        # 只在"整段较短、且没被当成正常陈述"时拦：以标记词**开头**即认为整段是独白
+        return "内心独白（标记词开头）"
+    # 整段被一对括号包住、且括号内以标记词开头 ⇒ 独白
+    core = t.strip("（）()【】[]“”\"' \n\t")
+    if core != t and core:
+        for m in _THOUGHT_MARKERS:
+            if core.lower().startswith(str(m).lower()):
+                return "内心独白（括号包裹）"
+    return ""
+
+
+def _is_raw_xml(text: str) -> str:
+    """这句是不是**原始 XML / 工具调用格式泄漏**？命中返回原因，否则空串。"""
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    if _RAW_TOKEN_RE.match(t):
+        return "原始特殊 token"
+    m = _RAW_XML_RE.match(t)
+    if m:
+        return "原始 XML（%s）" % m.group(0).strip()[:24]
+    return ""
+
+
+def outbound_leak_reason(text: str) -> str:
+    """**出站泄漏总闸**（内部故障话术 / 内心独白 / 原始 XML 三合一）。
+
+    ⇒ 统一入口，`send_text_batch` 只调这一个，避免以后再加一类时漏接线。
+    """
+    r = _is_internal_failure(text)
+    if r:
+        return "内部故障话术：" + r
+    r = _is_thought_leak(text)
+    if r:
+        return r
+    r = _is_raw_xml(text)
+    if r:
+        return r
+    return ""
+
+
 class SendQueue:
     def __init__(self, wechat, store, on_sent=None):
         self.wechat = wechat
@@ -188,9 +263,11 @@ class SendQueue:
         _kept = []
         _kept_src = []
         for _t, _src in zip(parts, part_src):
-            _why = _is_internal_failure(_t)
+            # ★ P0-10：闸门走**统一入口** `outbound_leak_reason`
+            #   （内部故障话术 ⊕ 内心独白 ⊕ 原始 XML，见该函数注释）
+            _why = outbound_leak_reason(_t)
             if _why:
-                log.warning("拦下内部故障话术（%s）：%s", _why, _t[:60])
+                log.warning("拦下出站泄漏（%s）：%s", _why, _t[:60])
                 _blocked_internal.append({"why": _why, "text": _t[:120]})
                 continue
             _kept.append(_t)
