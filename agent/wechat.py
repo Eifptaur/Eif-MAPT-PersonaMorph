@@ -3697,6 +3697,23 @@ class WeChatAdapter:
         except Exception:
             return False
 
+    def _popup_preferred(self) -> bool:
+        """**独立弹窗直通**开关（`send.popup_first`，默认关）。
+
+        ⛔ 为什么默认关（2026-10-01）：它是**新通路**。虽然已在真机验证成功
+          （`send_to_popup` 实测发出消息、`dry_run` 验收通过），但**接入主链属于行为变更**
+          ⇒ 先以开关形式引入、**默认保持原行为**（零回归），验证一轮后再考虑默认开。
+
+        为什么值得有它：若目标会话已存在**独立弹窗**（用户双击出来的单窗），
+        则可对它直接发送 —— **不需要切会话、不碰会话列表/面板左沿等像素定位、不抢前台**，
+        恰好绕开本项目此前失败最集中的两块（切会话 / 列表定位）。
+        ⚠️ 独立窗**重启后不保留**（用户实测）⇒ 找不到时本分支**直接回落原路径**，不报错。
+        """
+        try:
+            return bool((self.cfg.get("send") or {}).get("popup_first", False))
+        except Exception:
+            return False
+
     def _real_fallback_allowed(self) -> bool:
         """投递档确认不了目标会话时，**允不允许退回真鼠标/真键盘（L0）**——默认 **False**。
 
@@ -3790,6 +3807,24 @@ class WeChatAdapter:
                         st = _ch.check(chat_id, gui=gui)
                         _st_status = str(st.get("status"))
                         _st_note = str(st.get("note") or "")
+                        # ★ **独立弹窗直通**（`send.popup_first`，默认关）：目标会话若有独立弹窗，
+                        #   直接对它投递发送 —— 不切会话、不碰像素定位、不抢前台（报告 §56~§64）。
+                        #   ⚠️ 失败/找不到一律**回落**下面的原路径，绝不改变既有行为。
+                        # ⚠️ 用  取开关：本类的**测试桩/子类**未必有 
+                        #    （实测  的  就没有 ⇒ 直接调用会 AttributeError）
+                        if bool(getattr(self, "_popup_preferred", lambda: False)()):
+                            try:
+                                from . import wechat_windows as _wwP
+                                _pr = _wwP.send_to_popup(name or "", text)
+                                if _pr.get("ok"):
+                                    self._mark_sent(text)
+                                    self._dedup_mark(chat_id, text)
+                                    log.info("独立弹窗直通成功：%s", _pr.get("detail"))
+                                    return True, "独立弹窗直通：%s" % (_pr.get("detail") or "")
+                                log.info("独立弹窗直通未成（step=%s：%s）⇒ 回落原路径",
+                                         _pr.get("step"), str(_pr.get("detail"))[:100])
+                            except Exception as _eP:
+                                log.info("独立弹窗直通异常（回落原路径）：%s", _eP)
                         if st["status"] == "ok":
                             ok, msg = self.send_text_posted(text, chat_id)
                             if ok:
