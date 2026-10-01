@@ -86,16 +86,23 @@ def main():
         sheet = Image.new("RGB", (sw, sh), (255, 255, 255))
         dd = ImageDraw.Draw(sheet)
         yy = 0
-        for g, im in tiles:
-            dd.text((4, yy + 6), "%s  %dx%d  theme=%s  %s" %
-                    (g["png"], g["w"], g["h"], g["theme"], g["dir"][:22]), fill=(0, 0, 0))
-            yy += 26
+        for gi, (g, im) in enumerate(tiles):
+            _label = "【#%d】%s   %dx%d   theme=%s" % (
+                si + gi, g["png"], g["w"], g["h"], g["theme"])
+            # 大字标签 + 底色条，确保"是哪一帧"一眼可见（小字会被缩放糊掉）
+            dd.rectangle([0, yy, sheet.width, yy + 34], fill=(255, 244, 180))
+            dd.text((8, yy + 9), _label, fill=(0, 0, 0))
+            yy += 34
             sheet.paste(im, (0, yy))
             yy += im.height
         f = os.path.join(out, "sheet-%02d.png" % (si // TILE_N))
         sheet.save(f)
         sheets.append(f)
         print("  已存 %s  (%d 帧 / %dx%d)" % (os.path.basename(f), len(tiles), sheet.width, sheet.height))
+        # ★ 权威对应关系：显式打印"这张 sheet 里从上到下是哪几帧"（不靠人眼看小字）
+        for gi, (g, _im) in enumerate(tiles):
+            print("        #%-3d %-14s %dx%d  theme=%-5s  %s" % (
+                si + gi, g["png"], g["w"], g["h"], g.get("theme"), g["dir"]))
 
     io.open(os.path.join(out, "picked.json"), "w", encoding="utf-8").write(
         json.dumps([{k: v for k, v in g.items() if k != "path"} for g in picked],
