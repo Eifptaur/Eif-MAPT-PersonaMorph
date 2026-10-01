@@ -395,3 +395,124 @@ def popup_controls(scale: float = 1.0) -> dict:
         "scale": float(scale),
         "note": "图上坐标 / scale = 逻辑坐标；逻辑坐标 + 窗口左上角(逻辑) = 屏幕坐标",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 顶层：向"独立弹窗"发一条消息（6 步链路，每步都有可观测验收）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_to_popup(chat_name: str, text: str, *, timeout_s: float = 6.0,
+                  clear_first: bool = True, dry_run: bool = False) -> dict:
+    """向 `chat_name` 对应的**独立弹窗**发一条消息 ⇒ `{ok, step, detail, ...}`。
+
+    ⭐ **设计要点（都是踩坑换来的，见报告 §56~§64）**
+      ① **只用 `send_text`（`WM_CHAR`），不用剪贴板** —— `WM_CHAR` 不碰剪贴板，
+         不会与用户"复制粘贴"打架；`WM_PASTE` 那条路会覆盖用户剪贴板，**不进主路**。
+      ② **发送前必须确认"字真进去了"**：靠 `send_button_green()`（绿占比 ≥0.30）
+         —— 实测"API 返回 (True,'') 但字没进去"，**不能只看返回值**（§59）。
+      ③ **目标窗口必须是"独立弹窗"**（有 `标题=会话名`）；主窗里当前会话恰好同名时会误命中，
+         故若命中的是"主窗且其当前会话＝该名"，也照样可用（行为等价）。
+      ④ **失败即停**：任一步不过就返回，**绝不盲目点发送**。
+      ⑤ **全程不抢前台**（`MessageBackend.touches_cursor=False`）。
+
+    参数
+      `clear_first` —— 若输入框已有字（绿占比≥0.30），先清空（End+退格）再投。
+      `dry_run`     —— 只做到"字已进入输入框"这一步就**清空并返回**，**不点发送**（用于验收）。
+    """
+    out = {"ok": False, "step": "", "detail": "", "hwnd": 0, "chat": chat_name}
+    # ① 定位
+    hit = find_chat_window(chat_name)
+    hwnd = int(hit.get("hwnd") or 0)
+    if not hwnd:
+        out.update(step="locate", detail="按标题找不到窗口；候选=%s" % hit.get("candidates"))
+        return out
+    out["hwnd"] = hwnd
+    out["title"] = hit.get("title")
+    try:
+        from agent import input_backend as IB
+        be = IB.select_backend()
+    except Exception as e:
+        out.update(step="backend", detail="取输入后端失败：%s" % str(e)[:80])
+        return out
+
+    def _ratio():
+        im, _m = grab_window(hwnd, physical=False)
+        return (send_button_green_ratio(im) if im else -1.0), im
+
+    # ② 基线与可选清空
+    r0, _im = _ratio()
+    if r0 < 0:
+        out.update(step="grab", detail="抓图失败")
+        return out
+    if r0 >= 0.30:
+        if not clear_first:
+            out.update(step="precheck", detail="输入框里已有字（绿占比 %.3f），且 clear_first=False" % r0)
+            return out
+        try:
+            be.keys(hwnd, [0x23])          # VK_END
+            be.keys(hwnd, [0x08] * 40)     # 连续退格（投递不携带修饰键 ⇒ 不能用 Ctrl+A）
+        except Exception:
+            pass
+        import time as _t
+        _t.sleep(0.4)
+        r0b, _ = _ratio()
+        if r0b >= 0.30:
+            out.update(step="clear", detail="清空失败（绿占比仍 %.3f）" % r0b)
+            return out
+        out["cleared"] = True
+
+    # ③ 投递（只用 WM_CHAR）
+    try:
+        res = be.send_text(hwnd, text)
+    except Exception as e:
+        out.update(step="send_text", detail="投递异常：%s" % str(e)[:80])
+        return out
+    out["send_text_ret"] = str(res)
+    # ④ 轮询确认"字已进去"
+    import time as _t
+    t0 = _t.time()
+    r1 = -1.0
+    while _t.time() - t0 < float(timeout_s):
+        r1, _ = _ratio()
+        if r1 >= 0.30:
+            break
+        _t.sleep(0.25)
+    out["green_ratio_after_type"] = round(r1, 4)
+    if r1 < 0.30:
+        out.update(step="verify_typed", detail="投递后发送键未变绿（绿占比 %.3f）⇒ 字没进去，已中止，未点发送" % r1)
+        return out
+    out["ok"] = True
+    out["step"] = "typed"
+
+    if dry_run:
+        try:
+            be.keys(hwnd, [0x23]); be.keys(hwnd, [0x08] * 40)
+        except Exception:
+            pass
+        out["detail"] = "dry_run：字已成功进入输入框，已清空，**未点发送**"
+        return out
+
+    # ⑤ 点「发送」（图 = 整窗 ⇒ 屏幕坐标 = 窗口原点 + 图坐标；图用 physical=False 与逻辑一致）
+    try:
+        import ctypes as _ct
+        import ctypes.wintypes as _wt
+        _im, _meta = grab_window(hwnd, physical=False)
+        rct = _wt.RECT()
+        _user32.GetWindowRect(hwnd, _ct.byref(rct))
+        sx = int(rct.left + _im.size[0] * SEND_BTN_REL[0])
+        sy = int(rct.top + _im.size[1] * SEND_BTN_REL[1])
+        cret = be.click(hwnd, (sx, sy), press_ms=120)
+        out["click_ret"] = str(cret)
+        out["click_pt"] = (sx, sy)
+    except Exception as e:
+        out.update(step="click_send", detail="点发送异常：%s" % str(e)[:80])
+        return out
+    _t.sleep(1.2)
+    r2, _ = _ratio()
+    out["green_ratio_after_send"] = round(r2, 4)
+    if r2 >= 0.30:
+        out.update(ok=False, step="verify_sent",
+                   detail="点发送后输入框仍有字（绿占比 %.3f）⇒ 可能没发出去" % r2)
+        return out
+    out.update(step="sent", detail="已投递并点发送；输入框已清空（绿占比 %.3f）" % r2)
+    return out
