@@ -405,13 +405,85 @@ def _is_locked(e, path: str = "") -> bool:
     return False
 
 
-def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = False, progress=None):
+def releases_root(target: str = ROOT) -> str:
+    """「版本目录」的根：`<安装根>/releases`（各版本各存一份完整程序，见 `layout="versioned"`）。"""
+    return os.path.join(target, "releases")
+
+
+def read_pointer(target: str = ROOT):
+    """读 `releases/current.txt` 里的**版本目录名**（该跑哪一份）；文件不存在/读不出 ⇒ `None`。
+
+    ⛔ 返回 `None` 是**有意义的正常态**（不回退到"猜一个"）：调用方看到 `None` ⇒ 按老行为跑
+      安装根那一份。空串/空白也当"没有指针"。
+    """
+    p = os.path.join(releases_root(target), "current.txt")
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            return (fh.read() or "").strip() or None
+    except OSError:
+        return None
+
+
+def write_pointer(target: str, ver: str) -> str:
+    """**原子写**版本指针（tmp + `os.replace`），失败不留半个文件。返回失败原因（成功＝空串）。
+
+    ⛔ 必须原子：`current.txt` 被读到一半（半截版本名）⇒ 启动器解析失败 ⇒ 双击起不来。
+      `os.replace` 在 Windows 上是原子替换，落盘要么是旧内容、要么是新内容，没有中间态。
+    ⛔ 名字先过 `_pointer_name_ok`（纵深防御第一道）：写出去就晚了 —— 启动器虽然也会挡，
+      但"本机被写了个坏指针"这事实本身就是故障面（用户下次双击会莫名其妙跑回旧版）。
+    ⛔ 落盘走 `persist.atomic_write_text`（**统一收口**）：临时名带 pid + 随机段 ⇒
+      多进程/多线程同时更新（两个实例抢同一个版本）不会撞同一个临时档、不会写出半截版本名。
+      自己拼 `<path>.tmp` 是仓里正在还的老债（`persist_selftest` 有棘轮只许降），新点不许再欠。
+    """
+    if not _pointer_name_ok(ver):
+        return "版本名 %r 不能当指针（空 / 带路径分隔符 / 含 `..`）⇒ 拒写" % (str(ver)[:40],)
+    d = releases_root(target)
+    try:
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, "current.txt")
+        ok_w = persist.atomic_write_text(p, str(ver), newline="")
+        if not ok_w:
+            return "原子写失败（原指针未动）：%s" % (p,)
+        return ""
+    except Exception as e: # noqa: BLE001
+        return "%s: %s" % (type(e).__name__, str(e)[:80])
+
+
+def _pointer_name_ok(ver: str) -> bool:
+    """指针值**只许是版本目录名**这种形状（挡 `..\\..\\` 这类越界）。
+
+    与启动器 `ResolveVersionedRoot()` 里那道校验同一口径 —— 两侧都要挡（Python 侧防写出坏指针、
+    C# 侧防读到被别人改坏的指针）。空串/带分隔符/带 `..` ⇒ 不合法。
+    """
+    s = str(ver or "").strip()
+    if not s:
+        return False
+    if any(c in s for c in ("\\", "/", ":")):
+        return False
+    if ".." in s:
+        return False
+    return True
+
+
+def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = False, progress=None,
+               layout: str = "inplace"):
     """整包换入。返回 `(rc, msg, detail)`：rc 0=成功（可能带"跳过被占用的文件"）、1=失败已回滚、2=前置不成立。
 
     顺序（少一步都不安全）：
       读清单 → 版本已是最新就停 → **只读**算包的文件树哈希并与清单对齐 → 干跑就到此为止
       → 逐件快照 → 换入（跳过被占用件）→ 逐件组合校验 → 失败回滚 → 写 `data/installed.json`
+
+    `layout`（2026-10-09 新增，见第 162 项）：
+      · `"inplace"`（**默认**）＝**今天的行为，一字不改**：原地覆盖 `target` 下那份。
+      · `"versioned"`＝把这份代码装到 `releases/<版本>/`，**校验通过后只翻指针**
+        （`releases/current.txt`），**不碰**正在运行的那份 ⇒ "文件被占用"这个问题**自然消失**
+        （`locked` 分支在 versioned 下不该再出现）。
+      ⛔ 默认仍是 `inplace`：打包结构没改成 `releases/` 之前切过去会"找不到 releases 目录"。
+        由配置 `update.versioned`（默认 false）切；回退口＝**删掉 `current.txt`**（当场回到老行为）。
     """
+    _layout = str(layout or "inplace").strip().lower()
+    if _layout not in ("inplace", "versioned"):
+        _layout = "inplace"
     base = (manifest or {}).get("base") or {}
     want_ver = str(base.get("version") or "")
     want_tree = str(base.get("sha256") or "")
@@ -454,6 +526,19 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         return 0, "【干跑】包内 %d 件（本体 %d / 不碰 %d），版本 %s → %s" % (
             n_files, len(rels), len(skipped_scope), cur.get("version") or "?", want_ver), {"dry": True}
 
+    # ---- versioned 布局：把这份代码装进 releases/<版本>/，最后只翻指针 ----
+    # ⛔ 与 inplace 的差别只有两点：① 写到哪（新目录，不是原地）；② 收尾写什么（写指针，不是
+    #   覆盖运行中那份的 installed.json）。中间"解压→快照→换入→组合校验→失败回滚"整条链**照旧复用** ——
+    #   换入目标是个**新目录**，所以（a）没有"文件被占用"（`locked` 不该出现）；
+    #   （b）失败回滚＝把这个半装的目录删掉即可，不牵动正在运行的那份。
+    _ver_target = target
+    _pointer_at_end = ""
+    if _layout == "versioned":
+        if not _pointer_name_ok(want_ver):
+            return 2, "版本号 %r 不能当目录名（含分隔符/`..`）⇒ 拒在 versioned 布局下更新" % want_ver, {}
+        _ver_target = os.path.join(releases_root(target), want_ver)
+        _pointer_at_end = want_ver
+
     if progress:
         try:
             progress(0, 0)
@@ -477,7 +562,7 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         #   ⇒ 快照失败：此时一个文件都还没换 ⇒ 干净返回 1；校验抛异常：按"校验失败"处理 ⇒ 回滚。
         try:
             for rel in rels:
-                tp = os.path.join(target, rel.replace("/", os.sep))
+                tp = os.path.join(_ver_target, rel.replace("/", os.sep))
                 if os.path.exists(tp):
                     snaps[rel] = sha256_file(tp)
                     bp = os.path.join(backup, rel.replace("/", os.sep))
@@ -499,7 +584,7 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
             """
             okr, bad = [], []
             for rel in placed:
-                tp = os.path.join(target, rel.replace("/", os.sep))
+                tp = os.path.join(_ver_target, rel.replace("/", os.sep))
                 try:
                     if rel in snaps:
                         bp = os.path.join(backup, rel.replace("/", os.sep))
@@ -520,7 +605,7 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         # ---- ④ 换入（**只有"被占用"才跳过**；其它错误一律回滚，不许降级成"部分成功"）----
         for rel in rels:
             sp = os.path.join(src_root, rel.replace("/", os.sep))
-            tp = os.path.join(target, rel.replace("/", os.sep))
+            tp = os.path.join(_ver_target, rel.replace("/", os.sep))
             try:
                 os.makedirs(os.path.dirname(tp), exist_ok=True)
                 shutil.copy2(sp, tp)
@@ -539,13 +624,28 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         # ⛔ 这一步抛异常（文件被占用/被删/读不了）**必须回滚**，不许"报失败但已经全换完"。
         try:
             for rel in placed:
-                tp = os.path.join(target, rel.replace("/", os.sep))
+                tp = os.path.join(_ver_target, rel.replace("/", os.sep))
                 if sha256_file(tp) != files[rel]:
                     return rollback("组合校验失败：%s 哈希不符" % rel)
         except Exception as e: # noqa: BLE001
             return rollback("组合校验时出错（%s）：%s" % (rel, str(e)[:70] or type(e).__name__))
 
         extra = {"from": cur.get("version") or "", "files": len(placed)}
+        # ---- versioned：组合校验过了 ⇒ **只翻指针**，不碰正在运行的那份 ----
+        # ⛔ 顺序要紧：**先**装完并校验通过、**再**写指针。反过来（先翻指针后装）会出现
+        #   "指针指着一个还没装好的目录" ⇒ 下次启动拉起半个版本。
+        if _pointer_at_end:
+            _perr = write_pointer(target, _pointer_at_end)
+            if _perr:
+                # 指针写不进去 ⇒ 这份新目录**没人会跑**（但它是完整的、可复用）⇒
+                # 如实报失败，并提示"下次还会重试"。**不回滚**：删掉它只是白费一次下载。
+                return 1, ("新版本已装到 releases/%s（%d 件、校验通过），但**版本指针写不进去**（%s）"
+                           "⇒ 这次不切换（仍跑原来那份）。下次点更新会重试。"
+                           % (want_ver, len(placed), _perr)), {"phase": "pointer", "installed": want_ver}
+            write_local_state(target, want_ver, want_tree, dict(extra, layout="versioned"))
+            return 0, ("更新成功（版本目录）：%s → %s（装到 releases/%s，换成 %d 件，指针已翻）"
+                       % (cur.get("version") or "?", want_ver, want_ver, len(placed))), {
+                           "placed": len(placed), "layout": "versioned", "pointer": want_ver}
         if locked:
             # ⛔ **V3**：**不许**把 installed.json 的 version 推到位 —— 否则"再点一次更新"
             #    会被上面的短路判据吞成"已是最新、什么都没做"，被跳过的文件永远补不回来（实测过）。

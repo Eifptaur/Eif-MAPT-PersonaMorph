@@ -1055,10 +1055,19 @@ uc._state_path = lambda: _sf10 # 判据绝不动真 data/update_state.json
 uc._read_installed = lambda: {}
 U._relaunch_after_update = lambda *a, **k: None
 try:
+    # ⛔ 版本样本必须**与本机同一套体系**（2026-10-09 换轨成 `V<符号>` 之后，`Vᛞ`=4）。
+    #   老样本 `"1.0.0"` / `"2026.10.1.1"` 都是**日期式** ⇒ 与 `Vᛞ` 跨体系 ⇒
+    #   闸门先走"跨体系不据此判新旧"分支 ⇒ 下面这几条断言全崩（不是产品坏了，是夹具过时了）。
+    #   符号代表几是 `version.RUNE_VALUES` 那张**人手写的表**定的 ⇒ 判据里临时登记，不动真表。
+    import agent.version as _VERV10
+    _VERV10.RUNE_VALUES.setdefault("ᛟ", 5)   # 正常新版本（比 ᛞ=4 大一号）
+    _VERV10.RUNE_VALUES.setdefault("ᚠ", 3)   # 版本回退（比当前小）
+    _LOW10 = "Vᚠ"
+    _FINE10 = "Vᛟ"
     # ⚠️ 低版本那份必须带**与本机不同的内容指纹**：否则会先被"已是最新"短路吞掉，闸门就没被测到
-    _low10 = _man10("1.0.0", {"build": "0ldc0ffee000"})
-    _exp10 = _man10("2026.10.1.1", {"expires": "2000-01-01T00:00:00Z"})
-    _fine10 = _man10("2026.10.1.1")
+    _low10 = _man10(_LOW10, {"build": "0ldc0ffee000"})
+    _exp10 = _man10(_FINE10, {"expires": "2000-01-01T00:00:00Z"})
+    _fine10 = _man10(_FINE10)
     for _nm10, _m10, _kind10 in (("版本回退清单", _low10, "older"), ("expires 过期清单", _exp10, "expired")):
         if os.path.exists(_sf10):
             os.remove(_sf10)

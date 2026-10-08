@@ -21,6 +21,9 @@ namespace WxCloser
             StyleKit.Prep(); // 高 DPI（PerMonitorV2）+ 关系统崩溃弹窗
 
             string root = Path.GetDirectoryName(Application.ExecutablePath);
+            // ⛔ 第 162 项：`assets\`（窗体图标）**随代码走** ⇒ 指版本目录（没有指针就是 exe 目录）。
+            string appRoot = StyleKit.ResolveVersionedRoot(root);
+            StyleKit.AppRootHint = appRoot;   // 让 `lib\` 的 WebView2 解析走代码根（与 launcher 口径一致）
 
             // 取证入口：把结果窗离屏渲染成 PNG（不显示、不抢焦点），与被关掉的进程无关。
             // ⚠️ （#18）：可选第三参 = 字号倍率（等效 DPI 模拟，见 StyleKit.FontScale）——
@@ -40,7 +43,7 @@ namespace WxCloser
                 //   异常全文落盘 <dir>\close-shot.err，成功时把返回串也存 <dir>\close-shot.out。
                 try
                 {
-                    string ret = Shot(args[1], root, scale);
+                    string ret = Shot(args[1], appRoot, scale);
                     try { File.WriteAllText(Path.Combine(args[1], "close-shot.out"), ret + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                     Console.WriteLine(ret);
                 }
@@ -65,7 +68,8 @@ namespace WxCloser
             }
 
             List<string> killed = KillAll(root);
-            using (Form f = BuildForm(root, killed))
+            // ⛔ 第 162 项：`BuildForm` 里只用 `root` 找 `assets\`（窗体图标，随代码走）⇒ 传**代码根**。
+            using (Form f = BuildForm(appRoot, killed))
                 f.ShowDialog();
         }
 

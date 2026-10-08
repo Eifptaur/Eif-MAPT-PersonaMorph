@@ -72,7 +72,9 @@ namespace WxLauncher
 
         public LauncherForm()
         {
-            Root = Path.GetDirectoryName(Application.ExecutablePath);
+            // ⛔ `Root` 在这里＝**当前要跑的代码根**（找 `assets\`/控制台），不是安装根 ⇒ 走 `AppRoot`
+            //   （第 162 项：版本目录里也有 `assets\`）。用户数据仍走 `Program.InstallRoot`。
+            Root = Program.AppRoot;
             BuildUI();
             // ⛔ **静默档**（就绪时不再弹这个窗）：
             //   用户口径是"启动器的名字就是产品的名字，而且启动非常迅速"、"以后也都不用显示这个启动弹窗"
@@ -801,7 +803,7 @@ namespace WxLauncher
     {
         public BusyForm()
         {
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            string root = Program.AppRoot;   // 图标在 `assets\`（随代码走）⇒ 指版本目录
             Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -923,7 +925,7 @@ namespace WxLauncher
 
         public QtBootForm(string reason)
         {
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            string root = Program.AppRoot;   // 说的是"当前跑的那份代码缺界面组件"⇒ 指版本目录
             Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -1009,7 +1011,8 @@ namespace WxLauncher
             //   这跟当年"在 config.json 里瞎找 token、抓到 cloud.token（空）⇒ 401"是同一个病。
             //   现在：①先定位 `"server"` 段再取它的 `port`；②取不到就回读 `logs\console.url` 的端口
             //   （那是"上一次真跑起来的端口"，比配置更接近真相）；③都没有才回落 3210。
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            //   ⛔ 第 162 项：`config.json` 与 `logs\console.url` 都在**安装根**（不进版本目录）。
+            string root = Program.InstallRoot;
             int p = Ui.ServerPortFromConfig(root);
             if (p > 0) return p;
             int p2 = Ui.PortFromUrlFile(root);
@@ -1026,7 +1029,7 @@ namespace WxLauncher
 
         public AskForm()
         {
-            Root = Path.GetDirectoryName(Application.ExecutablePath);
+            Root = Program.AppRoot;   // 只用来找 `assets\`（图标）⇒ 随代码走
             Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -1272,6 +1275,16 @@ internal static class BarPeek
 
 static class Program
     {
+        /// <summary>**安装根**（启动器 exe 所在目录）—— 用户数据（runtime/data/logs/config.json）
+        /// 永远在这里，指针怎么翻都不动。等同老的 `GetDirectoryName(Application.ExecutablePath)`。</summary>
+        internal static string InstallRoot;
+
+        /// <summary>**实际要跑哪一份代码**：默认＝安装根（今天的行为）；
+        /// 若 `releases\current.txt` 指向一个**校验通过**的版本目录，就换成它。
+        /// ⛔ 只有**程序本体**（scripts/ agent/ assets/ ui_qt/ …）跟着它走；
+        ///   用户数据与 `runtime\` 仍走 `InstallRoot`（见第 162 项与 `报告/任务书-更新机制版本目录-20261008.md`）。</summary>
+        internal static string AppRoot;
+
         [STAThread]
         static void Main(string[] args)
         {
@@ -1292,6 +1305,11 @@ static class Program
             //   修法（把"裸奔区"压到零）：**在 `Main` 的第一条语句**就把两个钩子挂上，并且
             //   在进入任何分支之前，就把"异常落盘到哪"确定下来。这样即使 `Prep()` 自己炸，
             //   也能留下证据（`--shot <dir>` 传了目录就写那儿，否则写 exe 旁的 `_scratch\launcher.err`）。
+            //        ⛔ 这两根必须**尽早**定（第 162 项）：后面找 `assets\`/`scripts\` 的每一处都靠 `AppRoot`，
+            //          晚一步赋值就会有一处仍指着老目录 ⇒ 半新半旧。
+            InstallRoot = Path.GetDirectoryName(Application.ExecutablePath) ?? ".";
+            AppRoot = ResolveVersionedRoot(InstallRoot);
+            StyleKit.AppRootHint = AppRoot;   // `lib\` 的 WebView2 解析走代码根（第 162 项）
             string bootErr = null;
             try
             {
@@ -1466,7 +1484,17 @@ static class Program
             if (args != null && args.Length > 0 && args[0] == "--webview2probe")
             {
                 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
-                Console.WriteLine(WebView2Guide.Probe(Path.GetDirectoryName(Application.ExecutablePath)));
+                //   ⛔ 第 162 项：`BootstrapperPath(dir)` 找的是**随包的引导器**（`lib\` ⇒ 随代码走）。
+                Console.WriteLine(WebView2Guide.Probe(Program.AppRoot));
+                return;
+            }
+            //   --rootprobe  ⑥：打印双根解析结果（机械判据只认这两行 ASCII，见第 162 项验收）
+            //     判据：`install=<安装根>` / `app=<代码根>`。指针没翻时两者相同。
+            if (args != null && args.Length > 0 && args[0] == "--rootprobe")
+            {
+                try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
+                Console.WriteLine("install=" + Program.InstallRoot);
+                Console.WriteLine("app=" + Program.AppRoot);
                 return;
             }
             if (args != null && args.Length > 0 && args[0] == "--shortcutprobe")
@@ -1527,7 +1555,7 @@ static class Program
                 {
                     try
                     {
-                        Ui.NoteFallback(Path.GetDirectoryName(Application.ExecutablePath),
+                        Ui.NoteFallback(Program.InstallRoot,
                             "端口 " + prePort + " 上跑的不是本产品控制台（可能是同源上游产品）"
                             + " ⇒ 不代开它的页面，继续正常启动流程（本产品会自动换端口）");
                     }
@@ -1539,7 +1567,9 @@ static class Program
                     Application.SetCompatibleTextRenderingDefault(false);
                     if (!Ui.ConsoleWindowAlive())
                     {
-                        string dir0 = Path.GetDirectoryName(Application.ExecutablePath);
+                        // ⛔ 第 162 项：`ConsoleUrl` 读 `logs\console.url`、`NoteFallback` 写 `logs\`
+                        //   ⇒ 都指**安装根**（`logs\` 不进版本目录）。
+                        string dir0 = Program.InstallRoot;
                         string why0 = "";
                         string url0 = Ui.ConsoleUrl(dir0, out why0);
                         // ⛔ **只有真有人在听才开窗** —— 地址文件是"上一次"跑控制台时写下的，
@@ -1607,7 +1637,7 @@ static class Program
             //   （对齐「任何包换入都必须经过用户可见的公告与选择」）。
             //   检测不到（没有 runtime / 目录判断出错）就一言不发地跳过——拦路反而不是优化；
             //   走到这里说明控制台没在跑、互斥锁也拿到了 ⇒ 是一次真正的全新启动，才值得公告。
-            string qtBootWhy = QtBootForm.MissingReason(Path.GetDirectoryName(Application.ExecutablePath));
+            string qtBootWhy = QtBootForm.MissingReason(Program.AppRoot);
             if (qtBootWhy != null)
             {
                 Application.Run(new QtBootForm(qtBootWhy));
@@ -1615,8 +1645,27 @@ static class Program
             // ⛔ **就绪 ⇒ 不弹这个窗**（用户口径："以后也都不用显示这个启动弹窗"）。
             //   判据见 `FastPathReady`：运行时在 ＋ 依赖标记在 ＋ 界面组件在 ⇒ 走静默档
             //   （流程一步不少，只是不显示窗体；**出错时 `Fail()` 会把它显形**）。
-            LauncherForm.Silent = FastPathReady(Path.GetDirectoryName(Application.ExecutablePath));
+            LauncherForm.Silent = FastPathReady(Program.InstallRoot, Program.AppRoot);
             Application.Run(new LauncherForm());
+        }
+
+        /// <summary>读版本指针决定跑哪份。⛔ 任何一步不放心 ⇒ 一律退回 exe 目录（宁可跑旧的，不许起不来）。</summary>
+        /// <remarks>
+        /// `releases\current.txt` 由更新链（`agent/update_apply.py::write_pointer`）在**新版本校验通过后**原子写入。
+        /// 基础四道校验在 `StyleKit.ResolveVersionedRoot`（两个 exe 共用、口径不许漂移），
+        /// 这里**再补一层本产品专有的**：那个目录下**界面组件齐**（`QtBootForm.MissingReason`）。
+        /// 任何一级不过 ⇒ 返回 `exeDir`（跑安装根那份）。删掉 `current.txt` ⇒ 当场回到老行为。
+        /// </remarks>
+        static string ResolveVersionedRoot(string exeDir)
+        {
+            string cand = StyleKit.ResolveVersionedRoot(exeDir);
+            if (string.IsNullOrEmpty(cand) || cand == exeDir) return exeDir;
+            try
+            {
+                if (QtBootForm.MissingReason(cand) != null) return exeDir; // 界面组件不全 ⇒ 退回
+                return cand;
+            }
+            catch { return exeDir; }
         }
 
         /// <summary>「一切都就绪」⇒ 启动器窗口走静默档（不弹窗，照微信/WorkBuddy 那种"双击直接起"）。</summary>
@@ -1629,15 +1678,18 @@ static class Program
         ///    实测本机所有依赖都装好了（`dep_check` 27 项全过），却因为标记不在而每次都白弹一次启动器。
         ///    ⇒ 改成**直接探测事实**（`dep_check` 实测 0.10 秒）：装好了就静默，这才是"装完不再显示"。
         ///    标记仍在时当**零成本快通道**（省掉那次 0.1 秒的子进程），但不是唯一判据。
-        static bool FastPathReady(string root)
+        /// ⛔ **双根**（第 162 项）：`root`＝安装根（`runtime\python`、`data\.deps_ok` 这两样**永远**在安装根）；
+        ///    `appRoot`＝代码根（`agent\` 随更新走，`sys.path` 必须指向它，否则版本目录下探测会 import 失败）。
+        static bool FastPathReady(string root, string appRoot)
         {
             try
             {
                 if (string.IsNullOrEmpty(root)) return false;
+                if (string.IsNullOrEmpty(appRoot)) appRoot = root;   // 兜底：没给代码根就按安装根（老行为）
                 if (!File.Exists(Path.Combine(root, "runtime", "python", "python.exe"))) return false;
-                if (QtBootForm.MissingReason(root) != null) return false;
+                if (QtBootForm.MissingReason(appRoot) != null) return false;
                 if (File.Exists(Path.Combine(root, "data", ".deps_ok"))) return true; // 快通道：标记在 = 已核对过
-                return DepsProbeOk(root);                                              // 慢通道：真探测依赖
+                return DepsProbeOk(root, appRoot);                                     // 慢通道：真探测依赖
             }
             catch { return false; }
         }
@@ -1647,15 +1699,18 @@ static class Program
         ///    实测该探测 **0.10 秒 / 27 项**，比弹一次窗打断用户便宜得多。
         /// ⛔ 任何异常（跑不起来 / 超时 / 输出读不出）一律当**不齐** ⇒ 照旧弹窗（宁可多弹不要静默失败）。
         /// 输出约定：脚本打印 `DEPS_OK` 表示全齐，否则打印 `DEPS_MISSING:<包名列表>`。
-        static bool DepsProbeOk(string root)
+        /// ⛔ **双根**（第 162 项）：解释器来自**安装根**（`runtime\python` 不进包、永远在安装根），
+        ///    `sys.path` 指向**代码根**（`agent\` 在版本目录里）—— 混用会 import 不到 `agent.wechat`。
+        static bool DepsProbeOk(string root, string appRoot)
         {
             try
             {
                 string py = Path.Combine(root, "runtime", "python", "python.exe");
                 if (!File.Exists(py)) return false;
+                if (string.IsNullOrEmpty(appRoot)) appRoot = root;   // 兜底
                 // 单行脚本：不落盘、不留痕；`-c` 里只用标准库 + 本项目自己的 `dep_check`。
                 // `root` 里可能有空格/中文 ⇒ 用 r'' 原始串，并把单引号转义成两个。
-                string rq = root.Replace("'", "''");
+                string rq = appRoot.Replace("'", "''");
                 string code = "import sys;sys.path.insert(0,r'" + rq + "');"
                             + "from agent.wechat import dep_check as _d;"
                             + "rows,ok=_d('all');"
@@ -1697,7 +1752,7 @@ static class Program
     {
         public NoticeForm()
         {
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            string root = Program.AppRoot;   // 公告窗图标在 `assets\`（随代码走）
             Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -2137,7 +2192,8 @@ static class Program
         //    探针的判据要的是"按工作区算出来的那个尺寸"，读了存档就不再确定。
         static string GeoFile()
         {
-            try { return Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "data", "console_window.txt"); }
+            //   ⛔ 第 162 项：`data\` 在**安装根**（窗口几何是用户数据，不随版本目录走）。
+            try { return Path.Combine(Program.InstallRoot, "data", "console_window.txt"); }
             catch { return null; }
         }
 
@@ -2332,7 +2388,7 @@ static class Program
             catch { }
             _wv.CoreWebView2InitializationCompleted += delegate(object s, Microsoft.Web.WebView2.Core.CoreWebView2InitializationCompletedEventArgs e)
             {
-                if (!e.IsSuccess) { Ui.NoteFallback(Path.GetDirectoryName(Application.ExecutablePath), "WebView2 初始化失败（多半是系统没装 WebView2 运行时）"); Ui.FallbackBrowser(_url); Close(); return; }
+                if (!e.IsSuccess) { Ui.NoteFallback(Program.InstallRoot, "WebView2 初始化失败（多半是系统没装 WebView2 运行时）"); Ui.FallbackBrowser(_url); Close(); return; }
                 // ⛔ 
                 //   页面在"用户点停止 + 后端已关"之后会调 `window.close()`，但 WebView2 默认**忽略**它，
                 //   必须宿主自己响应 `WindowCloseRequested` 才真的关窗（否则用户点完停止，窗口一直杵在那）。
@@ -2416,7 +2472,7 @@ static class Program
             {
                 if (ProbeOnly) return; // 探针模式：只量几何，不起 WebView2
                 try { _wv.EnsureCoreWebView2Async(null); }
-                catch (Exception ex) { Ui.NoteFallback(Path.GetDirectoryName(Application.ExecutablePath), "EnsureCoreWebView2Async 抛异常：" + ex.Message); Ui.FallbackBrowser(_url); Close(); }
+                catch (Exception ex) { Ui.NoteFallback(Program.InstallRoot, "EnsureCoreWebView2Async 抛异常：" + ex.Message); Ui.FallbackBrowser(_url); Close(); }
             };
             StyleKit.Apply(this, "群相 控制台");
             // 全屏时"鼠标贴顶端才滑出顶栏"：WebView2 是**原生子窗口**、会吃掉鼠标消息，
@@ -2456,7 +2512,7 @@ static class Program
             //   免得被它的主题化逻辑覆盖。
             try
             {
-                string ico0 = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "assets", "app.ico");
+                string ico0 = Path.Combine(Program.AppRoot, "assets", "app.ico");
                 if (File.Exists(ico0)) Icon = Icon.ExtractAssociatedIcon(ico0);
             }
             catch { }
@@ -2638,7 +2694,7 @@ static class Program
                 if (StartingWindowOpen) return; // 还在硬超时窗口内 ⇒ 继续等
                 if (!_downStarting) return; // 已经离开「正在拉起」了 ⇒ 收工
                 HealFail("已尝试 " + HealStartTimeoutSec + " 秒，控制台服务仍没探到（" + Ui.ShortUrl(_url) + " 及候选口都没应答）"
-                    + HealLogTail(), Path.GetDirectoryName(Application.ExecutablePath));
+                    + HealLogTail(), Program.InstallRoot);
             }
             catch { }
         }
@@ -2646,7 +2702,7 @@ static class Program
         /// 失败时的**可诊断信息**：把 `logs\console_heal.log` 的最后几行带上，别让人对着空白猜。
         string HealLogTail()
         {
-            string tail = Ui.LastHealLog(Path.GetDirectoryName(Application.ExecutablePath), 5);
+            string tail = Ui.LastHealLog(Program.InstallRoot, 5);
             return string.IsNullOrEmpty(tail) ? "" : ("；最后几条自愈日志：" + tail);
         }
 
@@ -2696,7 +2752,13 @@ static class Program
         /// ⛔ 不等它退出：`onestart.py` 会一直守到控制台就绪（可能一两分钟）。
         void StartBackend()
         {
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            // ⛔ **双根**（第 162 项）：`root`＝安装根（`runtime\python`、`logs\python_path.txt`、
+            //   日志落点 —— 这些**永远**在安装根，指针怎么翻都不动）；
+            //   `appRoot`＝代码根（`scripts\onestart.py` 在**版本目录**里，随更新走）。
+            //   混用 ⇒ "用根目录的 Python 跑版本目录的脚本"看起来对，但日志会写错地方、且版本目录
+            //   一旦被删就找不到脚本 —— 所以这里必须显式分开。
+            string root = Program.InstallRoot;
+            string appRoot = Program.AppRoot;
             try
             {
                 string exe = "", pre = "", ver = "", why = "";
@@ -2706,12 +2768,12 @@ static class Program
                 //   已经被 JS 置成 disabled + "正在拉起…"，永远回不来（又一处"进去出不来"）。
                 //   ⇒ 走 HealFail：写日志 + 把原因贴到自绘页 + 重新画出可点的按钮。
                 if (!got) { HealFail("拉起失败：找不到可用的 Python（" + why + "）", root); return; }
-                string onestart = Path.Combine(root, "scripts", "onestart.py");
+                string onestart = Path.Combine(appRoot, "scripts", "onestart.py");
                 if (!File.Exists(onestart)) { HealFail("拉起失败：缺 scripts\\onestart.py", root); return; }
                 var po = new ProcessStartInfo(exe, ((pre.Length > 0 ? (pre + " ") : "") + "-X utf8 \"" + onestart + "\"").Trim());
                 po.UseShellExecute = false;
                 po.CreateNoWindow = true;
-                po.WorkingDirectory = root;
+                po.WorkingDirectory = appRoot;   // 让 onestart.py 以**代码根**为工作目录（它按相对路径找 agent/ 等）
                 po.EnvironmentVariables["WX_GUI"] = "1";
                 Process.Start(po);
                 _startAt = DateTime.Now;
@@ -2800,12 +2862,14 @@ static class Program
         /// 现场只有那台机器有，没这行日志就只能靠猜。
         public static void OpenConsole(string url)
         {
-            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+            // ⛔ 两个根分工（第 162 项）：`dir`＝**代码根**（找 `lib\`/`assets\` 的 WebView2 件，随代码走）；
+            //   `Program.InstallRoot`＝**安装根**（`logs\` 落点）。混用会出现"dll 找到了、日志写错地方"。
+            string dir = Program.AppRoot;
             try
             {
                 bool has = File.Exists(Path.Combine(dir, "lib", "Microsoft.Web.WebView2.WinForms.dll"))
                         || File.Exists(Path.Combine(dir, "Microsoft.Web.WebView2.WinForms.dll"));
-                if (!has) { NoteFallback(dir, "缺 lib\\Microsoft.Web.WebView2.WinForms.dll"); FallbackBrowser(url); return; }
+                if (!has) { NoteFallback(Program.InstallRoot, "缺 lib\\Microsoft.Web.WebView2.WinForms.dll"); FallbackBrowser(url); return; }
                 // ⑤：**运行库**不在时不要硬起窗口（初始化必失败、再兜底浏览器，用户看不懂为什么）。
                 // 先给自绘面板：一键装（随机带的官方引导器）｜用浏览器打开（仅当本机真有浏览器）｜复制网址；
                 // 一个都做不了时**如实说清"这次看不了控制台，但机器人在后台照常跑"**，并写日志留现场。
@@ -2818,29 +2882,29 @@ static class Program
                         {
                             string why;
                             bool done = WebView2Guide.Install(dir, out why);
-                            NoteFallback(dir, "缺 WebView2 运行库 ⇒ 一键安装：" + why);
+                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 一键安装：" + why);
                             if (done) { Application.Run(new ConsoleForm(url)); }
                             return;
                         }
                         if (f.Action == "browser")
                         {
-                            NoteFallback(dir, "缺 WebView2 运行库 ⇒ 用户选了用浏览器打开");
+                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户选了用浏览器打开");
                             FallbackBrowser(url);
                             return;
                         }
                         if (f.Action == "copy")
                         {
                             try { Clipboard.SetText(url); } catch { }
-                            NoteFallback(dir, "缺 WebView2 运行库 ⇒ 用户复制了网址（本机看不了控制台）");
+                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户复制了网址（本机看不了控制台）");
                             return;
                         }
-                        NoteFallback(dir, "缺 WebView2 运行库 ⇒ 用户点了知道了（未打开控制台）");
+                        NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户点了知道了（未打开控制台）");
                         return;
                     }
                 }
                 Application.Run(new ConsoleForm(url));
             }
-            catch (Exception ex) { NoteFallback(dir, "自家窗口启动异常：" + ex.Message); FallbackBrowser(url); }
+            catch (Exception ex) { NoteFallback(Program.InstallRoot, "自家窗口启动异常：" + ex.Message); FallbackBrowser(url); }
         }
 
         /// 取证探针：**我们自己的 WebView2 窗口**里的光标链路（鲸鱼光标 + 点击歪头帧）。
@@ -2853,7 +2917,7 @@ static class Program
         public static string CursorProbe(string url)
         {
             var sb = new StringBuilder();
-            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+            string dir = Program.AppRoot;   // 探的是本产品 WebView2 dll（`lib\` 随代码走）
             bool hasDll = File.Exists(Path.Combine(dir, "lib", "Microsoft.Web.WebView2.WinForms.dll"))
                        || File.Exists(Path.Combine(dir, "Microsoft.Web.WebView2.WinForms.dll"));
             sb.AppendLine("dll_present=" + hasDll);
@@ -3086,7 +3150,8 @@ static class Program
         public static string UrlProbe()
         {
             var sb = new StringBuilder();
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            //   ⛔ 第 162 项：探的是 `logs\console.url` / `config.json`（都在安装根）。
+            string root = Program.InstallRoot;
             string why = "";
             string u = ConsoleUrl(root, out why);
             if (string.IsNullOrEmpty(u)) u = ""; // 死链时 ConsoleUrl 会回 null，探针不许崩
@@ -3275,7 +3340,8 @@ static class Program
         /// 用指定的口重拼一个地址，**口令跟着走**（换口不能把口令换丢，否则 401）。
         public static string WithPort(string url, int port)
         {
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            //   ⛔ 第 162 项：口令的拥有者是 `logs\console.url`（在安装根）。
+            string root = Program.InstallRoot;
             string tok = TokenOf(url);
             if (tok == "")
             {
@@ -3301,7 +3367,8 @@ static class Program
         public static int[] CandidatePorts(string url)
         {
             var set = new System.Collections.Generic.List<int>();
-            string root = Path.GetDirectoryName(Application.ExecutablePath);
+            //   ⛔ 第 162 项：`config.json` / `logs\console.url` 都在**安装根**（不进版本目录）。
+            string root = Program.InstallRoot;
             int p0 = PortOf(url);
             if (p0 > 0) set.Add(p0);
             int pf = PortFromUrlFile(root);
@@ -3708,7 +3775,9 @@ static class Program
         }
         public static void FallbackBrowser(string url)
         {
-            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+            // ⛔ `dir` 这里**只用来写 `logs\console_open.log`** ⇒ 必须指**安装根**（`Program.InstallRoot`），
+            //   不是代码根 —— 日志落点在任何版本下都是同一个（第 162 项）。
+            string dir = Program.InstallRoot;
             // ⛔ **浏览器兜底也要探活**。
             //   这条路上没有 WebView2 可以画重试页 ⇒ 死链就是死链（用户截图正是 Edge 上的
             //   「无法访问此页面 / 127.0.0.1 拒绝连接」）⇒ 不再开它，改用**我们自己的**浮窗把话说清楚。
@@ -3740,7 +3809,7 @@ static class Program
         {
             public DeadLinkForm(string url, string variant = null)
             {
-                string root = Path.GetDirectoryName(Application.ExecutablePath);
+                string root = Program.AppRoot;   // 图标在 `assets\`（随代码走）
                 // variant = "occupied"：端口被别的程序占着（跑的不是本产品）的提示形态。
                 //   复用同一座窗、只换文案 —— 布局/窗高全走既有实测链（FitLabel + retry.Bottom
                 //   反推 ClientSize），两版文案行数不同也不会叠字/被裁。

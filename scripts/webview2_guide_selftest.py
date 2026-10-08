@@ -110,8 +110,12 @@ ok("有 install 分支（一键装）", 'f.Action == "install"' in lc and _GUIDE
    "引导器三元式=%s" % (_GUIDE_MAIN_ACTION in wg))
 ok("有 browser 分支（用浏览器打开）", 'f.Action == "browser"' in lc and 'Action = "browser"' in wg)
 ok("有 copy 分支（复制网址）", 'f.Action == "copy"' in lc and 'Action = "copy"' in wg)
-ok("还写了日志留现场（NoteFallback）", lc.count("NoteFallback(dir, \"缺 WebView2 运行库") >= 3,
-   lc.count("NoteFallback(dir, \"缺 WebView2 运行库"))
+# ⛔ **锚意图、不锚文案字面**：这里要守的是"缺运行库这条链的**每种结局都写日志留现场**"，
+#    不是"第一参数必须叫 `dir`"。第 162 项把日志落点从代码根改成**安装根**
+#    （`logs\` 永远在安装根）⇒ 断言改成"不限定第一参数"的计数。
+_NF_MISSING_RUNTIME = re.findall(r"NoteFallback\([^,]+,\s*\"缺 WebView2 运行库", lc)
+ok("还写了日志留现场（NoteFallback）", len(_NF_MISSING_RUNTIME) >= 3,
+   "命中 %d 处" % len(_NF_MISSING_RUNTIME))
 ok("探针开关已接进 Main", '"--webview2probe"' in lc)
 ok("官方两处注册表路径都在（HKLM WOW6432Node + HKCU）",
    "WOW6432Node\\Microsoft\\EdgeUpdate\\Clients" in wg and "Registry.CurrentUser" in wg)

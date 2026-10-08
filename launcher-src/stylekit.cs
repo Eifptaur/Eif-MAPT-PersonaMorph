@@ -304,13 +304,49 @@ namespace WxLauncher
             try { AppDomain.CurrentDomain.AssemblyResolve += ResolveFromLib; } catch { }
         }
 
+        /// <summary>**随代码走的根**（第 162 项）——`lib\` 里的 WebView2 程序集在版本目录里。
+        /// ⛔ 本文件被 `群相.exe` 与 `一键关闭.exe` **两个 exe 共用**，直接引用各自命名空间的
+        ///    `Program.AppRoot` 会编译不过 ⇒ 用这个"由调用方回填"的静态字段解耦。
+        ///    不设 ⇒ 退回 exe 目录（老行为）。**必须早于 `Prep()`（＝早于任何 WebView2 程序集加载）设置**。</summary>
+        internal static string AppRootHint;
+
+        /// <summary>读 `<exeDir>\releases\current.txt` 决定**代码根**（第 162 项）。
+        /// ⛔ 放在本文件是因为 `群相.exe` 与 `一键关闭.exe` 都要用（`群相.exe` 那份在 `Program` 里，
+        ///    但 `一键关闭.exe` 不编 `launcher.cs` ⇒ 拿不到它）。
+        /// 四级校验缺一不可：① 文件在；② 内容非空且**是合法目录名**（挡 `..\..\` 越界）；
+        /// ③ 那个目录存在；④ `assets\` 在（没有代码就等于空目录）。
+        /// 任何一级不过 ⇒ 返回 `exeDir`（跑安装根那份）。删掉 `current.txt` ⇒ 当场回到老行为。</summary>
+        internal static string ResolveVersionedRoot(string exeDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(exeDir)) return exeDir;
+                string rel = Path.Combine(exeDir, "releases");
+                string ptr = Path.Combine(rel, "current.txt");
+                if (!File.Exists(ptr)) return exeDir;                      // 没有指针 ⇒ 老行为
+                string ver = (File.ReadAllText(ptr) ?? "").Trim();
+                if (ver.Length == 0) return exeDir;                         // 空指针 ⇒ 老行为
+                if (ver.IndexOfAny(new[] { '\\', '/', ':' }) >= 0 || ver.Contains("..")) return exeDir;
+                string cand = Path.Combine(rel, ver);
+                if (!Directory.Exists(cand)) return exeDir;                 // 指向不存在的目录 ⇒ 老行为
+                if (!Directory.Exists(Path.Combine(cand, "assets"))) return exeDir; // 空壳目录 ⇒ 退回
+                return cand;
+            }
+            catch { return exeDir; }
+        }
+
         static System.Reflection.Assembly ResolveFromLib(object sender, ResolveEventArgs e)
         {
             try
             {
-                string dir = Path.GetDirectoryName(Application.ExecutablePath);
+                // ⛔ 双根（第 162 项）：`lib\` 随代码走 ⇒ 先探 `AppRootHint`，再退回 exe 目录。
+                string dir = string.IsNullOrEmpty(AppRootHint)
+                    ? Path.GetDirectoryName(Application.ExecutablePath)
+                    : AppRootHint;
+                string fallback = Path.GetDirectoryName(Application.ExecutablePath);
                 string name = new System.Reflection.AssemblyName(e.Name).Name;
-                foreach (string d in new string[] { Path.Combine(dir, "lib"), dir })
+                foreach (string d in new string[] { Path.Combine(dir, "lib"), dir,
+                                                    Path.Combine(fallback, "lib"), fallback })
                 {
                     string p = Path.Combine(d, name + ".dll");
                     if (File.Exists(p)) return System.Reflection.Assembly.LoadFrom(p);
