@@ -530,10 +530,15 @@ ck("B22 有一次性安全默认值迁移（老 config.json 也会被补上）",
 ck("B22a 迁移只对真实 config.json 跑（自定义 path 不写回用户配置）",
    _sm.has(SRC_CFG, "os.path.abspath(path) == os.path.abspath(CONFIG_FILE)"))
 # B22b：
-#   「限位」`ui.lock_window_pos` 改成默认开 ⇒ 老用户那份 config.json 里写着 false 的也必须搬到 true，
-#   否则"改默认值"对他们无效（与 B22 同一个坑）。这里守三件事：新默认 + 迁移项在表里 + 只做一次。
-ck("B22b 限位默认开（ui.lock_window_pos=True）", _sm.has(SRC_CFG, '"lock_window_pos": True'))
-ck("B22b2 「限位」也有一次性迁移（老 config.json 里 false 会被搬到 true）",
+#   「限位」`ui.lock_window_pos` 的**现行口径是默认关** —— 它是早期坐标标定阶段的临时手段，
+#   现在判定不再依赖"窗口必须多宽多高"（尺寸变了就按当前尺寸重新校准），
+#   而限位要动用户的窗口（还得"借了再还"）⇒ 定为不再需要、默认不碰。
+#   ⇒ 这里守三件事：新默认（关）+ 那条"搬到默认开"的迁移**已废弃** + 它不再改配置。
+#   ⚠️ 这条判据以前锚的是旧默认值（`"lock_window_pos": True`）—— 口径一反转它就红。
+#      锚默认值本身没错（这就是要守的东西），**错在只锚了一侧**：所以下面 B22b3/B22b4 反向锚一起留着。
+ck("B22b 限位默认**关**（ui.lock_window_pos=False —— 限位已定为不再需要）",
+   _sm.has(SRC_CFG, '"lock_window_pos": False'))
+ck("B22b2 「限位」那条一次性迁移**已在表里且已废弃**（保留空实现 ⇒ 老标记不会被当没跑过而重放）",
    "_WINDOW_POS_TAG" in SRC_CFG and "_window_pos_once" in SRC_CFG
    and _sm.has(SRC_CFG, "_MIGRATIONS = ("))
 try:
@@ -541,11 +546,11 @@ try:
     _t = {"ui": {"lock_window_pos": False}, "wechat": {"background_only": True},
           "input": {"allow_real_fallback": False}}
     _c1 = _C._window_pos_once(_t)
-    _c2 = _C._window_pos_once(_t) # 再跑一次：已经 true 了 ⇒ 不该再改、也不该报
-    ck("B22b3 迁移是幂等的（第二次跑什么都不改）",
-       bool(_c1) and _t["ui"]["lock_window_pos"] is True and _c2 == [], str((_c1, _c2)))
-    _t2 = {"ui": {"lock_window_pos": True}}
-    ck("B22b4 已经是 true 的用户不会被反复写（返回空表）", _C._window_pos_once(_t2) == [])
+    _c2 = _C._window_pos_once(_t) # 再跑一次：不该再改、也不该报
+    ck("B22b3 ★迁移**不再把用户搬成限位开**（一律返回空表、一个键都不动）",
+       _c1 == [] and _c2 == [] and _t["ui"]["lock_window_pos"] is False, str((_c1, _c2, _t["ui"])))
+    _t2 = {"ui": {"lock_window_pos": True}} # 用户自己显式打开的 ⇒ 迁移更不许去动他
+    ck("B22b4 ★用户自己开着的限位**不被迁移改回**（返回空表）", _C._window_pos_once(_t2) == [])
 except Exception as _e:
     ck("B22b3 迁移幂等能跑", False, str(_e)[:80])
 # B23：

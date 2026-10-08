@@ -452,6 +452,25 @@ POPUP_INBOX_REL = ((0.50, 0.16), (0.50, 0.22), (0.30, 0.16), (0.70, 0.22),
                    (0.50, 0.28), (0.50, 0.10), (0.30, 0.24), (0.70, 0.30))
 
 
+class _ResetStub:
+    """给「退出多选」那一枪用的**最小适配器** —— 只提供 `_click_posted` 这一个口。
+
+    ⚠️ 为什么不用真的 `WeChatAdapter`：`wechat.py` 与 `wechat_windows.py` **互相 import**
+      （本模块顶部就 `from agent import wechat`），在函数里现造一个适配器会把两条链绑死、
+      还会顺带触发一堆不必要的东西（建 GUI、校准布局…）。而复位只需要"投一枪点击"。
+    ⛔ 这里**不做** `_click_posted` 那套"点后自检有没有冒出不该出现的新窗"：
+      ✕ 那一枪点完**本来就不该有新窗**，但工具条消失的过程中微小时序会误判 ⇒ 反而停手。
+      复位是否成功由**复探输入框**决定（`_composer_reset_multiselect` 内），那才是真判据。
+    """
+
+    def _click_posted(self, backend, hwnd, pt, tag: str = "", right: bool = False, **kw):
+        try:
+            ok, why = backend.click(hwnd, pt, right=right)
+            return bool(ok), str(why)
+        except Exception as e:  # noqa: BLE001
+            return False, "%s 点击异常：%s" % (tag, e)
+
+
 def popup_input_points(rect) -> list:
     """由窗口矩形算出**独立窗输入框**的候选屏幕落点（按序试）。
 
@@ -614,6 +633,40 @@ def send_to_popup(chat_name: str, text: str, *, timeout_s: float = 6.0,
     except Exception as e:
         out.update(step="backend", detail="取输入后端失败：%s" % str(e)[:80])
         return out
+
+    # ⛔ **第 223 项：目标独立窗停在「多选 / 转发」模式 ⇒ 先复位再打。**
+    #   该模式下输入框整条不存在（底部换成工具条）⇒ 打字打不进、发送键恒灰
+    #   ⇒ 表观症状是"发了没反应"。这里有**正面证据**（底部那排工具条），
+    #   所以允许据此**动手复位**；复位成功后照常发，**绝不据此拒发**（第 215 项定调）。
+    #   ⛔ 复位手法**不许用 ESC**（实测会把独立窗整个关掉，退多选变成关窗）。
+    #   ⚠️ 帧必须来自**这个独立窗**（`grab_window(hwnd)`）——`gui` 那套抓的是主窗，
+    #      拿主窗的帧去判独立窗的底部，必然判不出来。
+    try:
+        from agent import wechat as _wxm
+        _im_fb, _m_fb = grab_window(hwnd, physical=False)
+        _fb = _wxm._probe_forward_bar_img(_im_fb, gui=None) if _im_fb is not None else None
+    except Exception:
+        _fb = None
+    if _fb:
+        log.info("独立窗停在「多选/转发」模式（底部工具条 %s）⇒ 先复位再打字", _fb)
+        try:
+            from agent import input_backend as _ib2
+            _be2 = _ib2.select_backend()
+            _stub = _ResetStub()
+            _rok, _rwhy = _wxm._composer_reset_multiselect(
+                _stub, _be2, int(hwnd), tag="发送前退出多选", img=_im_fb)
+        except Exception as _eRS:  # noqa: BLE001
+            _rok, _rwhy = False, "复位自身出错：%s" % str(_eRS)[:80]
+        out["multiselect_reset"] = {"ok": bool(_rok), "why": str(_rwhy)[:140]}
+        log.info("退出多选：%s", _rwhy)
+        if not _rok:
+            out.update(step="multiselect",
+                       detail=("目标窗停在「多选/转发」模式，且**没能复位**（%s）——"
+                               "这种窗口没有输入框，打不进字；按纪律不硬打、也不假报成功"
+                               % str(_rwhy)[:90]))
+            return out
+        import time as _t3
+        _t3.sleep(0.3)
 
     def _ratio():
         im, _m = grab_window(hwnd, physical=False)
@@ -2853,7 +2906,7 @@ def measure_list_top(main_hwnd: int, *, pane: int = 0, scale: float = 0.0) -> di
                 res.append((rs, min(y1, len(col)) - 1))
             return res
 
-        # ── 逐列找"搜索框亮段"：取每列**第一段** ≥238 且长度 20~80 的亮段 ──────
+        # ── 路 A：逐列找"搜索框亮段"（每列第一段 ≥238、长 20~80）──────────────
         votes = {}
         for x in xs:
             rr = _runs(a[:, x], 10, 400, 238, 20)
@@ -2862,21 +2915,64 @@ def measure_list_top(main_hwnd: int, *, pane: int = 0, scale: float = 0.0) -> di
                 if 20 <= ln <= 80:              # 搜索框高度量级（实测 40 物理）
                     votes.setdefault(r1, []).append(x)
                     break                        # 每列只投第一段
-        if not votes:
-            out["note"] = "找不到搜索框亮段 ⇒ 量不到列表顶（候选列 %s）" % (xs[:4],)
-            out["cols"] = xs
-            return out
-        # 取票数最多的下沿（并列取更靠上的 = 更可能是搜索框）
         best_bottom, best_xs = None, []
         for b in sorted(votes):
             if best_bottom is None or len(votes[b]) > len(best_xs):
                 best_bottom, best_xs = b, votes[b]
-        out["search_bottom_y"] = int(best_bottom)
-        out["vote_cols"] = list(best_xs)[:8]
         out["votes"] = {int(k): len(v) for k, v in sorted(votes.items())}
-        # +16 物理留白（实测 104→120）
-        out["list_top_y"] = int(round(best_bottom + 16))
-        out["ok"] = True
+
+        # ⛔ **票数门槛**：路 A 靠"≥238 的亮段"，可这个判定**依赖主题/字号** ——
+        #   实测（whale 主题、窗口 1201×971）：搜索框整片只有 **224~230**（够不到 238），
+        #   于是路 A 找不到搜索框，**反而把会话卡片之间的亮缝（238+）当成了它**
+        #   ⇒ 列表顶被量成 254，而**真值约 118** ⇒ 下游"落点必须 ≥ 列表顶"那道安全阀
+        #   把**好行全拒了**（保守失败：不会乱点，但功能整个不可用）。
+        #   ⇒ 票数太少（凑不够 1/3 列）就**不采信路 A**，改走路 B。
+        _min_votes = max(2, len(xs) // 3)
+        _a_ok = bool(best_bottom is not None and len(best_xs) >= _min_votes)
+
+        # ── 路 B（稳健）：找"顶部亮区 → 列表暗区"的**亮度台阶** ──────────────
+        #   本窗口结构（实测）：y 0~115 是顶栏+搜索框（亮，中位 224~230），
+        #   y≈118 起会话列表（暗，中位 ~120）。台阶比"绝对亮度"稳得多：
+        #   它不依赖主题把搜索框画多白，只看"哪儿开始明显变暗"。
+        _step_votes = {}
+        for x in xs:
+            col = a[:, x]
+            for y in range(20, min(400, len(col) - 4)):
+                _hi = int(_np.median(col[max(0, y - 24):y]))         # 台阶上方 24px 的中位
+                _lo = int(_np.median(col[y + 4:y + 28]))             # 台阶下方 24px 的中位
+                if _hi - _lo >= 60 and _lo < 190:                    # 明显跌暗、且下方确实是暗底
+                    _step_votes.setdefault(y, []).append(x)
+                    break
+        _step_y, _step_xs = None, []
+        for y in sorted(_step_votes):
+            if _step_y is None or len(_step_votes[y]) > len(_step_xs):
+                _step_y, _step_xs = y, _step_votes[y]
+        out["step_y"] = int(_step_y) if _step_y is not None else None
+        out["step_votes_n"] = len(_step_xs)
+
+        if _a_ok:
+            out["search_bottom_y"] = int(best_bottom)
+            out["vote_cols"] = list(best_xs)[:8]
+            out["how"] = "searchbar_bright"
+            # +16 物理留白（实测 104→120）
+            out["list_top_y"] = int(round(best_bottom + 16))
+            # ★ 与路 B 交叉核对（**只记不改**）：两路差得远 ⇒ 如实标注，供诊断
+            if _step_y is not None:
+                out["step_agrees"] = abs(int(round(best_bottom + 16)) - int(_step_y)) <= 40
+            out["ok"] = True
+            return out
+
+        if _step_y is not None:
+            out["search_bottom_y"] = None
+            out["how"] = "brightness_step"
+            out["list_top_y"] = int(_step_y)
+            out["ok"] = True
+            return out
+
+        out["note"] = ("两路都量不到列表顶（路 A 亮段票数 %s < 门槛 %s；路 B 无亮度台阶）"
+                       "⇒ 候选列 %s" % (len(best_xs), _min_votes, xs[:4]))
+        out["cols"] = xs
+        return out
         out["list_top_logical"] = round(out["list_top_y"] / sc, 2)
         out["pane"] = int(pane or 0)
         return out

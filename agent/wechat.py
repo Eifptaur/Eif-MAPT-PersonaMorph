@@ -671,6 +671,170 @@ def _probe_input_box_frame(gui, img=None):
     return None
 
 
+def _probe_forward_bar_img(img, gui=None):
+    """从**一张已经抓好的帧**里量「多选／转发」工具条（判据见 `_probe_forward_bar`）。
+
+    ⛔ 为什么要拆出这一层：**独立窗和主窗是两套帧**。独立窗那条链（`wechat_windows`）
+      用的是 `grab_window(hwnd)`（自己抓独立窗），**不是** `gui` 那套（抓的是主窗）
+      ⇒ 若只在 `gui` 帧上判，独立窗停在多选态时**根本判不到**（帧都对不上）。
+    """
+    try:
+        if img is None:
+            return None
+        px = img.load()
+        W, H = img.size
+        if H < 120 or W < 200:
+            return None
+        x0 = int(getattr(gui, "right_pane_left", 0) or 0) if gui is not None else 0
+        if x0 <= 0 or x0 > W * 0.6:
+            x0 = int(W * 0.22)
+        band_top = int(H * 0.88)
+        band_bot = H
+        # ① 深色像素占比：工具条是"大片背景 + 稀疏图标" ⇒ 深色**少而成簇**，
+        #   既不能成片（那是消息区），也不能几乎没有（那是正常输入框带）。
+        _tot = _dark = 0
+        for y in range(band_top, band_bot):
+            for x in range(x0, W, 2):
+                _tot += 1
+                if min(px[x, y][:3]) < 170:
+                    _dark += 1
+        if _tot <= 0:
+            return None
+        _dark_ratio = _dark / float(_tot)
+        if _dark_ratio > 0.15 or _dark_ratio <= 0.002:
+            return None
+        # ② 按列找深色小图标
+        dark_cols = []
+        for x in range(x0, W, 2):
+            n = 0
+            for y in range(band_top, band_bot):
+                if min(px[x, y][:3]) < 170:
+                    n += 1
+            if n >= 2:
+                dark_cols.append(x)
+        if len(dark_cols) < 3:
+            return None
+        # ③ 簇数 ≥3 且横跨 ≥60%
+        clusters = 1
+        for i in range(1, len(dark_cols)):
+            if dark_cols[i] - dark_cols[i - 1] > 8:
+                clusters += 1
+        span = (dark_cols[-1] - dark_cols[0]) / float(max(1, W - x0))
+        if clusters < 3 or span < 0.60:
+            return None
+        return {"how": "forward_bar", "band_top": band_top, "clusters": clusters,
+                "span": round(span, 3), "cols": len(dark_cols),
+                "dark_ratio": round(_dark_ratio, 4), "W": W, "H": H}
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return None
+
+
+def _probe_forward_bar(gui, img=None):
+    """量「多选／转发」工具条 —— 这个窗口此刻**根本不该有输入框**的**正面证据**。
+
+    背景（第 223 项，真机实测 2026-10-06）：独立窗停在「多选 / 转发」模式时，底部换成的是一条
+    「逐条转发 / 合并转发 / 复制 / 收藏 / 保存 / 删除」工具条，每行左侧各一个勾选框，
+    **输入框整条不存在**。此时：
+      · `send_button_green_ratio` **恒为 0**（没有输入框，自然没有绿按钮）⇒ 会被读成"字没打进去"；
+      · `_probe_input_box_frame` 量不到输入框 ⇒ 按"不许猜"的纪律，聚焦那一枪不点、阳性对照也做不了
+        ⇒ 发送链只能如实报"字没进去"，**用户看到的是"发了没反应"**。
+
+    ⛔ **为什么不拿"量不到输入框"单独当成多选态**：量不到也可能是"窗口被盖住/抓不到帧/尺寸异常"
+      （那类要按"判不了"处理，不许动手）。所以这里再要一条**独立的正面证据**：底部那条工具条
+      **本身**（一排等间距的深色小图标）。
+    判据（三项，全部成立才算）：
+      ① 带内**深色像素占比低**（0.002 < r ≤ 0.15）—— 成片深色是消息区、几乎没有深色是正常输入框；
+      ② 深色按列**成簇**，簇数 ≥3（＝一排图标）；
+      ③ 这些簇**横跨窗口宽度 ≥60%**（＝一整条工具条，而不是角落一小块噪点）。
+    ⛔ 判据里**不含"背景多亮"** —— 那是主题相关的量（换主题差 20+ 灰度），用它一换主题就失效。
+
+    ⚠️ 本函数收 `gui` 只是为了取 `right_pane_left`（可省）；**独立窗那条链请直接喂帧**
+      （`_probe_forward_bar_img(img)`），因为独立窗的帧来自 `grab_window(hwnd)`，与 `gui` 不是一套。
+    """
+    try:
+        if img is None:
+            from . import chat_header as _ch
+            img = _ch.capture_image(gui=gui)
+    except Exception:
+        img = None
+    return _probe_forward_bar_img(img, gui=gui)
+
+
+def _composer_reset_multiselect(adapter, backend, main: int, gui=None, *,
+                                tag: str = "退出多选", img=None) -> tuple:
+    """把独立窗从「多选 / 转发」模式**复位**（投工具条上那个 ✕）⇒ `(ok, 说明)`。
+
+    ⛔⛔ **不许用 ESC**：真机实测（2026-10-06）投 ESC **会把独立窗整个关掉**（不是只退多选）
+      —— 那一步之后整条链就没有目标窗可用了。
+    ✅ 正确手法：投「工具条上那个 ✕」的点击。位置**不写死**：在工具条带里找**最右侧那个深色图标**
+      （✕ 就在工具条最右），落点取它的中心；找不到就不投（**判不出来就不动手**）。
+    复位后**复探**：输入框回来了 ⇒ 成功。
+
+    `main` ＝ 目标窗句柄（**独立窗** —— 本函数要投的那一枪就投给它）。
+    `img`  ＝ 现成的窗口帧（`grab_window(hwnd)` 抓的）；不给就自己抓。
+    """
+    try:
+        if img is None:
+            from . import wechat_windows as _ww
+            _im, _m = _ww.grab_window(int(main), physical=False)
+            img = _im
+        if img is None:
+            return False, "%s：拿不到窗口画面 ⇒ 不投（不猜落点）" % tag
+        box = _probe_forward_bar_img(img, gui=gui)
+        if not box:
+            return False, "%s：量不到工具条（可能已经不在多选态）⇒ 不投" % tag
+        px = img.load()
+        W, H = img.size
+        band_top = int(box.get("band_top") or int(H * 0.88))
+        # 找**最右侧**的深色图标列簇（✕ 在工具条最右）
+        cols = []
+        for x in range(int(W * 0.5), W, 2):
+            n = 0
+            for y in range(band_top, H):
+                if min(px[x, y][:3]) < 170:
+                    n += 1
+            if n >= 2:
+                cols.append(x)
+        if not cols:
+            return False, "%s：工具条上找不到深色图标 ⇒ 不猜落点" % tag
+        rightmost = cols[-1]
+        cl = rightmost
+        for i in range(len(cols) - 1, 0, -1):
+            if cols[i] - cols[i - 1] > 8:
+                cl = cols[i]
+                break
+        cx_img = int((cl + rightmost) / 2)
+        ys = [y for y in range(band_top, H) if min(px[cx_img, y][:3]) < 170]
+        cy_img = int((min(ys) + max(ys)) / 2) if ys else int((band_top + H) / 2)
+        # 图内坐标 → 屏幕坐标：抓的是 GetWindowRect 那整块 ⇒ 屏幕 = 窗口原点 + 图内坐标
+        #   ⛔ **不乘 scale**（锁 PerMonitorV2 后"图内像素 : 屏幕物理像素"恒为 1:1，
+        #      见 `wechat_windows.grab_window` 的三重铁证）。
+        import ctypes as _ct
+        import ctypes.wintypes as _wt2
+        _r = _wt2.RECT()
+        _ct.windll.user32.GetWindowRect(int(main), _ct.byref(_r))
+        pt = (int(_r.left + cx_img), int(_r.top + cy_img))
+        ok, why = adapter._click_posted(backend, main, pt, "%s·点 ✕" % tag, allow_new=False)
+        if not ok:
+            return False, "%s：投 ✕（落点 %s）没成：%s" % (tag, pt, str(why)[:60])
+        time.sleep(0.5)
+        # 复探：输入框回来了 ⇒ 复位成功
+        try:
+            from . import wechat_windows as _ww2
+            _im2, _m2 = _ww2.grab_window(int(main), physical=False)
+        except Exception:
+            _im2 = None
+        if _im2 is not None and _probe_input_box_frame(gui, img=_im2):
+            return True, "%s：投 ✕（%s）后输入框回来了" % (tag, pt)
+        if _im2 is not None and not _probe_forward_bar_img(_im2, gui=gui):
+            # 工具条没了、输入框也没量到 ⇒ 至少**多选态已退出**，算复位成功（输入框可能还没重绘）
+            return True, "%s：投 ✕（%s）后工具条已消失（多选态已退出）" % (tag, pt)
+        return False, "%s：投了 ✕（%s）但工具条还在／输入框仍量不到 ⇒ 如实报，不硬往下打" % (tag, pt)
+    except Exception as e:  # noqa: BLE001
+        return False, "%s 异常：%s" % (tag, str(e)[:80])
+
+
 def _input_top_band(gui, band_px: int = 20):
     """返回 `(上半部分矩形(渲染相对), 落点(屏幕))`；量不到 ⇒ `(None, None)`，调用方**不许猜点**。
 

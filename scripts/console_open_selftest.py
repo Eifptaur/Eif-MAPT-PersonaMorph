@@ -721,9 +721,10 @@ ok("长清单折叠：默认是收起态（按钮写着「展开全部」）", _
 ok("长清单折叠：列表重渲染后能自动补回按钮（MutationObserver）", "MutationObserver" in _html)
 
 _cfg_src = src("agent/config.py")
-# 口径（已知现象）：
-# 「限位」默认**开**；关掉时才"绝不动窗口"——两处读取点的 fail-closed 语义必须还在。
-ok("默认开「限位」（ui.lock_window_pos=True）", _sm.has(_cfg_src, '"lock_window_pos": True'))
+# 口径（现行）：
+# 「限位」默认**关**（限位是早期坐标标定阶段的临时手段，定为不再需要）；
+# 关着的时候才"绝不动窗口"——两处读取点的 fail-closed 语义必须还在。
+ok("默认**关**「限位」（ui.lock_window_pos=False）", _sm.has(_cfg_src, '"lock_window_pos": False'))
 ok("默认不抢前台（ui.allow_foreground=False）", _sm.has(_cfg_src, '"allow_foreground": False'))
 _ua = src("agent/ui_adapt.py")
 _fg_body = _ua[_ua.index("def _force_geometry"):]

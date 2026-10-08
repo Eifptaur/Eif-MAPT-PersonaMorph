@@ -560,8 +560,8 @@ def _cfg_bool(key: str, default: bool = False) -> bool:
 
 
 def _force_geometry(gui) -> None:
-    """把微信主窗移到固定尺寸/位置（受 `ui.lock_window_pos` 控制，默认开——
-    坐标更稳、少点错；关掉则一行都不碰用户的窗口）。
+    """把微信主窗移到固定尺寸/位置（受 `ui.lock_window_pos` 控制，**默认关**——
+    限位是早期坐标标定阶段的临时手段，现在定为不再需要；只有用户显式打开才动窗口）。
 
     旧实现的真凶是 `ShowWindow(hwnd, 9)`（SW_RESTORE：**把最小化的微信强行弹出来**）
     ＋ 一对自相矛盾的 `SWP_SHOWWINDOW|SWP_HIDEWINDOW`。原实现的坐标其实被
