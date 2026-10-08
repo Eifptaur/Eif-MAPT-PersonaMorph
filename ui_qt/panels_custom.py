@@ -2822,13 +2822,13 @@ def persona_panel(t: Tokens) -> QWidget:
     pcard.body.addWidget(listw)
     pcard.body.addWidget(desc(t, "星标=收藏置顶；排序按模型评估分。点「使用」即切换当前人设（重启机器人后生效）。"))
     lay.addWidget(pcard)
-    # ★ 三级索引：这一页在 web 侧是 4 组（① 角色 / ② 评分补足 / ③ 行为与撤回 / ④ 主动开话题），
-    #   而 Qt 侧它们同属这一张角色卡 ⇒ 四个锚点都指向卡片顶部（滚动仍**可达**，只是都到同一处）。
-    #   宁可这样，也不要"有条但点不动"：锚点条是按 `web_anchor` 找目标的。
+    # ★ 三级索引（第三层＝功能项顶部的组锚点条）：这一页 web 侧 **4 组**，Qt 侧散在**三张卡**上 ——
+    #   ① 角色 ＝ pcard ／ ② 评分补足 ＝ rcard ／ ③ 行为与撤回、④ 主动开话题 ＝ ccard 里用分隔线切开的**两段**。
+    #   ⛔ 别退回"四个锚点全指卡片顶部"：那样点 ③、④ 都滚到同一处，**索引看得见但点不出区别**。
+    #      段在卡里 ⇒ 锚点就标在**那两段起始的分隔线**上（分隔线是卡片 body 的子件，滚动目标照样成立）。
     from panels_qt import mark_group # noqa: PLC0415
 
-    for _i in range(4):
-        mark_group(page, "persona", _i, pcard)
+    mark_group(page, "persona", 0, pcard)   # ① 角色
 
     def _refit_items() -> None:
         """条目宽 = 视口宽（右侧顶格）。
@@ -3373,6 +3373,7 @@ def persona_panel(t: Tokens) -> QWidget:
     # ── 评分补足块（pScoreLLM / pEnrich / pWebFetch 真接后端，:1326-1336）──
     rcard = Card(t)
     rcard.body.addWidget(h2(t, "评分补足"))
+    mark_group(page, "persona", 1, rcard)   # ② 评分补足
     # 一行放不下就折行；「标签+控件」成组（_pair）保证折行时标签不会和后缀控件分家。
     rrow = FlowBox(t, spacing=8)
     b_score = Btn("模型评分", t, "ghost")
@@ -3661,7 +3662,9 @@ def persona_panel(t: Tokens) -> QWidget:
     b_preview.clicked.connect(_prompt_preview)
     b_pclear.clicked.connect(_prompt_clear)
 
-    ccard.body.addWidget(_divider_local(t))
+    _sep_act = _divider_local(t)
+    ccard.body.addWidget(_sep_act)
+    mark_group(page, "persona", 2, _sep_act)   # ③ 行为与撤回（这一段的起点）
     ccard.body.addWidget(h2(t, "模块开关（三个全要，对齐 web :1366-1369）"))
     sw_scene = Switch(t, bool(config_io.read_path("system_prompt.enable_scene_rules")))
     sw_scene.setObjectName("swScene")
@@ -3688,7 +3691,9 @@ def persona_panel(t: Tokens) -> QWidget:
     ccard.body.addWidget(Field(t, "兜底匹配", "关掉=只认 newmsgid 精确匹配", sw_heur))
     binds.append(("store.recall.heuristic", sw_heur, "checkbox"))
 
-    ccard.body.addWidget(_divider_local(t))
+    _sep_pro = _divider_local(t)
+    ccard.body.addWidget(_sep_pro)
+    mark_group(page, "persona", 3, _sep_pro)   # ④ 主动开话题（这一段的起点）
     ccard.body.addWidget(h2(t, "主动开话题（proactiveRows，web :1383-1390）"))
     sw_pro = Switch(t, bool(config_io.read_path("proactive.enabled")))
     ccard.body.addWidget(Field(t, "主动开话题", "群冷场超阈值后按概率抛话题（默认关）", sw_pro))

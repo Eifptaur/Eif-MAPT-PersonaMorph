@@ -10653,12 +10653,33 @@ def t_subnav_coverage_guard() -> None:
 
     _pc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
     _need = []
+    _need, _short = [], []
     for _sec in _pcmod.MANUAL:
-        if len([r for r in _sm2.get(_sec).rows if r.kind == "group"]) >= 2 and not _re.search(
-                r'mark_group\w*\(page, "%s"' % _re.escape(_sec), _pc):
+        _n = len([r for r in _sm2.get(_sec).rows if r.kind == "group"])
+        if _n < 2:
+            continue
+        # ⛔ 光"页里出现过一次 mark_group"不算数 —— 实战踩到过：
+        #   `for _i in range(4): mark_group(page, "persona", _i, pcard)` 在**文本**上只算一次匹配，
+        #   而它把 4 个锚点**全指向同一张卡** ⇒ 点 ③④ 与点 ① 滚到同一处，
+        #   **索引看得见、却点不出区别**（用户口径："每个块都要能直接跳到那个位置"）。
+        #   ⇒ 判据要的是"**每一组都有自己的锚点、且目标不是同一个控件**"。
+        _pairs = _re.findall(r'mark_group\w*\(\s*page\s*,\s*"%s"\s*,\s*([^,]+?)\s*,\s*([^)]+?)\)'
+                             % _re.escape(_sec), _pc)
+        if not _pairs:
             _need.append(_sec)
+            continue
+        _idx = {p[0].strip() for p in _pairs}
+        _tgts = {p[1].strip() for p in _pairs}
+        _miss = []
+        for i in range(_n):
+            if str(i) not in _idx:
+                _miss.append(i)
+        if _miss or len(_tgts) != _n:
+            _short.append("%s(锚点 %s／组数 %d／不同目标 %d)" % (_sec, sorted(_idx), _n, len(_tgts)))
     ck("② 有组的手写页都声明了锚点（没声明就不生成条 ⇒ 与 web 侧不一致）", not _need,
        "未声明：%s" % _need)
+    ck("②b 锚点必须覆盖每一组、且各自指向**不同**的块（全指一张卡＝点哪条都到同一处）",
+       not _short, "未覆盖：%s" % _short)
     ck("② 分母守卫：确实有手写页被这条覆盖到（≥1 个）",
        len([s for s in _pcmod.MANUAL
             if len([r for r in _sm2.get(s).rows if r.kind == "group"]) >= 2]) >= 1, "")
