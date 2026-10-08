@@ -2967,6 +2967,19 @@ document.addEventListener('change', (e)=>{
   if(window._applying) return;                 // 程序性填表不算"用户改过"
   window._touchedCfg.add(el.dataset.cfg);
 }, true);
+// ⛔ `change` 只在**失焦**时触发 ⇒ 用户正打字（还没离开输入框）时它不算"改过"，
+//    而自动重载恰好会把这半句话吹掉（第 256 项第①类的真实形态）。
+//    ⇒ 补 `input` 监听（打字即算改过），只在有未保存改动时**拦住自动重载**。
+document.addEventListener('input', (e)=>{
+  const el = e.target;
+  if(!el || !el.dataset || !el.dataset.cfg) return;
+  if(window._applying) return;
+  if(el.tagName === 'INPUT' && el.type === 'checkbox') return;   // 勾选由 change 管
+  window._touchedCfg.add(el.dataset.cfg);
+}, true);
+/* 有未保存的改动吗？—— `_touchedCfg` 是"改过、还没提交"的集合（提交成功后由 getJSON 清空）
+   ⇒ 直接拿它当脏标记，不再另立一套状态（避免两处真相打架）。 */
+function cfgDirty(){ try{ return window._touchedCfg && window._touchedCfg.size > 0; }catch(e){ return false; } }
 const _getJSONRaw = getJSON;
 getJSON = async function(url, opts){
   if(url === '/api/config' && opts && opts.method === 'POST' && typeof opts.body === 'string'){
@@ -3991,7 +4004,16 @@ async function loadStatus(){  try{
          ② 连续 3 次取不到状态（服务正在重启/短暂不可用）⇒ 也重载一次（有次数上限，防风暴）。 */
     try{
       if(s && s.started_at){
-        if(window.__srvStartedAt && window.__srvStartedAt !== s.started_at){ location.reload(); return; }
+        if(window.__srvStartedAt && window.__srvStartedAt !== s.started_at){
+          // ⛔ 服务重启后要重新挂上，但**不许把用户没保存的设置当场吹掉**：
+          //    有未保存改动时只提示一次，由用户自己决定什么时候刷（页面已能自愈，不刷也不会卡死）。
+          if(cfgDirty()){
+            if(!window.__reloadHoldWarned){
+              window.__reloadHoldWarned = true;
+              toast('服务已重启：你还有没保存的设置，先点「保存设置」或手动刷新');
+            }
+          } else { location.reload(); return; }
+        }
         window.__srvStartedAt = s.started_at;
       }
     }catch(e){}
@@ -4831,8 +4853,16 @@ async function loadStatus(){  try{
        ⚠️ 以前这里只是 `catch(e){}`：状态取不到就永远停在旧画面，用户看到的就是"窗口一直显示已停止"。 */
     window.__pollFails = (window.__pollFails||0) + 1;
     if(window.__hadOk && window.__pollFails >= 3 && (window.__reloads||0) < 40){
-      window.__reloads = (window.__reloads||0) + 1;
-      location.reload();
+      // ⛔ 同理：有未保存的设置时，宁可停在旧画面也别把用户填的东西吹掉（提示一次就够）。
+      if(cfgDirty()){
+        if(!window.__reloadHoldWarned){
+          window.__reloadHoldWarned = true;
+          toast('连不上服务（可能正在重启）：你还有没保存的设置，先存一下或手动刷新');
+        }
+      } else {
+        window.__reloads = (window.__reloads||0) + 1;
+        location.reload();
+      }
     }
   }
 }

@@ -233,8 +233,11 @@ ok("「检测群聊并勾选」的确定按钮**当场落盘**（POST /api/confi
    and _page.count("wechat.group_name_white_list") >= 4)
 ok("群白名单保存失败会如实报（不许静默丢）", "群白名单保存失败" in _page)
 
-# ── ──
-ok("向导标题与总步数已是五步", "五步上手" in _page and _sm.has(_page, "第 1 步/共 5 步") and _sm.has(_page, "第 5 步/共 5 步"))
+# ⛔ 步数**不写死**了（第 256 项那轮改的：3 配 Key/昵称/选群 + 1 恢复 + 1 环境校准 + N 缺件 + 1 体检）。
+#    以前这条断言"共 5 步"——那是旧口径，现在按实数算 ⇒ 断言改成"标题在位 + 步数由 obTotal() 算"。
+ok("向导标题在位，且步数**由 obTotal() 按实数算**（不再写死 5 步）",
+   "上手向导" in _page and _sm.has(_page, "obTotal()") and "共 5 步" not in _page
+   and "共 6 步" not in _page)
 # ⛔ 这条以前还要求页面上出现一个**具体的占位昵称**（并解释"那只是占位"）。
 #    那个默认值已经去掉了（它是某个具体微信号的昵称，随包发出去等于把别人的名字发给第三方，
 #    而它在对方机器上毫无用处）⇒ 现在断言改成正面的口径：
@@ -244,8 +247,14 @@ ok("第 2 步是「机器人昵称＝你自己微信的原名」（有输入框�
    and _sm.has(_page, "setPath(cfg,'wechat.bot_nickname', nick)"))
 ok("第 4 步有真的「恢复」按钮（打 /api/resume，并如实报成功/失败）",
    'id="obResume"' in _page and _sm.has(_page, "await getJSON('/api/resume'") and "恢复失败" in _page)
-ok("第 5 步才是检测与完成（顺序没被改乱）",
-   _page.index("第 3 步/共 5 步") < _page.index("第 4 步/共 5 步") < _page.index("第 5 步/共 5 步"))
+# ⛔ 顺序按新结构断言（不写死总步数）：正常引导(1-3) → 4 恢复 → 5 环境校准(env_hint) →
+#    6..N 缺件(env-guide，一屏一项) → 末步 体检。旧断言查的是"第 3/4/5 步/共 5 步"那套死文案。
+ok("新步序在位：4 恢复 → 5 环境校准 → 缺件各一步 → 末步体检（不写死总步数）",
+   _sm.has(_page, "obRenderResume()") and _sm.has(_page, "obRenderHintStep()")
+   and _sm.has(_page, "obRenderItem(") and _sm.has(_page, "obRenderCheck()")
+   and "第 4 步/共 " in _page and "第 5 步/共 " in _page)
+ok("两类不许混：环境校准读 /api/status 的 env_hint，缺件读 /api/env-guide",
+   _sm.has(_page, "st.env_hint") and _sm.has(_page, "'/api/env-guide'"))
 
 print("")
 print("窗口/控制台外观判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP_N))
