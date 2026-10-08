@@ -158,21 +158,27 @@ ok("③e ★反例锚：把默认勾选删掉后，③b 的**判据式**会变�
 
 
 print("\n── ④ 就绪路径：不许弹窗 ＋ 不许停在欢迎页（防静默死锁）──")
+# ⚠️ 锚**意图**不锚**参数名**：就绪判定自"版本目录"落地后走**双根**
+#   （`runtime\python` 在安装根、界面组件/依赖探测在代码根）⇒ 源码里写的是
+#   `FastPathReady(root, appRoot)` / `DepsProbeOk(root, appRoot)`。
+#   判据只该问「运行时 + 界面组件 + 真探测依赖 三件还在不在」，**不该管形参叫什么** ——
+#   否则「双根化」这种纯结构调整会把三条判据一起搞红（本轮就是这么红的）。
 ok("④a `FastPathReady` 三条仍在（运行时 ＋ 界面组件 ＋ **真探测依赖**）",
-   ("runtime" in _L and "FastPathReady" in _L and "QtBootForm.MissingReason(root)" in _L
-    and "DepsProbeOk(root)" in _L), "")
+   ("runtime" in _L and "FastPathReady" in _L
+    and re.search(r"QtBootForm\.MissingReason\([^)]*\)", _L) is not None
+    and re.search(r"DepsProbeOk\(", _L) is not None), "")
 # ⛔ 这一条是"每次都弹窗"那个真 bug 的守卫：判据**不许**再要求"只认标记文件"。
 ok("④a′ ★就绪判定**不靠易失标记**：装了依赖就该静默（`data\\.deps_ok` 只作快通道）",
    ("File.Exists(Path.Combine(root, \"data\", \".deps_ok\"))" in _L
-    and "DepsProbeOk(root)" in _L
-    and bool(re.search(r"File\.Exists\(Path\.Combine\(root,\s*\"data\",\s*\"\.deps_ok\"\)\)\s*\)\s*return\s+true", _L))),
+    and re.search(r"DepsProbeOk\(", _L) is not None
+    and bool(re.search(r"File\.Exists\(Path\.Combine\([^)]*\"data\",\s*\"\.deps_ok\"\)\)\s*\)\s*return\s+true", _L))),
    "标记每次启动先删、装失败就不写回 ⇒ 只认标记会让用户**每次都白弹一次**（实测依赖已全装齐仍弹）")
 ok("④a″ ★探测口径＝`dep_check('all')` ＋ 输出契约 `DEPS_OK` / `DEPS_MISSING:`",
    ("dep_check as _d" in _L and "_d('all')" in _L
     and "DEPS_OK" in _L and "DEPS_MISSING" in _L), "")
 ok("④a‴ ★反例锚：探测**拿不准就当真不齐**（空输出/异常一律 return false，宁可多弹不要静默失败）",
    bool(re.search(r"if\s*\(string\.IsNullOrEmpty\(outp\)\)\s*return\s+false", _L))
-   and bool(re.search(r"static bool DepsProbeOk\(string root\)[\s\S]*?catch\s*\{\s*return false;\s*\}", _L)),
+   and bool(re.search(r"static bool DepsProbeOk\([^)]*\)[\s\S]*?catch\s*\{\s*return false;\s*\}", _L)),
    "")
 ok("④b ★静默判定被接到向导页序上（`GoPage(Silent ? PageInstalling : PageWelcome)`）",
    bool(re.search(r"GoPage\(\s*Silent\s*\?\s*PageInstalling\s*:\s*PageWelcome\s*\)", _L)),

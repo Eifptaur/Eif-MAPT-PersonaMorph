@@ -473,8 +473,8 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
       读清单 → 版本已是最新就停 → **只读**算包的文件树哈希并与清单对齐 → 干跑就到此为止
       → 逐件快照 → 换入（跳过被占用件）→ 逐件组合校验 → 失败回滚 → 写 `data/installed.json`
 
-    `layout`（2026-10-09 新增，见第 162 项）：
-      · `"inplace"`（**默认**）＝**今天的行为，一字不改**：原地覆盖 `target` 下那份。
+    `layout`（两种装法）：
+      · `"inplace"`（**默认**）＝原地覆盖 `target` 下那份（历史行为，一字不改）。
       · `"versioned"`＝把这份代码装到 `releases/<版本>/`，**校验通过后只翻指针**
         （`releases/current.txt`），**不碰**正在运行的那份 ⇒ "文件被占用"这个问题**自然消失**
         （`locked` 分支在 versioned 下不该再出现）。

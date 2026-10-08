@@ -2584,7 +2584,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">默认 20。</span></div>
       <div class="row"><label>重复内容合并(秒)</label><input type="number" min="0" step="30" data-cfg="feedback.limit.dup_window_s">
         <span class="hint">同一段内容在这个时间窗内重复提交 ⇒ 只算一次。默认 300（5 分钟）。</span></div>
-      <div class="hint">⚠️ <b>「发到哪儿」（接收地址 / 邮箱 / 口令）不在这里给界面</b> ——
+      <div class="hint"><b>「发到哪儿」（接收地址 / 邮箱 / 口令）不在这里给界面</b> ——
         那是投递凭据，等于开一个"把东西发到任意地址"的口子。要自建接收端的人手改 <code>config.json</code> 的
         <code>feedback</code> 段（手改本身就是一次显式动作）。</div>
 
@@ -2801,10 +2801,10 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
       </div>
       <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
-          <div class="sub">⑥ 省 token 档</div><div class="row"><label>档位</label><div class="grow">
-        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="token_budget.saver"> 省 token 档（省输入 token，但模型可能变笨一点）</label>
-        <div class="hint"><b>不勾 ＝ 完整档（默认）</b>：表情码清单、工具完整说明、网页原文、翻聊天记录 100 条 —— 全给模型，效果最好、最耗 token。<br>
-        <b>勾上 ＝ 省 token 档</b>：① 不摆表情码清单（省 ≈1147 token/轮）② 翻聊天记录上限 100→50、网页回执只留头 6000 字＋尾 3000 字 ③ 工具说明只留第一句（工具表是每次请求最大的单块，实测 37 个工具 ≈7324 token）④ 提示模型“能一次调完的别分两轮”。<br>
+          <div class="sub">⑥ 省用量档</div><div class="row"><label>档位</label><div class="grow">
+        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="token_budget.saver"> 省用量档（每次对话少发给模型一些内容，但模型可能变笨一点）</label>
+        <div class="hint"><b>不勾 ＝ 完整档（默认）</b>：表情码清单、工具完整说明、网页原文、翻聊天记录 100 条 —— 全给模型，效果最好、也最费额度。<br>
+        <b>勾上 ＝ 省用量档</b>：① 不摆表情码清单（少发 ≈1147 字/轮）② 翻聊天记录上限 100→50、网页回执只留头 6000 字＋尾 3000 字 ③ 工具说明只留第一句（工具表是每次请求最大的单块，实测 37 个工具 ≈7324 字）④ 提示模型“能一次调完的别分两轮”。<br>
         <b>代价（如实说）</b>：后三项属“可能掉效果” —— 长正文中段被省略、模型可能选错工具或漏参数。所以默认不勾；想省钱就勾，觉得变笨了取消即可。</div>
       </div></div>
 </section>
@@ -3048,7 +3048,7 @@ function syncToForm(){
       $('modelCustom').value = model;
     }
   }
-  /* 省 token 卡片视觉联动 */
+  /* 省用量卡片视觉联动 */
   const tb = $('thinkOffChk');
   if(tb){
     if(!tb._wired){ // 监听器只接一次：syncToForm 会被反复调用，重复 addEventListener 会越积越多
@@ -4301,7 +4301,7 @@ async function loadStatus(){  try{
         const cl = s.cloud || {};
         const el = $('cloudStat');
         if(el && cl.endpoints){
-          const parts = (cl.endpoints || []).map(e => e.label + '：' + (e.configured ? (e.valid ? '已填' + (e.token_set ? '（有 Token）' : '') : '网址格式不对') : '未配置'));
+          const parts = (cl.endpoints || []).map(e => e.label + '：' + (e.configured ? (e.valid ? '已填' + (e.token_set ? '（已填口令）' : '') : '网址格式不对') : '未配置'));
           el.textContent = (cl.enabled ? '总开关：开' : '总开关：关（不会上传）') + ' ｜ ' + parts.join(' ｜ ');
         }
       }catch(e){}
@@ -4698,7 +4698,7 @@ async function loadStatus(){  try{
     $('st-sent').textContent = s.stats.sent;
     $('st-cost').textContent = '¥' + (s.stats.cost||0).toFixed(4);
     const u = s.usage || {};
-    const fmt = (o) => ('¥' + (o?parseFloat(o.cost||0):0).toFixed(4) + ' · ' + ((o?parseInt(o.tokens||0):0)) + ' tok · ' + ((o?parseInt(o.sessions||0):0)) + ' 会话');
+    const fmt = (o) => ('¥' + (o?parseFloat(o.cost||0):0).toFixed(4) + ' · ' + ((o?parseInt(o.tokens||0):0)) + ' 字 · ' + ((o?parseInt(o.sessions||0):0)) + ' 会话');
     const lbl = {daily:'今日', weekly:'本周', monthly:'本月'};
     $('st-dcost').textContent = fmt(u.day);
     $('st-dlabel').textContent = '今日用量（' + (u.day?u.day.sent:0||0) + ' 条）';
@@ -4754,7 +4754,7 @@ async function loadStatus(){  try{
       }
       function applyDay(r,d){
         window.__calSel=d; window.__calDay=r; // 记录选中日（概览刷新时尊重）
-        const fmt=o=>('¥'+(o?parseFloat(o.cost||0):0).toFixed(4)+' · '+((o?parseInt(o.tokens||0):0))+' tok · '+((o?parseInt(o.sessions||0):0))+' 会话');
+        const fmt=o=>('¥'+(o?parseFloat(o.cost||0):0).toFixed(4)+' · '+((o?parseInt(o.tokens||0):0))+' 字 · '+((o?parseInt(o.sessions||0):0))+' 会话');
         $('st-sessions').textContent=r.sessions||0;
         $('st-tokens').textContent=r.tokens||0;
         $('st-sent').textContent=r.sent||0;

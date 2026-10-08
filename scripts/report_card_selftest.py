@@ -153,12 +153,16 @@ ok("E4★ 每条都带「为什么入选」（用户能自己判断像不像话�
 ok("E5★ 库里没数据 ⇒ `ok=False` 且说清原因（不硬凑）",
    (not RC.highlights_from_rows([], name="g")["ok"])
    and "没有可当" in RC.highlights_from_rows([], name="g")["note"], "")
+# ⛔ **必须落到变量再比**，不许写成 `f(x) == f(x)`：
+#   那种写法左右两边是同一个调用的结果 ⇒ **恒真**（判据卫生的⑥c 会红，而且它确实
+#   什么都没验——函数里塞个随机数/时间戳照样"通过"）。落到 `_r1` / `_r2` 才是真跑两遍。
+_r1 = RC.highlights_from_rows(_hrows, name="测试群")
+_r2 = RC.highlights_from_rows(_hrows, name="测试群")
 ok("E6★ 纯函数（不碰 IO）：只吃 rows，两次同一输入结果一致",
-   RC.highlights_from_rows(_hrows)["picks"] == RC.highlights_from_rows(_hrows)["picks"], "")
+   _r1["picks"] == _r2["picks"], "")
+_dup_picks = RC.highlights_from_rows(_hrows + [_hrows[0]], name="g")["picks"]
 ok("E7 同一条消息只出现一次（id 去重）",
-   len({p["id"] for p in RC.highlights_from_rows(
-       _hrows + [_hrows[0]], name="g")["picks"]}) == len(
-       RC.highlights_from_rows(_hrows + [_hrows[0]], name="g")["picks"]), "")
+   len({p["id"] for p in _dup_picks}) == len(_dup_picks), "")
 ok("E8★ `store` 那种行**没有 type 字段**也当文本（否则真机一条都挑不出来）",
    RC.highlights_from_rows([{"id": 9, "sender_name": "甲", "ts": 1791386610046,
                              "text": "这是一条没有 type 字段的普通文本消息"}])["ok"], "")

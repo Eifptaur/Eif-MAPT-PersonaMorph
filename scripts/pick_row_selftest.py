@@ -76,6 +76,37 @@ try:
     # ④ 绿底行都没有 ⇒ none
     r4 = CO.pick_target_row(object(), "还是没有")
     ok("B4 两条路都没有 ⇒ `ok=False`（调用方走搜索）", (not r4["ok"]) and r4["how"] == "none", "")
+
+    # ⑤★ **单字目标不许走纠错档** —— 真机实测过的坑：
+    #   目标 `E`（一个字母）时，`best_candidate` 的护栏是"编辑距离 ≤1"，而**任何单字符读数
+    #   距离都是 1** ⇒ 8 行里每一行都被纠成 `E`、全部报 0.85 ⇒ "哪一行都像目标"，
+    #   最后挑到**聊天区**里那个 `宀`（落点 y=828，跑到列表外）。
+    #   判据：行列表里**只有**真正的 `E` 该命中；聊天区串进来的 `宀` 必须 0 分。
+    CO.session_rows = lambda *a, **k: [{"name": "宀", "y_abs": 828},
+                                      {"name": "文件“，23．“", "y_abs": 240},
+                                      {"name": "E", "y_abs": 168}]
+    CO.highlight = lambda img: {"y_abs": 168, "name": "", "score": 0.9}
+    _r5 = CO.pick_target_row(object(), "E")
+    _r5_other = [x for x in (_r5.get("rows") or []) if x["name"] == "宀"]
+    ok("B5★ 单字目标只认**完全相等**：真 `E` 命中、聊天区的 `宀` 判 0 分",
+       _r5["ok"] and _r5["y_abs"] == 168 and _r5["name"] == "E"
+       and (not _r5_other or _r5_other[0]["score"] == 0.0),
+       "挑到 %r y=%s" % (_r5.get("name"), _r5.get("y_abs")))
+    # ⑥ 反向锚：**多字**目标仍必须走纠错/相似度档（别把这条修成"一律只认完全相等"）
+    CO.session_rows = lambda *a, **k: [{"name": "文件“，23．“", "y_abs": 240}]
+    CO.highlight = lambda img: None
+    _r6 = CO.pick_target_row(object(), "文件传输助手")
+    ok("B6★ 反向锚：多字目标仍走相似度档（不许把单字那条修成全局「只认完全相等」）",
+       _r6["ok"] and _r6["how"] == "name_unique" and _r6["y_abs"] == 240,
+       "how=%s y=%s" % (_r6.get("how"), _r6.get("y_abs")))
+    # ⑦ 单字目标 + 没有完全相等行 ⇒ 不许硬挑（宁可退回绿底行）
+    CO.session_rows = lambda *a, **k: [{"name": "巷", "y_abs": 100},
+                                      {"name": "群里的人", "y_abs": 200}]
+    CO.highlight = lambda img: {"y_abs": 200, "name": "", "score": 0.8}
+    _r7 = CO.pick_target_row(object(), "E")
+    ok("B7★ 单字目标、无完全相等行 ⇒ 不许硬挑（退绿底行或 none，绝不挑 `巷`）",
+       _r7.get("y_abs") != 100,
+       "挑到 y=%s how=%s" % (_r7.get("y_abs"), _r7.get("how")))
 finally:
     CO.session_rows, CO.highlight = _keep_rows, _keep_hl
 

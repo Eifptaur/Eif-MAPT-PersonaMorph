@@ -82,7 +82,7 @@ try:
     for k in ("version", "sha256", "url", "size", "files"):
         ok(k in b, "base 有字段 %s" % k)
     # 版本号两种形状都合法：
-    #   · 现行（2026-10-09 起）`V` + 已登记符号（如 `Vᛞ`）
+    #   · 现行体系 `V` + 已登记符号（如 `Vᛞ`）
     #   · 旧日期式 `YYYY.M.D.N[.M]`（换轨期清单可能还是这种，客户端仍认）
     def _is_ver(s):
         s = str(s or "")

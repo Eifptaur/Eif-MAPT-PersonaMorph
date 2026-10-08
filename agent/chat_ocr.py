@@ -2097,13 +2097,19 @@ def pick_target_row(img, target_name: str, others=(), db_others=None, pane_left:
       · `"highlight_fallback"` —— 都不像 ⇒ 用绿底行（**开出来发现不对就关掉、改走搜索**）；
       · `"none"` —— 两条都没有 ⇒ `ok=False`（调用方走搜索）。
     ⚠️ `y_abs` 与 `highlight()` / `row_geometry.green_band()` **同一坐标系**（同一次抓帧的像素）。
-    ⚠️ **单字名字**（`len<=1`）不做模糊纠错（`best_candidate` 本身会拒），此时只能靠"完全相等"命中。
+    ⚠️ **单字名字**（去噪后 `len<=1`）不做模糊纠错 —— ⛔ **这条得在本函数里拦**：
+      `best_candidate` **不会**自己拒（它的护栏是"编辑距离 ≤1"）⇒ 只传 `['E']` 这一个候选时，
+      **任何单字符读数距离都是 1** ⇒ 全被纠成 `E`、全部报 0.85 ⇒ 8 行里"哪一行都像目标"
+      （实测：目标 `E` 的一帧里，聊天区的 `宀` 被判成 `name_unique`、落点 y=828 跑到列表外）。
+      ⇒ 单字目标改成：**只认"去噪后完全相等"**（前缀档仍留给"名字被截断"那种多字情形）。
     """
     out = {"ok": False, "y_abs": 0, "name": "", "score": 0.0, "how": "none", "rows": []}
     try:
         rows = session_rows(img, pane_left=pane_left) or []
     except Exception:  # noqa: BLE001
         rows = []
+    # ⛔ 单字目标：去噪后只剩一个字符 ⇒ 纠错档必须**整个跳过**（见 docstring 末段的实测）。
+    _single = len(norm_alnum(target_name) or "") <= 1
     _scored = []
     for _r in rows:
         _nm = str(_r.get("name") or "").strip()
@@ -2111,10 +2117,11 @@ def pick_target_row(img, target_name: str, others=(), db_others=None, pane_left:
             continue
         _y = int(_r.get("y_abs") or 0)
         _b, _sc, _why = 0, 0.0, ""
-        try:
-            _b, _sc, _why = best_candidate(_nm, [target_name])
-        except Exception:  # noqa: BLE001
-            _b, _sc = "", 0.0
+        if not _single:
+            try:
+                _b, _sc, _why = best_candidate(_nm, [target_name])
+            except Exception:  # noqa: BLE001
+                _b, _sc = "", 0.0
         if not _sc and norm_alnum(_nm) == norm_alnum(target_name) and _nm:
             _b, _sc = target_name, 1.0          # 完全相等（单字名字也走这条）
         # ⭐ **通用相似度档**（实测必需，且**不分中英**）：OCR 常把"名字 + 时间/未读"黏成一串

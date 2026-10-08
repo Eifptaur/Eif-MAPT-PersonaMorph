@@ -83,7 +83,7 @@ try:
                                                "minBase": ver}}, fh, ensure_ascii=False)
         return path
 
-    # ⛔ 样本版本号跟着**版本体系**走（2026-10-09 换轨成 `V<符号>`）。
+    # ⛔ 样本版本号跟着**版本体系**走（现行体系是 `V<符号>`）。
     #    符号代表几是**人手写的对照表**（`version.RUNE_VALUES`）⇒ 判据里**临时登记**两枚
     #    比当前版大/小的符号，而不是去改真表（真表只登记实际发过的版本）。
     import agent.version as _VER0

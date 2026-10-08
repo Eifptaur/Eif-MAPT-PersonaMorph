@@ -40,7 +40,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import update_apply as UA # noqa: E402
 
-# ⛔ 版本号跟着**版本体系**走（2026-10-09 换轨成 `V<符号>`）。符号代表几是
+# ⛔ 版本号跟着**版本体系**走（现行体系是 `V<符号>`）。符号代表几是
 #    `version.RUNE_VALUES` 那张**人手写的对照表**定的 ⇒ 判据里**临时登记**三枚符号
 #    （正常新版本 / 更旧 / 越界），而不是去改真表（真表只登记实际发过的版本）。
 import agent.version as _VERX # noqa: E402

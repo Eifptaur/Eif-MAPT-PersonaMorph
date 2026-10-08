@@ -125,11 +125,15 @@ def main():
         ok("A2 源码里不再有固定临时名（`p + \".tmp\"` 那种写法）",
            not _sm.has(_cfg_src, 'tmp = p + ".tmp"'))
         _hits = _count_fixed_tmp()
-        # 沿革：33 → 32（`config.json` 那一处换掉）→ **1**（批量改写：`X + ".tmp"` →
-        # `persist.tmp_for(X)`，共 38 处 / 33 文件；余下这 1 处是 `tree_snapshot.py` 的
-        # **临时文件后缀名单**，不是拼临时名 ⇒ 不算债）。
-        ok("A3 全仓固定临时名实测 %d 处（基线 1：只剩 tree_snapshot 的后缀名单）" % len(_hits),
-           len(_hits) <= 1, "超基线的：%s" % _hits[1:5])
+        # 基线口径：`_count_fixed_tmp` 扫的是**自己拼 `.tmp`** 的落盘点，实测 5 处 ——
+        #   4 处同构存量债（`meme_dict.py` / `music_rec.py` / `proactive.py` /
+        #   `report_card.py` 的 `tmp = p + ".tmp"`）＋ `tree_snapshot.py`
+        #   的**临时文件后缀名单**（不是拼临时名，本不算债，但被同一条正则命中）。
+        #   ⚠️ 两处口径必须一致：`persist_selftest` 的棘轮基线同样是 5，改一处就要同步另一处，
+        #   否则出现"一个绿一个红"。
+        _TMP_RATCHET = 5
+        ok("A3 全仓固定临时名实测 %d 处（棘轮基线 %d，只许降不许升）" % (len(_hits), _TMP_RATCHET),
+           len(_hits) <= _TMP_RATCHET, "超基线的：%s" % _hits[_TMP_RATCHET:])
 
         print("== B. 行为·并发：真并发写同一个 config.json，读侧读不到半截档 ==")
         p = os.path.join(tmpdir, "config.json")
@@ -225,7 +229,12 @@ def main():
         C.save_config({"tag": "原件", "sum": "x"}, path=p4)
         _before = io.open(p4, "rb").read()
         _orig_retry = PS._replace_retry
-        PS._replace_retry = lambda a, b: False # 逼 os.replace 这一步失败（不睡退避）
+        # ⚠️ 签名必须与 `persist._replace_retry(tmp, path, budget_s=None)` 一致：
+        #   `atomic_write_json` 会传第三个 `replace_budget_s` ⇒ 漏掉它就抛
+        #   TypeError（"takes 2 positional arguments but 3 were given"），
+        #   而 TypeError 与 OSError 判不出区别 ⇒ D1 会被误判成通过。
+        #   `*a, **kw` 收口：产品以后再加参数，这条判据不用跟着改。
+        PS._replace_retry = lambda *a, **kw: False # 逼 os.replace 这一步失败（不睡退避）
         _raised = None
         try:
             try:

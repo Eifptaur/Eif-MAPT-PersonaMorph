@@ -75,6 +75,10 @@ OK_LIST = {
     "wechat.exe": "微信本体进程名",
     "silk_v3_decoder.exe": "按需下载的语音解码器（不随包）",
     "silk_v3_encoder.exe": "同上（不随包）",
+    # ⚠️ ffmpeg 是**外部二进制**：产品只去 PATH / `tools.d/` 里找它，永远不随包。
+    #   `env_guide.py` 那段文案说的正是"你自己放一份" ⇒ 拿它当"死指引"是**误报**。
+    "ffmpeg.exe": "外部音视频工具（用户自备，不随包）",
+    "ffprobe.exe": "同上（ffmpeg 套件里的探测工具，不随包）",
     "weixin.exe": "微信进程名（大小写不同）",
     "chrome.exe": "用户的浏览器（回退路径要开它）",
     "msedge.exe": "同上（Edge）",
