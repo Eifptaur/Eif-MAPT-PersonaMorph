@@ -111,11 +111,15 @@ ok("没有一手台词的卡标了「（按其口吻）」（rimi_bd）", "按�
 
 print("── C2. 每张卡都要有评分可显示──")
 import json as _json # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 _RATINGS = os.path.join(ROOT, "data", "persona_ratings.json")
 try:
     with io.open(_RATINGS, encoding="utf-8") as f:
         _R = _json.load(f)
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     _R = {}
 # ⛔ 只对**人设库里的卡**要求"有评分可显示"：
 #   `xiaojingyu` 是**内置兜底卡**（角色卡留空时用的那一张），它不属于人设库、也不是用户新加的卡；

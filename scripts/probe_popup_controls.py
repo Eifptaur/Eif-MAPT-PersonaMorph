@@ -7,7 +7,7 @@
 方法：
   1. **OCR 找「发送」**（最直接：按钮上有这两个字）⇒ 给出其框位置；
   2. **几何法找输入框**：在底部区域找"连续的大块浅色矩形"（背景白 ⇒ 边框/圆角特征）；
-  3. 把结果换算成**比例**（`x/w`, `y/h`），与用户给的截图交叉核对。
+  3. 把结果换算成**比例**（`x/w`, `y/h`），与截图交叉核对。
 用法：./runtime/python/python.exe -u scripts/probe_popup_controls.py [会话名关键字]
 """
 import logging
@@ -19,7 +19,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from PIL import Image  # noqa: E402
+
 from agent import wechat_windows as WW  # noqa: E402
 
 

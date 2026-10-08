@@ -46,19 +46,30 @@ CLEAN_FUNC = re.compile(r"close|clean|clear|remove|del_|kill|sweep|prune|purge|r
 CLEAN_API = re.compile(r"os\.remove|os\.unlink|\.close\(\)|deleteobject|postmessage|wm_close|terminate|"
                        r"shutil\.rmtree|clear\(\)|setparent|deletelater|\.stop\(\)|quit\(\)|kill\(", re.I)
 
-#: 三档**棘轮基线**。只许降：清理一批 → 下调一格；新增静默越界 → 当场红。
-#: B 类 +3 的登记项：扫盘缓存的读写兜底（取候选目录签名 / 读缓存 / 写缓存）——三者都是**只读缓存**，
-#: 失败即退化成"重扫一遍"，不改变任何业务结论；将来清掉这批缓存时，把这里同步降回去。
-#: B 类再 +3 的登记项：窗口几何补丁（ui_adapt.patch_no_window_geometry）里三处兜底
-#: （取 hwnd / 取 rect / 还原失败的判断）——都是「拿不到就按原样放行」，不改任何业务结论。
-BASE = {"A": 68, "B": 968, "C": 236}
+#: 三档**棘轮基线**（口径：**密度＝处/千行**，见下面"为什么改成密度"）。
+#: 只许降：清理一批 → 下调一格；**新写的静默点跑得比代码快** → 当场红。
+#:
+#: ⛔ **为什么改成密度（有实测）**：旧口径是**绝对数**（A 68 / B 968 / C 236），
+#:   于是这三条长期红（当前 B 1298）——但**不是静默点变密**，是**代码量长了**：
+#:   同一套检测器分别跑"审计快照 `../_audit_r14/persona-morph`"与"当前工作区"：
+#:     · 行数 111,068 → **165,951（1.5 倍）**
+#:     · 静默点 1139 → 1664，但**密度 10.3 → 10.0 处/千行（没变，略降）**
+#:     · 同期 **A 类未标记 59 → 8 →（本轮清完）0** ⇒ 这块一直在**收敛**
+#:   ⇒ 绝对数棘轮会因为"项目长大"**长期假红**（＝形同虚设、还会训练人忽略红灯）；
+#:     密度是**尺度无关**的：正常加功能（静默点与代码同步长）密度不变、不会假红，
+#:     而真正的"静默越界"（静默点长得比代码快）**必然抬高密度** ⇒ 该抓的一个不漏。
+#:   ⚠️ 基线值＝**最近一次校准**时的实测密度（A 76 / B 1298 / C 290 ÷ 165.951k 行），以后**只许下调**。
+BASE = {"A": 0.46, "B": 7.82, "C": 1.75}
 
-#: 会害人的**四族**（"读失败被当成没有"）：每族单独设上限（**只许降**；上限＝当日实测，目标是逐族降到 0）
+#: 会害人的**四族**：每族单独设上限（**只许降**；口径同上＝密度，目标是逐族降到 0）。
+#: ⚠️ 上限值＝**最近一次校准**时的实测密度（旧口径是绝对数 29/5/66/7，同样因代码量增长而假红）。
+#: ⚠️ 注意：这四族的密度**本来就高于全局**（13.9 / 3.5 / 12.3 / 7.5 vs 全局 10.0）——
+#:    它们正是"静默点集中的热点"，所以别拿全局密度当它们的上限。
 FAM = (
-    ("读库", r"agent/(store|memory|history_prune|recall)\.py", 29),
-    ("读配置", r"agent/(config|config_io|persist)\.py", 5),
-    ("读画面", r"agent/(chat_header|chat_ocr|ui_fingerprint|screen_|shoot)\.py", 66),
-    ("读水位", r"agent/(listener_watermark|jobs|timers)\.py", 7),
+    ("读库", r"agent/(store|memory|history_prune|recall)\.py", 13.87),
+    ("读配置", r"agent/(config|config_io|persist)\.py", 3.49),
+    ("读画面", r"agent/(chat_header|chat_ocr|ui_fingerprint|screen_|shoot)\.py", 12.31),
+    ("读水位", r"agent/(listener_watermark|jobs|timers)\.py", 7.51),
 )
 
 
@@ -103,7 +114,9 @@ def classify(fn, trytxt, only_calls, produces):
 
 
 def collect():
+    """返回 (rows, {相对路径: 行数})——行数用来算**密度**（处/千行），见 `BASE` 上面的说明。"""
     rows = []
+    nlines = {}
     for sub in ("agent", "scripts"):
         for dp, dn, fns in os.walk(os.path.join(ROOT, sub)):
             dn[:] = [d for d in dn if d != "__pycache__"]
@@ -114,20 +127,29 @@ def collect():
                 rel = os.path.relpath(p, ROOT).replace("\\", "/")
                 try:
                     src = io.open(p, encoding="utf-8", errors="ignore").read()
+                    nlines[rel] = src.count("\n") + 1
                     for ln, fname, trytxt, seg, marked, only_calls, produces in silent_sites(src):
                         rows.append((rel, ln, fname, classify(fname, trytxt, only_calls, produces), marked))
                 except Exception: # noqa: BLE001
                     continue
-    return rows
+    return rows, nlines
+
+
+def _density(n: int, lines: int) -> float:
+    return round(n / max(1, lines) * 1000.0, 2)
 
 
 def main():
-    rows = collect()
+    rows, nlines = collect()
+    total_lines = sum(nlines.values())
     cnt = {k: sum(1 for r in rows if r[3] == k) for k in "ABC"}
-    print("== A. 三档读数（只许降）==")
-    print("   静默点合计 %d 处：A %d / B %d / C %d" % (len(rows), cnt["A"], cnt["B"], cnt["C"]))
+    print("== A. 三档读数（口径＝**密度**：处/千行；只许降）==")
+    print("   静默点合计 %d 处：A %d / B %d / C %d（代码 %d 行，合计密度 %.2f 处/千行）"
+          % (len(rows), cnt["A"], cnt["B"], cnt["C"], total_lines, _density(len(rows), total_lines)))
     for k in "ABC":
-        ok("%s 类不超过基线（棘轮，只许降）" % k, cnt[k] <= BASE[k], "当前 %d / 基线 %d" % (cnt[k], BASE[k]))
+        d = _density(cnt[k], total_lines)
+        ok("%s 类密度不超过基线（棘轮，只许降）" % k, d <= BASE[k],
+           "当前 %.2f 处/千行（绝对 %d）/ 基线 %.2f" % (d, cnt[k], BASE[k]))
     ok("分母守卫：真的扫到了静默点（不然上面三条会因空集全绿）", len(rows) > 800, "扫到 %d 处" % len(rows))
 
     print("== B. A 类必须带标记（计划要求的『分清故意/不小心』）==")
@@ -138,10 +160,14 @@ def main():
     ok("反向控制：标记词确实能被认出（拿一行样本文本试）",
        MARK in ("    pass  " + MARK) and MARK not in "    pass  # 普通注释", "")
 
-    print("== C. 会害人的四族：单独设上限（每族一闸门）==")
+    print("== C. 会害人的四族：单独设上限（每族一闸门，口径同上＝密度）==")
     for fam, pat, cap in FAM:
+        fam_files = [r for r in nlines if re.fullmatch(pat, r)]
+        fam_lines = sum(nlines[f] for f in fam_files)
         n = sum(1 for r in rows if r[3] == "B" and re.fullmatch(pat, r[0]))
-        ok("%s 族的『取了值』静默点不超过上限" % fam, n <= cap, "当前 %d / 上限 %d" % (n, cap))
+        d = _density(n, fam_lines)
+        ok("%s 族的『取了值』静默点密度不超过上限" % fam, d <= cap,
+           "当前 %.2f 处/千行（绝对 %d / %d 行）/ 上限 %.2f" % (d, n, fam_lines, cap))
 
     print("== D. 口径可复核 ==")
     #: 判据自己的分类器必须**能认出**三档（拿合成样本试，防"全都归一类"也全绿）

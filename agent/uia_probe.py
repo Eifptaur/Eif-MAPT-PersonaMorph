@@ -30,7 +30,7 @@ PROBE_DIR = os.path.join(ROOT, "wechatauto_logs", "ui_probe")
 WECHAT_UI_MAP = {
     "main_window": {"uia_class": "mmui::MainWindow", "win32_class": "Qt51514QWindowIcon"},
     "sub_window": {"uia_class": "mmui::FramelessMainWindow", "win32_class": "Qt51514QWindowIcon",
-                   "note": "独立聊天窗口；wxauto4 原话：通过子窗口发送不会切换主窗口"},
+                   "note": "独立聊天窗口；通过子窗口发送不会切换主窗口"},
     "main_tabbar": {"uia_class": "mmui::MainTabBar", "automation_id": "main_tabbar"},
     "chat_master": {"uia_class": "mmui::ChatMasterView"},
     "chat_page": {"uia_class": "mmui::ChatMessagePage"},
@@ -130,7 +130,8 @@ def _collect_nodes(max_nodes=800, max_depth=8) -> dict:
             hwnd = int(u32.FindWindowW(cls, None) or 0)
             if hwnd:
                 break
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         hwnd = None
     if not hwnd:
         out["error"] = "没找到微信主窗（win32 类名 %s）" % WECHAT_UI_MAP["main_window"]["win32_class"]
@@ -155,7 +156,8 @@ def _collect_nodes(max_nodes=800, max_depth=8) -> dict:
                                   "class": str(getattr(c, "ClassName", "") or ""),
                                   "name": str(getattr(c, "Name", "") or "")[:40],
                                   "aid": str(getattr(c, "AutomationId", "") or "")})
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue
                 stack.append((c, depth + 1))
         out["nodes"] = nodes
@@ -218,7 +220,8 @@ def version_gate(save: bool = True, cur: dict = None) -> dict:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 old = json.load(f) or {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         old = {}
     new = cur if cur else probe(save=save)
     cmp_ = compare_fingerprint(old, new)

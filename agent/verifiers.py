@@ -8,6 +8,15 @@
   ④ **可复制**：报告是一段纯文本，用户粘进「反馈」就能让我直接定位；
   ⑤ **只读**：全部检查只读配置/文件/日志/端口，**不动窗口、不发消息、不改配置**。
 
+     ⚠️ **"不改配置"的边界（用户 澄清）** —— 本条**仅约束"检验器自己"**：
+       检验是**诊断动作**，诊断期间不许有副作用，所以它不改。
+       ⛔ **不要**把它推广成"机器人一律不许帮用户改配置"。**恰恰相反**：
+       若用户**填错了地址/路径 ⇒ 扫不到盘、跑不起来**，**必须帮他把配置改对**
+       （走正常路径、保证正确运行是硬要求）。区别在**谁改、什么时候改**：
+         · **检验器（本模块）**：只报告"哪儿配错了"，**不改**，让用户自己决定；
+         · **修正动作（正常功能链）**：要跑/修时，**该改就改**，改完要能跑通。
+       ⇒ 判据是"**是否具备'修正'的语义**"，不是"配置这两个字出现就禁"。
+
 返回结构（与 `attach_diagnosis` 同形，便于控制台复用渲染）：
     {"id", "name", "symptom", "ok", "verdict", "action", "checks": [{"name","ok","detail"}], "report"}
 """
@@ -55,7 +64,8 @@ def _read_json(path, default=None):
     try:
         with io.open(path, encoding="utf-8") as fh:
             return json.load(fh)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return default if default is not None else {}
 
 
@@ -63,7 +73,8 @@ def _tail(path, n: int = 400) -> list:
     try:
         with io.open(path, encoding="utf-8", errors="replace") as fh:
             return fh.read().splitlines()[-n:]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
 
 
@@ -131,7 +142,8 @@ def _port_open(port: int = 0, timeout: float = 0.6) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", int(port or _port())), timeout=timeout):
             return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -206,7 +218,7 @@ def _verdict(checks, ok_all_msg, action_map) -> tuple:
 
     if not bad:
         # ⛔ 一项都没测到（全是 None）时**不许给 ✅** ——
-        #   以前只改了措辞（"另有 N 项没测到"），判决却仍是"通过"，用户看到的就是 ✅。
+        #   以前只改了措辞，判决却仍是"通过"，用户看到的就是 ✅。
         #   ⇒ 全空 ⇒ `ok=None`（没测到），由 `_finish` 渲染成"没测到"，调用方/面板都不把它当通过。
         if checks and all(c["ok"] is None for c in checks):
             return (None, "**一项都没测到**：%s（这不是「通过」，是这次没能取到判据所需的现场；"
@@ -521,7 +533,8 @@ def v_no_reply() -> dict:
                 try:
                     if _a.get("live"):
                         _age = int(_now - float(_a["live"]))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     _age = None
                 # ⛔ /U3：走统一助手（**未来时间**不算"刚写过"）
                 if _fresh_age(_age, 0, 300) is True:
@@ -613,7 +626,8 @@ def v_no_reply() -> dict:
             if ts:
                 t0 = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
                 last_age = (time.time() - t0) / 60.0
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     checks.append(_check("最近有过一轮响应", _fresh_age(last_age * 60 if last_age is not None else None,
                                                         0, 24 * 3600),
@@ -836,7 +850,8 @@ def v_update_stuck() -> dict:
     try:
         _age_min = (time.time() - os.path.getmtime(_p("data", "update_state.json"))) / 60.0
         _age_txt = ("%.0f 分钟前写的" % _age_min) if _age_min < 1440 else ("%.1f 天前写的" % (_age_min / 1440.0))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     checks.append(_check("更新状态文件可读", bool(st), "lastStatus=%s · version=%s · 快照是 %s"
                          % (st.get("lastStatus") or st.get("status") or "-", st.get("version") or "-", _age_txt)))
@@ -851,7 +866,8 @@ def v_update_stuck() -> dict:
     pid_txt = ""
     try:
         pid_txt = io.open(_p("data", "watchdog.pid"), encoding="utf-8", errors="replace").read()[:40]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pid_txt = ""
     pid = ""
     m = re.search(r"\d+", pid_txt or "")
@@ -862,7 +878,8 @@ def v_update_stuck() -> dict:
     url = ""
     try:
         url = io.open(_p("logs", "console.url"), encoding="utf-8", errors="replace").read().strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     ok_url = bool(url) and (":%d" % port) in url
     checks.append(_check("console.url 与控制台端口一致", ok_url,
@@ -883,7 +900,7 @@ def v_update_stuck() -> dict:
 def v_machine_profile() -> dict:
     """**本机适配**（只读档案：本机能力 + 已经学到的路线；不是症状诊断）。
 
-    ⚠️ 名字改短的由来（用户 2026-09-29）：*"我说的是『这台机器学到什么』，作为一个功能描述，
+    ⚠️ 名字改短的由来（用户 ）：*"我说的是『这台机器学到什么』，作为一个功能描述，
        它不够精确概括，太长了"* ⇒ 定名 **「本机适配」**（4 字：界定了范围＝本机、点明了目的＝适配），
        症状行压缩为「本机能力与已学到的路线（只读）」。
 
@@ -938,7 +955,8 @@ def v_console_dead() -> dict:
     url = ""
     try:
         url = io.open(_p("logs", "console.url"), encoding="utf-8", errors="replace").read().strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if url and "token=" in url:
         try:
@@ -1197,7 +1215,7 @@ def _finish(vid, name, symptom, ok, verdict, action, checks, info_only: bool = F
             "verdict": verdict, "action": action, "checks": checks,
         # ⛔ 出口兜底：报告是**设计给人粘贴进「反馈」发出去**的（本文件头就写了"可复制"）⇒
         #    整段过一遍 `pii.scrub_text`：账号/群号一律只留可辨认的首尾掩码。
-        #    （2026-09-28 现场：反馈消息里带着别人的 `账号=wxid_<真号>` 发到了群里。）
+        #    （现场：反馈消息里带着别人的 `账号=wxid_<真号>` 发到了群里。）
         "report": _pii_scrub("\n".join(lines))}
 
 

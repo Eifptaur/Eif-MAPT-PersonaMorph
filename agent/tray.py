@@ -101,7 +101,8 @@ def _icon_path() -> str:
         from .config import ROOT
         p = os.path.join(ROOT, "assets", "app.ico")
         return p if os.path.exists(p) else ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 

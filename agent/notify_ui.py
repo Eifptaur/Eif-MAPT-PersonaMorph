@@ -39,7 +39,17 @@ CONSOLE_CAPTION = "群相 控制台"
 # 启动器自家的窗体标题也带「群相」⇒ **必须先排除**，否则被认成控制台（launcher.cs 里的窗体标题）：
 # 「群相 一键启动」/「群相 正在启动」/「群相 启动完成」/「群相 已就绪」。
 LAUNCHER_CAPTIONS = ("一键启动", "正在启动", "启动完成", "已就绪", "已在运行", "正在关闭")
-EXE_HINTS = ("一键启动.exe", "Agent启动器.exe", "一键启动", "Agent启动器")
+EXE_HINTS = ("群相.exe", "一键启动.exe", "Agent启动器.exe", "一键启动", "Agent启动器")
+
+
+def launcher_exe(root: str | None = None) -> str:
+    """启动器的**实际**路径：**委托给唯一来源** `autostart.find_launcher_exe`。
+
+    ⛔ 我自己先在这里写了一份"新名优先、老名兜底"的逻辑 ⇒ 那就是**同一件事两个家**（改名时必有一处漏）。
+      现在只剩 `agent/autostart.py` 一处定义，这里只是薄封装（保留本名，免得改一堆调用点）。
+    """
+    from . import autostart as _as
+    return _as.find_launcher_exe(root)
 FOREGROUND_HINT = ("控制台",) # 兜底：前台不是控制台时才需要弹
 
 SW_SHOWNOACTIVATE = 4
@@ -115,7 +125,8 @@ def _title(hwnd) -> str:
         buf = ctypes.create_unicode_buffer(n + 2)
         u.GetWindowTextW(hwnd, buf, n + 2)
         return buf.value or ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -134,7 +145,8 @@ def _exe_of(hwnd) -> str:
                 return os.path.basename(buf.value or "")
         finally:
             k.CloseHandle(h)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return ""
 
@@ -164,7 +176,8 @@ def flash(hwnd, count: int = 6) -> bool:
         fi = FLASHWINFO(ctypes.sizeof(FLASHWINFO), wintypes.HWND(int(hwnd)),
                         FLASHW_TRAY | FLASHW_TIMERNOFG, int(count), 0)
         return bool(_u().FlashWindowEx(ctypes.byref(fi)))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -175,7 +188,7 @@ def classify_console_window(title: str, exe: str) -> int:
       旧判据是**标题子串** `TITLE_HINTS=("群相","控制台","Persona Morph",…)` + `EXE_HINTS`（含裸 "一键启动"）。
       但启动器自己的窗口就叫**「群相 一键启动」**、完成时叫**「群相 启动完成」**，而**控制台窗口与启动器窗口
       是同一个 exe**（一键启动.exe）⇒ 启动器窗口拿 3+2 分，被当成"控制台已经开着"。
-      现场的连锁（05:09 实测日志）：机器人侧 `open_console` 判成 `reuse`（"控制台已经开着 ⇒ 复用那个窗口"）
+      现场的连锁（05:09 实测日志）：机器人侧 `open_console` 判成 `reuse`
       ⇒ 它不开；2 秒后 `onestart._probe_browser_was_opened()` 也看到那个窗口 ⇒ 判"机器人侧已打开"，启动器
       也不开 ⇒ **两边都不开、屏幕上一片空白**；他再点一次时启动器窗口已经关掉，这才开出来。
       顺带：标题里带「群相」的浏览器标签页（包括我们自己的 DSH 会话标签）同样会撞上这条判据。
@@ -193,7 +206,7 @@ def classify_console_window(title: str, exe: str) -> int:
 
 
 def window_title(hwnd) -> str:
-    """给一个窗口句柄取标题（**诊断用**：把"我当时认的是哪个窗口"写进日志，取不到返回空串）。"""
+    """给一个窗口句柄取标题（**诊断用**：把"判定时认的是哪个窗口"写进日志，取不到返回空串）。"""
     try:
         return _title(int(hwnd))
     except Exception:
@@ -222,7 +235,7 @@ def find_console_window() -> int:
         _u().EnumWindows(_WNDENUMPROC(_cb), 0)
     except Exception as e:
         # ⚠️ 这里原来写的是 `_WNDUMPROC`（本模块里根本不存在），
-        #   `NameError` 被这句 `except` 吃掉 ⇒ **函数永远返回 0**（"找不到控制台窗口"），
+        #   `NameError` 被这句 `except` 吃掉 ⇒ **函数永远返回 0**，
         #   于是 `open_console()` 的复用分支从没生效过、每重启一次就多开一个窗口。
         #   教训：吞异常的兜底必须**至少留一条 warning 级痕迹**，否则一个拼写错误能静默半年。
         log.warning("枚举窗口失败（找不到控制台窗口）：%s: %s", type(e).__name__, e)
@@ -248,6 +261,20 @@ def _url_live(u: str) -> bool:
         return False
 
 
+#: `console_url()` 解析结果的进程内缓存有效期（秒）。
+#  为什么要缓存：连不上时一次探测要**等满 0.4s 超时**，而 `console_url()` 为防误判
+#  还要**复查一次** ⇒ 冷口径下一次解析最多 0.8s。界面/报表构建会在一次流程里
+#  问**几十次**同一地址（实测设置面板 20 次 ⇒ 白等 16 秒）⇒ 必须缓存。
+#  3 秒 = 开关控制台来不及察觉的量级。
+_CONSOLE_URL_TTL_S = 3.0
+_console_url_cache: dict = {}
+
+
+def _console_url_clear_cache() -> None:
+    """清空 `console_url()` 缓存（自检在"造新现场"之间调用）。"""
+    _console_url_cache.clear()
+
+
 def console_url(anchor: str = "") -> str:
     """控制台地址（带 token 与锚点）。
 
@@ -266,6 +293,18 @@ def console_url(anchor: str = "") -> str:
         base = read_console_url()
     except Exception:
         base = ""
+
+    # ⚠️ 结果缓存 `_CONSOLE_URL_TTL_S` 秒：调用方（界面构建、报表、托盘）会在一次流程里
+    #   问几十次同一地址，不缓存就是几十次 TCP 探测（控制台没在跑时每次等满超时）。
+    #   缓存值为 (取用时刻monotonic, 返回值)，`anchor` 在缓存之后单独拼（不参与缓存）。
+    import time as _t
+    _now = _t.monotonic()
+    _hit = _console_url_cache.get("v")
+    if _hit is not None and (_now - _hit[0]) < _CONSOLE_URL_TTL_S:
+        base = _hit[1]
+        if anchor:
+            base += anchor if str(anchor).startswith("#") else ("#" + str(anchor))
+        return base
 
     def _live(u: str) -> bool:
         return _url_live(u)
@@ -291,6 +330,7 @@ def console_url(anchor: str = "") -> str:
             base = _fallback
     if not base:
         base = _fallback or "http://127.0.0.1:3210/"
+    _console_url_cache["v"] = (_t.monotonic(), base)
     if anchor:
         base += anchor if str(anchor).startswith("#") else ("#" + str(anchor))
     return base
@@ -310,7 +350,7 @@ def webview_ready() -> dict:
 
     这是"点打开控制台却弹出浏览器"的第一判据——先查清楚再决定，而不是开了才发现。
     """
-    exe = os.path.join(ROOT, "一键启动.exe")
+    exe = launcher_exe()
     dll = os.path.join(ROOT, "lib", "Microsoft.Web.WebView2.WinForms.dll")
     rep = {"exe": os.path.exists(exe), "dll": os.path.exists(dll),
            "runtime": False, "runtime_ver": "", "why": "", "ok": False}
@@ -328,11 +368,12 @@ def webview_ready() -> dict:
                 continue
         if not rep["runtime"]:
             rep["why"] = "系统没装 WebView2 运行时"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         rep["runtime"] = True # 查不出来就按"可能就绪"（exe 自己还有一次回退），别把人挡在门外
         rep["why"] = "运行时检测不可用（按就绪处理）"
     if not rep["exe"]:
-        rep["why"] = "目录里没有 一键启动.exe"
+        rep["why"] = "目录里没有启动器（群相.exe / 一键启动.exe）"
     elif not rep["dll"]:
         rep["why"] = "缺 lib\\Microsoft.Web.WebView2.WinForms.dll"
     rep["ok"] = bool(rep["exe"] and rep["dll"] and rep["runtime"])
@@ -392,7 +433,8 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
             write_console_url(url) # 顺手把地址落盘：别的入口（启动器/托盘）直接读，别再自己拼
         elif url:
             log.warning("不落盘控制台地址（端口连不上，留着会害下次开窗）：%s", url.split("?")[0])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     #   实测：4 个「群相 控制台」窗口**各由一个 `一键启动.exe` 托管**，来自 4 次**间隔 >90 秒**的重启——
     #   而这里原来是**无条件新开**（唯一防双窗手段是"90 秒内刚有人开过就跳过"，间隔一超就失效）⇒ 越重启越多窗。
@@ -413,13 +455,14 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
                 log.warning("已有控制台窗口，但要打开的地址 %s 连不上（很可能控制台服务没在跑）——"
                             "仍按既定口径复用它；若窗口里是错误页，请点「重启」或重新「一键启动」",
                             str(url).split("?")[0])
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     if _ex and _u().IsWindow(_ex):
         try:
             if str(mode or "") == "quiet":
-                # 🔴 （用户实测反馈）：
-                #   机器人**自己**在后台开的窗（启动时那一次、以及任何自动调用）**不许把控制台抬到前台** ——
+                # 🔴 机器人**自己**在后台开的窗（启动时那一次、以及任何自动调用）
+                #   **不许把控制台抬到前台** ——
                 #   只闪任务栏就够了：用户想看的自然会点任务栏，不想看的不该被顶出游戏。
                 #   要抬起来只有一种情况：**用户自己点了**「打开控制台」（调用方显式要求 attention）。
                 flash(_ex)
@@ -442,7 +485,7 @@ def open_console(url: str = "", browser_path: str = "", take_lock: bool = True, 
         _live = False
     if ready["ok"]:
         try:
-            subprocess.Popen([os.path.join(ROOT, "一键启动.exe"), "--console", url],
+            subprocess.Popen([launcher_exe(), "--console", url],
                              creationflags=0x08000000)
             return {"ok": True, "how": "webview", "why": "", "ready": ready, "live": _live}
         except Exception as e:

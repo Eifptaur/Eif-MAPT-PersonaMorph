@@ -9,7 +9,7 @@ import os
 import sys
 import logging
 
-ROOT = r'C:\Users\ptmou\Desktop\WX-chatbot\persona-morph'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 logging.disable(logging.CRITICAL)
 from PIL import Image
@@ -21,7 +21,7 @@ CASES = [
     ('external-全屏原图-1920x1080.png', '测试', (75, 30, 420, 1080)),
     ('external-反馈来源-1151x1185.png', '测试', (61, 30, 1151, 1185)),
     ('0af83564-b60d-4812-aa4f-3c330c6399c0.png', '微信团队', (123, 30, 363, 1281)),
-    ('7bcf1579-61e9-4c80-a54a-47eb45341b53.png', 'aaa偷啃使', (158, 30, 363, 1281)),
+    ('7bcf1579-61e9-4c80-a54a-47eb45341b53.png', '某会话', (158, 30, 363, 1281)),
 ]
 
 for fn, key, box in CASES:

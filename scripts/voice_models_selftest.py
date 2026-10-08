@@ -54,6 +54,9 @@ REAL_POST = VM._post
 import tempfile as _tf_TMP # noqa: E402
 TMP = _tf_TMP.mkdtemp(prefix="pm-vm-judge-")
 from agent import tts as _tts_mod # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 _tts_mod.out_dir = lambda: TMP
 WAV = b"RIFF" + b"\x00" * 60 + b"WAVE" + b"\x00" * 40 # 够像 wav 头就行
 
@@ -61,7 +64,8 @@ WAV = b"RIFF" + b"\x00" * 60 + b"WAVE" + b"\x00" * 40 # 够像 wav 头就行
 def files_now():
     try:
         return set(os.listdir(TMP))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return set()
 
 

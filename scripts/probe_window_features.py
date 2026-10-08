@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """probe_window_features.py —— 逐项对比「主窗 vs 独立弹窗」的窗口特征（找出抓不到的成因）
 
-动机（用户指出）：主窗 `PrintWindow` 抓到 37.37% 内容、独立窗只有 1.98%，
+动机：主窗 `PrintWindow` 抓到 37.37% 内容、独立窗只有 1.98%，
     且三种前置动作全部无效 ⇒ **"不可能抓不到"，独立窗一定有某个特征不同**。
 本脚本把两个窗口的这些属性全部打印出来对照：
   · 样式 GWL_STYLE / 扩展样式 GWL_EXSTYLE（含 WS_EX_LAYERED / WS_EX_NOREDIRECTIONBITMAP）
@@ -25,6 +25,8 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from agent import wechat_windows as WW  # noqa: E402
+
+log = logging.getLogger("persona-morph")
 
 _U32 = ct.windll.user32
 _DWM = ct.windll.dwmapi
@@ -89,7 +91,8 @@ def feat(hw):
         val = ct.c_int(0)
         _DWM.DwmGetWindowAttribute(hw, DWMWA_CLOAKED, ct.byref(val), ct.sizeof(val))
         d["cloaked"] = val.value
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     r = _R()
     _U32.GetWindowRect(hw, ct.byref(r))
@@ -103,13 +106,15 @@ def feat(hw):
         _col = ct.c_uint(0)
         _ok = _U32.GetLayeredWindowAttributes(hw, ct.byref(_col), ct.byref(_p), ct.byref(_fl))
         d["layered_attrs"] = (bool(_ok), _p.value, hex(_fl.value))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         d["layered_attrs"] = None
     try:
         fr = _R()
         _DWM.DwmGetWindowAttribute(hw, DWMWA_EXTENDED_FRAME_BOUNDS, ct.byref(fr), ct.sizeof(fr))
         d["dwm_frame"] = (fr.l, fr.t, fr.r, fr.b, fr.r - fr.l, fr.b - fr.t)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         d["dwm_frame"] = None
     return d
 

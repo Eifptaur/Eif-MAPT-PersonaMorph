@@ -27,8 +27,8 @@ if _ROOT not in sys.path:
 import agent.wechat as W  # noqa: E402
 from agent import chat_ocr as CO  # noqa: E402
 
-A_ID = "49615732107@chatroom"
-B_ID = "50493777651@chatroom"
+A_ID = "10000000001@chatroom"
+B_ID = "10000000002@chatroom"
 _n = 0
 _bad = 0
 

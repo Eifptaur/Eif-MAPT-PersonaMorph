@@ -27,6 +27,9 @@ sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import webui as W # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 PASS = FAIL = 0
 
@@ -102,7 +105,8 @@ for root, dirs, files in os.walk(os.path.join(ROOT, "agent")):
         p = os.path.join(root, f)
         try:
             tree = ast.parse(io.open(p, encoding="utf-8").read())
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         top = set()
         for n in tree.body:

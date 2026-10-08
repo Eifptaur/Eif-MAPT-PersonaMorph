@@ -30,6 +30,9 @@ import socket
 import sys
 import urllib.parse
 from pathlib import Path
+import logging
+
+log = logging.getLogger("persona-morph")
 
 # 嵌入式运行时（python310._pth）不把脚本目录放进 sys.path —— 自检直跑必需
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -93,8 +96,26 @@ def url_live(u: str, timeout: float = 0.4) -> bool:
         port = int(p.port or 80)
         with socket.create_connection((host, port), timeout):
             return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
+
+
+#: 地址解析结果的进程内缓存有效期（秒）。
+#  为什么要缓存：一次探测（连不上时）要**等满 0.4s 超时**，而 `resolve_base_url()`
+#  为防忙机器误判还要**复查一次** ⇒ 冷启动口径下**一次解析最多 0.8s**。
+#  而界面构建（如设置面板）会在一次绘制里问**几十次**同一个地址
+#  （实测 persona 页 20 次 ⇒ 白等 16 秒，且控制台没在跑时**必然**每次都等满超时）。
+#  地址在几秒内不会变，缓存住这一次探测即可把"几十次 × 0.8s"压成"一次 0.8s"。
+#  取值权衡：太短 ⇒ 控制台刚起来时界面仍显示"未连上"；太长 ⇒ 控制台刚关掉时仍显示"已连上"。
+#  3 秒是"开关控制台也来不及察觉"的量级，且足够覆盖一次面板构建。
+_URL_CACHE_TTL_S = 3.0
+_url_cache: dict[tuple, tuple[float, str, str]] = {}
+
+
+def _cache_clear() -> None:
+    """清空缓存。供自检在"造新现场"之间调用，避免上一种现场的结论串到下一幕。"""
+    _url_cache.clear()
 
 
 def _read_config_server(root: Path) -> dict:
@@ -108,7 +129,8 @@ def _read_config_server(root: Path) -> dict:
             srv = cfg.get("server") or {}
             if isinstance(srv, dict):
                 return srv
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     return {}
 
@@ -131,8 +153,19 @@ def resolve_base_url(root: str | Path = "") -> tuple[str, str]:
       "file"    logs/console.url 活性检查通过，以它为准
       "config"  文件缺失或死链，回落配置地址
       "default" 连配置都没有，用文档化默认值
+
+    ⚠️ 结果按 `_URL_CACHE_TTL_S` **进程内缓存**：一次面板构建会问几十次同一个地址，
+       不缓存就是几十次 TCP 探测（控制台没在跑时每次等满超时）。
+       缓存键含 `root`，不同根的调用互不串味。
     """
+    import time as _t
+
     root = Path(root) if root else ROOT
+    _key = (str(root),)
+    _hit = _url_cache.get(_key)
+    if _hit is not None and (_t.monotonic() - _hit[0]) < _URL_CACHE_TTL_S:
+        return _hit[1], _hit[2]
+
     file_url = ""
     fp = root / "logs" / "console.url"
     if fp.exists():
@@ -143,12 +176,15 @@ def resolve_base_url(root: str | Path = "") -> tuple[str, str]:
     if file_url:
         # 活性检查；死了复查一次（0.4s 在忙机器上会误判，同 agent 侧口径）
         if url_live(file_url) or url_live(file_url):
+            _url_cache[_key] = (_t.monotonic(), file_url, "file")
             return file_url, "file"
         # 死链：弃用，回落配置地址（就算配置地址也连不上也回落——
         # 配置是文档化的唯一权威来源，绝不把死链交出去）
     cfg_url = _config_base(root)
     if cfg_url:
+        _url_cache[_key] = (_t.monotonic(), cfg_url, "config")
         return cfg_url, "config"
+    _url_cache[_key] = (_t.monotonic(), DEFAULT_BASE, "default")
     return DEFAULT_BASE, "default"
 
 
@@ -159,6 +195,11 @@ def _selftest() -> list[tuple[str, bool, str]]:
     import tempfile # noqa: PLC0415
 
     out: list[tuple[str, bool, str]] = []
+
+    # ⚠️ 本自检在**同一次进程里依次造多种现场**，而 `resolve_base_url` 有 3 秒缓存
+    #   ⇒ 每换一种现场前清一次，否则上一幕的结论会串到下一幕（假绿/假红）。
+    #   各现场虽然 root 不同、缓存键已含 root，但"链路串接"那次用真 root、可能命中前文 ⇒ 统一清。
+    _cache_clear()
 
     # 现场一：文件是死链（写了没人听的端口）⇒ 必须弃用回落 config
     with tempfile.TemporaryDirectory() as td:
@@ -198,6 +239,7 @@ def _selftest() -> list[tuple[str, bool, str]]:
 
     # 链路串接：resolve 出来的地址直接能喂给 heal.probe_backend（类型/口径流转）
     from heal import probe_backend # noqa: PLC0415
+    _cache_clear()
     url, _src = resolve_base_url()
     probe = probe_backend("http://127.0.0.1:1", timeout=0.2)
     out.append(("resolve → probe 链路串通（不可达口判 REFUSED）",

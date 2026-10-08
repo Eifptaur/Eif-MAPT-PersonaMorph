@@ -16,6 +16,9 @@
 """
 import os
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ON = False
 _FH = None
@@ -34,7 +37,8 @@ def _log(line):
             _FH = open(os.path.join(d, "input_audit.log"), "a", encoding="utf-8")
         _FH.write("%s %s\n" % (time.strftime("%H:%M:%S"), line))
         _FH.flush()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -69,7 +73,8 @@ def install():
                         for f in reversed(frames[-4:]))
                     args = ", ".join(_fmt(v) for v in a)
                     _log("%s(%s)   ← %s" % (name_, args, where))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
                 return orig_(*a, **kw)
             return _wrapper
@@ -104,5 +109,6 @@ def _fmt(v):
                         pass
             return "{" + ",".join(parts) + "}" if parts else "<ptr>"
         return repr(v)[:40]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "?"

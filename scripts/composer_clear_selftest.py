@@ -58,7 +58,7 @@ class FakeBackend:
     def __init__(self):
         self.vks = []
 
-    def keys(self, hwnd, vks, hold_ms=30):
+    def keys(self, hwnd, vks, hold_ms=5, wake=True):
         self.vks.append(tuple(int(v) for v in (vks or ())))
         return True, ""
 
@@ -206,9 +206,18 @@ _seg_text = _ss.func_src(SRC, "send_text_posted")
 ok("发文字链：打字前清残留走共用件", _sm.has(_seg_text, "_clear_composer_posted(self, backend, main, gui, r"))
 ok("发文字链：不再有 Ctrl+A（0x41）", _sm.count(_seg_text, "0x41") == 0,
    "命中 %d 次" % _sm.count(_seg_text, "0x41"))
-ok("发文字链：清不掉**不阻塞打字**（只记日志，不 return 失败）",
-   _sm.has(_seg_text, "log.warning(\"%s（继续打字，但可能与残留串成一条）\"") and
-   _sm.count(_seg_text, "return False, _cwhy0") == 0)
+ok("发文字链：**量不到输入框状态 ⇒ 拒发这一档**（不许当成空框继续打）",
+   _sm.has(_seg_text, "输入框状态判不了") and _sm.has(_seg_text, "不许当作空的"), "")
+# ⛔ 口径（写明，防后人照着"拒发＝侵犯可用性"改回放行）：
+#   量不到框里有没有东西时，**唯一安全的动作是不发这一档** —— 放行则可能把"残留 + 新字"
+#   串成一条发出去（**对外可见、不可逆**）。而"拒发"不会让消息消失：
+#   上游 `send_text` 在 `send_text_posted` 失败后会退回真实路径（按名字打开会话再发）。
+#   ⇒ 与"读不到就不判"的定调**不冲突**：那条针对的是"把判不了翻成不是"；
+#     这里拒的是**一次可能损坏内容外发**，且上游有兜底 —— 属安全方向。
+ok("★ 反向锚：拒发之外**没有**静默放行的路（`return False, _cwhy0` 出现 0 次）",
+   _sm.count(_seg_text, "return False, _cwhy0") == 0, "")
+ok("发文字链：清残留失败也要**说清是哪张单/为什么**（回执带 `_cwhy0`）",
+   _sm.has(_seg_text, "_cwhy0") and _sm.has(_seg_text, "清空优先于填充"), "")
 _seg_img = _ss.func_src(SRC, "send_image_posted")
 ok("发图链：粘贴**前**记基线（用于判断能不能撤）", _sm.has(_seg_img, "_pre_st, _pre_why = _composer_state(self, gui, r)"))
 ok("发图链：失败收尾撤草稿（图还挂在框里时）",
@@ -263,7 +272,7 @@ class _ImgBackend(ib.MessageBackend):
         self.calls.append(("click", tuple(int(v) for v in screen_pt)))
         return True, ""
 
-    def keys(self, hwnd, vks, hold_ms=30):
+    def keys(self, hwnd, vks, hold_ms=5, wake=True):
         self.calls.append(("keys", tuple(int(v) for v in vks)))
         return True, ""
 

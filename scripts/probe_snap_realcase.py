@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from agent import chat_ocr as co  # noqa: E402
 
-CANDS = ['文件传输助手', '腾讯新闻', '微信团队', 'aaa偷啃使用者']
+CANDS = ['文件传输助手', '腾讯新闻', '微信团队', '某会话']
 READS = [
     '文件传，“星期六',      # 真机注释里的原串
     '文件传, "星期六',       # 同上，半角

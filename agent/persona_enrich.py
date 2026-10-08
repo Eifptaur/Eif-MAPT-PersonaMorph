@@ -62,7 +62,7 @@ def enrich(text: str, silent: bool = False) -> str:
 
 def enrich_all(personas: dict) -> dict:
     """原地补足并返回；silent 判定同 persona_check。"""
-    silent_keys = ("link_zelda", "pika", "kongqishi", "dunshan", "novice_jieluo")
+    silent_keys = ("kongqishi", "dunshan", "novice_jieluo")
     for k, v in personas.items():
         if not isinstance(v, dict) or not v.get("text"):
             continue

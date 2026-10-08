@@ -5,7 +5,7 @@
 采集方式：`gh api repos/<repo>/git/trees/HEAD?recursive=1` 列路径 → 过滤文件名/目录（screenshot|docs|images…）
 → `raw.githubusercontent.com` 直下（30 张 / 11 个不同项目 / 3.4 MB）。
 
-## 真值分两档（口径必须写清，2026-09-29 立的规矩）
+## 真值分两档（口径必须写清，立的规矩）
 
 **tier-1「核过」**（本文件 `CASES`）：**看原图逐条核过** —— 把图按四象限切到原分辨率再看，
 只写"确凿看见的"串。它是**硬指标**，也用来做棘轮。
@@ -46,7 +46,7 @@ LOCAL = os.path.abspath(os.path.join(os.path.dirname(WEB), "local"))
 
 #: `(素材文件名, 真值清单...)` —— 真值是我看着图逐个写下来的（可在 overview 拼图上复核）
 CASES = [
-    # ⛔ **真值必须"看原图逐条核过"**（2026-09-29 教训）：第一版真值是我从**缩略总览**上抄的，
+    # ⛔ **真值必须"看原图逐条核过"**（教训）：第一版真值是我从**缩略总览**上抄的，
     #    审计发现约 **30% 记错**（例：图上写 `17 results in 6 files`，我记成 `13 results in 8 files`；
     #    Files 图里根本没有 `Gallery`/`Recent`；KeePassXC 是 `Expiration` 不是 `Expires`）
     #    ⇒ 那些真值**永远不可能命中**，把成功率**低报**了。现在这一批是**四象限原分辨率放大后逐条读出来的**。
@@ -55,14 +55,14 @@ CASES = [
      "Find All References", "Change All Occurrences"),
     ("gh-027-Files-FilesScreenshot.png", "Home", "Documents", "Recycle Bin", "17 items", "1 item selected"),
     ("gh-005-keepassxc-main_interface.png", "Sample Entry", "Advanced", "Expiration", "Searches and Tags"),
-    # ⛔ 真值修正（2026-09-29，看原图核过）：这条原来写着 `Ratio` —— **图里根本没有 Ratio**
+    # ⛔ 真值修正（看原图核过）：这条原来写着 `Ratio` —— **图里根本没有 Ratio**
     #    （右上只有 Uploaded: / Downloaded: / State: / Running Time: / Remaining Time: /
     #      Last Activity: / Availability: …）。那是早前**从缩略总览抄错**的真值，
     #    和本文件文档串里记的那次审计事故同一类 ⇒ 换成图上确凿可见的几条。
     ("gh-024-transmission-WI-main-screen.png", "No Selection", "Uploaded", "Downloaded",
      "Running Time", "Remaining Time", "Availability", "1 Transfer"),
     ("gh-001-PowerToys-pt_run_ui.png", "Maps", "Magnify", "Messaging", "Packaged application"),
-    # 2026-09-29 新入库（看原图四象限逐条核过）
+    # 新入库（看原图四象限逐条核过）
     ("gh-036-keepassxc-autoopen.png", "AutoOpen", "Database 1", "/keyfile.key", "/autoopen.kdbx",
      "Expiration", "Search (Ctrl+F)"),
 ]
@@ -126,7 +126,7 @@ def _all_cases():
         out.append((name, *merged[name]))
     return out
 
-#: 素材库目标张数（用户要求扩到 100 张）
+#: 素材库目标张数（要求扩到 100 张）
 TARGET_IMAGES = 100
 #: 识别率标准（用户把标准提到 99%）——这是**目标**，不是"现在已经达到"
 TARGET_RECALL = 0.99
@@ -142,7 +142,7 @@ KIND_LOCAL = "local-real"
 #: 棘轮（**分档记**）：总召回 + 微信界面专项召回，各自只许涨不许跌。
 BEST_RECALL_WX = 0.0
 #: **硬读档参数**（写在这里＝可复现；改它就要重测并更新棘轮）
-#: ⭐ 2026-09-29 消融后定的两档（**热态**实测，6 张 tier-1 图 / 31 条真值）：
+#: ⭐ 消融后定的两档（**热态**实测，6 张 tier-1 图 / 31 条真值）：
 #:   · 基础档 recognize_dual：23/31 = 74.2%，0.22s/张
 #:   · 快速档（纯内置 1x+2x+2x锐化）：26/31 = 83.9%，1.59s/张
 #:   · 全对档（快速档 + 第二引擎 1x）：**31/31 = 100%**，4.47s/张（旧"全开"20.5s/张 ⇒ 快 4.6×）
@@ -160,7 +160,7 @@ BOOST_DESC_OLD = "全开：两引擎×两尺度×反色"
 
 
 #: 棘轮（只许涨不许跌）。每次实测后**只往上改**，并记下当时的口径。
-#: ⭐ 2026-09-29 实测（6 张图 / 31 条核过真值）：
+#: ⭐ 实测（6 张图 / 31 条核过真值）：
 #:   · 基础档 23/31 = **74.2%**（`BEST_RECALL_BASE`）
 #:   · **硬读档 31/31 = 100.0%**（`BEST_RECALL`，**验收标准按这一档**）
 #:   · 代价：硬读档 123s / 6 张 ≈ 20s 一张（基础档 1.2s）⇒ 它是"难读时加档"，不进每笔发送链。

@@ -8,7 +8,7 @@
   ① **按会话隔离**（`chats[<chat_key>]`）：注入只读**本会话**那一条列表，**结构上**就不可能串群；
      注入给模型的那段文字里也写明"只属于本会话、不许据此推断别的会话"。
   ② **截止日期**：每条可带 `until`（epoch 秒；按日期填的按**当天 23:59:59** 存）；到点后
-     `active()` 不再返回它，`prune()` 把它**真删掉**（"自动舍弃"），并在日志/接口回执里说清丢了几条。
+     `active()` 不再返回它，`prune()` 把它**真删掉**，并在日志/接口回执里说清丢了几条。
   ③ **相关才注入**：`relevant()` 用**字面重叠**（2-gram，去标点、去虚词）判断；重叠不上就**不注入**
      （宁可这次不用上，也不往模型里塞无关的背景）。也可给某条打 `always` 表示每次都用。
      诚实边界：这里是**字面**匹配，不是语义 —— 换个说法就匹配不上，会在接口回执里如实说明。
@@ -68,7 +68,8 @@ def _load() -> dict:
                 bad = "%s.bad.%d" % (p, int(time.time()))
                 os.replace(p, bad)
                 log.warning("预设信息文件读不了（%s）⇒ 已改名留证：%s，本次按空起", e, os.path.basename(bad))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return {"schema": SCHEMA, "chats": {}}
 

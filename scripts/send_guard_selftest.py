@@ -70,11 +70,11 @@ try:
     a = _bare_adapter()
     # A1 完全一致 ⇒ 认
     CO.header_text = _fake_header("演示")
-    ok1, why1 = a._screen_only_identity("58471307405@chatroom", gui="FAKE", name="演示")
+    ok1, why1 = a._screen_only_identity("10000000003@chatroom", gui="FAKE", name="演示")
     ck("A1 会话头标题＝目标名 ⇒ 认（纯屏幕证据）", ok1 is True, str(why1)[:70])
     # A2 另一个群 ⇒ 不认（这是"防发错人"的那一半）
     CO.header_text = _fake_header("闲聊群")
-    ok2, why2 = a._screen_only_identity("58471307405@chatroom", gui="FAKE", name="演示")
+    ok2, why2 = a._screen_only_identity("10000000003@chatroom", gui="FAKE", name="演示")
     ck("A2 会话头标题是别的群 ⇒ 不认", ok2 is False, str(why2)[:70])
     # A3 单字母名字：`E班群` **不算** `E`（`matches()` 对单字是"以它开头"，这一档更严）
     CO.header_text = _fake_header("E班群")
@@ -85,15 +85,15 @@ try:
        "E班群=%s E=%s" % (ok3, ok3b))
     # A4 读不到标题 ⇒ 不认（fail-closed，且措辞说明是"读不到"）
     CO.header_text = _fake_header("")
-    ok4, why4 = a._screen_only_identity("58471307405@chatroom", gui="FAKE", name="演示")
+    ok4, why4 = a._screen_only_identity("10000000003@chatroom", gui="FAKE", name="演示")
     ck("A4 标题读不到 ⇒ 不认且如实说「读不到」", ok4 is False and "读不到" in why4, str(why4)[:60])
     # A5 OCR 抛异常 ⇒ 不认、不冒泡
     CO.header_text = _fake_header("", boom=True)
-    ok5, why5 = a._screen_only_identity("58471307405@chatroom", gui="FAKE", name="演示")
+    ok5, why5 = a._screen_only_identity("10000000003@chatroom", gui="FAKE", name="演示")
     ck("A5 OCR 异常 ⇒ 不认且不冒泡（发送链不会因它炸）", ok5 is False and "异常" in why5, str(why5)[:60])
     # A6 名字带后缀（`演示 (3)`）算同一个会话（沿用 matches 的包含口径）
     CO.header_text = _fake_header("演示 (3)")
-    ok6, _ = a._screen_only_identity("58471307405@chatroom", gui="FAKE", name="演示")
+    ok6, _ = a._screen_only_identity("10000000003@chatroom", gui="FAKE", name="演示")
     ck("A6 标题带后缀（演示 (3)）算同一个会话", ok6 is True)
 finally:
     CO.header_text = _orig_header
@@ -193,13 +193,27 @@ ck("D11 自检量不出来时按「有内容」放行（前置自检不许把发
 
 # ── E 身份复核：双档互证不许被"活动行时间读不出"翻案──
 print("[E] 身份复核：内容 × 会话头标题带 双档命中 ⇒ 直接放行")
-_IDN = _srcslice.from_func(SRC, "chat_identity_ok")[:16000]
+# ⛔ 原来这里写的是 `[:16000]` —— **切片上限会随函数变长而失效**：`chat_identity_ok` 已经长到
+#   27 万字符，而 `_row_time_conflict(...)` 那一问在 16000 之后 ⇒ `find()` 返回 -1
+#   ⇒ E2 变成"取不到锚点所以恒红"（**是判据的刀口钝了，不是产品错了**）。
+#   ⇒ 取**整个函数**（字符串操作，不做无谓的截断）。
+_IDN = _srcslice.from_func(SRC, "chat_identity_ok")
 _PM_SRC = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
 ck("E1 内容命中后先问会话头标题带，命中就放行",
    "self._screen_only_identity(chat_id, gui=gui, name=name)" in _IDN
    and "双档互证，放行" in _IDN)
+# ⛔ 锚点必须取到（否则下面那条的 `-1 < -1` 会给出**看似成立**的结论）——
+#    这就是"先自证探针有效，再断言结论"。
+_IDN_HIT = _IDN.find("双档互证，放行")
+_IDN_CONF = _IDN.find("_row_time_conflict(chat_id")   # ⛔ 只锚**稳定前缀**：见下条说明
+ck("E2a 分母守卫：两个锚点在 `chat_identity_ok` 里都取到了（否则 E2 是空转）",
+   _IDN_HIT >= 0 and _IDN_CONF >= 0, "放行锚=%d 冲突问锚=%d" % (_IDN_HIT, _IDN_CONF))
+# ⛔ 原来锚的是**整个调用** `_row_time_conflict(chat_id, gui=gui)` —— 而实现后来多传了一个参数
+#    （`gui=gui, img=_pane_img`），闭合括号的位置变了 ⇒ **整串匹配不上** ⇒ `find()` 返回 -1
+#    ⇒ E2 恒红（是判据的锚点脆，不是顺序错了）。⇒ 只锚**调用前缀** `_row_time_conflict(chat_id`，
+#    多传/少传 kwarg 都不再影响它。
 ck("E2 这一问排在「活动行时间冲突」那套严格逻辑**之前**（否则时间戳读不出就会被翻成否）",
-   _IDN.find("双档互证，放行") < _IDN.find("_row_time_conflict(chat_id, gui=gui)"))
+   _IDN_HIT >= 0 and _IDN_CONF >= 0 and _IDN_HIT < _IDN_CONF)
 _bad_rel = [l.strip()[:40] for l in _PM_SRC.splitlines() if l.strip().startswith("from .")]
 ck("E3 相对导入修掉：人性化行为决策改走绝对导入（脚本跑时 `from .` 必抛、功能静默失效）",
    not _bad_rel and "from agent import behavior as bh" in _PM_SRC, str(_bad_rel[:2]))
@@ -265,9 +279,13 @@ try:
                 "知唔知钓鱼凳好舒服啊", "老大几时回广州肘人", "在呢，怎么了？")),
        "")
     _ssrc = io.open(os.path.join(ROOT, "agent", "sender.py"), encoding="utf-8").read()
+    # ⛔ 旧锚是 `_is_internal_failure(_t)` —— 它**已被统一入口取代**（见 `sender.py` 的
+    #    "★ P0-10：闸门走统一入口 `outbound_leak_reason`"）：那一个函数盖三类
+    #    （内部故障话术 ⊕ 内心独白 ⊕ 原始 XML）⇒ 还要分头判反而会漏。
+    #    锚点跟着实现走 ⇒ 改成守**统一入口** ＋ "它排在风险闸门那圈循环之前"。
     ck("G3 拦网接在 send_text_batch 的**发之前**（不是只写在提示词里）",
-       "_is_internal_failure(_t)" in _ssrc and "_blocked_internal.append" in _ssrc
-       and _ssrc.index("_is_internal_failure(_t)") < _ssrc.index("for _t in parts:\n            _v = _risk.check"))
+       "outbound_leak_reason(_t)" in _ssrc and "_blocked_internal.append" in _ssrc
+       and _ssrc.index("outbound_leak_reason(_t)") < _ssrc.index("for _t in parts:\n            _v = _risk.check"))
     ck("G4 同会话短窗去重在位（_DEDUP_WINDOW_S + 与最近自己发过的文本比对）",
        "_DEDUP_WINDOW_S" in _ssrc and "跳过重复发送" in _ssrc and "include_self=True" in _ssrc)
     _wsrc = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
@@ -306,9 +324,9 @@ try:
     ck("H6 与 `chat_is_open` 既有口径一致（那里早就写明授权闸默认不接指纹）",
        "allow_weak" in SRC and "授权写动作的最后一道闸绝不接它" in SRC)
     # ⛔ （审计 （P1）**）：**闸门自己出错 ≠ 闸门放行**。
-    #   老写法是 `except Exception: log.warning("会话头校验跳过")` 之后**继续往下发送** ⇒
+    #   老写法是 `except Exception: log.warning` 之后**继续往下发送** ⇒
     #   一遇到异常（指纹/抓图/OCR 任一抛错）就回到"没有闸"的状态 —— 恰好是最该拦的时候不拦。
-    # ⚠️ 静态判据只看**代码**：新写的注释里为了解释历史引用了旧文案（"会话头校验跳过"），
+    # ⚠️ 静态判据只看**代码**：新写的注释里为了解释历史引用了旧文案，
     #    不剥注释就会把这条判成红（同 `poke_locate_selftest.code_of` 的教训）。
     _CODE = "\n".join(_l for _l in SRC.splitlines() if not _l.strip().startswith("#"))
     ck("H7 会话头闸**自身出错**时报 fail-closed（不再 log 一句就继续发）",

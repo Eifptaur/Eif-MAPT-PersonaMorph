@@ -2,6 +2,9 @@
 """收藏表情语义选择：从收藏列表（文件名=语义）挑最合适的一个序号。
 模型判别（离线可缓存）；无模型时用本地规则（按关键词/默认 0）。"""
 import os, glob, re
+import logging
+
+log = logging.getLogger("persona-morph")
 
 EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "emojis")
 
@@ -14,11 +17,13 @@ def list_emojis() -> list:
         for i, f in enumerate(files):
             try:
                 sz = os.path.getsize(f)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 sz = 0
             out.append({"index": i, "name": os.path.splitext(os.path.basename(f))[0], "size": sz})
         return out
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
 
 
@@ -40,5 +45,6 @@ def pick(context: str = "") -> int:
             v = int(m.group(1))
             return max(0, min(len(lids) - 1, v - 1))
         return 0
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0

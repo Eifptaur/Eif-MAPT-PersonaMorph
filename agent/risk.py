@@ -59,14 +59,11 @@ EVENT_PATH = os.path.join(DATA_DIR, "risk_events.jsonl")
 
 # 闸门自己的默认值（config.json 的 risk 段缺哪项就用这里的；不在 config 里也能跑）
 #
-# ⚠️ 口径：原话——
-#    "L1 全局节奏…L2 会话节奏没必要限制得这么死，只要限制发送的内容，或者某些任务不做就行，
-#     就是之前说的那些红线。只在内容层上做筛选。"
-#    "这个全局节奏、会话节奏应该可以交给用户自定义，让他们自己把控账号的风险。"
-#    "到时候我会在介绍里面声明，让他们自己把控账号，账号封了也别怪我。"
-# ⇒ **频率/节奏类阈值默认全部为 0（＝不限）**，只作为"用户想自己掐时"的旋钮（config.json / 控制台）；
-#   闸门默认真正把关的是**内容层与任务层**：群发特征（同一内容短时间发给多个会话）、链接堆积、
-#   禁止词（用户自己填）；"某些任务不做"落在功能层（群控/加粉/营销群发这些能力我们本来就不提供）。
+# ⚠️ 设计口径：
+#    频率/节奏类阈值**默认全部为 0（＝不限）**，只作为"用户想自己掐时"的旋钮
+#      （config.json / 控制台）——"节奏"这件事交给用户自己按需收紧。
+#    闸门默认真正把关的是**内容层与任务层**：群发特征（同一内容短时间发给多个会话）、链接堆积、
+#      禁止词；"某些任务不做"落在功能层（群控/加粉/营销群发这些能力本来就不提供）。
 DEFAULTS = {
     "enabled": True,
     "paused": False,
@@ -161,6 +158,7 @@ class RiskGate(object):
         self._lock = threading.RLock()
         self._refuse_overwrite = False # 坏档留证失败 ⇒ 拒绝覆盖原档
         self._flag_seen = None # 控制台『暂停/恢复』标记的上次值
+        self._ctl_ticket = None # 本闸门在 `control` 里占的那一层的**票号**（恢复时退这一层）
         self._st = {"paused": False, "paused_reason": "", "blocks": 0,
                     "min": [], "hour": [], "day": [], "day_key": "",
                     "chats": {}, "events": [], "recent": [],
@@ -177,7 +175,7 @@ class RiskGate(object):
     #    `risk_state.json` 坏掉/读不出来时 `paused` 掉回默认的 False，**停机开关静默解除**，
     #    机器人接着往外发。读不出"停止开关"绝不能等价于"没有暂停" ⇒ 改成 **fail-closed**：
     #    坏档照 `persist.quarantine` 改名留证，内存里置 paused=True + 写清原因，
-    #    用户确认后在控制台点『恢复发送』即可（坏档没丢，还能人工修回来）。
+    #    后在控制台点『恢复发送』即可（坏档没丢，还能人工修回来）。
     # ⛔ `_load` 原来只对"读不出来"fail-closed，**形状洞是 fail-open**——
     #    顶层是 list / str / None / `{}` 时 `isinstance(d, dict)` 不成立 ⇒ 既不留证、也不暂停，
     #    `paused` 落回 False（实测 `allowed=true` 闸门放行）。与 timers/holidays/watermark/config
@@ -257,7 +255,8 @@ class RiskGate(object):
             os.makedirs(os.path.dirname(self.event_path), exist_ok=True)
             with open(self.event_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     def _event(self, verdict, chat_key, text=""):
@@ -269,7 +268,8 @@ class RiskGate(object):
             os.makedirs(os.path.dirname(self.event_path), exist_ok=True)
             with open(self.event_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     # ── 停机开关 ────────────────────────────────────────────────────────
@@ -351,11 +351,15 @@ class RiskGate(object):
             self._st["paused_reason"] = str(reason or "")[:120]
             self._save()
         # 两套开关互相同步：闸门暂停 ⇒ 也让 `control.is_paused()` 为真（发送链每一步都查它）
+        # ⛔ 用**持票的嵌套计数**而非直接写布尔：闸门暂停占一层并**记住自己的票** ⇒
+        #   恢复时只退自己那层（若闸门早已被别的路径恢复过，票就不在了 ⇒ 退票无效果，不误伤）。
         try:
             from . import control as _ctl
-            _ctl.set_paused_flag(True)
-        except Exception:
-            pass
+            self._ctl_ticket = _ctl.suspend_push(
+                "风险闸门暂停：%s" % (str(reason or "")[:60] or "未给原因"))
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            self._ctl_ticket = None
 
     def recover(self) -> dict:
         """**一键恢复**：清掉闸门暂停 + 清掉控制台的暂停标记 ⇒ 立刻能发。
@@ -365,16 +369,29 @@ class RiskGate(object):
         或被拦升级之后，用户按遍界面都解不开。控制台的可点入口是顶栏『暂停/恢复』
         （`/api/pause`|`/api/resume` → `orch.set_paused()` + `data/paused.flag`）；
         本方法把**两套开关一起清干净**，让"再点一次恢复"或调用本方法都能真的恢复。
+
+        ⚠️ 这是**显式恢复**（用户意图）⇒ 嵌套计数**强制归零**（不是退一层）：
+        用户按了恢复就该全恢复，不该被某个来源剩下的层数继续拦着。
         """
         self.resume()
         try:
             from . import control as _ctl
+            _ctl.suspend_reset()
             _ctl.set_paused_flag(False)
         except Exception:
             pass
+        self._ctl_ticket = None
         return self.snapshot()
 
     def resume(self):
+        """闸门自己恢复（**只退自己占的那一层**）。
+
+        ⛔ 从 `suspend_reset()`（强制清零）改成**退自己的票**：
+          清零会把**别人的暂停来源**一起解掉（正是 P1-3 要防的"嵌套提前恢复"）。
+          用户显式恢复请走 `recover()`（那一路才是零清）。
+        ⚠️ 票号不在（说明已被别处恢复/重置过）⇒ 退回清零，行为与旧版一致（宁可全恢复，
+          也不留一个解不开的暂停把用户锁死）。
+        """
         with self._lock:
             self._st["paused"] = False
             self._st["paused_reason"] = ""
@@ -383,7 +400,16 @@ class RiskGate(object):
             self._save()
         try:
             from . import control as _ctl
-            _ctl.set_paused_flag(False)
+            _tok = self._ctl_ticket
+            if _tok is None:
+                # 没有票（不是本实例 push 的）⇒ 退回清零，保证"恢复"总能恢复
+                _ctl.suspend_reset()
+                _ctl.set_paused_flag(False)
+            else:
+                _ctl.suspend_pop(_tok)
+                if _ctl.suspend_depth() == 0:
+                    _ctl.set_paused_flag(False)
+            self._ctl_ticket = None
         except Exception:
             pass
 
@@ -441,14 +467,23 @@ class RiskGate(object):
                         return verdict(False, "L1", "quiet_hours",
                                        "现在是静默时段（%02d:00-%02d:00），已拦下这条；"
                                        "可在控制台『风险闸门』里关闭静默" % (hs, he))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
 
             # L1 全局总量
+            #   ⚠️ 上限会按**这个群的活跃度**缩放（第 134 项）：`group_adaptive.enabled` 为假时
+            #   恒返回原值 ⇒ **行为与以前一字不差**（零回归，与 `quiet_hours` 同一套默认关口径）。
             for key, cap, win, label in (("min", "per_minute", 60, "每分钟"),
                                          ("hour", "per_hour", 3600, "每小时"),
                                          ("day", "per_day", 86400, "每天")):
                 cap = int(cfg.get(cap) or 0)
+                if cap > 0:
+                    try:
+                        from . import group_pace as _gp
+                        cap = _gp.adaptive_cap(chat_key, cap)
+                    except Exception as _e:  # noqa: BLE001
+                        log.debug("群活跃度缩放失败（按原上限处理）：%s", str(_e)[:80])
                 if cap > 0 and len(self._st[key]) >= cap:
                     oldest = min(self._st[key]) if self._st[key] else now
                     return verdict(False, "L1", "global_" + key,
@@ -554,7 +589,8 @@ class RiskGate(object):
             try:
                 if float(ch.get("last_ts") or 0) - now > 60:
                     ch["last_ts"] = 0.0
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 ch["last_ts"] = 0.0
         # 跨会话近期发送记录（群发特征检测）
         self._st["recent"] = [[s, c, t] for s, c, t in (self._st.get("recent") or [])

@@ -54,7 +54,8 @@ def _new_token_file(p: str, gen: str) -> str:
     if d:
         try:
             os.makedirs(d, exist_ok=True) # `logs/` 在全新解压出来的包里可能还没有
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return ""
     try:
         fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -62,9 +63,11 @@ def _new_token_file(p: str, gen: str) -> str:
         try:
             with open(p, encoding="utf-8") as fh:
                 return fh.read().strip()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
     try:
         os.write(fd, (gen + "\n").encode("utf-8"))
@@ -144,7 +147,8 @@ def token(root: str = "", create: bool = True) -> str:
             if not root:
                 _CACHE["tok"] = t
             return t
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if not create:
         return ""
@@ -184,7 +188,8 @@ def _from_query(path: str) -> str:
         from urllib.parse import parse_qs, urlparse
         q = parse_qs(urlparse(str(path)).query)
         return str((q.get("token") or [""])[0]).strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 

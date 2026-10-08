@@ -10,6 +10,9 @@ import re
 import subprocess
 import sys
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
@@ -36,7 +39,8 @@ def _migrate_crash_log_name() -> None:
                 f.write("\n===== 以下为旧名 bot_crash.log 并入的内容（2026-09-16 改名）=====\n")
                 f.write(old)
             os.remove(_OLD_CRASH_LOG)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -57,7 +61,8 @@ def pkg_version() -> str:
         with open(os.path.join(ROOT, "agent", "version.py"), encoding="utf-8") as f:
             m = re.search(r"VERSION\s*=\s*['\"]([^'\"]+)['\"]", f.read())
         return m.group(1) if m else ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 os.makedirs(DATA, exist_ok=True)
 
@@ -88,7 +93,8 @@ def _read_watchdog_pid():
         pid = int(lines[0].strip() or 0)
         ver = lines[1].strip() if len(lines) > 1 else ""
         return pid, ver
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0, ""
 
 
@@ -119,7 +125,8 @@ def _note(msg: str) -> None:
     try:
         with open(CRASH_LOG, "a", encoding="utf-8") as f:
             f.write(line)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         print("[watchdog] %s" % msg)
@@ -156,7 +163,8 @@ def _drop_own_pid_file() -> None:
         if pid and pid != os.getpid():
             return
         os.remove(PID_FILE)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -204,15 +212,18 @@ def main():
                 subprocess.run(["taskkill", "/F", "/PID", str(old)],
                                creationflags=0x08000000, timeout=10,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             time.sleep(1)
         with open(PID_FILE, "w", encoding="utf-8") as f:
             # 第二行写**整包版本**（读的人按"格式不认识就当旧版"处理也会接管，见 `_verify_own_pid`）
             f.write("%s\n%s" % (os.getpid(), pkg_version() or WATCHDOG_VER))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     exe = find_pythonw()
     flags = 0x08000000 | 0x00000008 if os.name == "nt" else 0
@@ -227,7 +238,8 @@ def main():
         _env = os.environ.get("WXAGENT_WATCHDOG_DELAY")
         if _env:
             _delay = max(_delay, int(_env))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _delay = 0
     _delay = max(0, min(600, _delay))
     # ── `--takeover`──────────────────────────────
@@ -242,7 +254,8 @@ def main():
                 _m = re.search(r"\d+", _f.read() or "")
             if _m and int(_m.group(0)) != os.getpid():
                 _others.append(int(_m.group(0)))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         try:
             _ps = ("Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" | "
@@ -252,7 +265,8 @@ def main():
             for _t in (_r.stdout or b"").decode("utf-8", "ignore").split():
                 if _t.isdigit() and int(_t) != os.getpid():
                     _others.append(int(_t))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         for _p in sorted(set(_others)):
             if _p == os.getpid():
@@ -260,14 +274,16 @@ def main():
             try: # ⛔ 不用 /T：看门狗是机器人的父进程，连树杀会把机器人一起杀掉
                 subprocess.run(["taskkill", "/F", "/PID", str(_p)],
                                capture_output=True, creationflags=0x08000000, timeout=10)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         for _f2 in ("bot.lock", "bot.pid"):
             try:
                 _p3 = os.path.join(DATA, _f2)
                 if os.path.exists(_p3):
                     os.remove(_p3)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         print("看门狗：takeover —— 收掉残留看门狗 %s，并清掉实例证据（bot.lock/bot.pid）"
               % (sorted(set(_others)) or "无"))
@@ -278,7 +294,8 @@ def main():
     try:
         if os.path.exists(STOP_FLAG):
             os.remove(STOP_FLAG)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     fails = 0 # 连续"启动失败"计数
     _stamps = [] # 窗口限流用的重启时间戳（对账第 ⑤ 条）
@@ -287,7 +304,8 @@ def main():
         if os.path.exists(STOP_FLAG):
             try:
                 os.remove(PID_FILE)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass  # 清理型：静默合法
             return 0
         _t0 = time.time()
@@ -314,13 +332,15 @@ def main():
                 with open(CRASH_LOG, "a", encoding="utf-8") as _c:
                     _c.write("[watchdog] persona_morph 退出：code=%s (0x%08X) · 存活 %.1fs\n"
                              % (rc, (rc or 0) & 0xFFFFFFFF, time.time() - _t0))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         except Exception as e:
             try:
                 with open(CRASH_LOG, "a", encoding="utf-8") as crash:
                     crash.write("[watchdog] 异常：%s\n" % e)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         _alive = time.time() - _t0
         # ① 单实例闸门：有别的实例在跑（exit 3）⇒ 再拉一万次也是同一个结果 ⇒ 退场留痕

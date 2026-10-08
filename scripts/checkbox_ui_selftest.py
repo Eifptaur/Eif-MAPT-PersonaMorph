@@ -38,17 +38,24 @@ def ck(name, cond, extra=""):
 
 
 src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
-# 只取勾选框那一族规则（从自研注释到 focus-visible 之后）
+# 只取勾选框那一族规则（从自研注释到 `:disabled` 那条规则结束）
 _i = src.find("自研勾选框")
 # ⚠️ 取样窗口必须**收到本块结尾**：第一版写死 +2600 字符，把隔壁 `.pri` 的渐变色也吃进来了
-#    ⇒ E1 假红（自检自己错，不是样式错）。末尾锚点＝本块最后一条规则。
+#    ⇒ E1 假红（自检自己错，不是样式错）。末尾锚点＝本块最后一条规则（`:disabled` 那条的 `}`）。
 _end = src.find("input[type=checkbox]:disabled", _i)
 _end = (src.find("}", _end) + 1) if _end > 0 else (_i + 1200)
 _SEG = src[_i:_end] if _i > 0 else ""
 
 print("[A] 不用浏览器默认外观")
-ck("A0 取样窗口够长且落在本块内（判据自己没瞎）",
-   _i > 0 and 600 <= len(_SEG) <= 1600, "段长 %d" % len(_SEG))
+# ⛔ A0 **不许用"字符数窗口"当判据**（项目第 58 项点名过这类脆判据）：
+#   它原来写 `600 <= len(_SEG) <= 1600`，而这一段 CSS **一加规则就超过上界** ⇒
+#    判据凭空变红，而样式一个字都没错（实测：只是涨到 1833）。
+#   ⇒ 改成**内容锚**：① 起点标记在；② 段尾就是本块最后一条规则的 `}`；
+#    ③ 段里必须有本块该有的东西（`appearance:none`）；④ 只留一个**很松的**长度下界防"切空了"。
+_SEG_END_OK = bool(_SEG) and _SEG.rstrip().endswith("}")
+ck("A0 取样窗口落在本块内（用品尾锚点判，不看字符数）",
+   _i > 0 and len(_SEG) >= 300 and _SEG_END_OK and "appearance:none" in _SEG,
+   "段长 %d · 段尾=%r" % (len(_SEG), _SEG[-24:]))
 ck("A1 有自研注释标记（后来人能看懂为什么写这段）", _i > 0)
 ck("A2 appearance:none 到位（否则默认白方块还在）", "appearance:none" in _SEG)
 ck("A3 不再把 accent-color 当 checkbox 的唯一手段",

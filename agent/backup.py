@@ -40,10 +40,18 @@ import json as _json
 import os
 import time
 import zipfile
+import logging
+
+log = logging.getLogger("persona-morph")
 
 #: 导出时排除的运行时状态目录（跨机无意义，恢复还会破坏当前运行实例）
 _EXC_DIRS = frozenset({
     "debug", "out_images", "media", "logs", "browser-screenshots", "__pycache__", "存档",
+    # ⭐ `gen_images`（AI 生图落盘）**必须排除**：实测 666 MB / 364 张 ＝ `data/` 的 98%，
+    #   而它**不是**"设置与数据"—— 是可由模型随时重新生成的产品产物，跨机搬过去也没用。
+    #   ⛔ 排除它**不是静默行为**：下方 manifest 的 note 里逐字写明"不含 AI 生图图库"。
+    #   （修前：备份包 675.65 MB，其中 98.4% 是图库；修后 ~10.7 MB。）
+    "gen_images",
 })
 
 #: 导出时排除的运行时状态文件（锁 / pid / 日志）
@@ -61,6 +69,28 @@ _DATA_DENY = frozenset({
 
 #: `_db_recent_rows` 一类判据环境开关：命中即**不写盘**
 _JUDGE_ENV = "PM_JUDGE_NO_PROC"
+
+#: 产品根（本模块所在包的上一级）—— 用来判"这次恢复的落点是不是**用户真那份工程目录**"。
+_PRODUCT_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _blocks_write(root: str) -> bool:
+    """判据环境下**该不该拦这次写**。
+
+    ⛔ 语义修正（原先是"判据环境 ⇒ 一律不写盘"）：那道闸真正要保护的是**用户那份工程目录**，
+    而不是"任何写盘"。原来的一刀切有两个后果：
+      ① `backup_import()` 本来**收 `root` 参数**（判据隔离口）——判据传自建临时目录时，
+         写盘**天然安全**，却被一并挡掉 ⇒ 那条判据自己的"恢复后逐字节一致"两段**必红**
+         （实测：单独带 `PM_JUDGE_NO_PROC=1` 跑就是 35/2，套件里一直红）。
+      ② 语义过宽还掩盖了真正的保护点：**只要落点是产品根就必须拦** —— 这条现在**判得更准**。
+    判不出落点（异常）⇒ **保守拦住**（宁可少写，也不能碰用户目录）。
+    """
+    if not os.environ.get(_JUDGE_ENV):
+        return False
+    try:
+        return os.path.realpath(str(root or "")) == _PRODUCT_ROOT
+    except Exception: # noqa: BLE001
+        return True
 
 
 def _skip_runtime(base: str) -> bool:
@@ -131,7 +161,9 @@ def backup_export(root: str) -> bytes:
              "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
              "note": ("本包含 config.json（全部设置）+ data/ 全部数据"
                       "（记忆/分区/自定义人设/用量价格/对话计费/表情/评分/风控等，不含运行时锁与日志）；"
-                      "解压覆盖同名文件即可恢复「所有数据和设置」"),
+                      "解压覆盖同名文件即可恢复「所有数据和设置」。"
+                      "⛔ 不含 AI 生图图库（data/gen_images/）：那是模型可随时重生成的产出，"
+                      "体积却占 data/ 的九成以上，搬进备份包会让包体积暴涨而对恢复无用。"),
              "files": files}, ensure_ascii=False))
     return buf.getvalue()
 
@@ -164,7 +196,8 @@ def backup_import(root: str, body: bytes, on_save=None) -> dict:
     if "manifest.json" in names:
         try:
             manifest = _json.loads(zf.read("manifest.json").decode("utf-8", "replace"))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             manifest = {}
     is_backup = (manifest.get("kind") == "backup") or \
                 ("config.json" in names) or any(n.startswith("memory/") for n in names) \
@@ -211,11 +244,15 @@ def backup_import(root: str, body: bytes, on_save=None) -> dict:
             except Exception as e:
                 result["warnings"].append("设置恢复失败：%s" % e)
 
-    # 判据环境（`PM_JUDGE_NO_PROC=1`）⇒ **一律不写盘**（只做校验与结算，不留痕）
+    # 判据环境（`PM_JUDGE_NO_PROC=1`）：**拦不拦看落点** —— 落点是产品根才拦（见 `_blocks_write`）。
     _judge = bool(os.environ.get(_JUDGE_ENV))
+    # ⛔ 拦不拦，看**落点**：只有落点是产品根才拦（理由见 `_blocks_write` 的说明）。
+    _blocked = _blocks_write(root)
     if _judge:
         result["judge_env"] = True
-        result["warnings"].append("判据/自检环境：数据文件一律不写盘")
+        result["judge_blocked"] = _blocked
+        result["warnings"].append("判据/自检环境：%s" % ("落点是产品根 ⇒ 数据文件一律不写盘"
+                                                     if _blocked else "落点是隔离目录 ⇒ 照写"))
 
     # ② 恢复 memory/（整包覆盖到 data/memory/）
     mdir = os.path.join(root, "data", "memory")
@@ -232,7 +269,7 @@ def backup_import(root: str, body: bytes, on_save=None) -> dict:
         if not rel.endswith(".json"):
             result["warnings"].append("跳过非 json 记忆条目：%s" % n)
             continue
-        if _judge:
+        if _blocked:
             result["memory_files"] += 1
             continue
         dst = os.path.join(mdir, rel)
@@ -262,7 +299,7 @@ def backup_import(root: str, body: bytes, on_save=None) -> dict:
         if rel in _DATA_DENY:
             result["warnings"].append("跳过运行状态条目（会打乱当前实例）：%s" % n)
             continue
-        if _judge:
+        if _blocked:
             result["data_files"] += 1
             continue
         dst = os.path.join(ddir, rel)

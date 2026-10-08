@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「直接更新」判据（
+"""「直接更新」判据
 一定要直接更新**」）。
 
 要守的三件事：
@@ -161,6 +161,10 @@ finally:
 print("── F. 依赖与运行期数据**不随版本变**：写成契约（2026-09-22 立约）──")
 # 来源＝`research\更新机制-增量与实际做法.md` §五 4：以前"包里没有 runtime/"是**巧合**（靠排除规则），
 # 不是契约 ⇒ 改一次打包规则就可能覆盖掉用户装好的依赖（用户抱怨"更新完又装一遍"）。
+# ⛔ 分档更正（用户口径"为啥不能有 runtime，setup 直接安在本地不行吗"）：
+#   "`runtime/` 不覆盖"**不等于**"包里不许有 runtime" ——
+#   依赖跟包走（`offline/wheels` 轮子 + `offline/python/*.zip` 素材），
+#   但**用户机器上装好的那棵树**（`runtime/`）与用户数据（`data/ config.json`）绝不覆盖。
 _UA = io.open(os.path.join(ROOT, "agent", "update_apply.py"), encoding="utf-8").read()
 _PM = io.open(os.path.join(ROOT, "scripts", "pm_update.py"), encoding="utf-8").read()
 _PK = io.open(os.path.join(ROOT, "scripts", "pack_online.py"), encoding="utf-8").read()
@@ -183,9 +187,19 @@ ok("整包更新不碰 runtime/（agent/update_apply.py 的 NEVER_TOUCH）",
    '"runtime/"' in _UA_NT, _UA_NT[:90] or "没找到 NEVER_TOUCH 赋值行")
 ok("增量更新也不碰 runtime/（scripts/pm_update.py 的 NEVER_TOUCH）",
    '"runtime/"' in _PM_NT, _PM_NT[:90] or "没找到 NEVER_TOUCH 赋值行")
-ok("出包时**断言**包里不含 runtime/、data/、config.json（不再靠巧合）",
+ok("出包时**断言**包里不含「用户装好的依赖」与「用户数据」"
+   "（`runtime/` 树 · `data/` · `config.json` —— 不再靠巧合）",
    _sm.has(_PK, "forbidden = sorted(") and _sm.has(_PK, 'n.startswith(("runtime/", "data/"))')
-   and _sm.has(_PK, "forbidden") and _sm.has(_PK, "含不该随包分发的运行时/数据"))
+   and _sm.has(_PK, "forbidden"))
+# ⛔ 分档的第二条：正式包**要带依赖素材**（`offline/`），别把这条一起断言没了。
+#   反例锚：若哪天有人又给 `EXCLUDE` 加回 `"offline/"` 且不给 `--with-wheels`，
+#   "首装零联网"就**静默失效**（用户还是得联网等十几分钟）⇒ 这里钉住。
+ok("⭐ 正式发行形态＝含依赖：`--with-wheels` 时放行 `offline/`（首装零联网的前提）",
+   _sm.has(_PK, 'EXCLUDE = tuple(e for e in EXCLUDE if e != "offline/")')
+   and _sm.has(_PK, "with_wheels = (not no_wheels)"),
+   "out = %s" % ("默认含依赖" if not _sm.has(_PK, "with_wheels = (not no_wheels)") else "见右"))
+ok("⭐ 用户用不到的包有**机械判据**（`BLOAT` 规则表 + 出包断言 exit 7）",
+   _sm.has(_PK, "BLOAT = [") and _sm.has(_PK, "包内膨胀断言未过") and _sm.has(_PK, "return 7"))
 
 print("\n==== 直接更新判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

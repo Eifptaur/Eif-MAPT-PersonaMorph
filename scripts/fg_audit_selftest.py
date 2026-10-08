@@ -21,6 +21,9 @@
     `moments_comment` 已过 `_background_only`；
   · `wechat._restore_after_send` —— 发送**收尾**：`restore_zorder()`（类级已过闸）＋把主窗压到
     Z 底（`HWND_BOTTOM`），方向都是"离开前台"而不是抢占；
+  · `wechat_windows.*` 那一族「独立窗最小化档」与「借/还前台」—— 逐条理由写在 `ALLOW` 里
+    （方向都是"用户看不到 / 不激活 / 借完立刻还"；⛔ 收窗口只许用 `SW_SHOWMINNOACTIVE`(7)，
+    用 `SW_MINIMIZE`(6) 会把独立窗的 owner＝微信主窗顶到前台，见 `minimize_back_selftest` B8）；
   · `scripts/*selftest*` —— 判据里的假对象/阳性对照。
 """
 import ast
@@ -54,12 +57,38 @@ ALLOW = {
     ("wechat.py", "moments_comment"), ("wechat.py", "moments_like"),
     ("wechat.py", "moments_publish_text"),
     ("voice_strip.py", "_send_alt"), ("voice_strip.py", "_cancel_alt"),
+    # `_set_window_placement`：**低层 setter**（改显示态 + `rcNormalPosition`），
+    #   ⛔ 它自己**从不激活**（不碰 `SetForegroundWindow`/`BringWindowToTop`），
+    #   只被 `put_window_onscreen()` 调用 —— 而后者**查过前台闸** `fg_allowed()`。
+    #   用途＝"把停在屏幕外的窗口搬回屏内"（**往用户看得见的方向**救，不是往外藏）。
+    ("voice_strip.py", "_set_window_placement"),
     ("window_borrow.py", "restore"),
     ("wechat.py", "_restore_after_send"),
     # ⚡ 「摁住微信」的循环——
     #   它**不是**"把微信带到前台"，而是**反着来**：微信一到前台就立刻把用户原窗口还回去 + 把微信压到
     #   Z 序底层（NOACTIVATE、不动几何、不改可见性）。实测切会话/发消息期间微信占前台 0.00 秒。
     ("wechat.py", "_hold_loop"),
+    # ── 「独立窗最小化档」那一族（只动**独立窗**，方向都是"离开用户视线/不激活"）────────────
+    #   `_OffscreenShown`：把**独立窗**移到屏幕外再显示（用户看不到、不抢焦点），用完精确还原。
+    #     它碰 `ShowWindow`/`SetWindowPos` 是**本质必需**：真最小化的窗口，Windows 会屏蔽投递的
+    #     鼠标消息 ⇒ 必须让它短暂"脱离最小化"；"屏外"这个位置就是为"零像素上屏"选的。
+    #     ⛔ 收窗口**只许**用 `SW_SHOWMINNOACTIVE`(7)：`SW_MINIMIZE`(6) 会"最小化**并激活**
+    #        Z 序里的下一个顶层窗"，而独立窗的 Z 序邻居正是它的 owner ＝**微信主窗**
+    #        ⇒ 用户会看到主窗被顶到前台（他什么都没做）。这条由 `minimize_back_selftest` B8 看守。
+    #     收尾还配了"先收窗口、再还前台"的顺序（`voice_strip.send` 的 `finally`）。
+    ("voice_strip.py", "__enter__"), ("voice_strip.py", "_restore"),
+    #   `park_popup`：把**我们自己刚弹出来的**独立窗立刻收起（只改可见性；`how="exists"`
+    #     ＝用户自己开着的那个窗绝不动）⇒ 目的是"别在用户眼前闪"。
+    #   `unstick_window_to_screen`：把**卡在屏外的**窗口摆回屏内（治"卡在屏外、从任务栏也拉不回来"的僵死态）。
+    ("wechat_windows.py", "park_popup"), ("wechat_windows.py", "unstick_window_to_screen"),
+    # ── 「借/还前台」这一对（**唯一允许的抢占**，且借完立刻还）──────────────────────────
+    #   `_borrow_foreground_now`：`popup_paste_blind` 在"微信不在前台"时临时借一次（实测借到 6ms、
+    #     窗口**保持最小化不被显示**、该线程 `hwndFocus==None` ⇒ 用户按键不会落进去），借完立即还。
+    #   `restore_foreground` / `_restore_foreground_now`：**还**给用户（restore，不是抢占）。
+    #   `popup_paste_blind`：那一下**真 Ctrl** 会被前台窗口的线程收走，故必须配 `fg_stash` 兜底还；
+    #     实测副作用＝前台被抓 3 次、每次约 0.1ms（人眼看不到），详见该函数 docstring。
+    ("wechat_windows.py", "_borrow_foreground_now"), ("wechat_windows.py", "restore_foreground"),
+    ("wechat_windows.py", "_restore_foreground_now"), ("wechat_windows.py", "popup_paste_blind"),
 }
 
 PASS = FAIL = 0

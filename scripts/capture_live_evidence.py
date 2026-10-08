@@ -28,13 +28,15 @@
   · 每帧的判据快照**只含屏幕侧**（绿底行 y/score/name、会话行数与摘要、图尺寸）——
     DB 侧（`_last_time_hhmm` 等）留到事后分析时再查，避免每帧开库拖慢连拍。
 
-⛔⛔ **别把"本脚本要窗口可见"误读成"产品要窗口可见"**（2026-09-30 用户当面纠正）：
+⛔⛔ **别把"本脚本要窗口可见"误读成"产品要窗口可见"**（用户当面纠正）：
   · **产品发送不要求窗口可见** —— `README.md` 写明"后台消息投递为主…
     **不要求微信窗口可见**（**最小化与被遮挡时也能干**）"；
     机制依据在 `wechat_ui.hit()` 的注释："没有记录或**判据不可用（窗口最小化抓不到图）**时
     **放行但留痕**，不把第一次用锁死" ⇒ 最小化时判据不可用，但**点击/发送照走**。
   · 而且"微信最小化时仍能发送"在 `agent/version_matrix.py` 里是 **L5 最高目标**
-    （`minimized_send`），只是 `SEED_RUNS` 里状态 = **`unknown` / "未测（最高目标的最严条件）"**。
+    （`minimized_send`），`SEED_RUNS` 里**文本**一条已记为 `ok`（核实：
+    `send_to_popup` 判到 `IsIconic` 即自动降级到 `send_to_popup_blind`，判据＝DB 回读）；
+    ⚠️ 该结论**只覆盖文本**，图/表情/文件/真语音条在最小化档**尚未逐类标定**。
   · ⇒ **本脚本需要窗口可见，纯粹是"留证/看屏幕"的需要**；
     它与"最小化能不能发送"是**两件独立的事**，不要混在一起说。
 """
@@ -44,6 +46,9 @@ import json
 import os
 import sys
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -128,7 +133,7 @@ def main():
         return 2
     print("  ✓ GUI 就绪：%s" % type(_gui).__name__)
 
-    # ⛔ **前置检查：窗口是不是最小化/被挪到屏幕外**（2026-09-30 实测加）
+    # ⛔ **前置检查：窗口是不是最小化/被挪到屏幕外**（实测加）
     #   实测踩到：`WeChatGUI` 初始化成功、但 `rect=(-31989, -32000, -30103, -30561)`
     #   —— **-32000 是 Windows 最小化窗口的经典坐标**。此时 `PrintWindow` 拿不到帧
     #   （`chat_header` 会诚实地返回 None 而不是退回抓屏——抓屏会读到别人家的像素）。
@@ -139,7 +144,8 @@ def main():
     _rr = getattr(_gui, "render_rect", None)
     try:
         _x0, _y0 = int(_rr[0]), int(_rr[1])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _x0 = _y0 = 0
     if _x0 < -10000 or _y0 < -10000:
         print("  ⛔ 微信窗口**处于最小化 / 屏幕外**（render_rect=%s）⇒ **抓不到帧、无法留证**。" % (_rr,))

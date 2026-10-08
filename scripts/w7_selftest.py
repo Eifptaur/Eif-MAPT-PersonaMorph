@@ -7,6 +7,7 @@
 
 用法：py -3 scripts\\w7_selftest.py   （非零退出＝有失败）
 """
+import io
 import os
 import sys
 import tempfile
@@ -102,7 +103,16 @@ ck("D1 requirements 解析出包名（含核心驱动库与 cv2 链）",
    "wechatauto-replica" in names and "opencv-python" in names and "numpy" in names,
    "%d 项" % len(reqs))
 got = [r for r in reqs if r[0] == "wechatauto-replica"][0]
-ck("D2 核心库要求写成 ==1.2.2.2（与实测版本一致）", got[1] == "==" and got[2] == "1.2.2.2")
+# ⛔ **锚「不变量」，不锚「数字」**：这条原来写死 `==1.2.2.2`；那个库升到 1.2.4.4 之后它就变成**假红**
+#   （判据数字过期 —— 每升一次库都要手改判据，早晚会漏）。真正要守的是两件事：
+#    ① 核心库必须**精确 pin**（`==`）：这个库的 API 一变，我们的调用点就得跟着改 ⇒ 用 `>=`
+#       等于把"哪天被升上去"交给运气；
+#    ② 这个 pin **必须与运行时实际装的版本一致** —— 否则"要求"与"事实"两张皮
+#       （体检报"全部满足"，而实际跑的是另一个版本）。
+_inst_core = str(dh.installed_version("wechatauto-replica") or "")
+ck("D2 核心库要求是**精确 pin**（`==`）且与运行时实装版本一致",
+   got[1] == "==" and bool(_inst_core) and got[2] == _inst_core,
+   "要求 %s%s ／ 实装 %r" % (got[1], got[2], _inst_core))
 
 ck("D3a vtuple 数值版", dh.vtuple("1.2.2.2") == ((0, 1), (0, 2), (0, 2), (0, 2)))
 ck("D3b vtuple 带字母后缀不炸",
@@ -137,8 +147,9 @@ sp = dh.site_packages()
 ck("D7b 体检盯的是**项目运行时**的 site-packages（防止「跑在哪个解释器上」骗结论）",
    bool(sp) and "runtime" in sp.lower(), dh.probe_source())
 key = {d["name"]: d for d in diag}
-ck("D7c 运行时里核心驱动库＝1.2.2.2（不是 1.1.5.1）",
-   key["wechatauto-replica"]["installed"] == "1.2.2.2" and key["wechatauto-replica"]["status"] == "ok",
+ck("D7c 运行时里核心驱动库的**实装版本 == requirements 的 pin**（不是旧版回落的）",
+   key["wechatauto-replica"]["installed"] == got[2]
+   and key["wechatauto-replica"]["status"] == "ok",
    str(key["wechatauto-replica"]))
 ck("D7d 运行时里 cv2 链与 numpy 都在",
    all(key[n]["status"] == "ok" for n in ("numpy", "opencv-python", "PyAutoGUI")),
@@ -163,6 +174,89 @@ try:
 finally:
     dh.subprocess.run = _orig
 ck("D10 dry-run 不执行任何命令", executed is False and calls["n"] == 0)
+
+print("\n[F] 离线包（`offline/wheels`）真的能满足 requirements —— 直接判「离线装得上」")
+# ⛔ 现场：`requirements.txt` 写 `wechatauto-replica==1.2.4.4`，而 `offline/wheels` 里只有 **1.2.2.2**
+#   ⇒ "含依赖"的便携包**根本装不起来**，只能联网补齐（用户实测报回来的）。
+#   而原来的判据 D8 只问"`offline/` 目录在不在"（返回布尔）⇒ **这种版本错位它看不见**。
+#   ⇒ 这里补两条：① 逐个核"精确 pin"有没有对应版本的轮子；② **真跑一次离线解析**（`--no-index`）。
+import glob as _glob
+import re as _re
+import subprocess as _sp
+
+_W_HEELS = _glob.glob(os.path.join(ROOT, "offline", "wheels", "*.whl"))
+ck("F1 分母守卫：`offline/wheels` 扫到 ≥40 个轮子（否则下面两条测的是空气）",
+   len(_W_HEELS) >= 40, "%d 个" % len(_W_HEELS))
+
+_HAVE = set()
+for _f in _W_HEELS + _glob.glob(os.path.join(ROOT, "offline", "wheels", "*.tar.gz")):
+    _m = _re.match(r"^([A-Za-z0-9_.\-]+?)-(\d[^-]*)", os.path.basename(_f))
+    if _m:
+        _HAVE.add((_m.group(1).lower().replace("_", "-"), _m.group(2)))
+_PINS = []
+for _l in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8"):
+    _l = _l.split("#")[0].strip()
+    _m = _re.match(r"^([A-Za-z0-9_.\-]+)\s*==\s*([\w.]+)$", _l)
+    if _m:
+        _PINS.append((_m.group(1).lower().replace("_", "-"), _m.group(2)))
+_MISS = [p for p in _PINS if p not in _HAVE]
+ck("F2 ★ 每个**精确 pin** 都能在 `offline/wheels` 里找到对应版本（逐个核，不看目录在不在）",
+   bool(_PINS) and not _MISS, "核了 %d 个；缺/错版：%s" % (len(_PINS), _MISS))
+
+# ② **真跑一次离线解析**：`pip download --no-index --find-links offline/wheels -r requirements.txt`
+#   ⇒ 成功 = "含依赖包"那句承诺成立（连传递依赖一起算）。只解析、不安装（下载到临时目录，用完删）。
+_TMPF = tempfile.mkdtemp(prefix="pm-w7-offline-")
+try:
+    _r = _sp.run([dh.runtime_python(), "-m", "pip", "download", "--no-index",
+                  "--find-links", os.path.join(ROOT, "offline", "wheels"),
+                  "-r", os.path.join(ROOT, "requirements.txt"), "-d", _TMPF],
+                 capture_output=True, text=True, timeout=300,
+                 cwd=ROOT)
+    _tail = (_r.stdout or "").strip().splitlines()[-1:] or [""]
+    ck("F3 ★★ **离线（`--no-index`）能解析出全部依赖** —— 这是「含依赖包」承诺的直接判据",
+       _r.returncode == 0, "rc=%s ｜ %s" % (_r.returncode, str(_tail[0])[:120]))
+finally:
+    import shutil as _sh
+    _sh.rmtree(_TMPF, ignore_errors=True)
+
+# ④ **`offline_available()` 必须真的核版本**（不是"目录里有没有这个文件"）
+#   现场（用户实测报回）：错版轮子（1.2.2.2 而 requirements 要 1.2.4.4）也判"离线可用"
+#   ⇒ 走 `--no-index` ⇒ 装不上 ⇒ 只能人工联网补齐。判据：正例真、反例假。
+import shutil as _sh2
+import tempfile as _tf
+
+_BACKUP_WD = dh.WHEELS_DIR
+_TMPD = _tf.mkdtemp(prefix="pm-w7-offline-bad-")
+try:
+    _src_files = sorted(os.listdir(_BACKUP_WD))
+    for _f in _src_files[:12]:                      # 摆够分母（≥10 个才不像"空集")
+        _sh2.copy2(os.path.join(_BACKUP_WD, _f), os.path.join(_TMPD, _f))
+    # 把那个"精确 pin"的包换成**错版本**（模拟用户遇到的那次）
+    _sh2.copy2(os.path.join(_BACKUP_WD, "wechatauto_replica-1.2.4.4-py3-none-any.whl"),
+               os.path.join(_TMPD, "wechatauto_replica-1.2.2.2-py3-none-any.whl"))
+    dh.WHEELS_DIR = _TMPD
+    dh._OFFLINE_CACHE.clear()
+    _bad_ok = dh.offline_available()
+    _bad_why = dh.offline_why()
+    ck("F4 ★★ 行为测：**错版轮子目录** ⇒ `offline_available()` 必须 False"
+       "（旧实现只看「有没有这个文件」，这种错位它照样判可用）",
+       _bad_ok is False, "返回 %s ｜ 原因：%s" % (_bad_ok, _bad_why[:110]))
+finally:
+    dh.WHEELS_DIR = _BACKUP_WD
+    dh._OFFLINE_CACHE.clear()
+    _sh2.rmtree(_TMPD, ignore_errors=True)
+ck("F5 ★ 反例锚：真实 `offline/wheels` ⇒ `offline_available()` 为 True"
+   "（否则上面的 F4 只是「永远假」）",
+   dh.offline_available() is True, dh.offline_why()[:110])
+
+# ⑤ **唯一实现点 + 失败要能退联网**（都是"改一处就得两处一起改"的收口）
+_SD = io.open(os.path.join(ROOT, "scripts", "setup_deps.py"), encoding="utf-8").read()
+_SD_CODE = "\n".join(l.split("#")[0] for l in _SD.splitlines())
+ck("F6 ★ 安装脚本**调唯一实现** `dep_heal.offline_available()`，不许再自己抄一份弱检查",
+   "dep_heal" in _SD_CODE and "offline_available(" in _SD_CODE
+   and 'startswith("wechatauto_replica-")' not in _SD_CODE)
+ck("F7 ★★ **离线装失败必须自动退联网**（原来没有这一步 ⇒ 用户只能自己想办法）",
+   "自动改走联网安装" in _SD)
 
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:

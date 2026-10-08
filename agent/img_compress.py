@@ -52,7 +52,7 @@ def compress_if_needed(path: str, out_dir: str = None) -> tuple:
             w, h = im.size
             fmt = (im.format or "").upper()
             # ⛔ 动图**一律不压**：这条链是"缩放 + 重编码成 JPEG"，对 GIF 而言等于
-            #   `convert("RGB")` 抽首帧 ⇒ 收件人拿到一张静的（表情的动效就这么没了）。
+            #   `convert` 抽首帧 ⇒ 收件人拿到一张静的（表情的动效就这么没了）。
             #   动图通常也不大，原样发比"压掉动效"划算。
             if bool(getattr(im, "is_animated", False)) and int(getattr(im, "n_frames", 1)) > 1:
                 return path, "动图不压缩（压了会只剩首帧），原样发送"

@@ -25,7 +25,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-#: 与 `agent.wechat.dep_check("key")` 的必需项同口径（那个是唯一真源；这里只是为了"只取必需"）
+#: 与 `agent.wechat.dep_check` 的必需项同口径（那个是唯一真源；这里只是为了"只取必需"）
 KEY = ("wechatauto-replica", "requests", "urllib3", "pillow", "cryptography", "zstandard",
        "uiautomation", "comtypes", "pywin32", "pyperclip", "psutil", "colorama", "winsdk",
        "imageio-ffmpeg", "sounddevice", "pypinyin")

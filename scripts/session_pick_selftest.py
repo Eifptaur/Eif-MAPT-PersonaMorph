@@ -11,7 +11,14 @@
 import os
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+import logging
+log = logging.getLogger("persona-morph")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+# ⛔ 判据**不许构造真 GUI**：本判据会走到 `WeChatAdapter._get_gui()` ⇒ 真构造 `WeChatGUI`
+#   ⇒ ① 读用户真窗口的句柄/矩形 ② 第三方库初始化时**动 stdout** ⇒ 判据的输出被吞
+#   （实测只打印出 138/162 条、**连哪一条失败都没打出来**）。⇒ 上闸（见 PLAN 第 261 项）。
+#   `line_buffering=True` 是第二道保险：逐行 flush ⇒ 就算有东西换了 stdout，已打印的也不丢。
+os.environ["PM_JUDGE_NO_GUI"] = "1"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -65,9 +72,13 @@ ok("整条就是时间词 ⇒ 退回原文（真有会话叫「星期六」也�
 ok("这类名字照样能配上（matches 不被 strip 破坏）", CO.matches("星期六", "星期六") is True)
 ok("空串/纯空白仍返回空", CO.clean("") == "" and CO.clean("   ") == "")
 ok("「上午/下午/中午」不当时间剥（更像名字的一部分）", CO.clean("下午茶交流群") == "下午茶交流群")
+# ⛔ 换成 AST 锚点：原来按"函数在文件里的**文本位置**"切、还只取前 1800 字符 ——
+#   函数一被搬位置就崩/切错，**且函数一长长，锚点就被切到窗口外**（本次实测：那一枪在 1800 字之后
+#   ⇒ 判据恒红，而产品是好的）。说明故意不照抄旧语法：照抄会被"可机械改写形态"普查当成新写的一处。
 ok("find_row_info 单帧漏读 ⇒ 会再抓 3 帧找一次（源码断言）",
-   _sm.has(open(os.path.join("agent", "wechat.py"), encoding="utf-8").read().split(
-       "def _click_visible_session(")[1][:1800], "capture_best(gui=gui, frames=3)"))
+   _sm.has(_srcslice.func_src(
+       open(os.path.join("agent", "wechat.py"), encoding="utf-8").read(), "_click_visible_session"),
+       "capture_best(gui=gui, frames=3)"))
 
 print("── A3. 一次切会话最多一枪（连点两下会把聊天框关掉）──")
 ok("刚点过（0.5s）⇒ 不许再点", CO.click_allowed(100.0, 100.5, 3.0)[0] is False, CO.click_allowed(100.0, 100.5)[1])
@@ -204,6 +215,21 @@ class _FakeSelf:
     def chat_identity_ok(self, chat_id, gui=None):
         return (False, "stub")
 
+    def _band_on_target_row(self, chat_id, name: str = "", gui=None, row_y_abs=None,
+                            pane_left=None, tol=40, frames: int = 2, gap: float = 0.25):
+        """⛔ B5 根治把 `_click_visible_session` 里的局部 `_band_on_row()` 提成了
+        `WeChatAdapter._band_on_target_row`（可复用原语）⇒ 本夹具**必须跟着补这个桩**，
+        否则 `_click_visible_session` 一调就 `AttributeError`（判据链整段断掉）。
+
+        ⚠️ 桩的口径要和真实方法一致（`(band, measured, why)` 三值）：
+          本夹具测的是"换窗/重投**顺序**"，绿底带证据由 `CO.highlight_wide` 的桩供给 ⇒
+          这里**直接转调真方法**（它自己会调被桩住的 `capture_image`/`highlight_wide`），
+          既不重复实现一遍逻辑（免得桩与真代码漂移），也让顺序判据照样吃住绿底带分支。
+        """
+        return W.WeChatAdapter._band_on_target_row(
+            self, chat_id, name=name, gui=gui, row_y_abs=row_y_abs,
+            pane_left=pane_left, tol=tol, frames=frames, gap=gap)
+
     # 会话身份事务（`agent/wechat.py::_idn_txn_scope` 装饰器会调这两个）：
     # 本夹具测的是"换窗重试顺序"，事务清缓存与它无关，桩成空操作即可。
     # ⛔ 漏了它们 ⇒ 装饰器一进函数就 `AttributeError`，本判据整段跑不起来（判据链断开）。
@@ -211,6 +237,12 @@ class _FakeSelf:
         return None
 
     def _idn_txn_end(self):
+        return None
+
+    # ⛔ `_band_on_target_row` 里有一句 `gui or self._get_gui()`；本夹具的调用点
+    #    `_click_visible_session(..., gui=None)` 传的是 None ⇒ 会去问 `_get_gui()`。
+    #    补一个返回 None 的桩（真机里 `_get_gui()` 也只在 gui 缺省时才被问到）。
+    def _get_gui(self):
         return None
 
 
@@ -242,7 +274,8 @@ try:
         try:
             if os.path.exists(_cp_tmp):
                 os.remove(_cp_tmp)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     _cp_reset()
@@ -252,10 +285,18 @@ try:
     _CP.record_ok = lambda *a, **k: None
     _CP.record_fail = lambda *a, **k: None
     _slp, _sel, _cap, _fri = _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info
+    # ⛔ 还要桩 `layout_state`：`_click_visible_session` 会先问"当前帧会话列表在不在"
+    #    （`capture_image` → `layout_state` → `can_switch_chat`）。只桩 `capture_image`
+    #    而把假图喂给**真** `layout_state` ⇒ 它按"帧不可判"退化成 `hidden` ⇒ 函数**提前返回**
+    #    "列表被微信藏起来了" ⇒ 下面整段 D2 全红（**看着像产品坏了，其实是判据缺一个桩**）。
+    _lay_keep = _CH.layout_state
     try:
         _t.sleep = lambda s: None # 脱机：不等那 1.35s
         IB.select_backend = lambda cfg=None, gui=None: IB.MessageBackend(activate=False)
         _CH.capture_image = lambda gui=None, render=None: "FAKE_IMG"
+        _CH.layout_state = lambda img, pane_left=0: {
+            "list_visible": True, "pane_left": 300, "reason": "stub（本段测的是换窗/重投顺序）",
+            "can_switch_chat": True, "can_send_if_open": True, "layout_ok": True}
         CO.find_row_info = lambda img, name, **kw: {"pos": (10, 20), "y_abs": 100, "name": name}
         _f1 = _FakeSelf(hits=2)
         _o1, _w1 = W.WeChatAdapter._click_visible_session(_f1, "filehelper", "文件传输助手",
@@ -311,7 +352,7 @@ try:
         finally:
             CO.highlight_wide = _hw_keep
 
-        # ── P0-3（2026-09-30）：确认顺序**纯像素绿底带第一位**（诊断书 2.4，实测切会话 5s→0.5s）──
+        # ── P0-3：确认顺序**纯像素绿底带第一位**（诊断书 2.4，实测切会话 5s→0.5s）──
         #   为什么必须有这几条：改的是"三条证据的先后"，而三条证据**最终都能判真**——
         #   只测结果就分不出顺序（旧顺序也会成功）⇒ 判据必须**分辨谁先被问到**。
         #   手法：桩住 OCR 那两条（`chat_is_open` / `chat_identity_ok`），给它们埋计数器；
@@ -417,12 +458,14 @@ try:
         _CP.record_fail = lambda *a, **k: None
     finally:
         _t.sleep, IB.select_backend, _CH.capture_image, CO.find_row_info = _slp, _sel, _cap, _fri
+        _CH.layout_state = _lay_keep
         _CP.record_ok, _CP.record_fail = _rook, _rfail
         _CP.PATH = _cp_path_keep # 偏好文件路径还原 + 临时件删掉（判据不留痕）
         try:
             if os.path.exists(_cp_tmp):
                 os.remove(_cp_tmp)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 finally:
     IB.find_render_child = _rc_keep
@@ -460,16 +503,24 @@ ok("content_match：太短不给结论（fail-closed）", CO.content_match("abc"
 ok("content_match：容忍 OCR 吞字（多尺度片段）",
    CO.content_match("这是一条独特内 abcdef", "这是一条独特内容 abcdef") is True)
 _real_cb, _real_pt = CO.capture_best, CO.pane_text
+_all_keep = W.WeChatAdapter._all_chat_last_hhmm
 try:
+    # ⛔ 夹具要**按 chat_id 区分**：判"内容排他"时会拿**别的会话**的正文来比 ——
+    #   原来这里不看 chat_id、谁来都返回同一段话 ⇒ 参照集会判成"逐字雷同" ⇒ 判否。
     class _FakeDB:
         @staticmethod
         def get_messages(chat_id, limit=8):
-            return [{"content": "这是一条独特内容 abcdef"}]
+            return ([{"content": "这是一条独特内容 abcdef"}] if chat_id == "x"
+                    else [{"content": "别的会话的另一段话，完全不一样"}])
 
     ad2 = W.WeChatAdapter.__new__(W.WeChatAdapter)
     ad2._db = _FakeDB()
     CO.capture_best = lambda gui=None, frames=3: object()
     CO.pane_text = lambda img, limit=200: "……这是一条独特内容 abcdef……"
+    # ⛔ 还要桩"全量会话"那一问：`chat_identity_ok` 现在会问 `_all_chat_last_hhmm()`
+    #    来确认"名单外有没有别人在说话"（`bool({})` 是假 ⇒ 空表被判成"查不到" ⇒ 判否）。
+    #    这里给一个**非空**的表（一个名单外、内容不同的会话）⇒ 参照集含名单外、且不雷同。
+    W.WeChatAdapter._all_chat_last_hhmm = lambda self: {"野群@chatroom": "00:00"}
     ok("内容一致 ⇒ 判 True（可以发）", ad2.chat_identity_ok("x", gui=object())[0] is True)
     CO.pane_text = lambda img, limit=200: "完全是别的会话的内容在这里"
     ok("内容不符 ⇒ 判 False（拒绝发送）", ad2.chat_identity_ok("x", gui=object())[0] is False)
@@ -477,6 +528,7 @@ try:
     ok("目标没有可比文本 ⇒ None（当「没有正面证据」处理）", ad2.chat_identity_ok("x", gui=object())[0] is None)
 finally:
     CO.capture_best, CO.pane_text = _real_cb, _real_pt
+    W.WeChatAdapter._all_chat_last_hhmm = _all_keep
 ok("send_file_posted 接了内容级闸", _sm.has(_src, "chat_identity_ok(chat_id, gui=gui)"))
 
 # ⛔ 单字母名字的会话行：E 的行 OCR 成 `[草稿]EE`（草稿标记＋名字＋草稿内容），
@@ -485,7 +537,7 @@ ok("单字母名字：`[草稿]EE` 能匹配上 E", CO.matches("[草稿]EE", "E"
 ok("单字母名字：纯 `E` 也能匹配", CO.matches("E", "E") is True)
 ok("单字母名字：不误配到别的会话（`群里的人`）", CO.matches("群里的人", "E") is False)
 ok("单字母名字：`[草稿]` 之外的前缀也会被剥掉（Draft）", CO.matches("[Draft]EE", "E") is True)
-ok("多字名字不受影响（仍是包含判断）", CO.matches("海绵宝宝课堂19：29", "海绵宝宝") is True)
+ok("多字名字不受影响（仍是包含判断）", CO.matches("某中文群名课堂19：29", "某中文群名") is True)
 
 # ⛔ （⑤ 重发时实测出来）：`find_row_info` 对单字名字的**名字行复核**原来写的是
 #    `norm(got) == norm(name)` **裸全等**，而 E 那种行的名字行会被 OCR 成 `[草稿]EE`
@@ -498,7 +550,7 @@ ok("单字复核走 matches（不再裸全等，草稿标记会剥掉）", _sm.h
 # ⛔ "明明一直是 E 的会话，你却扫不到，这是不是个 bug" ⇒ 查实是**四个**真缺陷，逐条钉住：
 #   ① 身份闸的"针"里混进了**类型占位符**（`[文件/链接/卡片]`/`[文本]`）—— 拿它去聊天区找永远找不到，
 #      还会把真短 token 挤出名额 ⇒ 针必须是真内容；
-#   ② 聊天区**一个字都读不到**时老实现返回 False（"证据说不是"）—— 该说"自检不可用"（None）；
+#   ② 聊天区**一个字都读不到**时老实现返回 False—— 该说"自检不可用"（None）；
 #   ③ `pane_text` 单帧原尺寸读，文件卡多的那一屏读成空串 ⇒ 要放大 + 分段重读；
 #   ④ `send_file_posted` 对内容档的 False **无条件拒绝** ⇒ `confirm_open`（"**调用方声明**"这条明路）形同虚设。
 ok("① 针里不再收方括号类型占位符", _sm.has(_src, 're.match(r"^\\[[^\\[\\]]{1,16}\\]$", c)'))
@@ -528,8 +580,13 @@ ok("switch_chat_posted 会把目标会话的最后消息时间传进去",
 
 # ⛔ 会话行必须用**慢节奏**点击
 _ib_src = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
+# ⛔ 原来是**整串签名**当锚（`def click(self, hwnd: int, …, press_ms: int = None)`）——
+#   实现一换行、或者**多一个参数**（后来确实加了 `right_keep_target`）就整串失配 ⇒ 判据恒红，
+#   而产品是好的。⇒ 改成读**真实签名对象**（语义锚，不看写法），与 `input_backend_selftest` 的 T2/T3 同口径。
+import inspect as _inspect # noqa: E402
+_sig_click = _inspect.signature(IB.MessageBackend.click).parameters
 ok("MessageBackend.click 支持 hover_ms / press_ms",
-   _sm.has(_ib_src, "def click(self, hwnd: int, screen_pt, right: bool = False, hover_ms: int = 0, press_ms: int = None)"))
+   "hover_ms" in _sig_click and "press_ms" in _sig_click, str(list(_sig_click)))
 ok("会话行点击用的是慢节奏（hover_ms=300, press_ms=150）",
    _sm.has(_w_src, "hover_ms=300, press_ms=150"))
 ok("身份闸有「高亮行时间」这一档", "highlight_time" in _w_src and _sm.has(_co_src, "def highlight_time(img)"))
@@ -545,7 +602,7 @@ ok("第二道证据二选一：聊天区出现同一时间 **或** 该时刻在�
    and _sm.has(_w_src, "def _active_row_time_ok"))
 
 print("\n── F. 时间口径：10 点以前的时刻也要能按时间定位（实测根因）──")
-# ⛔ 根因（两次 ABORT 的直接原因）：`find_row_info` 把**目标时间**（`strftime('%H:%M')`
+# ⛔ 根因（两次 ABORT 的直接原因）：`find_row_info` 把**目标时间**（`strftime`
 #    ＝`01:03`）与**读到的**时间（归一成 `'%d:%02d'`＝`1:03`）**直接比字符串** ⇒ 上午 0~9 点永不相等。
 #    E 那种单字母会话名字读不出来、**时间档是唯一信号** ⇒ 表现成"列表里明明有 E，滚 6 轮也定位不到"。
 ok("hhmm：01:03 / 1：03 / 01：03 归一成同一个 1:03",
@@ -646,6 +703,8 @@ ok("各档**共用同一帧**（原来每档各抓 2~3 张，一轮取帧十几�
 
 print("── J. 点前等列表停稳（投递滚轮是平滑滚动，惯性期间点击会点空）──")
 from agent import chat_header as CH # noqa: E402
+import logging
+
 try:
     from PIL import Image as _I4
 

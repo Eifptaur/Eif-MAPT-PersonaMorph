@@ -53,7 +53,7 @@ def _qi_raw(ptr, iid_str: str, itype):
     """手写 QueryInterface：返回按 itype 包装的接口指针。
 
     不用 comtypes 的 QueryInterface —— 它对回调借出再 AddRef 的指针会返回
-    错误类型的包装（实测）。vtbl[0] = QI，与官方 C 调用同构。
+    错误类型的包装。vtbl[0] = QI，与官方 C 调用同构。
     """
     import ctypes
     from ctypes import POINTER, c_void_p
@@ -849,7 +849,7 @@ def build_host_html(port: int, token: str) -> str:
         "if(b&&r&&b.parentNode!==r){try{r.appendChild(b);}catch(e){}}"
         # ⛔ 减号/圆点挂在 document 的**捕获**段，不挂在本体元素上：原版自己的 click 处理
         #    也在 document 捕获段，一旦它的处理里 stopPropagation（气泡/弹层逻辑会这么做），
-        #    挂在本体上的监听就轮不到 —— 用户实测「点减号没反应」正是这个形态。
+        #    挂在本体上的监听就轮不到 —— 「点减号没反应」正是这个形态。
         #    同节点同阶段之间只有 stopImmediatePropagation 拦得住，挂这里最稳。
         "if(!window.__pmBtn){"
         "window.__pmBtn=1;"
@@ -868,7 +868,7 @@ def build_host_html(port: int, token: str) -> str:
         #      按住本体是它在挪本体（现象＝"只能在宿主窗内移动"）。所以必须在**它之前**
         #      （window 捕获段，比它的 document 捕获更早）把这一次拖动拦下。
         #   ② 但**不能一按下就抢**：宿主一抢鼠标捕获（SetCapture），内核就收不到"抬起"，
-        #      `click` 事件永远不会产生 ⇒ 原版的"单击本体弹气泡"全废（用户实测）。
+        #      `click` 事件永远不会产生 ⇒ 原版的"单击本体弹气泡"全废。
         # ⇒ 做法：按下只记录，指针累计移动超过阈值才认定"这是拖动"并接管；单击原样放行。
         "function isInteractive(el){"
         "if(!el||!el.closest)return false;"
@@ -966,7 +966,7 @@ def build_host_html(port: int, token: str) -> str:
         "try{var r=rectsNow();var pi=popInfo();var rr=rootRect();"
         "var meta=[window.innerWidth,window.devicePixelRatio,pi.pop,rr,pi.n];"
         # 视口尺寸一并带上：宿主用它**自校准 Bounds 口径**（传逻辑像素还是物理像素，
-        # 随运行库而异；传错会让画面整块画到窗口之外 = 用户"啥都看不到"）。
+        # 随运行库而异；传错会让画面整块画到窗口之外 = ）。
         # 视口也进签名，窗口尺寸一变就会重报一次。
         "var sig=JSON.stringify([r,meta]);"
         "if(sig===window.__pmRectSig)return;window.__pmRectSig=sig;"

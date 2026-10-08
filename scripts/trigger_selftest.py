@@ -200,7 +200,11 @@ _ok2, _why2, _hits2 = ad4._pane_time_hits("filehelper", "今天09：05")
 ok("对不上时**不许**放行（今天09:05 ≠ 昨天20:17）", (not _ok2) and not _hits2, str(_why2)[:70])
 _ok3, _why3, _ = ad4._pane_time_hits("filehelper", "")
 ok("聊天区一个字都没读到 ⇒ 给不出证据（不是判否、也不是放行）", not _ok3, str(_why3)[:50])
-ok("内容级复核里真的接了这条证据（源码级）", "_pane_time_hits(chat_id, pane)" in SRC and "_ok_pt" in SRC)
+# ⛔ 锚点只取**调用前缀**：实际是 `self._pane_time_hits(chat_id, pane, img=_pane_img)` ——
+#   原来锚写成带右括号的 `..._pane_time_hits(chat_id, pane)` 会**整串匹配不上**（实参后面还有 kwarg）
+#   ⇒ 判据恒红。少传/多传 kwarg 都不该让这条锚失效。
+ok("内容级复核里真的接了这条证据（源码级）",
+   "_pane_time_hits(chat_id, pane" in SRC and "_ok_pt" in SRC)
 ok("只认相对日与裸 HH:MM，显式日期不猜（源码级）", '{"昨天": 1, "前天": 2}' in SRC)
 
 print("\n── I. 消息判定台账：每条进来的消息都要记「判为谁 + 为什么」──")

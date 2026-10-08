@@ -22,6 +22,9 @@ import time
 
 from .config import DATA_DIR
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _lock = threading.RLock()
 
@@ -79,7 +82,8 @@ def note(kind: str, model: str, reason: str = "") -> None:
                     d = json.load(f)
                 if isinstance(d, dict):
                     cur = d
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             counts = cur.get("counts") or {}
             key = "%s→%s" % (kind, model or "主模型")
@@ -88,11 +92,12 @@ def note(kind: str, model: str, reason: str = "") -> None:
             cur["last"] = {"ts": int(time.time() * 1000), "kind": kind, "model": model or "",
                            "reason": str(reason or "")[:120]}
             os.makedirs(os.path.dirname(stats_path()), exist_ok=True)
-            tmp = stats_path() + ".tmp"
+            tmp = persist.tmp_for(stats_path())
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(cur, f, ensure_ascii=False, indent=1)
             persist.replace_into(tmp, stats_path())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -107,6 +112,7 @@ def snapshot() -> dict:
         if isinstance(d, dict):
             out["counts"] = d.get("counts") or {}
             out["last"] = d.get("last") or None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out

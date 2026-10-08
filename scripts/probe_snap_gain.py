@@ -7,7 +7,7 @@
 
 ━━ 判据（v2：修掉 v1 的假增益）━━
 v1 的错法：遍历**所有**读出的名字，取**第一个**能 `best_candidate` 成功的当"救回"
-   ⇒ 目标=微信、读出全是 '0'，硬纠成 '海绵宝宝' 也记成救回 —— **纯假增益**。
+   ⇒ 目标=微信、读出全是 '0'，硬纠成 '某中文群名' 也记成救回 —— **纯假增益**。
 
 v2 的两条硬约束（缺一不算救回）：
   ① **纠错结果必须恰等于目标**（归一化后相等）。纠到别的名字＝没救回，甚至更糟（点错会话）。
@@ -23,7 +23,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
 
 from agent import chat_ocr as co  # noqa: E402
 from agent import chat_header as ch  # noqa: E402

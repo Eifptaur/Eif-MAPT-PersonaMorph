@@ -49,7 +49,7 @@ EXTS = (".png", ".jpg", ".jpeg")
 print("── A. 素材库 ──")
 _files = sorted(f for f in os.listdir(WEB) if f.lower().endswith(EXTS)
                 and os.path.isfile(os.path.join(WEB, f)))
-# ⚠️ 口径（2026-09-29 按用户的分阶段要求改）：**当前阶段是「先把小库的识别率冲到并稳住 99-100%，
+# ⚠️ 口径（按用户的分阶段要求改）：**当前阶段是「先把小库的识别率冲到并稳住 99-100%，
 #    稳定之后再扩库」** ⇒ 这时候「张数没到 100」是**计划内**的，不该判红。
 #    改成**棘轮下限**：只许涨不许跌（跌了说明有人删素材），离目标多远如实打印。
 CORPUS_FLOOR = 56   # 历史最好张数（只许往上改）
@@ -108,7 +108,7 @@ ok("B7 ★ 量召回走的是合并后的用例集（不是裸 `CASES`，否则�
    "看 `measure()` 与 `main()` 的迭代对象")
 
 print("\n── C. 标准（99%）与棘轮 ──")
-ok("C1 标准＝99%（用户口径）", abs(float(getattr(B, "TARGET_RECALL", 0)) - 0.99) < 1e-9,
+ok("C1 标准＝99%（项目约定）", abs(float(getattr(B, "TARGET_RECALL", 0)) - 0.99) < 1e-9,
    "TARGET_RECALL=%s" % getattr(B, "TARGET_RECALL", None))
 ok("C2 棘轮存在（记录历史最好读数，只许涨不许跌）",
    isinstance(getattr(B, "BEST_RECALL", None), (int, float)) and getattr(B, "BEST_RECALL") > 0,

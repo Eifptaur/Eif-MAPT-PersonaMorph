@@ -4,8 +4,8 @@
 ## 为什么能做了（更正上一轮）
 上一轮我说"本机无可量化的真库" —— **这句话错了**。
 本机存在**已解密的真实库副本**（`%TEMP%\wechatauto_db\`，项目历史留下的）：
-  · `wxid_ctkh6fu5iuri22_eda5`  1558 联系人 / 23 群 / message.db 有 **50 张 Msg_* 会话表**
-  · `wxid_ukl2ti5eyhor029_e7c2` 27 联系人 / 2 群
+  · `wxid_<别号>_eda5`  1558 联系人 / 23 群 / message.db 有 **50 张 Msg_* 会话表**
+  · 示例账号（`wxid_<序号>`）27 联系人 / 2 群
 ⇒ 有真数据 ⇒ **不必再要"真机"，本条可以直接测**。
 
 ## 测什么
@@ -23,8 +23,11 @@ import glob
 import os
 import sqlite3
 from collections import defaultdict
+import logging
 
-_BASE = os.path.join(os.environ.get('TEMP', r'C:\Users\ptmou\AppData\Local\Temp'),
+log = logging.getLogger("persona-morph")
+
+_BASE = os.path.join(os.environ.get('TEMP', os.environ.get("TEMP", "")),
                      'wechatauto_db')
 print('== 找真实库 ==')
 _accts = []
@@ -61,7 +64,8 @@ for _acct in _accts:
                         _t //= 1000
                     _buckets[_t // 60].add(_tb)
                     _rows += 1
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
         _c.close()
         _multi = {k: v for k, v in _buckets.items() if len(v) >= 2}

@@ -22,6 +22,9 @@ os.chdir(ROOT)
 
 from agent import chat_header as ch # noqa: E402
 from agent.input_backend import _lock_dpi, find_main_window, find_render_child, window_rect # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 #    图标位置一律由共用实现 `agent/input_bar.py` 算（本探针只 import，不许自己再算一套）。
 
@@ -39,7 +42,8 @@ def find_dialog(timeout=3.0):
                     t = win32gui.GetWindowText(h)
                     if ("选择文件" in t) or ("打开" in t):
                         hits.append((h, t))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         win32gui.EnumWindows(cb, None)
         if hits:
@@ -77,7 +81,8 @@ def main():
     gui = ad._get_gui()
     try:
         gui._update_render_rect()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     r = tuple(gui.render_rect)
     print("渲染区（屏幕坐标）= %s  尺寸 %dx%d" % (r, r[2] - r[0], r[3] - r[1]))

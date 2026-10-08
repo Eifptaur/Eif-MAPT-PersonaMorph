@@ -11,7 +11,7 @@
 用法：
     fp = capture()                      # 抓当前主窗 → 会话头指纹
     remember("filehelper", fp)          # 记住（第一次确认某会话说开着时）
-    ok, info = verify("filehelper")     # 以后每次投递前问一句：还是它吗？
+    ok, info = verify     # 以后每次投递前问一句：还是它吗？
 """
 from __future__ import annotations
 
@@ -50,6 +50,108 @@ DEFAULT_THRESHOLD = 0.90 # 相似度阈值（1.0=完全一致）
 
 
 # ── 纯函数（可用合成图单测，不需要微信）──────────────────────────────────
+def list_rows_by_shade(img, pane_left: int = 0, row_h: int = 0) -> dict:
+    """按**行底色**给会话列表分档 ⇒ 判"有没有置顶、置顶几行"。**纯结构量，不写死像素。**
+
+    ⛔ 依据（用户给的版式事实，真机实测两条独立吻合）：
+      · **无置顶** ⇒ 会话栏底色**均一**（≈238）；
+      · **有置顶** ⇒ **搜索行 ＋ 置顶行**的底色一起**变深**（≈230），与普通行形成对比；
+      · **无论怎样，都比侧栏/顶栏（≈224）浅**。
+      实测（置顶「E」后 1091×899 的帧）：第1行(搜索行)=230 · 第2行(置顶 E)=230 · 第3行起=238。
+
+    ⇒ 这就是"**从屏幕判定置顶**"的尺子 —— 第二台机复核已证明 **DB 里查不到置顶**
+      （`sort_ts` 压根不改、收起/展开零痕迹）⇒ 只能看屏幕。
+
+    ⛔ **阈值不写死**：只比"同一帧里两簇底色谁更深"，分界取两簇的均值；
+      取不到两簇 ⇒ 如实报"均一（无置顶）"，⛔ 不去硬凑一个。
+    ⛔ **行高也不写死**：默认按"列表高度 ÷ 可见行数"现算；拿不准就只报首行与整体两档。
+    """
+    out = {"has_pinned": False, "pinned_rows": 0, "search_row_bg": 0,
+           "normal_bg": 0, "rows": [], "why": ""}
+    try:
+        import collections as _c
+        rgb = img.convert("RGB")
+        w, h = rgb.size
+        pl = int(pane_left or 0) or detect_pane_left(img) or int(w * 0.30)
+        _x0, _x1 = max(0, pl - 110), max(8, pl - 6)   # 只看**列表右侧那条空带**（避开头像与文字）
+        _top = int(h * 0.055)                          # 跳过标题带
+        if row_h <= 0:
+            row_h = max(40, int((h - _top) / 7.6))     # 7.6 ≈ 一屏可见行数的实测量级
+        vals = []
+        for _i in range(8):
+            _yc = _top + int(row_h * (_i + 0.5))
+            if _yc >= h - 8:
+                break
+            _cnt = _c.Counter()
+            for _y in range(max(0, _yc - row_h // 5), min(h, _yc + row_h // 5), 2):
+                for _x in range(_x0, _x1, 2):
+                    _cnt[sum(rgb.getpixel((_x, _y))) // 3] += 1
+            if not _cnt:
+                break
+            vals.append(_cnt.most_common(1)[0][0])
+        if not vals:
+            out["why"] = "量不到行底色"
+            return out
+        # ⛔ **先把"白"行剔掉**：列表最后一行**下面是聊天区/白底**（≈250）⇒ 它不属于列表，
+        #   留着会把"普通档"抬成 250 ⇒ 于是 238 反被判成"更深"⇒ 置顶行数虚高。
+        #   （实测踩到：夹具里列表外那一行 = 250 ⇒ 判定把 3 行置顶数成了 0/虚数。）
+        _nonwhite = [v for v in vals if v <= 246]
+        if len(_nonwhite) >= 2:
+            vals = _nonwhite
+        out["rows"] = vals
+        out["search_row_bg"] = vals[0]                 # 第 1 行＝搜索行（含 🔍/＋）
+        # ⛔ **普通档＝最浅的那一档**（`max`），不是"出现次数最多的那一档"。
+        #   为什么：置顶行**只会更深、不会更浅**（用户给的规律）⇒ 取众数会在"置顶行数 ≥ 普通行数"
+        #   时与置顶档**打平**，基准被污染 ⇒ **把 30+ 置顶的真实账号判成"无置顶"**
+        #   （实测踩到：3 行置顶的合成帧被判成 `has_pinned=False`）。
+        _normal = max(vals[1:]) if len(vals) > 1 else vals[0]
+        out["normal_bg"] = _normal
+        _cut = _normal - 4                             # 差 ≥5 阶才算"更深"（实测 230 vs 238 ⇒ 差 8）
+        out["has_pinned"] = any(v <= _cut for v in vals[1:])
+        _n = 0
+        for v in vals[1:]:                             # 置顶块＝从第一会话行起**连续**更暗的那些行
+            if v <= _cut:
+                _n += 1
+            else:
+                break
+        out["pinned_rows"] = _n
+        out["why"] = ("行底色 %s ｜ 普通档=%d ｜ 门槛=%d ⇒ 置顶 %d 行" % (vals, _normal, _cut, _n))
+        return out
+    except Exception as _e:  # noqa: BLE001
+        out["why"] = "行底色判定异常：%s" % str(_e)[:60]
+        return out
+
+
+def _list_side_is_light_gray(px, start: int, y0: int, y1: int, step: int, w: int) -> bool:
+    """界限**左侧那一带**是不是"会话栏的浅灰"（≈238）⇒ 用来否掉"咬到聊天区里的白空隙"。
+
+    ⛔ 依据（用户给的版式事实，实测吻合）：**侧栏/顶栏 ≈224** · **会话栏（含搜索行）≈238-240** ·
+      **聊天区 ≈250（白）**。三块色值分得很开，所以"界限左边是不是浅灰"是一条**结构性**判据。
+    ⛔ **不写死像素**：左边那一带的宽度取"界限的 ~35%（上限 140px）"，按帧宽自适应。
+    ⚠️ 取**中位数**（会话栏里有头像/文字，会更暗 ⇒ 均值会被拉低而误判）。
+    """
+    try:
+        _span = max(24, min(140, int(start * 0.35)))
+        _xs = list(range(max(0, start - _span), max(1, start - 6), 6))
+        if not _xs:
+            return False
+        _vals = []
+        for _y in range(y0, y1, max(1, step * 2)):
+            for _x in _xs:
+                try:
+                    _vals.append(px[_x, _y])
+                except Exception:  # noqa: BLE001
+                    pass
+        if len(_vals) < 12:
+            return False
+        _vals.sort()
+        _med = _vals[len(_vals) // 2]
+        # 浅灰带：230..246（白≥247 ⇒ 左边也是白的 ⇒ 那不是界限）
+        return 230 <= _med <= 246
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int = 24) -> int:
     """探测**聊天面板左沿**（像素）：从 lo 往右找连续 need 列都接近纯白的起点。
 
@@ -74,7 +176,7 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
         run, start = 0, 0
         _lo = int(min(w * lo_rel, PANE_SCAN_MIN_PX))
         # ⛔ **上界**：会话列表是**固定像素宽**（真机 ≈300px，加左边竖导航栏后左沿 ≈345），
-        #    面板左沿不可能跑到半屏去。真机实测（群「aaa偷啃使用者」，渲染 1088×972）：
+        #    面板左沿不可能跑到半屏去。真机实测（群「某会话」，渲染 1088×972）：
         #    它把聊天区里一段「连续 24 列纯白」（气泡之间的空白）当成了左沿，返回 **507**
         #    （真实 ≈345、库值 239）⇒ 下游 `_avatar_blocks(img, pane_left)` 的扫描起点被推到 507，
         #    **头像列（x≈360~413）整块落在扫描区之外** ⇒ 报「左侧一个头像方块都没有」⇒ 拍不上。
@@ -91,11 +193,21 @@ def detect_pane_left(img, lo_rel: float = 0.15, hi_rel: float = 0.60, need: int 
                     start = x
                 run += 1
                 if run >= need:
-                    return start if start <= _hi_pane else 0
+                    if start > _hi_pane:
+                        return 0
+                    # ⛔ **色值佐证**（版式事实：侧栏/顶栏≈224 深灰 · 会话栏≈238 浅灰 · 聊天区≈250 白）：
+                    #   真界限的**左侧那一带必须是"浅灰"**。若左侧也是白的 ⇒ 说明咬到的是
+                    #   **聊天区里的白色空隙**（已记录的真实失败：返回 507、真值≈345）
+                    #   ⇒ **不许返回**，继续往后扫（这正是那条 507 事故的成因）。
+                    #   ⚠️ 用**中位数**而不是均值：会话栏里有头像/文字（更暗）⇒ 均值会被拉低。
+                    if _list_side_is_light_gray(px, start, y0, y1, step, w):
+                        return start
+                    run = 0
             else:
                 run = 0
         return 0
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
@@ -107,7 +219,7 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
     根本找不到白列 ⇒ 一路扫到气泡右边，实测报 **660**（真值 384）⇒ 会话列裁剪框跟着偏进聊天区
     （`left-240 .. left-6`）⇒ `find_row_info` 把聊天气泡当会话行读 ⇒ "列表里没看到「×××」那一行"。
 
-    ## ⚠️ 2026-09-30 更正：会话列表**不是**固定像素宽（老注释写错了）
+    ## ⚠️ 更正：会话列表**不是**固定像素宽（老注释写错了）
     老注释这里写着「微信的会话列表是**固定像素宽、不随窗口变**」——**实测证伪，别信这条**。
     35+ 张真机样本实测（见 `报告/ocr瓶颈-20260930/列表宽度可变-35张样本实测.md`）：
       · 会话列表宽度 **170 ~ 1198px（7 倍差）**：可**手动拖拽**，也**随窗口缩放**；
@@ -147,14 +259,15 @@ def detect_pane_left_alt(img, rail_max_rel: float = 0.12, list_w: int = 300) -> 
         if pl <= 0 or pl >= w:
             return 0
         return pl
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
 def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
     """**当前会话行（绿底高亮）的右边界 x** —— 用它定"会话列表右沿"（≈面板左沿）。
 
-    ⛔ 为什么加它（2026-09-30，由用户提示："凭绿色带你就能判断面板左沿的起始点"）
+    ⛔ 为什么加它（判断面板左沿的起始点"）
       `pane_left_for` 原来的两个来源只覆盖了一个失效方向：
         · 老口径（连续白列）会**过冲**（气泡占满聊天区左列）⇒ 用结构锚修；
         · 但它也会**不足**（实测 1121×1091 深色帧：老口径给 **291**，而绿底行右边界是 **443**
@@ -191,7 +304,7 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
         #      · 用"左半段绿点占比 ≥0.55" ⇒ 实拍帧里绿底只占 x≈160~400（而左半段取到 0.6w）
         #        ⇒ 占比仅 0.36 ⇒ **永远判不出**（返回 0）。
         #    ⇒ 改为 argmax（绿底行必然是"绿点绝对数最多"的行），并限左半段以避免聊天区干扰。
-        #    ⛔★ 2026-10-01 再修：原来这里写死 `0.60w`，**本身就是 T21 那个误杀的隐形帮凶** ——
+        #    ⛔★ 再修：原来这里写死 `0.60w`，**本身就是 T21 那个误杀的隐形帮凶** ——
         #      `frame-028`（1760×1358）的真绿底段是 `90~1087`，而 `0.60×1760=1056 < 1087`
         #      ⇒ **扫描都扫不到右端**，后面的上界判据更是必然否决。
         #      ⇒ 放宽到 `0.92w`：本步**只负责"找出绿底行是哪一行"**，绿底行必然靠左起铺，
@@ -258,7 +371,7 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
             return 0
         if (_best_r - _bl) < int(w * 0.10):                       # 段要够长
             return 0
-        # ⭐ **右边界不再用"占窗口比例"判，改用结构性判据**（2026-10-01，T21 实测修复）
+        # ⭐ **右边界不再用"占窗口比例"判，改用结构性判据**（T21 实测修复）
         #
         # ⛔ 原来的上界是 `_best_r >= int(w*0.60) ⇒ return 0`（＝"占窗口 >60% 就不认"）。
         #   它**误杀了合法帧**，证据（全量 112 帧实测）：
@@ -295,6 +408,53 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
                 # 右端之后**还有明显绿色** ⇒ 这不是"列表绿底的右沿"（更可能是绿底延伸到聊天区）
                 if _green_ratio > 0.20:
                     return 0
+        # ⭐⭐ **第三条约束：绿带右端之后必须"整体干净"**（接 PLAN 第 23 项 ②）
+        #
+        # ⛔ 为什么还缺一条：上面"右端之后不许再绿"只管住了**绿**。
+        #   而**聊天区里的内容**（气泡文字/图片）右端之后也**不是绿**（是白的、有墨的）
+        #   ⇒ 于是"聊天区一小块绿元素 + 右边一片白聊天区"能**整条通过**上一条。
+        #   第 23 项 ② 记的那个数（一帧返回 857 ≈ 0.999w）就是这一类。
+        #
+        # ⛔⛔ **绝不许改回"占比阈值"** —— 这是已经在全量帧上验过的错法（T21）：
+        #   `frame-028`（1760×1358）真绿段 `90~1087` ＝ 0.618w，按下界 0.60w 就**误杀**；
+        #   `frame-027` 同一段在 1121 宽下 ＝ 0.970w。**两帧绿段是同一段**（会话列表是
+        #   **固定像素宽 ~1000px、不随窗口缩放**）⇒"占窗口比例"与"列表宽度"根本不同量纲，
+        #   窗口一宽就会把合法列表判成"太宽"⇒**方法错了，不是阈值没调好**。
+        #   ⇒ 本条判据**只允许用结构量**：绿带右端之后那一段**有没有内容**。
+        #
+        # ★ 判据（结构量，无比例）：会话列表右端之后那一片，是**聊天区的空白底色**
+        #   —— 一块**跨行跨列都均匀**的纯色面（实测真机合法帧：右端之后整片都是 `250,250,250`）。
+        #   而**聊天区里的绿色元素**（绿气泡/图片/表情）右端之后必然是**聊天区的内容**
+        #   （气泡/文字/头像，颜色深浅交错 ⇒ **一点都不均匀**）。
+        #   ⇒ 判据：**在右端之后取一整块矩形区域，看它的"颜色离散度"**：
+        #      · 空白聊天区 ⇒ 离散度极小（同一色）；
+        #      · 聊天区内容区 ⇒ 离散度大。
+        #   ⛔ 这里**绝不能**写成"右端超过 X% 宽就判 0" —— T21 已用真机帧证过那是错法（M5b 是回归锚）。
+        #   ⛔ 也**不要**用"逐列跟中位数比"（试过，会自证：内容一多，中位数自己就是内容色 ⇒ 永远判干净）。
+        #
+        #   ⚠️ 为什么用**离散度**而不是"占比/极差"：
+        #     极差会被**单个**孤立噪点/分隔线拉满（一张纯白面里有一条灰线 ⇒ 极差很大但仍是空白）；
+        #     而离散度（标准差）对"少数几列有内容"不敏感、对"整片都是内容"敏感 ⇒ 正是我们要的区分。
+        #   ⚠️ 阈值 **28** 是**真机标定**：合法列表帧右端之后实测离散度 ≈ **0.0**（全同一色），
+        #     而聊天区内容区的离散度轻松 >60 ⇒ 中间取 28，两侧余量都很足。
+        if 0 < _best_r < w - 2:
+            _x0 = min(w - 1, _best_r + 4)
+            _x1 = min(w, max(_x0 + 40, _best_r + int((w - _best_r) * 0.5)))
+            _y0 = _b0
+            _y1 = min(h - 1, _b1)
+            _samples = []
+            _ystep2 = max(1, (_y1 - _y0) // 8)
+            for _x in range(_x0, _x1, 5):
+                for _y in range(_y0, _y1 + 1, _ystep2):
+                    _v_r, _v_g, _v_b = px[_x, _y][:3]
+                    _samples.append((_v_r + _v_g + _v_b) / 3.0)
+            # 分母守卫：真采到足够点才判（采不到就照旧认，零回归）
+            if len(_samples) >= 24:
+                _mu = sum(_samples) / float(len(_samples))
+                _var = sum((v - _mu) ** 2 for v in _samples) / float(len(_samples))
+                _sd = _var ** 0.5
+                if _sd > 28.0:
+                    return 0
         # 只在"这一段够长"时才认（避免几像素的绿点）
         _ret = int(_best_r) if _best_r > int(w * 0.10) else 0
         try:
@@ -302,7 +462,8 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
         except Exception:
             pass
         return _ret
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
@@ -337,7 +498,7 @@ def pane_left_for(img, cross_check: bool = True) -> int:
             alt = int(detect_pane_left_alt(img) or 0)
         except Exception:
             alt = 0
-    # ⭐ 第三来源：**绿底行（当前会话高亮）的右边界**（2026-09-30，用户提示）
+    # ⭐ 第三来源：**绿底行（当前会话高亮）的右边界**
     #   它天然贴着"会话列表右沿"，且**不依赖主题/气泡**。只在它与上面的结果
     #   **差得远**（>60px）时才采用 ⇒ 不改动本来正确的帧（实测 1886×1421 两者只差 2px）。
     _gx = 0
@@ -361,7 +522,8 @@ def pane_left_for(img, cross_check: bool = True) -> int:
     else:
         try:
             val = int(img.size[0] * PANE_LEFT_REL)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             val = 0
     # ⭐ 绿带纠偏：老口径**偏小**这一侧原来没人管（它只修"过冲"）——
     #   实测 1121×1091 深色帧：老口径 291 / 绿底行右边界 443 ⇒ 小 152px。
@@ -392,7 +554,8 @@ def pane_left_for(img, cross_check: bool = True) -> int:
         _w2 = int(img.size[0])
         if _w2 and int(val) > int(_w2 * 0.85):
             val = int(_w2 * PANE_LEFT_REL)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         img._pm_pane_left = int(val) # 同一帧只算一次（同一对象被十几个函数各调一遍）
@@ -404,9 +567,8 @@ def pane_left_for(img, cross_check: bool = True) -> int:
 def layout_state(img, pane_left: int = 0) -> dict:
     """**当前帧是哪种布局** —— 以及由此推出的"哪些操作可行"。
 
-    ⛔ 为什么必须有它（2026-10-01 用户给出规则 + 两张"临界点"对照图后确立）
-      微信窗口**宽度不足以同时放下"最小会话列表 + 最小聊天区"时，会自己把会话列表隐藏**
-      （只剩左侧头像栏 + 聊天区）；再继续缩则压缩聊天区。用户实测的两张同机图：
+    ⛔ 为什么必须有它：微信窗口**宽度不足以同时放下"最小会话列表 + 最小聊天区"时，会自己把会话列表隐藏**
+      （只剩左侧头像栏 + 聊天区）；再继续缩则压缩聊天区。同机两张"临界点"对照图：
         · 列表隐藏 (875×926)：`pane_left`=227（**0.259 w，其实是"侧栏右沿"**），绿底行【无】
         · 列表显示 (876×926)：`pane_left`=330（**0.377 w，"列表右沿"**），绿底行【330】
       ⇒ **两张图总宽只差 1px 却状态相反** ⇒ **"宽度阈值"不是全局常数**（随 DPI/字号/版本，
@@ -427,7 +589,8 @@ def layout_state(img, pane_left: int = 0) -> dict:
     """
     try:
         w = int(img.size[0])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         w = 0
     _gx = 0
     try:
@@ -440,20 +603,79 @@ def layout_state(img, pane_left: int = 0) -> dict:
         except Exception:
             pane_left = 0
     _vis = _gx != 0
+    # ⭐ **第三态 `narrowing`**（加；同日补**结构性分界**）：以前只有「可见 / 隐藏」两态，
+    #    但实测还有第三态 —— **搜索入口收起、只剩一个放大镜**（列表还在但很窄）。它**没有绿底行**，
+    #    按旧口径会被并进「隐藏」，于是上层以为「不能切会话」，其实还能。
+    #    分界口径（都是本帧结构量，不看固定阈值）：
+    #      · 有绿底行 ⇒ **full**（当前打开的会话行在，列表正常）
+    #      · 没绿底 ⇒ 再问一句"**搜索入口是什么形态**"：
+    #          - `box`（白框／读得到「搜索」二字）⇒ 列表还够宽 ⇒ **narrowing**
+    #          - `icon`（只剩放大镜）⇒ 已窄到微信把框退化了 ⇒ 结合宽度：够宽仍算 `narrowing`，否则 `hidden`
+    #      · 形态也测不出（异常/找不到入口）⇒ 退回 `0.20w` 兜底（**与接线前行为一致**）
+    #    ⛔ 为什么加"形态"这条：0.20w 是**比例兜底**（窗口一宽就偏），而"框还在不在"是**结构量** ——
+    #       它正是微信自己决定"要不要把框收成图标"的那条线：
+    #       「**如果搜索框太窄，它会退化成搜索图标（也就是那个放大镜）**」）。
+    _entry_variant = ""
+    if not _vis:
+        try:
+            from . import chat_ocr as _co  # 延迟导入：`chat_ocr` 顶层 import 本模块，反向 import 会成环
+            _se = _co.find_search_entry(img)
+            _entry_variant = str((_se or {}).get("variant") or "")
+        except Exception:
+            _entry_variant = ""
+    if _vis:
+        _state = "full"
+    else:
+        _wide_enough = bool(w and (pane_left / float(w)) >= 0.20)
+        if _entry_variant == "box":
+            _state = "narrowing"          # 结构量：框还在 ⇒ 列表够宽
+        elif _entry_variant == "icon":
+            _state = "narrowing" if _wide_enough else "hidden"
+        else:
+            _state = "narrowing" if _wide_enough else "hidden"   # 测不出 ⇒ 兜底（同接线前）
     if _vis:
         _why = ("会话列表**可见**：绿底行右边界 = %d（占比 %.3f w）⇒ 面板左沿含义=列表右沿"
                 % (_gx, (_gx / w) if w else 0))
     else:
-        _why = ("会话列表**不可见**（窄窗被微信隐藏）：没有绿底行 ⇒ "
+        _why = ("会话列表**不可见**（没有绿底行）：搜索入口形态=%s ⇒ "
                 "面板左沿含义=侧栏右沿（≈%.3f w）；此时**不能切会话**，"
-                "但目标会话若已打开**仍可发送**" % ((pane_left / w) if w else 0))
+                "但目标会话若已打开**仍可发送**"
+                % (_entry_variant or "测不出", (pane_left / w) if w else 0))
+    # ⭐ `layout_ok`：**这一帧能不能用来量坐标/做校准**。
+    #    "左侧会话列表 + 右侧聊天区"**不是每帧都成立** —— 客服提示页 / 聊天区占满 / 调试面板
+    #    这几类帧里，`pane_left` 与各种"按比例取带"的定位量**都会给出看着正常但含义不同的数**
+    #    ⇒ 拿它们去标定坐标，标出来的值是错的，而且**不报错**（最难查的一类）。
+    #    判据（三条都要满足，全用本帧结构量）：
+    #      ① 会话列表可见（有绿底行）—— 没有列表就无从量"列表右沿"；
+    #      ② `pane_left` 落在合理区间（0.05w~0.85w）—— 0 或接近整幅宽都说明这帧不是标准布局；
+    #      ③ 聊天区还留得下（≥ 0.25w）—— 聊天区被压没了的帧不能用来量输入条/发送键。
+    #    ⛔ `layout_ok=False` 只否决"**量坐标**"，**不否决发送** ——
+    #      目标会话已打开时照样能发（`can_send_if_open` 不受它影响）。
+    _pw = (pane_left / float(w)) if w else 0.0
+    _layout_ok = bool(_vis and w and 0.05 <= _pw <= 0.85 and (1.0 - _pw) >= 0.25)
+    _lo_why = ("" if _layout_ok else
+               "（不标准：%s）" % "；".join(
+                   [x for x in (
+                       "" if _vis else "没有绿底行⇒列表不可见",
+                       "" if (0.05 <= _pw <= 0.85) else "面板左沿占比 %.3f 不合理" % _pw,
+                       "" if (1.0 - _pw) >= 0.25 else "聊天区只剩 %.3f w" % (1.0 - _pw),
+                   ) if x]))
     return {
+        "state": _state,                # ⭐ full / narrowing / hidden（三态，加）
         "list_visible": _vis,
         "pane_left": int(pane_left),
         "green_right": _gx,
-        "can_switch_chat": _vis,
+        "layout_ok": _layout_ok,        # ⭐ 这一帧**能不能用来量坐标**（False ⇒ 只许发，不许标定）
+        # ⛔ 原来写的是 `can_switch_chat = _vis`（**只认"有绿底行"**）——
+        #   那等于把 `narrowing` 也当成"不能切会话"。可 `narrowing` 的定义就是
+        #   「**列表还在**、只是搜索框退化成放大镜（没有绿底行是因为当前没选中任何会话行）」
+        #   ⇒ 列表在就能切 ✓。实测代价：搜索路整条被这道闸拦死（退化成 `ok=False`）。
+        #   ⇒ 只有 `hidden`（列表真被藏起来）才不许切。
+        #   ⚠️ 但 `narrowing` 下点搜索入口**必须用 `find_search_entry` 现测出来的坐标**，
+        #      ⛔ 不许用"记住的间距"推 —— 真机取证过：推出来的落点会落在灰底空白上（点空）。
+        "can_switch_chat": bool(_state in ("full", "narrowing")),
         "can_send_if_open": True,          # 发送只依赖聊天区
-        "reason": _why,
+        "reason": _why + _lo_why,
     }
 
 
@@ -496,7 +718,7 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
     try:
         if default_y0 is None:
             default_y0 = BAND_PX[1]
-        # ⭐⭐ **深色主题：不做这个扫描，直接用固定 y0**（2026-09-30 实测修，这是根因的第二层）
+        # ⭐⭐ **深色主题：不做这个扫描，直接用固定 y0**（实测修，这是根因的第二层）
         #   本函数找的是"连续 ≥4 行**整行都是深色**"的横条 —— 而那条横条是**浅色主题特有的**
         #   （浅底上压着一条深色自绘标题条）。**深色主题下深色与背景融为一体** ⇒
         #   "整行都是深色"**恒真** ⇒ 扫描必然给出**错误**的 y0（实测被判到 y=143，
@@ -535,8 +757,98 @@ def detect_band_y0(img, x0: int, x1: int, default_y0: int = None, max_scan: int 
             return int(default_y0) # 没有这种横条 ⇒ 维持原样
         y0 = int(run_end) + 3
         return int(max(int(default_y0), min(y0, int(max_y0))))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return int(default_y0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 标题带的**当帧实测**定位（自 `scripts/probe_title_y.py` 搬入；探针改为从这里导入）
+# ─────────────────────────────────────────────────────────────────────────────
+# ⛔ 为什么需要它：`BAND_PX = (10, 38, 340, 56)` 是**过期绝对常量** —— 实测标题落在 y≈58~70，
+#   而那个框压在标题上边缘 ⇒ 字被切掉（读不出、指纹也退化）。本函数按**当帧画面**定 y 范围。
+# ⚠️ **暂不接管 `band_box`**：`band_box` 被"指纹"与"OCR"两条链共用 ⇒ 先把它作为**独立能力**引入，
+#   由调用方（新路径／探针）显式选用，`band_box` 行为**零变化**；验证一轮后再考虑切主路径。
+
+
+def _row_bg_and_ink(img, y, xs):
+    """该行的 (背景色众数, 墨点数)。背景＝众数（文字只占少数像素）。"""
+    from collections import Counter
+    px = img.load()
+    c = Counter()
+    for x in xs:
+        r, g, b = px[x, y][:3]
+        c[(r // 16 * 16, g // 16 * 16, b // 16 * 16)] += 1
+    bg = c.most_common(1)[0][0]
+    ink = 0
+    for x in xs:
+        r, g, b = px[x, y][:3]
+        if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) > 90:
+            ink += 1
+    return bg, ink
+
+
+def detect_title_band_y(img, pl, x_lo_off=5, x_hi_frac=0.22,
+                        ink_min_pts=2, pad=6, h_frac=0.075):
+    """**当帧实测**标题带的 y 范围 ⇒ `(y0, y1)`；定不出给 `None`（**调用方退回 `BAND_PX`**）。
+
+    ⛔ 为什么不靠"绝对墨量"：深色帧的标题可能是**单字母 `E`** ⇒ 全行只有 2~5 个墨点。
+      "墨占比 ≥0.02"、"连续 4 行 ≥3 点"这类**绝对阈值判据必然失败**
+      （实测都抓到了 y≈128~219 的**消息区第一条消息**）。
+      ⇒ 改用「**先限定范围，再在范围内找第一个有墨的行**」。
+
+    范围怎么定（**色差**）：逐行算聊天区左半段的**背景色众数**，找从上往下**第一个明显变化**
+      的 y = `y_edge`；`y_edge` **上方很暗**（亮度 < 80）⇒ 深色主题、上方就是标题带
+      ⇒ 范围 `[0, y_edge]`；**上方是中等灰**（80~210）⇒ 浅色主题、上方是**窗口控制区**
+      ⇒ 范围 `[y_edge, y_edge + h_frac*h]`（下界只能估，故给得宽松）。
+
+    两处**必须收窄/放宽**的参数（都是实测定的，别按直觉改回去）：
+      · 扫描区 `[pl+5, pl+0.22w]` —— 放到 0.42w 会把**聊天区右上角图标**（x≈890、y=16~32）
+        圈进来 ⇒"第一个墨行"命中的是图标；标题左端实测紧贴面板左沿（pl+27）。
+      · y 扫描上限 **0.45h** —— 有一批帧的"色差边"落在 0.30h 之外（整段同色 ⇒ 判不出）。
+    """
+    w, h = img.size
+    x0 = max(0, min(w - 1, pl + x_lo_off))
+    x1 = min(w, pl + int(w * x_hi_frac))
+    if x1 - x0 < 30:
+        return None
+    step = max(1, (x1 - x0) // 110)          # 密采样：单字母标题只有十几个像素宽
+    xs = list(range(x0, x1, step))
+    y_scan = min(h, int(h * 0.45))
+    seq = []
+    for y in range(0, y_scan):
+        bg, ink = _row_bg_and_ink(img, y, xs)
+        seq.append((y, bg, ink))
+    if len(seq) < 20:
+        return None
+
+    def _lum(c):
+        return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+
+    # ⛔ 阈值必须 **12**：深色主题的标题带与消息区**只差 16 个亮度单位**
+    #   （背景 (32,32,32) → (48,48,48)）；原来写 18 ⇒ **深色帧全部判不出**（返回 None）。
+    #   而浅色的差是 112（(112,112,120) → (248,248,248)）⇒ 降到 12 两边都能检出。
+    y_edge, bg_above = None, None
+    for i in range(3, len(seq) - 3):
+        a = _lum(seq[i - 3][1])
+        b = _lum(seq[i + 3][1])
+        if abs(b - a) > 12:
+            y_edge, bg_above = seq[i][0], seq[i - 3][1]
+            break
+
+    if y_edge is None:
+        y_lo, y_hi = 0, int(h * 0.16)        # 找不到边 ⇒ 保守取顶部一小段（标题必在窗口顶部那一带）
+    elif _lum(bg_above) < 80:
+        y_lo, y_hi = 0, y_edge               # 深色：上方＝标题带
+    else:
+        y_lo, y_hi = y_edge, min(h, y_edge + int(h * h_frac))  # 浅色：上方＝控制区
+
+    for y, bg, ink in seq:                   # 范围内从上往下找**第一个有墨的行** ⇒ 标题
+        if y < y_lo or y > y_hi:
+            continue
+        if ink >= ink_min_pts:
+            return (max(y_lo, y - pad), min(h, y + pad + max(8, int(h * 0.018))))
+    return None
 
 
 def band_box(img, pane_left_rel=None, band_px=None, pane_left_px: int = 0,
@@ -583,7 +895,7 @@ def detect_polarity(img, box=None) -> str:
     （浅色主题背景近白、深色主题背景近黑；文字只占少数像素，不足以挪动中位数）。
     任何异常 ⇒ 一律 `"light"`（＝历史行为，保证浅色路径逐字不变）。
 
-    ⛔ 为什么需要它（2026-09-30 实测的根因）：`fingerprint()` 原来只数**暗点**，
+    ⛔ 为什么需要它（实测的根因）：`fingerprint()` 原来只数**暗点**，
       是"浅底深字"的硬假设 ⇒ 深色主题下剖面平坦 ⇒ 返回空 ⇒ `check()` 报 `no_capture`
       （文案却写"抓不到窗口画面（最小化/收进托盘/被遮挡）"，把人往"最小化"上带偏）
       ⇒ 投递档永远确认不了目标会话 ⇒ 发不出去。
@@ -607,7 +919,8 @@ def detect_polarity(img, box=None) -> str:
             return "light"
         vals.sort()
         return "dark" if vals[len(vals) // 2] < 128 else "light"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "light"
 
 
@@ -642,7 +955,7 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
         def _raw(bx, pol: str = "light") -> list:
             """逐列墨点密度剖面。`pol="light"` ＝数**暗点**（浅底深字）；`pol="dark"` ＝数**亮点**。
 
-            ⛔ 为什么必须分极性（2026-09-30 实测的根因）：老实现只数暗点（`px < DARK`），
+            ⛔ 为什么必须分极性（实测的根因）：老实现只数暗点（`px < DARK`），
               那是"浅底深字"的假设。**深色主题**下背景本身就是暗的 ⇒ 每一列都是暗点 ⇒
               剖面近乎平坦 ⇒ 被 `_norm` 的平坦检查判成"没内容" ⇒ `fingerprint` 返回 **空**
               ⇒ `check()` 报 `no_capture`（文案还说"抓不到窗口画面（最小化/收进托盘/被遮挡）"，
@@ -694,7 +1007,7 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
         #   那条自绘深色标题条**下方** —— 固定 y0 在真机上会压在标题条上 ⇒ 指纹退化 ⇒ 该尺寸档
         # 永远学不到参照（详见 `detect_band_y0`）。 起见 `band_box`（唯一实现）。
         _y0 = int(box[1])
-        # ⭐⭐ **先判极性，再取对应提取方式**（2026-09-30 修根因）：
+        # ⭐⭐ **先判极性，再取对应提取方式**（修根因）：
         #   浅色主题 ⇒ 数暗点（历史行为，逐字不变）；深色主题 ⇒ 数亮点。
         #   不判极性的话，深色下剖面平坦 ⇒ `_norm` 判"没内容"⇒ 空指纹 ⇒ `no_capture`。
         _pol = detect_polarity(img, box)
@@ -716,7 +1029,8 @@ def fingerprint(img, pane_left_rel=None, band_px=None, bins: int = BINS, pane_le
             if _fp2 and not degenerate_reason(_fp2) and min(_fp2) == 0:
                 return _fp2
         return fp
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
 
 
@@ -764,14 +1078,15 @@ def load(path: str = None) -> dict:
     try:
         with open(p, "r", encoding="utf-8") as f:
             return json.load(f) or {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
 def save(data: dict, path: str = None) -> str:
     p = path or STORE_PATH
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
+    tmp = persist.tmp_for(p)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
         f.flush()
@@ -785,7 +1100,65 @@ def size_key(img_or_size) -> str:
     try:
         s = img_or_size.size if hasattr(img_or_size, "size") else img_or_size
         return "%dx%d" % (int(s[0]), int(s[1]))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return ""
+
+
+SCENE_KEEP = 5
+SCENE_MAX_PER_PROC = 3 # 同一 tag 在**本进程内**最多存几份
+_SCENE_SEEN = {}
+
+
+def dump_scene(img, tag: str, extra: dict = None, keep: int = SCENE_KEEP) -> str:
+    """把**失败当时的画面 ＋ 判据中间量**落到 `wechatauto_logs/fail/<时间戳>_<tag>/`。
+
+    口径同 `WeChatAdapter._dump_fail_shot`：别人拿到这个目录、**不读日志**就能判断
+    "是压根没抓到画面，还是抓到了但带子/锚点取错位置" —— 两者修法完全不同，
+    而它们的表观症状（"指纹是空的"）长得一模一样。⇒ 放 `shot.png`（原图）＋ `probe.json`。
+
+    为什么必须有它：抓帧失败这条路上过去**只写一行文字日志**。跨机实测报回
+    "拒绝记住空白会话头指纹（尺寸 1095x900）"时，本机只能在"整幅空白"与"裁剪位置错"
+    之间猜（那台机的窗口在屏、渲染子窗也认到了）—— 有这一帧就不用猜。
+
+    `img` 允许为 None（只写 json）。**尽力而为，绝不抛**：留证失败不许带崩正常流程。
+    两道限量：① 同一 tag 在本进程内最多 `SCENE_MAX_PER_PROC` 份（抓帧失败会被高频调用，
+    不加这道闸会一秒建一个目录）；② 磁盘上同一 tag 只留最近 `keep` 份。
+    """
+    try:
+        _n = int(_SCENE_SEEN.get(tag, 0))
+        if _n >= int(SCENE_MAX_PER_PROC):
+            return ""
+        _SCENE_SEEN[tag] = _n + 1
+        base = os.path.join(ROOT, "wechatauto_logs", "fail")
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        d = os.path.join(base, "%s_%s" % (stamp, tag))
+        os.makedirs(d, exist_ok=True)
+        if img is not None:
+            try:
+                img.save(os.path.join(d, "shot.png"))
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                pass
+        with open(os.path.join(d, "probe.json"), "w", encoding="utf-8") as f:
+            _ex = dict(extra or {})
+            # ⭐ 自动带上最近一次抓帧的判定中间量（谁赢的 / 子窗与渲染区各多大 / 走的哪条路）：
+            #   跨机排查"这张图为什么不对"全靠它，调用方不必逐个传。
+            _ex.setdefault("last_grab", dict(LAST_GRAB))
+            json.dump({"tag": tag, "when": stamp,
+                       "size": (list(img.size) if img is not None else None),
+                       "extra": _ex}, f, ensure_ascii=False, indent=1)
+        try: # 只留最近 keep 份（同一 tag）—— 失败现场比日志更占地方，不许无限涨
+            olds = sorted(n for n in os.listdir(base) if n.endswith("_" + tag))
+            for n in olds[:-int(keep)]:
+                import shutil
+                shutil.rmtree(os.path.join(base, n), ignore_errors=True)
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            pass
+        return d
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -866,7 +1239,7 @@ def ref_sizes(chat_id: str, path: str = None) -> list:
 def _print_window(hwnd, flags: int = 2, physical: bool = False):
     """`PrintWindow(PW_RENDERFULLCONTENT)` 取窗口**自身画面**（遮挡也拿得到）。失败返回 None。
 
-    ⚠️ **`physical=False`（默认）会缺右下角**（2026-10-01 实测，报告 §52/§53）：
+    ⚠️ **`physical=False`（默认）会缺右下角**（实测，报告 §52/§53）：
        `GetWindowRect` 返回的是**逻辑像素**（已按 DPI 折算），而窗口按**物理像素**渲染
        ⇒ 用逻辑尺寸建位图时，`PrintWindow` **只画得出左上角约 1/scale² 的区域**
        （本机 DPI=144 ⇒ scale=1.5 ⇒ 只用上 ≈44% 的画布），其余留底色。
@@ -923,7 +1296,8 @@ def _print_window(hwnd, flags: int = 2, physical: bool = False):
         g32.GetDIBits(mdc, bmp, 0, h, buf, ctypes.byref(bi), 0)
         g32.DeleteObject(bmp); g32.DeleteDC(mdc); u32.ReleaseDC(int(hwnd), hdc)
         return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
@@ -932,7 +1306,8 @@ def _too_dark(img) -> bool:
     try:
         from PIL import ImageStat
         return ImageStat.Stat(img.convert("L")).mean[0] < 6
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -949,7 +1324,8 @@ def _crop_render(img, main, render):
                         min(img.size[0], l + int(render[2] - render[0])),
                         min(img.size[1], t + int(render[3] - render[1]))))
         return sub if (sub.size[0] > 60 and sub.size[1] > 40) else None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
@@ -979,7 +1355,8 @@ def _blocky(img) -> bool:
             if best_row >= 3.0 and best_col >= 3.0:
                 return False
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -1003,7 +1380,8 @@ def _frame_ok(img) -> bool:
         if not (st.mean[0] > 25 and st.stddev[0] > 12 and (hi - lo) >= 40):
             return False
         return not _blocky(g)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -1024,7 +1402,8 @@ def _mono(img, span: float = 8.0) -> bool:
         st = ImageStat.Stat(img.convert("L"))
         lo, hi = st.extrema[0]
         return st.stddev[0] < 2.0 or (hi - lo) < span or _blocky(img)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return True
 
 
@@ -1044,7 +1423,7 @@ def is_blank(fp) -> bool:
         `degenerate_reason` 的判据③（有墨列 ≥ 总数−8）必然命中；20 个现场里它**唯一承重 0 次**。
       · 但仍保留：①它是 `is_blank()` 的**返回值**，而 `is_blank()` 在别处**单独使用**
         （`scripts/collect_report.py` 的体检报告那里根本不看 `degenerate_reason`）⇒ 删掉会静默
-        改掉那边的口径；②这是**用户真报障换来的守卫**（「机器人有时不回话」），而且"冗余"依赖
+        改掉那边的口径；②这是**用户真报障换来的守卫**，而且"冗余"依赖
         「`degenerate_reason` 判据③ 今后不变」这个耦合 —— 省 2 行不划算，破守备代价大。
       · ⇒ 要收「标题带里只有两条竖线、没有字」那类帧，请**在入库入口**收
         （`remember()` 的「有墨的列 < 4 ⇒ 只记日志不入库」那道闸），**不要在这里抬阈值**。
@@ -1064,7 +1443,7 @@ def degenerate_reason(fp, bins: int = BINS) -> str:
     """指纹是不是**退化的**（不是"没字"，而是"根本没抓到名字那条带"）——返回人话原因，空串＝正常。
 
     ⛔ 真机证据：
-    `49615732107@chatroom` 的 `1716x900` 参照 ＝ `[0]*63 + [255]`：**63 维是"没有墨"、只有最右边一维满墨**
+    `10000000001@chatroom` 的 `1716x900` 参照 ＝ `[0]*63 + [255]`：**63 维是"没有墨"、只有最右边一维满墨**
     （本文件的指纹是"逐列暗点密度"，`0`＝这一列没有字、`255`＝这一列满墨；正常一帧＝中间十几列有墨）。
     同一会话其它四个尺寸（1562x1324 / 1160x900 / 1107x1324 / 1107x900）**逐字节完全相同且正常**
     ⇒ 那一条是在画面异常时学到的。`is_blank` 抓不住它（极差 255、最暗列 0 都过），
@@ -1102,7 +1481,8 @@ def _window_belongs_to(hwnd, allow) -> bool:
             if not p or p == h:
                 break
             h = p
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     return False
 
@@ -1172,26 +1552,69 @@ def _region_occluded(render, main_pid: int, samples: int = 3) -> bool:
                     ours = int(pid.value) == int(main_pid)
                 seen.append((int(pid.value), bool(ours)))
         return _occlusion_verdict(seen, main_pid)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
+
+
+#: 最近一次抓帧的**判定中间量**（谁赢了、子窗多大、与渲染区差多少、走的哪条路）。
+#  留证（`dump_scene`）会把它一起写进 `probe.json` —— 跨机排查"图为什么不对"就靠这一份。
+LAST_GRAB: dict = {}
+
+#: 渲染子窗与渲染区的尺寸容差（超出就不是同一块地方）。
+CHILD_SIZE_TOL = 8
+
+
+def child_matches_render(img_size, render, tol: int = CHILD_SIZE_TOL) -> bool:
+    """渲染子窗这张图的尺寸与**渲染区**是否一致（不一致 ⇒ 它就不是"渲染区"）。
+
+    ⛔ 为什么必须有这道闸：原来这里写的是"**渲染子窗的图就是渲染区，零换算**"，
+    而那句结论是**在一台机器上量出来的**（注释里写着 1139×890）。跨机实测出现过
+    **子窗 1095×900、渲染区 1210×900** 的情况 —— 图被当成渲染区用了，
+    于是所有按渲染区算出来的坐标（面板左沿、文字带、行几何）**整体错位**；
+    表观症状是"指纹是空的 / 读到的名字是乱的"，而**图本身是有内容的**
+    ⇒ 质量闸（`_frame_ok`）根本拦不住它，只能靠尺寸对上才发现。
+
+    ⛔ 不一致时**不许凑合用**：宁可退回"抓主窗 + 按 render 裁剪"那条路 ——
+    那条路的坐标系是确定的（窗口原点 + 渲染区偏移），错也错得明白。
+    `render` 未知/非法时返回 True（无从校验，维持旧行为）。
+    """
+    try:
+        if not render:
+            return True
+        rw = int(render[2]) - int(render[0])
+        rh = int(render[3]) - int(render[1])
+        if rw <= 0 or rh <= 0:
+            return True
+        return (abs(int(img_size[0]) - rw) <= int(tol)
+                and abs(int(img_size[1]) - rh) <= int(tol))
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return True
 
 
 def grab_render(gui=None, render=None, tries: int = 12):
     """取"渲染区"图像：**优先 PrintWindow（遮挡也能拿）**，失败才退回抓屏（且**遮挡时不退**）。
 
     四条（"抓图不可靠"的真因，别再回退）：
-      ① **渲染子窗 `MMUIRenderSubWindowHW` 整幅就是渲染区**（实测 1139×890 ＝ render_rect 的尺寸）
-         ⇒ 对它 PrintWindow 得到的图**坐标＝渲染区相对**，省掉"按窗口原点裁剪"的换算。
+      ① 渲染子窗 `MMUIRenderSubWindowHW` 若**尺寸与渲染区一致**，它的图**坐标＝渲染区相对**
+         （省掉"按窗口原点裁剪"的换算）；⛔ 不一致就不许当渲染区用（见 `child_matches_render`）。
       ② **PrintWindow 对微信是"冷启动会连失几枪"**：实测同一窗口，连打 4~6 枪全是 None，之后
          连中两枪（mean 236）。⇒ 必须**多试几枪**（`tries=12`，等价约 1 秒预算），一枪不成不能退。
       ③ **抓到的帧要看质量**：`_frame_ok` 同时要求"不太暗 + 有内容（std>12）"——只看 mean 会把
          "没画完的纯色帧"当成功。
       ④ **退回抓屏必须带遮挡校验**：`WindowFromPoint` 采样发现渲染区被别的进程盖着 ⇒ **不退回抓屏**，
          宁可返回 None 让上层说"抓不到画面"（实测过：退回后读到的是用户的浏览器画面，全程不报错）。
+
+    ⚠️ 每次调用都会把判定中间量写进 `LAST_GRAB`（谁赢的、子窗与渲染区各多大、走的哪条路）——
+    这是"抓不到画面"这类故障唯一能自证的东西，别删。
     """
     render = render or (gui.render_rect if gui else None)
     main = int(getattr(gui, "main_hwnd", 0) or 0) if gui else 0
+    LAST_GRAB.clear()
+    LAST_GRAB.update({"render": (list(render) if render else None), "main": int(main)})
     best = None
+    best_from = ""
     if main:
         cands = []
         try: # 渲染子窗优先：省换算、1:1 对齐渲染区
@@ -1202,6 +1625,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
         except Exception:
             pass
         cands.append(main)
+        LAST_GRAB["cands"] = list(cands)
         for _round in range(max(1, int(tries))):
             for hwnd in cands:
                 try:
@@ -1215,11 +1639,39 @@ def grab_render(gui=None, render=None, tries: int = 12):
                     # 否则上层会把它当"抓到了"。
                     if best is None and not _mono(img):
                         best = img # 留一帧"质量可疑但有内容"的兜底
+                        best_from = "child" if hwnd != main else "main"
                     continue
                 if hwnd != main:
-                    return img # 渲染子窗的图就是渲染区，零换算
+                    if child_matches_render(img.size, render):
+                        LAST_GRAB.update({"win": "child", "child_size": list(img.size)})
+                        return img # 子窗图的坐标本来就是渲染区相对 ⇒ 零换算
+                    # ⚡ 尺寸对不上，最常见的原因是**位图按逻辑尺寸建、而窗口按物理尺寸渲染**
+                    #   （`_print_window` 的已知缺陷：DPI 不等于 100% 时画面只画得出左上角一部分）
+                    #   ⇒ 先按**物理尺寸**再抓一次；尺寸对上就用它（这时它就是渲染区）。
+                    try:
+                        _imgp = _print_window(hwnd, physical=True)
+                    except Exception:
+                        _imgp = None
+                    if (_imgp is not None and not _too_dark(_imgp)
+                            and _frame_ok(_imgp) and child_matches_render(_imgp.size, render)):
+                        LAST_GRAB.update({"win": "child_physical",
+                                          "child_size": list(_imgp.size),
+                                          "child_size_logical": list(img.size)})
+                        return _imgp
+                    # ⛔ 两条都尺寸不符 ⇒ 这张图不是渲染区，**不许再往下用**（会整体错位）
+                    #   它会落到"抓主窗 + 按 render 裁剪"那条路（坐标系确定，错也错得明白）。
+                    LAST_GRAB.update({"win": "child_mismatch", "child_hwnd": int(hwnd),
+                                      "child_size": list(img.size),
+                                      "child_size_physical": (list(_imgp.size) if _imgp is not None else None)})
+                    dump_scene(img, "render_child_mismatch",
+                               {"child_hwnd": int(hwnd), "child_size": list(img.size),
+                                "child_size_physical": (list(_imgp.size) if _imgp is not None else None),
+                                "render": (list(render) if render else None)})
+                    continue
                 sub = _crop_render(img, main, render) if render else img
                 if sub is not None and _frame_ok(sub):
+                    LAST_GRAB.update({"win": "main_crop", "main_size": list(img.size),
+                                      "sub_size": list(sub.size)})
                     return sub
             time.sleep(0.08)
         # ⚡ 把"允许盖在渲染区上的自家窗口"告诉遮挡校验（否则同进程的搜索窗/表情面板
@@ -1227,6 +1679,12 @@ def grab_render(gui=None, render=None, tries: int = 12):
         _OCCLUDE_ALLOW.clear()
         _OCCLUDE_ALLOW.update(int(c) for c in cands)
     if best is not None:
+        # ⛔ 兜底帧**不许无条件套裁剪**：子窗那张图的坐标本来就是"渲染区相对"，
+        #   再按"窗口原点"裁一次会整体错位（旧写法无差别地裁，正是错位来源之一）。
+        if best_from == "child":
+            LAST_GRAB.update({"win": "best_child", "child_size": list(best.size)})
+            return best
+        LAST_GRAB.update({"win": "best_main", "main_size": list(best.size)})
         return _crop_render(best, main, render) if (render and main) else best
     try:
         from PIL import ImageGrab
@@ -1244,15 +1702,21 @@ def grab_render(gui=None, render=None, tries: int = 12):
         #   被跳过**、直接抓屏（侦察线 A 打桩实测：真调了 `ImageGrab.grab` 并拿到哨兵图＝别人家像素）。
         if not main_pid:
             log.warning("拿不到主窗 PID（main_hwnd 缺失）⇒ **不退回抓屏**：抓屏可能读到别人家的像素")
+            dump_scene(None, "render_no_pid", {"main_hwnd": int(main), "render": list(render or [])})
             return None
         if _region_occluded(render, main_pid):
             log.warning("渲染区被别的窗口遮挡（PrintWindow 也没拿到帧）⇒ 不退回抓屏："
                         "抓屏会读到别人家的像素，返回 None 更诚实")
+            dump_scene(None, "render_occluded",
+                       {"main_hwnd": int(main), "render": list(render or []),
+                        "allow_hwnds": sorted(int(c) for c in _OCCLUDE_ALLOW)})
             return None
         return ImageGrab.grab((int(render[0]), int(render[1]), int(render[2]), int(render[3])),
                               all_screens=True) # 副屏/负坐标下不带它只抓到主屏的空白
     except Exception as e:
         log.warning("渲染区抓取失败：%s", e)
+        dump_scene(None, "render_error",
+                   {"main_hwnd": int(main), "render": list(render or []), "err": str(e)[:200]})
         return None
 
 

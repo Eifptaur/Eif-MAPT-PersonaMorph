@@ -23,6 +23,8 @@ import importlib.metadata as md
 import logging
 import os
 
+log = logging.getLogger("persona-morph")
+
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
@@ -104,7 +106,8 @@ def ensure_compat_patches() -> str:
             if str(_PATCHED["how"]).startswith("patched"):
                 logging.getLogger("persona-morph").info(
                     "适配层兼容补丁：页 1 明文头改为**按磁盘事实**判（全加密库不再被当成明文头模式）")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     return _PATCHED["how"]
 
@@ -200,7 +203,8 @@ def iter_shards(db):
     for item in (getattr(db, "_db_files", None) or []):
         try:
             rel, path = item[0], item[1]
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         out.append((rel, path))
     return out
@@ -224,6 +228,72 @@ def missing_key_shards(db) -> list:
     return out
 
 
+def stable_keys_path(account: str) -> str:
+    """**稳定密钥缓存**的路径：`%LOCALAPPDATA%\\wechatauto_keys\\<账号>.json`。
+
+    （驱动库自己也有个 `_stable_key_file()`，但实测在"workdir 是临时目录"时**没被用上**
+      ⇒ 临时 workdir 的 `keys.json` 是空的、稳定缓存里的钥匙明明全都能开库 ⇒ 白瞎。）
+    """
+    try:
+        base = os.environ.get("WECHATAUTO_KEYS_DIR") or os.path.join(
+            os.environ.get("LOCALAPPDATA") or "", "wechatauto_keys")
+        return os.path.join(base, "%s.json" % account) if (base and account) else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def adopt_stable_keys(db) -> dict:
+    """把**稳定缓存**里的钥匙灌进当前 db（并顺手写进 workdir），返回 `{found, ok, saved}`。
+
+    为什么必须补这一步（真机取证）：驱动库的 `workdir` 在**临时目录**
+      （`%TEMP%\\wechatauto_db\\<账号>`），它 `keys.json` 是空的；
+      而 `%LOCALAPPDATA%\\wechatauto_keys\\<账号>.json` 里那 20 把钥匙**经页1校验全部可用**。
+      ⇒ 不灌进来，就会出现"20/40 个分片拿不到密钥 ⇒ 读消息/会话头/投递回读全断"
+        （表现成"读不到库"，而**主判据就是库** ⇒ 整条链降级）。
+    ⛔ 只灌**能过 `_key_works` 的**（宁少不滥）；灌完写回 workdir 的 `keys.json`（下次直接命中）。
+    """
+    out = {"found": 0, "ok": 0, "saved": False, "path": ""}
+    try:
+        import json as _json
+        acct = str(getattr(db, "account", "") or "")
+        p = stable_keys_path(acct)
+        out["path"] = p
+        if not (p and os.path.exists(p)):
+            return out
+        data = _json.load(open(p, encoding="utf-8"))
+        out["found"] = len(data)
+        cur = getattr(db, "_keys", None)
+        if cur is None:
+            return out
+        for rel, k in data.items():
+            try:
+                kb = bytes.fromhex(k) if isinstance(k, str) else bytes(k)
+            except Exception:  # noqa: BLE001
+                continue
+            try:
+                cur[rel] = kb
+                if db._key_works(rel):
+                    out["ok"] += 1
+                else:
+                    cur.pop(rel, None)          # 过不了校验的**不留**（免得谎报"有钥匙"）
+            except Exception:  # noqa: BLE001
+                cur.pop(rel, None)
+        # 写回 workdir 的 keys.json（下次 init 直接命中）
+        try:
+            kf = str(getattr(db, "keys_file", "") or "")
+            if kf and out["ok"]:
+                os.makedirs(os.path.dirname(kf), exist_ok=True)
+                with open(kf, "w", encoding="utf-8") as fh:
+                    _json.dump({r: (k.hex() if isinstance(k, bytes) else k)
+                                for r, k in cur.items()}, fh)
+                out["saved"] = True
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def refresh_shards(db) -> dict:
     """刷新分片表并**补齐新分片的密钥**。返回 `{added, missing, dropped, refreshed}`。
 
@@ -243,10 +313,30 @@ def refresh_shards(db) -> dict:
         pass
     miss = missing_key_shards(db)
     if miss:
+        # ★ **先灌稳定缓存**（真机取证）：驱动库的 workdir 在**临时目录**、其 `keys.json` 是空的，
+        #   而 `%LOCALAPPDATA%\wechatauto_keys\<账号>.json` 里那 20 把钥匙**页1校验全部可用**
+        #   ⇒ 不灌进来就会误报"20/40 个分片拿不到密钥"，整条"以库为主"的链跟着降级。
+        try:
+            _ad = adopt_stable_keys(db)
+            if _ad.get("ok"):
+                log.info("从稳定缓存补到 %d 把可用密钥（%s）⇒ 分片可读", _ad["ok"], _ad.get("path"))
+        except Exception:  # noqa: BLE001
+            pass
+        miss = missing_key_shards(db)
+    if miss:
         try:
             db._load_or_extract_keys()
         except Exception:
             pass
+        miss = missing_key_shards(db)
+    if miss:
+        # ★ 扫描之后再试一次稳定缓存（顺序：缓存 → 扫描 → 再缓存）——
+        #   扫描可能把 `_keys` 覆盖成"含失效项"的一版，这一下能把好钥匙重新灌回来。
+        try:
+            adopt_stable_keys(db)
+        except Exception:  # noqa: BLE001
+            pass
+        miss = missing_key_shards(db)
     dropped = []
     miss2 = missing_key_shards(db)
     if miss2:
@@ -257,7 +347,8 @@ def refresh_shards(db) -> dict:
                 dropped = list(miss2)
                 db._db_files = _keep
                 miss2 = missing_key_shards(db)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             dropped = []
     after = set(rel for rel, _ in iter_shards(db))
     return {"added": sorted(after - before), "missing": miss2, "dropped": dropped,
@@ -278,7 +369,8 @@ def open_shard(db, rel):
         refresh_shards(db)
         try:
             return db._open(rel)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return None
 
 
@@ -296,13 +388,14 @@ def contact_db_rel(db):
         try:
             if os.path.basename(path) == "contact.db":
                 return rel
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     return None
 
 
 def load_nickname_map(db) -> dict:
-    """wxid -> 显示名 的整表映射（老 `_load_nicknames` 的唯一实现，走适配层）。
+    """wxid -> 显示名整表映射（老 `_load_nicknames` 的唯一实现，走适配层）。
 
     ⛔ 原来**三类失败全部静默返回 `{}`**（`rel is None`
     直接 return、查询异常 `except: pass`）—— 而 那次同族修复只改了 `load_groups`
@@ -473,7 +566,7 @@ def message_conns(db, user):
 def find_server_id_local_id(db, user, server_id):
     """在**所有分片**里按 server_id 找 local_id（原实现只查第一个分片 ⇒ 静默少查）。
 
-    返回 int 或 None。等价于旧代码里那段 `conn.execute("SELECT local_id FROM %s WHERE server_id=?")`。
+    返回 int 或 None。等价于旧代码里那段 `conn.execute`。
     """
     conns = message_conns(db, user)
     try:
@@ -639,3 +732,163 @@ def fill_text(db, chat_id: str, local_id, friendly: str) -> str:
         return s
     got = message_text(db, chat_id, local_id)
     return got or s
+
+
+def read_voice_transcript(db, user: str, local_id) -> tuple:
+    """**读「微信自己存的语音转写」** ⇒ `(文本, 原因说明)`。
+
+    背景：微信对**开了「语音转文字」**的语音，会把转写结果存在库里；存在就直接拿 ——
+    **毫秒级、不下载音频、不跑识别引擎**（旧链要先 download_media 再跑识别，慢一个数量级）。
+
+    ⛔ **读不到一律返回 `("", 原因)`，绝不编文本** —— 调用方（`voice.transcribe_message`）
+      据此**如实走旧的下载＋识别链**；本函数**不改变**原有行为。
+    ⛔ 字段形态随版本变（本次只按已确认的路径试），**读不出就如实说"本版取不到"**，
+      不要为了"看起来能用"去猜列名 —— 猜错会把「没有」伪装成「有内容」。
+    """
+    if db is None:
+        return "", "没有数据库句柄"
+    try:
+        rows = db.get_voice_rows(user, limit=5, local_id=local_id) or []
+    except Exception as e: # noqa: BLE001
+        return "", "读语音行失败：%s" % type(e).__name__
+    if not rows:
+        return "", "库里没有这条语音的行"
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        # 已确认的窄查询字段（见 wechatauto/db.py 的 `get_voice_rows` / 图片行注释）：
+        #   `packed_info` 是打包的附加信息；不同版本里转写可能在这里、也可能压根没有。
+        for _k in ("packed_info", "packed_info_data"):
+            _v = r.get(_k)
+            if not _v:
+                continue
+            # 只认「看起来就是一段可读文字」的情形（长度够、没有控制字符）
+            if isinstance(_v, (bytes, bytearray)):
+                try:
+                    _v = _v.decode("utf-8", errors="ignore")
+                except Exception: # noqa: BLE001
+                    continue
+            _s = str(_v).strip()
+            if len(_s) >= 2 and all(ord(c) >= 32 or c in "\n\t" for c in _s):
+                return _s, ""
+    return "", "本版本里取不到转写字段（如实退回识别链）"
+
+
+def load_moments(db, limit: int = 10, username: str = "", keyword: str = "",
+                 mine: bool = False) -> list:
+    """朋友圈动态（**纯读库：不开窗、不截图、不动鼠标**），返回结构化 list。
+
+    为什么用它替代"截屏 + OCR"（我方原实现是「打开朋友圈窗 → 滚动 → 截图给模型看」）：
+      ① **不用开窗** —— 不抢前台、不动光标，与"只读观察者"的产品目标一致；截图那条路必须真开窗；
+      ② **结构化** —— 作者／正文／时间／**点赞人**／**评论（含「谁回复谁」）**都是**字段**，
+         模型不必从小字截图上"认字"（中文小字 OCR 会错字）；
+      ③ **省 token**（文字 ≪ 图片）。
+
+    走**公开 API**：`MomentDB.get_moments(limit=, offset=, username=, since=, until=, keyword=)`；
+    `mine=True` 走 `get_my_moments`（只看自己发的）。
+
+    错误语义与 :func:`load_groups` 同口径：**真失败就抛**（由调用方记进 `_cap` 并如实显示），
+    **调用成功但确实没有动态**才返回空列表 —— 不许把"读失败"吞成"没有"。
+    """
+    from wechatauto import MomentDB  # 公开 API：朋友圈读库入口
+    mdb = MomentDB(db)
+    n = max(1, int(limit))
+    if mine and has_api(mdb, "get_my_moments"):
+        rows = mdb.get_my_moments(limit=n)
+    else:
+        rows = mdb.get_moments(limit=n, username=(str(username or "") or None),
+                               keyword=(str(keyword or "") or None))
+    out = []
+    for r in (rows or []):
+        try:
+            out.append({
+                "nickname": str(r.get("nickname") or ""),
+                "username": str(r.get("username") or ""),
+                "text": str(r.get("text") or ""),
+                "create_time": int(r.get("create_time") or 0),
+                "likes": _moment_names(r.get("likes")),
+                "comments": _moment_comments(r.get("comments")),
+                "image_count": len(r.get("images") or []),
+                "video_count": len(r.get("videos") or []),
+                "tid": str(r.get("tid") or ""),
+            })
+        except Exception: # 单条解析失败不拖垮整批（整批失败才抛，见上）
+            continue
+    return out
+
+
+def _moment_names(raw) -> list:
+    """点赞人名单归一：驱动库可能给 str / dict / 混合 ⇒ 一律取"名字字符串"。"""
+    out = []
+    for x in (raw or []):
+        if isinstance(x, dict):
+            n = x.get("nickname") or x.get("name") or x.get("username") or ""
+        else:
+            n = x
+        n = str(n or "").strip()
+        if n:
+            out.append(n)
+    return out
+
+
+def _moment_comments(raw) -> list:
+    """评论归一成 `[{author, content, reply_to}]`。
+
+    ⛔ **必须留住 `reply_to`**：朋友圈评论是"某人回复某人"的树形，
+    截图上认不出层次（两个名字挨着，谁是回复者谁是对象分不清）。
+    """
+    out = []
+    for x in (raw or []):
+        if isinstance(x, dict):
+            c = {
+                "author": str(x.get("author") or x.get("nickname") or "").strip(),
+                "content": str(x.get("content") or x.get("text") or "").strip(),
+                "reply_to": str(x.get("reply_to") or "").strip(),
+            }
+        else:
+            c = {"author": "", "content": str(x or "").strip(), "reply_to": ""}
+        if c["content"] or c["author"]:
+            out.append(c)
+    return out
+
+
+def load_group_members(db, chatroom_wxid: str) -> list:
+    """群成员**名录**（静态读库、可轮询）：`[{username, nick_name, remark, name, is_owner}]`。
+
+    ⛔ 与 :func:`load_nickname_map` 的分工（**别混**）：
+      · `load_nickname_map()` 读的是 **`contact` 表（通讯录）** ⇒ **群里没加你好友的人它压根没有**；
+      · 本函数走**群成员表** ⇒ **覆盖全群**（含不在通讯录的）。
+    我方原先只有"最近活跃成员"（从消息流统计**发过言的人**）⇒ **没发过言的人看不见**：
+    于是 @ 不到他、也不知道"这人是谁"。
+
+    走**公开 API** `WeChatDB.get_group_members()`（说明原文：静态读库，可轮询；
+    返回 `username / nick_name / remark / is_owner`，按 username 排序）。
+
+    失败语义与 :func:`load_groups` 同口径：**非群聊返回空列表**（那是事实，不是错误）；
+    **查询真失败则抛**（由调用方记进 `_cap` 并如实显示），不许把"读失败"吞成"没有成员"。
+    """
+    wxid = str(chatroom_wxid or "").strip()
+    if not wxid.endswith("@chatroom"):
+        return []
+    if not has_api(db, "get_group_members"):
+        raise RuntimeError("驱动库缺少 get_group_members()（需 1.2.4+；当前版本 %s）"
+                           % installed_version())
+    rows = db.get_group_members(wxid) or []
+    out = []
+    for r in rows:
+        try:
+            u = str(r.get("username") or "").strip()
+        except Exception:
+            continue
+        if not u:
+            continue
+        nick = str(r.get("nick_name") or "").strip()
+        remark = str(r.get("remark") or "").strip()
+        out.append({
+            "username": u,
+            "nick_name": nick,
+            "remark": remark,
+            "name": remark or nick or u,   # 显示名优先级：备注 > 昵称 > wxid（与通讯录口径一致）
+            "is_owner": bool(r.get("is_owner")),
+        })
+    return out

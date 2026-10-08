@@ -44,6 +44,10 @@
   "emoji_send_mode": "image",
   "owner_accounts": [],
   "owner_mode": "know",
+  "_note_private_name_white_list": "监听目标私聊的勾选名单（与群白名单对称：勾选存 wxid、同名靠 wxid 分得清）。非空 ⇒ 只监听勾中的人；为空 ⇒ 回到 private_chat 档位口径（老配置行为不变）。",
+  "private_name_white_list": [],
+  "_note_channels_download": "视频号下载（可选、默认关）：视频号官方没公开下载接口 ⇒ 这条路要「浏览器自动化 + 一次性登录腾讯元宝」（不装系统证书、不改系统代理，用隔离配置目录）。关着的时候一切照旧、不装任何东西。",
+  "channels_download": false,
   "private_chat": "owner_only",
   "echo_window_s": 120,
   "limit_window": "shrink_only"
@@ -53,7 +57,11 @@
   "self_nickname": "",
   "role_text": "",
   "participation": "medium",
-  "custom_rules": ""
+  "custom_rules": "",
+  "active": "",
+  "slots": {},
+  "_note_persona_slots": "多槽位人设：同一个机器人备好几套「它像谁」。active 选槽位名（留空＝用 role_text 或内置卡）；slots 里留空的项不覆盖上层值，不用一次填完。drift_remind_every 是防出戏提醒的轮次间隔（0＝关闭）；长对话里人格会衰减，每 N 轮注入一次轻提醒能把评分抬回来。",
+  "drift_remind_every": 12
  },
  "web_search": {
  "online_allowed": true,
@@ -119,12 +127,16 @@
  "drain_delay_ms": 1200,
  "max_concurrent_runs": 2,
  "send": {
+  "only_popup": true,
   "min_gap_ms": 1000,
   "max_gap_ms": 3000,
   "by_length_ms": 20,
   "max_per_minute": 20,
   "max_per_hour": 500,
   "hard_split_at": 2000,
+  "_note_max_reply_parts": "一轮回复的条数上限：max_total_per_reply 是一轮最多几条（超了截断、不报错）；max_parts_per_reply 是单次 send_text_batch 最多几段，0 = 回落到 max_total_per_reply。",
+  "max_total_per_reply": 3,
+  "max_parts_per_reply": 0,
   "fallback_autosend": true,
   "fallback_max_chars": 60,
   "fallback_block_selfref": true,
@@ -227,6 +239,11 @@
   "timeout_ms": 8000,
   "max_chars": 4000
  },
+ "skills": {
+  "enabled": false,
+  "dir": "skills",
+  "max_items": 50
+ },
  "image_gen": {
   "enabled": false,
   "trigger_mode": "on_request",
@@ -236,6 +253,11 @@
   "backends": "",
   "style_allow": "",
   "style_block": "",
+  "_note_ip_guard": "生成侧 IP 闸门（第 187 项）：只拦具体的角色名/作品名（严格维权方五家），绝不拦画风词——判据是可识别性，不是风格接近。名单在 agent/ip_guard.py；这里只放开关。",
+  "ip_guard": {
+   "enabled": true,
+   "extra_block": []
+  },
   "filter_chain": {
    "size": true,
    "dup": true,
@@ -288,12 +310,35 @@
   "dup_window_seconds": 120,
   "dup_min_len": 8
  },
+ "_note_group_adaptive": "群活跃度自适应（第 134 项）：发言频率跟着群的冷热走——冷群把「每分钟/每小时/每天上限」往下调、热群往上调，都封顶。默认关；关着时上面那几个上限一字不差照旧。",
+ "group_adaptive": {
+  "enabled": false,
+  "window_min": 30,
+  "baseline_days": 7,
+  "cold_ratio": 0.33,
+  "hot_ratio": 1.5,
+  "cold_scale": 0.6,
+  "hot_scale": 1.4,
+  "max_scale": 1.5,
+  "min_cap": 1
+ },
  "rhythm": {
   "enabled": true,
   "profile": "gentle",
   "gap_min_seconds": null,
   "gap_max_seconds": null,
   "burst": null
+ },
+ "_note_emoji": "表情码提示：prompt_codes 控制要不要把「可用表情码」摆给模型看（不给它，它只会用「（微笑）」这种文字对付，而微信只认方括号里的码）；allow_unicode 控制情绪组里要不要一并给出 😄 这类 Unicode 字符，关掉＝只给微信 [码]。curiosity 是「向群友请教」：低置信度（疑似梗图）的含义靠问群里的人补全，默认全关（问多了像刷屏），由你显式打开并给概率；cooldown_s 是同一张表情的提问冷却，answer_window_s 是应答窗口（超过这么久才回的不算回答）。",
+ "emoji": {
+  "prompt_codes": true,
+  "allow_unicode": true,
+  "curiosity": {
+   "enabled": false,
+   "probability": 0.15,
+   "cooldown_s": 21600,
+   "answer_window_s": 120
+  }
  },
  "poke": {
   "reply_probability": 0.9,
@@ -424,6 +469,8 @@
  "video_read": {
   "enabled": true,
   "max_frames": 4,
+  "_note_wait_download_s": "投递点击视频气泡触发微信自己下载后，最多等这么久（秒）；等不到就如实说读不了（不再干等 75 秒）。只影响「点完之后等多久」，不是总开关。",
+  "wait_download_s": 15,
   "max_seconds": 60
  },
   "bilibili": {
@@ -455,7 +502,11 @@
   "consolidate_model": "",
   "consolidate_off_peak": true,
   "consolidate_off_peak_window": "00:30-08:30",
-  "consolidate_force_after_hours": 24
+  "consolidate_force_after_hours": 24,
+  "_note_memory_expiry": "记忆的时效：默认会淡出，重要的标 long_term（永不过期）。淡出不等于删除——文件只追加，淡出只是不再塞进提示词，历史仍可查。填 <=0 表示全部不过期（全部记得）。",
+  "followup_expire_days": 30,
+  "followup_show_max": 3,
+  "event_expire_days": 60
  },
  "scoring": {
   "enabled": true,
@@ -521,7 +572,9 @@
    "ring_speed": 0.4
   },
   "balance_display": "real",
-  "balance_fake": ""
+  "balance_fake": "",
+  "_note_tap_min": "可点目标的最小高度（像素）：桌面鼠标 34 就够（行级标准高度，与下拉/输入行齐平）；触摸屏/平板/手指操作调到 44 —— 那是触摸可用的通行下限，低于它点不准。",
+  "tap_min": 34
  },
  "server": {
   "enabled": true,
@@ -565,7 +618,12 @@
   "out_device": "cable",
   "meter_guard": true,
   "real_click": true,
-  "enter_via": "alt",
-  "fallback_click": true
+  "enter_via": "posted",
+  "fallback_click": true,
+  "_note_voice_strip_extra": "confirm_timeout＝发完等 DB 回读的上限（秒）：一旦库里进新行立刻返回，所以它只是上限、不是「要等这么久」；语音条是小 blob（~0.4s 落库）⇒ 12s 足够（图片/表情要 30s~3min，别拿本值去等它们）。find_by_frame＝抓得到独立窗帧时顺手用帧特征找「语音切换键/录音热区」，跨窗口尺寸/DPI 都稳；抓不到帧（最小化档）自动退回算式。",
+  "confirm_timeout": 12.0,
+  "find_by_frame": true,
+  "toggle_x": 0.857,
+  "toggle_y": 0.952
  }
 }

@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
 import time
 
 from . import persist
+from . import config_events as _cfgev
 
 log = logging.getLogger("persona-morph")
 
@@ -56,9 +58,18 @@ DEFAULT_CONFIG = {
         #       一段只为擦掉自己默认值而存在的文案；
         #    ③ 与其他默认值口径不一致：真值是空的，写死一个假名会让"默认"这件事说不清。
         #    留空之后：@ 识别仍可用（`is_at_me` 同时看 `persona.bot_name`，「小鲸鱼」照样能唤醒），
-        #    首次引导会直接问用户"你自己微信叫什么"。
+        #    首次引导会直接问。
         "bot_nickname": "",
         "group_name_white_list": [], # 监听目标群：**群 wxid**（老配置写群名也认；空 = 所有群）
+        # 监听目标私聊：**私聊 wxid**（空 = 按 `private_chat` 档位来）。
+        #   ⚠️ 与 group_name_white_list 对称：**勾选存 wxid**（同名靠 wxid 分得清）。
+        #   档位（private_chat）管"要不要监听私聊 / 监听谁的范围"，白名单管"具体勾哪几个"：
+        #   白名单非空 ⇒ **只**监听勾中的人；为空 ⇒ 回到档位口径（老配置行为不变）。
+        "private_name_white_list": [],
+        # 视频号下载（**可选、默认关**）：视频号官方没公开下载接口 ⇒ 这条路要"浏览器自动化 ＋
+        #   一次性登录腾讯元宝"（不装系统证书、不改系统代理，用隔离配置目录）。
+        #   用户的拍板是「**要给用户选项**」⇒ 这里是个开关；关着的时候一切照旧、不装任何东西。
+        "channels_download": False,
         # 消息轮询间隔（秒）。**默认 1（P0-8）**：诊断书实测"消息检测 ≤5 秒"（当时 `poll_interval=5`）
         # 是整条链最靠前的一段耗时，而它**纯等**（`time.sleep`）⇒ 降到 1 秒直接把检测压到 ≤1 秒。
         # ⚠️ 代价：每轮要**每群读一次库**，频率由 0.33 次/秒升到 1 次/秒 ⇒ 读库调用 +3 倍
@@ -89,7 +100,6 @@ DEFAULT_CONFIG = {
         "replay_on_resume": False,
         "start_paused": True, # 启动后默认暂停（控制台点「恢复」才开始监听）
         # 盲试点击（默认关）：侧栏图标找不到"自证"时，是否允许按图标列/比例猜位置真点几下。
-        # 用户实测
         # ⇒ 默认关：宁可如实报"没自证到"，也不拿用户的界面乱试。
         "allow_click_hunting": False,
         # 只走后台（默认关）：真鼠标档的路径（拍一拍 / 引用 / 朋友圈点赞·评论·发表 / 标定）
@@ -108,7 +118,7 @@ DEFAULT_CONFIG = {
         # 想让成功率优先（列表在屏幕上动几下无所谓）就打开本开关。
         "scroll_list_fallback": False,
         # ── 「学会停手」（A 轮；实现见 `agent/backoff.py`）───────────────────────────────
-        # 起因（2026-09-28 网友反馈）："一直顶界面、闪来闪去，还一直划群列表" ——
+        # 起因（网友反馈）："一直顶界面、闪来闪去，还一直划群列表" ——
         #   每一枪都被我们自己的安全闸拒了（拒绝是对的），但**拒绝了还接着来**：
         #   每条要回的消息都再借一次前台、再切一次会话 ⇒ 用户看到的就是闪与划。
         # 口径照抄业界成熟做法（AWS/Polly/Resilience4j 的重试三原则 + Martin Fowler 的熔断）：
@@ -155,6 +165,13 @@ DEFAULT_CONFIG = {
         "role_text": "", # 留空 = 内置"小鲸鱼"角色卡
         "participation": "medium", # low | medium | high
         "custom_rules": "",
+        # ── 多槽位人设（第 102 项）：同一个机器人备好几套"它像谁"，随时切 ──
+        #   `active` 选槽位名；`slots` 里**留空的项不覆盖**上层值（不逼用户一次填完）。
+        "active": "", # 留空 ⇒ 用 `role_text` / 内置卡
+        "slots": {}, # {"槽位名": {"bot_name": "", "role_text": "", "mode": "invented|real"}}
+        # ── 防出戏（第 106 项）：长对话里人格会衰减 ⇒ 每 N 轮注入一次轻提醒 ──
+        #   `0` ⇒ 关闭；**正常轮次不注入**（只在整倍数轮注入）。
+        "drift_remind_every": 12,
     },
     # ── 联网搜索（保留 qq-agent 的完整实现）────────────────────────────
     "web_search": {
@@ -192,12 +209,30 @@ DEFAULT_CONFIG = {
     "max_concurrent_runs": 2, # 全局同时进行的 agent 运行数
     # ── 发送保护 ───────────────────────────────────────────────────────
     "send": {
+        # ⛔ **「只对独立窗操作」**（默认 **True**＝**切会话链已废**，见 PLAN 第 225 项）。
+        #   开着 ⇒ 发送只许对目标会话的**独立窗**做：**不切会话、不在主窗里发**，拿不到就如实失败。
+        #   为什么默认开：独立窗**一窗一会话** ⇒ **结构上不可能发错**；而"切会话"每一步都有切错的风险。
+        #   ⚠️ 拿不到独立窗时的**开窗链是三级的**（见 `wechat_windows.ensure_popup`）：
+        #      ① **已有**目标独立窗 ⇒ 直接用，不动任何东西；
+        #      ② 列表里看得见目标行 ⇒ **双击**（真机实测的人手节拍：两枪、间隔 ~175ms）；
+        #      ③ 双击（含一轮重试）没开出来 ⇒ **右键**那一行、菜单里选「开成独立窗口」（候选词见
+        #         `wechat_windows.POPUP_MENU_LABELS`，⛔ 匹配不到就不点）；
+        #      ④ 目标行**不在可见区**或读不出行身份 ⇒ **走搜索**（搜名字 → 单击结果 → 双击高亮行）；
+        #      ⑤ 全都不成 ⇒ **如实失败** ＋ 让用户自己把那一行拖出来（`user_action`）。
+        #   ⇒ 关掉这个开关就退回"允许切会话/允许在主窗里发"的老路（那条路有切错风险，只作应急）。
+        "only_popup": True,
         "min_gap_ms": 1000,
         "max_gap_ms": 3000,
         "by_length_ms": 20,
         "max_per_minute": 20,
         "max_per_hour": 500,
         "hard_split_at": 2000, # 微信单条消息安全切分长度
+        # ── 本轮回回复**累计**条数上限（≤0 = 不限）──
+        # ⚠️ 为什么需要"累计"这一维：模型可能在一轮里**分多次**调 `send_message` ⇒
+        #   单次调用限 20 条拦不住累计五六条（对方视角＝被刷屏）。
+        #   两处一起生效：`tools.py::_exec_send_message`（调用前截断）+ `sender.py::send_text_batch`（最后一道兜底）。
+        "max_total_per_reply": 3, # 一轮回复最多几条（超了截断，不报错）
+        "max_parts_per_reply": 0, # 单次 `send_text_batch` 最多几段；0 = 回落到 max_total_per_reply
         # 兜底自动补发的过滤
         "fallback_autosend": True, # 兜底总开关：模型没调发送工具时，把最终文本当回复发出去
         "fallback_max_chars": 60, # 兜底只发短话（长文多半是分析）；0=不限
@@ -309,11 +344,29 @@ DEFAULT_CONFIG = {
         "out_device": "cable", # 播到哪块输出设备（名字子串，默认抓 CABLE；Scream 用户可改成 scream）
         "meter_guard": True, # 播的时候录音音量点一直不亮 ⇒ 取消（不发静音语音条）
         "real_click": True, # 真点路（进录音态/点发送）会动光标，用完立刻还原
-        # 进录音态走哪条路：
-        #   alt   ＝**按住右 Alt**（SendInput 注入）：**不动鼠标、不依赖任何坐标**，代价＝那几秒微信要在前台
-        #   click ＝真鼠标点那个圆圈（老路，会动两下光标，用完还原）
-        "enter_via": "alt",
+        # 进录音态走哪条路（**默认 posted**）：
+        #   posted ＝★**纯投递点击**（PostMessage 点"语音切换键"+"按住说话"）：**不动鼠标、不借前台、不注入键盘**；
+        #            实测：独立窗"可见非前台"档与**最小化档**都能进录音态并发出真语音条
+        #   alt    ＝按住右 Alt（SendInput 注入）：**不动鼠标、不依赖任何坐标**，代价＝那几秒微信要在前台
+        #   click  ＝真鼠标点那个圆圈（老路，会动两下光标，用完还原）
+        # ⛔ 默认是 posted 的理由：与产品取向（不借前台、不动用户桌面）一致；alt 要求"那几秒微信在前台"，
+        #    而"最小化档"是最高目标 ⇒ 默认就该走不需要前台的这条。
+        # ⚠️ posted 档**没有** fallback_click 兜底（那是 alt 档的保险）——纯投递算不出落点时**如实失败**，
+        #    不偷偷改成动鼠标的路。
+        "enter_via": "posted",
         "fallback_click": True, # Alt 路不成时自动退回真点（个别微信版本不认右 Alt 时不至于发不出去）
+        # 投递路（enter_via=posted）用的比例（**客户区**比例，不是渲染区）：
+        #   语音切换键 x、输入条图标行 y；要按微信版本/尺寸标定过再改。
+        "toggle_x": 0.857,
+        "toggle_y": 0.952,
+        # 发完**等回读确认**的超时（秒）。判据是"事件+标量"（见 wechat.wait_new_message）：
+        # 一旦库里进新行立刻返回，所以这个值只是**上限**，不是"要等这么久"。
+        #   语音条是小 blob（跟文字一个量级，~0.4s 落库）⇒ 12s 足够；
+        #   ⚠️ 图片/表情那种要 30s~3min，**别拿本值去等它们**（那条路另有各自超时）。
+        "confirm_timeout": 12.0,
+        # 抓得到独立窗帧时，顺手用**帧特征**（而不是写死的比例）找"语音切换键/录音热区"。
+        #   跨窗口尺寸 / DPI 缩放都稳（帧内比例算）；抓不到帧（最小化档）自动退回比例。
+        "find_by_frame": True,
     },
     "voice_reply": {
         "enabled": False, # 总开关（控制台可切）
@@ -380,12 +433,28 @@ DEFAULT_CONFIG = {
         "timeout_ms": 8000, # 单次请求超时
         "max_chars": 4000, # 结果截断
     },
+    # ── Skill（"什么情况该怎么做"的说明书；默认关）────────────────────────────
+    #   与 user_tools 的分工：**工具**是能调用的函数（调了就执行）；**Skill** 是一段给模型看的正文，
+    #   **没有可执行代码**，模型自己在清单里判断该不该读、需要时调 `skill` 工具取正文。
+    #   一句话判据：**规则能写死的走工具，要理解人话的走 Skill**。实现在 agent/skills.py。
+    #   · 目录两型都收：`skills/<name>/SKILL.md`（目录包）与 `skills/<name>.md`（扁平），两型功能等价。
+    #   · 清单**只注入用户消息**（⛔ 不进 system prompt：system 保持纯静态，前缀缓存靠它）。
+    #   · 关掉 enabled ⇒ 清单不注入 ＋ skill 工具不注册（**一处关掉全失效**）。
+    "skills": {
+        "enabled": False, # 总开关（控制台可切）
+        "dir": "skills", # skill 目录（相对项目根）
+        "max_items": 50, # 清单里最多列几个（多了会挤占本轮 token）
+    },
     # ── 群友要图：按需求生成（设计稿 docs/设计-群友要图-生图链条.md；实现在 agent/image_gen.py）──
     #   七段链条＝触发→意图解析→挑后端→生成→**可插拔过滤链**→发送→回执；红线硬编码（不做真人换脸、无  入口）。
     #   backends 在控制台是一个输入框，格式 `id | local/online | url`，多个用分号分隔（image_gen.cfg() 负责解析）。
     "image_gen": {
         "enabled": False, # 总开关（默认关）
         "trigger_mode": "on_request", # on_request＝被要求时 | sometimes＝偶尔主动 | off＝不主动
+        # 生成侧 IP 闸门（第 187 项）：**只拦具体的角色名/作品名，绝不拦画风词**
+        # （判据＝可识别性，不是"风格接近"）。名单在 `agent/ip_guard.py`，只收五家严格维权方。
+        # `extra_block` 是**列表型**：控制台没有列表控件 ⇒ 有意不在界面暴露（要加就编辑配置文件）。
+        "ip_guard": {"enabled": True, "extra_block": []},
         "max_count": 2, # 单次最多生成几张
         "size_default": "square", # square | portrait | landscape
         # 🔴 **默认出网**。
@@ -425,7 +494,7 @@ DEFAULT_CONFIG = {
             "preset": "quality", # 用哪套预设（见 agent/sd_local.py::PRESETS；留空＝DEFAULT_PRESET）
             "port": 7860, # 本地服务端口（默认 A1111 的口，产品能自动探到）
             "model_dir": "data/sd_model", # 模型放哪（相对仓库根；也可写绝对路径）
-            "allow_online_install": False, # **默认关**：不开就不联网下载（要下 10.8 GB，必须用户明确同意）
+            "allow_online_install": False, # **默认关**：不开就不联网下载（要下 10.8 GB，必须同意）
             "auto_start": True, # 装了之后：生成前若服务没跑就顺手拉起来（用户零操作）
             "steps": 4, # SDXL-Turbo 用 1~4 步
         },
@@ -477,12 +546,26 @@ DEFAULT_CONFIG = {
         "dup_window_seconds": 120,
         "dup_min_len": 8,
     },
+    # ── 群活跃度自适应（`agent/group_pace.py`，第 134 项）─────────────────
+    #   "发言频率跟着群的冷热走"：冷群把上限往下调、热群往上调（都封顶）。
+    #   ⛔ **默认关**：不开启时上面那几个上限**一字不差**照旧（与 `quiet_hours` 同一套口径）。
+    "group_adaptive": {
+        "enabled": False,
+        "window_min": 30, # 近期窗口（分钟）
+        "baseline_days": 7, # 长期均值取多少天
+        "cold_ratio": 0.33, # 近期密度/长期密度 < 此 ⇒ 冷
+        "hot_ratio": 1.5, # ........................ > 此 ⇒ 热
+        "cold_scale": 0.6, # 冷群把上限降到 60%
+        "hot_scale": 1.4, # 热群提到 140%
+        "max_scale": 1.5, # 再怎么热也不超过这个倍数
+        "min_cap": 1, # 缩完至少留 1 条（不许缩成 0）
+    },
     # ── 拟人节奏层（`agent/rhythm.py`）────────────────────────────────────
     # ★ 与 risk 的**分工**（别混）：`risk` 判"**发不发**"（拦下＝消息不发）；
     #   本段判"**多慢发**"（只 sleep，消息**照发**）。
     # ⇒ 所以这一段**默认开**，而 `risk` 的节奏阈值默认 0：口径是
     #   "节奏交给用户自控"把控的是**发不发**；本层不改变"最终会发出去"这个事实，
-    #   只抹掉"脚本式连发"这个**风控特征**（外部项目作者 2026-09-21 因它被强制重登）。
+    #   只抹掉"脚本式连发"这个**风控特征**（外部项目作者 因它被强制重登）。
     # 来历与完整理由见 `agent/rhythm.py` 的模块 docstring。
     "rhythm": {
         "enabled": True,
@@ -502,6 +585,22 @@ DEFAULT_CONFIG = {
         "active_daily_limit": 3, # 每天最多主动拍几次
     },
     # ── 人性化行为决策（省 token 规则引擎；人设 participation/sticker_level 只调频率系数）──
+    "emoji": {
+        # 提示词里要不要把「可用表情码」摆给模型看：不给它，它只会用「（微笑）」这种文字对付，
+        # 而微信只认方括号里的码 ⇒ 默认给。关掉可省提示词 token（约 1 K 字符/轮）。
+        "prompt_codes": True,
+        # 情绪组里是否一并给出 Unicode emoji（😄 这类字符）；关掉＝只给微信 [码]。
+        "allow_unicode": True,
+        # 「向群友请教」：低置信度（疑似梗图）的语义靠"问群里的人"补全 ——
+        # 梗的含义本就在使用社群的共识里，看图读不出、检索也常搜不到。
+        # ⛔ 默认**全关**：问多了像刷屏 ⇒ 由用户显式打开并给概率。
+        "curiosity": {
+            "enabled": False,        # 总开关：关着就完全不问
+            "probability": 0.15,     # 每轮对话"要不要问"的概率（0~1）
+            "cooldown_s": 21600,     # 同一张表情的提问冷却（秒）＝ 6 小时
+            "answer_window_s": 120,  # 应答窗口（秒）：超过这么久才回的不算回答
+        },
+    },
     "behavior": {
         "collect_emoji": {"enabled": True, "probability": 0.8, "cooldown_s": 900, "daily_limit": 6},
         "send_emoji": {"enabled": True, "probability": 0.35, "cooldown_s": 600, "daily_limit": 6},
@@ -610,6 +709,12 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "max_frames": 4, # 默认抽 4 帧（上限 8，见 agent/video_read.py::MAX_FRAMES）
         "max_seconds": 60, # 音频最多识别这么多秒
+        # B9：微信 4.x **不会自动下视频**。原来库 `download_video` 只**被动干等**
+        # （默认 75 秒）——那 75 秒是"等一个永远等不到的东西"，白等还把整条链拖过看门狗阈值。
+        # 现在改成：**投递点击视频气泡触发微信自己下载**（不动光标/不动键盘/关伪激活），
+        # 点完最多等这么久；等不到就如实说读不了（不再干等 75 秒）。
+        # 注意：这条只影响"点完之后等多久"，**不是**总开关；要关整条链用 `enabled`。
+        "wait_download_s": 15,
     },
     # ── B 站视频：群友丢链接时能去查标题/UP/简介/字幕；"听"那段会下音频轨 ──
     "bilibili": {
@@ -644,6 +749,12 @@ DEFAULT_CONFIG = {
         "share_across_groups": False, # true=所有群共享一个记忆池（群间互通）；false=每群独立（默认）
         "shared_groups": [], # 可选：只在这几个群间共享记忆（填群名；比全共享更精准，需勾选下方群）
         "summarize_on_exit": True, # 关闭机器人时把本次对话总结成群友印象（只在那时调一次模型）
+        # ── 记忆的**时效**（第 113/114 项）：默认"会淡出"，重要的标 long_term ⇒ 永不过期 ──
+        #   ⛔ 淡出 ≠ 删：文件是 append-only，淡出只是**不再往提示词里塞**（历史留着能查）。
+        #   ⛔ 填 <=0 ⇒ **全部不过期**（有人就想要"全都记得"）。
+        "followup_expire_days": 30, # 「待跟进」多久没问成就不再追（如"明天考试"这种短期的）
+        "followup_show_max": 3, # 一次最多往提示词里塞几条待跟进（防提示词被塞爆）
+        "event_expire_days": 60, # 情感/事件记录多久淡出（难过/骄傲这类；不急的早该淡）
         # ── 降 Token（P0-3）：后台记忆整理是**唯一没有实时性要求**的 LLM 负载 ⇒ 最该省钱的地方 ──
         #   每次约 1.5 万 token、每群每 6 小时；谷段价约为峰段一半，与缓存折扣乘法叠加。
         "consolidate_model": "", # 留空＝沿用主模型；填一个便宜档模型名则只给"记忆整理/摘要"这类后台任务用
@@ -733,6 +844,10 @@ DEFAULT_CONFIG = {
         # 界面文案风格（Qt 侧 `shell.py` 读；web 侧按 `webui.py` 的 `text_style == "whale"` 判）
         #   normal＝正常说法 / whale＝鲸语（替换一批界面词，见 `whale_text.py`）
         "text_style": "normal",
+        # 可点目标的**最小高度**（像素）。桌面用鼠标时 34 就够（行级标准高度，与下拉/输入行齐平）；
+        # 触摸屏/平板/手指操作时调到 44 —— 那是触摸可用的通行下限，低于它点不准。
+        # 取 `34` 作默认（不牺牲桌面信息密度），需要触摸友好的设备自行调到 44。
+        "tap_min": 34,
         # 余额的**显示伪装**（
         # 可以在界面显示上把金额改掉，但是实际上还是那么多」）⇒ 这是**显示层**的事：
         # `real`＝照实显示 / `hide`＝显示成"已隐藏" / `fake`＝显示成 balance_fake 填的数字。
@@ -780,13 +895,15 @@ DEFAULT_CONFIG = {
     # ── 环境自适应（`agent/env_profile.py`）────────────────────────────────────
     # 探测这台机器有什么能力（复用 compat 的 11 轴 + 操作面的输入档位/前台配额/切会话台账/OCR 引擎），
     # 推出"建议路线"，并**按机器指纹记住"哪条路线真成过"**。
-    # ⭐ `auto_apply` **默认开**（用户口径：*"最重要的就是适配，难道还要让用户动手"*）：
+    # ⭐ `auto_apply` **默认开**（设计取向：**适配就该自动完成，不该要求用户动手**）：
     #    开着时本模块按"本机哪条路真成过"自动调整**先试哪条路**，用户不需要做任何事；
     #    也只对白名单里的路线族生效（切会话路线 / 点击目标 / OCR 引擎），
-    #    **绝不碰安全闸门**（不动光标、不抢前台、不群发、不越版本门）。
-    #    想看它学了什么/想关掉：控制台「本机适配」那条只读档案 ＋ 这个开关。
+    #    **绝不碰安全闸门**（不动光标、不主动置前、不群发、不越版本门）；
+    #    且**授权永远来自现场自检**（记忆只影响"先试哪个"，不影响"这一枪算不算数"），
+    #    **连败到阈值就丢掉记忆**、退回默认顺序（防"记错了"锁死）。
+    #    控制台开关在「调试 · 高级功能」的「本机适配（先试哪条路）」那一行。
     "env_profile": {
-        "auto_apply": True, # 允许记忆影响"先试哪条路"（默认开＝自动适配；关掉则只显示不改）
+        "auto_apply": True, # 允许记忆影响"先试哪条路"（**默认开**＝适配自动完成；关掉＝只探测/给建议/记事实）
     },
     # ── 群友备注（管理员设置，模型优先用备注称呼）──────────────────────
     "member_notes": {},
@@ -817,7 +934,7 @@ def as_bool(v, default: bool = False) -> bool:
     """把「开关」读成布尔：**字符串 `"false"` / `"no"` / `"off"` 都是假**。
 
     ⛔ `config.json` 是人手改的，写成 `"false"`（带引号）
-    完全可能；而全项目有几十处 `bool(cfg.get("某个开关"))` —— `bool("false")` 是 **True**
+    完全可能；而全项目有几十处 `bool(cfg.get)` —— `bool` 是 **True**
     ⇒ 开关被**反向打开**（本该关掉的红线开关反而开了）。⇒ 两件事：
     ①`get_config()` 载入时**统一归一化**（见 `_coerce_bool_strings`）—— 一处生效，不必改那几十处；
     ②**新代码读开关一律用本函数**，别再写裸 `bool()`。
@@ -838,9 +955,44 @@ def as_bool(v, default: bool = False) -> bool:
         if str(s):
             log.warning("开关值认不出来（%r）⇒ 取默认值 %s（不朝「开」倒）；"
                         "要显式打开请写 true/on/yes/1", str(v)[:40], bool(default))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return bool(default)
+
+
+def normalize_prob(v, default: float = 0.0) -> float:
+    """把"概率"配置归一化到 `[0,1]`（**兼容用户在界面上直接填 0~100**）。
+
+    ⛔ 为什么必须有它（真实缺陷，不是洁癖）：界面上那一格是**自由文本框**
+      （`ui_qt/panels_custom.py` 里 `v_prob.setText(str(cur.get("probability", "")))`
+      把配置值原样显示、用户可任意填）。用户看到"概率"二字，很自然就填 `90`。
+      而原先的代码是 `prob = float(cfg.get("reply_probability", 0.9))` ⇒ 拿到 `90.0`
+      ⇒ 再与 `random.random()`（恒 `<1`）比较 ⇒ **"90% 概率"变成"每次必做"**。
+      同类写法 `max(0.0, min(1.0, x))` 也不好：填 `90` 会被截成 `1.0`，**同样是恒真**。
+
+    ✅ 口径（两条都要守）：
+      ① **`>1` 一律按百分数理解**（÷100）：`90 ⇒ 0.9`、`100 ⇒ 1.0`；
+      ② **合法 `0` 原样保留**（`0 ⇒ 0.0`）—— 用户填 0 就是"永不"，
+         **不许**把它当成"没配"抬成 `default`。
+
+    ⚠️ 边界：`1` 就是 100%（不除）；`1.5` 按"1.5%"理解 ⇒ `0.015`（与 UI 的 0~100 口径一致）；
+      非数值（`None`／`""`／`"abc"`）⇒ 返回 `default`（同样过一遍本函数）；负数 ⇒ `0.0`；NaN ⇒ `0.0`。
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        try:
+            return max(0.0, min(1.0, float(default)))
+        except (TypeError, ValueError):
+            return 0.0
+    if f != f:  # NaN（`v != v` 只对 NaN 成立）
+        return 0.0
+    if f > 1.0:
+        f = f / 100.0
+    if f < 0.0:
+        return 0.0
+    return 1.0 if f > 1.0 else f
 
 
 def _coerce_bool_strings(node):
@@ -913,7 +1065,7 @@ def load_config(path: str | None = None) -> dict:
     except Exception as e:
         print("[config] 一次性迁移跳过：%s" % e)
     # ⛔ 把"写成字符串的开关"（`"false"`）归一成真布尔 —— 一处生效，
-    #   全项目几十处 `bool(cfg.get("开关"))` 于是自动正确（否则它们会把开关**反向**打开）。
+    #   全项目几十处 `bool(cfg.get)` 于是自动正确（否则它们会把开关**反向**打开）。
     try:
         cfg = _coerce_bool_strings(cfg)
     except Exception as e:
@@ -922,30 +1074,65 @@ def load_config(path: str | None = None) -> dict:
 
 
 _current_config: dict | None = None
-_config_stamp: tuple | None = None # 内存里这份配置对上的**磁盘指纹**（mtime_ns, size）
+_config_stamp: object = None   # 内存里这份配置对上的**磁盘内容指纹**（见 `_stamp`）
 
 
 def _stamp(path: str):
-    """磁盘上那份配置的指纹；读不到（还没写过/无权限）返回 None。"""
+    """磁盘上那份配置的**内容指纹**；读不到（还没写过/无权限）返回 None。
+
+    ⛔ 用 `(mtime_ns, size)` 判"配置变没变"是不够的，两种情形会**漏判**：
+      · **同一秒内改写**（`os.replace` 换档极快）⇒ mtime_ns 可能相同；
+      · **等长改写**（改一个字、开关 `true`→`false` 这类）⇒ size 相同。
+    两者叠加 ⇒ `get_config()` 认为"没变"而**一直用旧值**，手工改的配置/另一个进程写的值
+    在跑着的进程里永远不生效。这里改成**逐字节内容哈希**（读一遍文件、算 `blake2b` 摘要）：
+    只要内容有一个字节不同就必然变。代价是一次小文件读（`config.json` 量级几 KB），
+    远低于"整个进程重启一次"。
+
+    ⛔ 读失败**不再当作"没变"**（返回 None 会让调用方走"重读"分支，
+    而重读又会保留内存那份 —— 这是既有的容错设计，见 `reload_config`）；
+    这里只负责**如实**区分"读到了内容"与"读不到"，不做兜底吞错。
+    """
     try:
-        st = os.stat(path)
-        return (st.st_mtime_ns, st.st_size)
-    except OSError:
+        with open(path, "rb") as fh:
+            return hashlib.blake2b(fh.read(), digest_size=16).hexdigest()
+    except FileNotFoundError:
         return None
+    except OSError as e:
+        # 被独占/权限不足 ⇒ 如实抛带"怎么办"的错误，让上层按容错分支处理，
+        # 而不是在这里悄悄返回 None 把"读不到"伪装成"内容没变"。
+        raise OSError("读取配置指纹失败（文件可能被独占或权限不足，稍后重试即可）：%s" % e) from e
+
+
+def _stamp_safe(path: str):
+    """`_stamp` 的容错包装：读不到（被独占/权限不足）时返回一个**哨兵**值。
+
+    ⛔ 语义必须与 `None`（文件不存在）区分开：文件不存在 ⇒ 回来 `None`；
+    读**失败** ⇒ 回来 `_STAMP_UNREADABLE`。调用方据此判断"是否要重读"。
+    `get_config()` 里"读不到 ≠ 内容没变"这一点很关键：若把读不到当"没变"，
+    会在文件被独占的瞬间**继续用旧值**（正好是 P1-8 要消灭的那类静默过期）。
+    """
+    try:
+        return _stamp(path)
+    except OSError as e:
+        log.debug("配置指纹读取失败，按“内容可能已变”处理：%s", e)
+        return _STAMP_UNREADABLE
+
+
+_STAMP_UNREADABLE = object()   # 读失败哨兵（与 None＝不存在区分开）
 
 
 def get_config() -> dict:
-    """当前配置。**配置一变就作废**：盘上那份的指纹跟内存里这份对不上 ⇒ 直接重读。
+    """当前配置。**配置一变就作废**：盘上那份的内容指纹跟内存里这份对不上 ⇒ 直接重读。
 
     为什么要有这一步：
     原来只有 `set_config()`（控制台 `/api/config` 保存）这一条路会换掉内存里那份；
     **手工改 `config.json`、或另一个进程写的值，跑着的这个进程永远看不到** —— 旧值就一直生效。
-    指纹比对只是一次 `os.stat`，比"整个进程重启一次"便宜得多。
+    指纹比对只是一次小文件读 + 哈希，比"整个进程重启一次"便宜得多。
     """
     global _current_config, _config_stamp
     if _current_config is None:
         return reload_config()
-    if _stamp(CONFIG_FILE) != _config_stamp:
+    if _stamp_safe(CONFIG_FILE) != _config_stamp:
         return reload_config()
     return _current_config
 
@@ -967,23 +1154,65 @@ def reload_config(path: str | None = None) -> dict:
     if parsed is None and err and _current_config is not None \
             and os.path.abspath(p) == os.path.abspath(CONFIG_FILE):
         log.warning("读取配置失败（%s），保留内存里那份、不退回默认值：%s", "被占用" if transient else "档坏了", err)
-        _config_stamp = _stamp(p)
+        _config_stamp = _stamp_safe(p)
         return _current_config
+    _old = _current_config
     _current_config = load_config(p)
-    _config_stamp = _stamp(p)
+    _config_stamp = _stamp_safe(p)
+    # 读出来跟内存里那份**内容不一样**才算"变过"（首次加载 `_old is None` 不广播：
+    # 那时没有任何订阅者，广播没有接收方，还会白白记一条"全部键都变了"的噪音）。
+    if _old is not None:
+        _diff = diff_keys(_old, _current_config)
+        if _diff:
+            _cfgev.emit(_diff)
     return _current_config
 
 
+def diff_keys(old: dict, new: dict) -> list:
+    """列出两份配置**内容不同**的键（点号路径，排序后返回）。只比较值，不做结构猜测。
+
+    用途：配置换掉之后告诉订阅方"变了哪些项"，让它们**只重做受影响的那些**，
+    而不是无脑整份重绘。键集合的增删也算变化（`old` 有 `new` 没有 ⇒ 记 `-key` 的键名本身）。
+    """
+    out = []
+
+    def _walk(a, b, prefix):
+        if isinstance(a, dict) and isinstance(b, dict):
+            for k in set(a) | set(b):
+                _walk(a.get(k), b.get(k), "%s.%s" % (prefix, k) if prefix else str(k))
+            return
+        if a != b:
+            out.append(prefix)
+
+    try:
+        _walk(old or {}, new or {}, "")
+    except Exception as e: # noqa: BLE001
+        log.debug("配置差异计算失败（按“全部都算变了”处理）：%s", e)
+        return ["*"]
+    return sorted(out)
+
+
 def set_config(cfg: dict) -> None:
+    """换掉内存里那份配置，并**广播变更**（写配置即广播：订阅方不必轮询）。
+
+    广播在换值之后、返回之前发出；事件载荷是"变了哪些键"（`diff_keys`），
+    不带具体值（避免口令一类敏感值散进各处）。派发失败不影响本函数返回 ——
+    订阅方回调的异常由 `config_events` 自己吃掉并记账（见该模块 docstring）。
+    """
     global _current_config, _config_stamp
+    _old = _current_config
     _current_config = cfg
     # 记下此刻盘上的指纹：紧接着的 `save_config()` 会把它改掉，下次 get_config 比一次
     # （比中就重读同一份内容，不会把刚设进去的值冲掉）。
-    _config_stamp = _stamp(CONFIG_FILE)
+    _config_stamp = _stamp_safe(CONFIG_FILE)
+    if _old is not None:
+        _diff = diff_keys(_old, _current_config)
+        if _diff:
+            _cfgev.emit(_diff)
 
 
 # ── 「不打扰」硬开关：不许被"连带"翻到不安全的一侧 ─────────────────────
-# 现场（2026-09-29 群相反馈 · 另一台机器）：用户没主动关，但报告里 `wechat.background_only=False`、
+# 现场（群相反馈 · 另一台机器）：用户没主动关，但报告里 `wechat.background_only=False`、
 # `input.allow_real_fallback=True` ⇒ 结果抢窗口/动鼠标。查证：
 #   · 默认值、`_safe_defaults()` 一次性迁移、`config.example.json` **三者都是安全侧**；
 #   · 后端 `/api/config` 也是 `deep_merge(get_config(), data)`（提交里有才覆盖）；

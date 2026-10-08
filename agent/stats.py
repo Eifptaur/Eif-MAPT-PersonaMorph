@@ -13,6 +13,9 @@ import threading
 import time
 from datetime import datetime, timedelta
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _PERIODS = ("daily", "weekly", "monthly")
 _HISTORY_MAX = 24
@@ -77,7 +80,8 @@ class UsageStats:
                 self.data["day_start"] = _day_start()
                 self.data["day"] = _empty()
             self._save()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     def _archive(self):
@@ -91,7 +95,8 @@ class UsageStats:
                                                "fresh_tokens", "cached_tokens", "output_tokens")},
                 })
                 self.data["history"] = self.data["history"][-_HISTORY_MAX:]
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     def record(self, sessions: int = 0, calls: int = 0, tokens: int = 0, sent: int = 0,
@@ -115,8 +120,58 @@ class UsageStats:
                     for t in targets:
                         t[key] = t.get(key, 0) + val
                 self._save()
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
+
+    def by_month(self, months: int = 6, now=None) -> list:
+        """按**自然月**归并用量与花费（**降序，含当月**）⇒ 供「月账单」用。
+
+        为什么要单独一个口径：现有 `period` 能切成 `monthly`，但它只回答"**本周期**花了多少"，
+        回答不了"**上个月、上上个月各花了多少**" —— 而用户想看的恰恰是后者。
+
+        ⛔ 两个不能省的点：
+          · **没花费的月份要给 0，不是缺项** —— "这个月没花钱"和"没这个月"是两回事，
+            前者必须显示出来（否则用户看到的是**空白**，会以为页面坏了）；
+          · **同一自然月里的多条历史（周账）要相加** —— 周期是周/日时，一个月会有好几条。
+        """
+        n = max(1, int(months or 6))
+        agg = {}
+        for it in (self.data.get("history") or []):
+            k = str((it or {}).get("start") or "")[:7]
+            if len(k) != 7:
+                continue
+            acc = agg.setdefault(k, _empty())
+            for f in acc:
+                try:
+                    acc[f] = acc[f] + (float(it.get(f) or 0) if f == "cost" else int(it.get(f) or 0))
+                except Exception:  # noqa: BLE001
+                    pass
+        # 当期（可能还没归档）也并进它所属的那个月
+        _cur = self.data.get("period") or {}
+        _ck = str(self.data.get("period_start") or "")[:7]
+        if len(_ck) == 7 and (_cur.get("tokens") or _cur.get("cost") or _cur.get("calls")):
+            acc = agg.setdefault(_ck, _empty())
+            for f in acc:
+                try:
+                    acc[f] = acc[f] + (float(_cur.get(f) or 0) if f == "cost" else int(_cur.get(f) or 0))
+                except Exception:  # noqa: BLE001
+                    pass
+        # 生成"最近 n 个自然月"（**含没有记录的月份** ⇒ 给 0）
+        base = datetime.fromtimestamp(now or time.time())
+        out = []
+        for i in range(n):
+            y, m = base.year, base.month - i
+            while m <= 0:
+                m += 12
+                y -= 1
+            key = "%04d-%02d" % (y, m)
+            row = dict(agg.get(key) or _empty())
+            row["month"] = key
+            row["label"] = "%d 年 %d 月" % (y, m)
+            row["current"] = (i == 0)
+            out.append(row)
+        return out
 
     def snapshot(self):
         with self._lock:
@@ -128,14 +183,17 @@ class UsageStats:
                 "day": dict(self.data.get("day") or {}),
                 "day_start": self.data.get("day_start"),
                 "history": list(self.data.get("history") or [])[-_HISTORY_MAX:],
+                # 月账单（第 151 项）：两个前端都读这一处（web 的 stat 格 / Qt 的 cost 格）
+                "months": self.by_month(6),
             }
 
     def _save(self):
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            tmp = self.path + ".tmp"
+            tmp = persist.tmp_for(self.path)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=1)
             persist.replace_into(tmp, self.path)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """表情代码库（扩展版）：**微信 `[名]` 转义** + **Unicode Emoji 分组**。
 
-为什么要有这个文件（2026-10-02 定）：
+为什么要有这个文件：
 
 微信里能"发出去"的表情有**两类**，机制完全不同：
 
@@ -10,7 +10,7 @@
 | **微信黄脸** | `[呲牙]` 这样的**方括号代码**（不是 Unicode） | 写进消息文本，**微信客户端在发送时自己转义** ⇒ 零坐标、零鼠标、不依赖面板版本 | ~150 |
 | **Unicode Emoji** | 😀🎉🔥 这类**真字符** | 直接当文本字符发 | 上千 |
 
-⇒ 用户观察（2026-10-02）：「微信输入的 emoji 只是一部分，能输进去的却有很多」
+⇒ ：「微信输入的 emoji 只是一部分，能输进去的却有很多」
   ⇒ 所以**不要局限在微信那套 `[名]` 白名单**，把 Unicode 也纳进来，模型可选面立刻大一个数量级。
 
 ⚠️ 硬事实：`[名]` **只认微信官方名**；拼错/写了不存在的名字 ⇒ **原样当文字发出去**（所以白名单是必须的，
@@ -128,6 +128,131 @@ def mood_emoji(mood: str) -> dict:
             "unicode_candidates": list(uni_list)}
 
 
+def prompt_lines(allow_unicode: bool = True, wx_limit: int = 48) -> list[str]:
+    """给模型看的**「可用表情码」清单**（提示词用）。
+
+    为什么必须给：模型不知道自己能写 `[微笑]`，就会用「（微笑）」这种文字对付过去 ——
+    而微信只认方括号里的码。把可选码摆清楚，它才会真的用上。
+
+    契约：
+      · `allow_unicode=False` ⇒ **只给微信码**（不列 😄 这类字符）；
+      · `wx_limit` 之后的码只列名字（不重复加方括号），省 token；
+      · 返回若干行（调用方直接拼进提示词，别自己再加工）。
+    """
+    wx = list(WX_CODES)
+    head = wx[:max(1, int(wx_limit))]
+    out = ["【可用的微信表情码】在回复里直接写方括号码，微信会把它变成表情"
+           "（共 %d 个，常用的先列）：%s" % (len(wx), " ".join("[%s]" % x for x in head))]
+    if len(wx) > len(head):
+        out.append("（其余 %d 个同样可用：%s）" % (len(wx) - len(head), "、".join(wx[len(head):])))
+    if MOOD:
+        out.append("【情绪组】想表达某种情绪时优先从对应组里挑一个，别硬凑字面：")
+        # ⭐ **按使用频次排序**：以前每个情绪组按**固定顺序**列候选，
+        #    模型天然会挑排第一的那个 ⇒ 表现出来就是「**只会发呲牙，不会发别的**」。
+        #    按"这群里真用过的次数"排过之后，摆在最前面的就是**这群真正常用的**。
+        #    ⛔ 只调整**顺序**、不改候选集合也不改格式（频次表读不到 ⇒ 原样不动）。
+        _used: dict = {}
+        try:
+            from . import emoji_index as _ei
+            _used = dict(_ei.top_used(80))
+        except Exception: # noqa: BLE001
+            _used = {}
+        for mk in MOOD:
+            m = mood_emoji(mk)
+            _cands = list(m.get("wx_candidates") or [])
+            if _used and _cands:
+                def _uk(x):
+                    _s = str(x).strip()
+                    if _s.startswith("[") and _s.endswith("]"):
+                        _s = _s[1:-1]
+                    return -int(_used.get(_s) or 0)
+                try:
+                    _cands.sort(key=_uk)
+                except Exception: # noqa: BLE001
+                    pass
+            bits = "／".join(_cands)
+            cand = m.get("unicode_candidates") or []
+            if allow_unicode and cand:
+                bits = (bits + "　或　" + " ".join(cand)) if bits else " ".join(cand)
+            out.append("· %s → %s" % (mk, bits))
+        # 【颜文字】纯文本的"表情感"：不用文件、不用发图、不受版本影响 ⇒ 最省的一条路
+        _km = []
+        for _mk in list(MOOD)[:6]:
+            _k = kaomoji_for(_mk, 2)
+            if _k:
+                _km.append("%s → %s" % (_mk, " ".join(_k)))
+        if _km:
+            out.append("【颜文字】想带点表情感又不想发表情图时，可以直接写这些（纯文本）：")
+            out.append("；".join(_km))
+    return out
+
+
+# ── 颜文字库────────────────────────────────────────────
+#   为什么要有它：颜文字是**纯文本** —— 不用文件、不用发图、不用找坐标、也不受版本影响，
+#   是最省的一条"让文字带表情感"的路（群里"不带一点表情的文字"往往显得冷）。
+#   ⛔ 按**情绪**分组即可，每组 3 个 —— **不做十几类**（分类越细越没人用，属过度设计）。
+KAOMOJI = {
+    "开心": ("(＾▽＾)", "(￣▽￣)", "(*^_^*)"),
+    "无奈": ("(￣～￣)", "(・_・;)", "(¬_¬)"),
+    "生气": ("(╯°□°）╯", "(｀Д´)", "(#`Д´)"),
+    "害羞": ("(〃▽〃)", "(*/ω＼*)", "(￣ω￣;)"),
+    "惊讶": ("(⊙_⊙)", "(°Д°)", "(・o・)"),
+    "难过": ("(；_；)", "(╥﹏╥)", "(´；ω；`)"),
+}
+
+
+def kaomoji_for(mood: str, limit: int = 3) -> list:
+    """按情绪给几个颜文字 ⇒ `[...]`（纯文本，可直接发）。
+
+    ⛔ 认不出的情绪 ⇒ **空列表**（**不硬凑**：随便给一个不搭的颜文字比不给更糟）。
+    """
+    return list(KAOMOJI.get(str(mood or "").strip(), ()))[: max(1, int(limit or 3))]
+
+
 def stats() -> dict:
     return {"wx_codes": len(WX_CODES), "unicode": len(all_unicode()),
-            "moods": len(MOOD)}
+            "moods": len(MOOD), "kaomoji_moods": len(KAOMOJI)}
+
+
+# ── 颜文字**语义索引**────────────────────────────────────
+#   与「表情图语义索引」同一个道理：**模型看到 `(＾▽＾)` 并不知道它是什么表情** ⇒ 得给一句说明。
+#   每条写清两件事：**什么情绪**、**什么场合用**。
+#   ⛔ 只写能判定的事实，不写"很有感觉"这种空话 —— 空话对选表情没有帮助。
+#   ⛔ 认不出的颜文字 ⇒ `kaomoji_info` 返回空 dict（**不编**），调用方照实处理。
+KAOMOJI_INFO = {
+    "(＾▽＾)": ("开心", "轻松愉快地答应、附和"),
+    "(￣▽￣)": ("开心", "得意、无所谓地一笑"),
+    "(*^_^*)": ("开心", "礼貌地高兴、打招呼"),
+    "(￣～￣)": ("无奈", "将就接受、懒得争"),
+    "(・_・;)": ("无奈", "尴尬、拿不准"),
+    "(¬_¬)": ("无奈", "半信半疑地看一眼"),
+    "(╯°□°）╯": ("生气", "掀桌式夸张不爽"),
+    "(｀Д´)": ("生气", "真的不高兴"),
+    "(#`Д´)": ("生气", "强烈不满"),
+    "(〃▽〃)": ("害羞", "被夸了不好意思"),
+    "(*/ω＼*)": ("害羞", "捂脸、羞"),
+    "(￣ω￣;)": ("害羞", "尴尬地笑"),
+    "(⊙_⊙)": ("惊讶", "愣住、没反应过来"),
+    "(°Д°)": ("惊讶", "大惊"),
+    "(・o・)": ("惊讶", "疑惑地看"),
+    "(；_；)": ("难过", "委屈"),
+    "(╥﹏╥)": ("难过", "哭了"),
+    "(´；ω；`)": ("难过", "伤心"),
+}
+
+
+def kaomoji_info(k: str) -> dict:
+    """给模型看的颜文字说明 ⇒ `{"kaomoji", "mood", "use"}`。
+
+    ⛔ 认不出的 ⇒ **空 dict**（不编）：模型据此就知道"这个我不认识"，不会硬用。
+    """
+    t = str(k or "").strip()
+    if t not in KAOMOJI_INFO:
+        return {}
+    mood, use = KAOMOJI_INFO[t]
+    return {"kaomoji": t, "mood": mood, "use": use}
+
+
+def kaomoji_index() -> list:
+    """整张颜文字索引（给面板/提示词用）⇒ 每条 `{kaomoji, mood, use}`。"""
+    return [{"kaomoji": k, "mood": v[0], "use": v[1]} for k, v in KAOMOJI_INFO.items()]

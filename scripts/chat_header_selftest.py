@@ -22,6 +22,7 @@ except Exception:
     pass
 
 from agent import chat_header as ch # noqa: E402
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 from PIL import Image, ImageDraw, ImageFont # noqa: E402
 
 OK, BAD = [], []
@@ -528,7 +529,7 @@ print("\n[K] 深色主题适配（2026-09-30 修根因）")
 # 起因：`fingerprint` 只数**暗点**（浅底深字假设）⇒ 深色主题下剖面平坦 ⇒ 空指纹
 #   ⇒ `check()` 报 `no_capture`（文案却写"抓不到窗口画面（最小化/收进托盘/被遮挡）"，
 #     把人一路带偏到"最小化"上）⇒ 投递档永远确认不了目标会话 ⇒ **发不出去**。
-# 修法（"先判极性，再取对应提取方式"）：浅色数暗点 / 深色数亮点；
+# 修法：浅色数暗点 / 深色数亮点；
 #   且 `detect_band_y0` 在深色下**不做**"找全宽深色横条"的扫描 —— 那条横条是**浅色主题特有**的，
 #   深色下"整行都是深色"恒真 ⇒ 扫描必然给出错误 y0（实测偏到 y=143，真值 ≈90）。
 
@@ -559,7 +560,7 @@ ck("K6 源码锚：`fingerprint` 把极性传进 `_raw`（两处调用都传）"
 print("\n[L] 面板左沿的第三来源：绿底行右边界（2026-09-30，由用户提示）")
 # 起因：`pane_left_for` 原来只覆盖"过冲"这一侧（老口径 > 结构锚 + 80 ⇒ 改用结构锚），
 #   但它也会**偏小** —— 实测深色窄窗 1121x1091：老口径给 291，而绿底行右边界是 443（差 152px）。
-# 用户提示："凭绿色带你就能判断面板左沿的起始点"。
+# 判断面板左沿的起始点"。
 
 
 def _frame_with_green(has_green=True):
@@ -590,7 +591,7 @@ ck("L4 源码锚：绿带纠偏带 **>60px 阈值**（不是无条件覆盖 —�
 ck("L5 源码锚：`detect_green_right` 有帧级缓存（同一帧被十几个函数各调一遍）",
    "_pm_green_right" in _seg, "")
 
-# ── L6/L7 越界钳位（2026-09-30 自己引入又修掉的边界 bug）──
+# ── L6/L7 越界钳位（自己引入又修掉的边界 bug）──
 # 症状：某帧的面板左沿贴近图宽 ⇒ 调用方 `crop(pl+10, …)` 抛 "right < left" ⇒ 整条链崩。
 # 修法：① `detect_green_right` 右边界 ≥ 80% 宽时不采信（那多半是聊天区里的绿色气泡/图片）；
 #       ② `pane_left_for` 收尾把结果钳在 ≤85% 宽（保证任何下游 +dx 都不越界）。
@@ -633,13 +634,33 @@ _st_h = ch.layout_state(_frame_with_list(False))
 ck("M1 有绿底行（从左侧起铺）⇒ 判「列表可见」", _st_v["list_visible"] is True, str(_st_v["green_right"]))
 ck("M2 无绿底行 ⇒ 判「列表不可见」（窄窗隐藏 / 或没打开会话）",
    _st_h["list_visible"] is False, str(_st_h["green_right"]))
-ck("M3 推论一致：列表不可见 ⇒ `can_switch_chat=False`；可见 ⇒ True",
-   _st_v["can_switch_chat"] is True and _st_h["can_switch_chat"] is False, "")
+# ⛔ 这条原来写的是「列表不可见 ⇒ `can_switch_chat=False`」—— 把"没有绿底行"直接等同于"不能切"。
+#   用户报的 bug 正是这一条：**列表还在、只是搜索框退化成放大镜**时也判成不能切 ⇒ 搜索路整条废掉。
+#   ⇒ 改**按状态**断言：可见 ⇒ True；**只有 `hidden` 才 False**（`narrowing` 必须 True，见 M3b）。
+ck("M3 推论一致：可见 ⇒ True；`hidden` ⇒ False；**「没有绿底行」≠「不能切」**",
+   _st_v["can_switch_chat"] is True
+   and (_st_h["state"] != "hidden" or _st_h["can_switch_chat"] is False),
+   "fixture 状态=%s" % _st_h["state"])
+# ⛔ M3b（用户报的 bug）：`narrowing` 的定义是「**列表还在**、只是搜索框退化成放大镜」——
+#   放大镜**就是**搜索入口、点得开 ⇒ 这一态必须**允许切会话**。
+#   原来 `can_switch_chat = _vis`（只认绿底行）⇒ 把 `narrowing` 也拦死 ⇒ 搜索路整条废掉。
+ck("M3b ⭐ `narrowing`（列表还在/框退化成图标）**也允许切会话**（只有 `hidden` 才不许）",
+   __import__("_srcmatch").has(
+       open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "agent", "chat_header.py"), encoding="utf-8").read(),
+       'can_switch_chat": bool(_state in ("full", "narrowing"))'), "")
+# ⛔ M3c：**色值佐证**（用户给的版式事实：侧栏/顶栏≈224 · 会话栏≈238 · 聊天区≈250 白）。
+#   真界限的**左侧那一带必须是浅灰**；左侧也是白的 ⇒ 咬到了"聊天区里的白空隙"
+#   （已记录的真实失败：返回 507、真值≈345）⇒ 必须**继续往后扫**，不许返回。
+_CHSP = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "agent", "chat_header.py"), encoding="utf-8").read()
+ck("M3c ⭐ 界限判定带**色值佐证**（左侧必须是会话栏的浅灰，否则继续扫）",
+   __import__("_srcmatch").has(_CHSP, "def _list_side_is_light_gray(") and __import__("_srcmatch").has(_CHSP, "_list_side_is_light_gray(px, start"), "")
 ck("M4 推论一致：无论列表是否可见，`can_send_if_open` 都为 True（发送只依赖聊天区）",
    _st_v["can_send_if_open"] is True and _st_h["can_send_if_open"] is True, "")
-# ⭐ 右边界判据 **2026-10-01 改（T21）**：**不再用"占窗口比例"**，改用**结构性判据**。
+# ⭐ 右边界判据 **改（T21）**：**不再用"占窗口比例"**，改用**结构性判据**。
 #
-# ⛔ 旧判据（"右端 ≥0.60w ⇒ 判 0"）**误杀了合法帧**，实测证据（全量 112 帧）：
+# ⛔ 旧判据**误杀了合法帧**，实测证据（全量 112 帧）：
 #     · `frame-027`（1121w）与 `frame-028`（1760w）的绿段**是同一段 `90~1087`**
 #       ⇒ 占窗口 0.970w / 0.618w ⇒ **旧判据把后者误杀**（列表明明可见、绿底完整）。
 #     ★ 真因：**会话列表宽度是固定像素（≈1000px），不随窗口等比缩放**
@@ -676,6 +697,345 @@ _dw3 = ImageDraw.Draw(_im_right)
 _dw3.rectangle([600, 100, 900, 190], fill=(77, 163, 110))     # 左端 0.60w ⇒ 不从左侧起铺
 ck("M7 绿段左端 0.60w（不从左侧起铺）⇒ 返回 0（拦聊天区绿元素）",
    ch.detect_green_right(_im_right) == 0, "实得 %s" % ch.detect_green_right(_im_right))
+
+# ⭐ M8：**绿带右端之后是"聊天区内容"⇒ 不许认**
+#
+# ⛔ 上面 M5c 只挡住了"右端之后**还是绿**"。而**聊天区里的内容**（气泡文字/图片/头像）右端之后
+#    **不是绿**（是白的、有墨的）⇒ 于是"一小块绿元素 + 右边一片带内容的聊天区"能整条通过。
+#    第 23 项 ② 记的那个数（一帧返回 857 ≈ 0.999w）就是这一类。
+# ★ 判据（结构量，**不是占比**）：右端之后取一整块区域，看它的**颜色离散度**（标准差）。
+#    空白聊天区 ⇒ 同一色 ⇒ 离散度 ≈0；内容区（气泡/头像/文字深浅交错）⇒ 离散度大。
+#   ⛔ 这里**绝不能**写成"右端超过 X% 宽就判 0" —— T21 已用真机帧证过那是错法（M5b 是回归锚）。
+#   ⛔ 也**不要**改成"逐列跟中位数比"（试过：内容一多，中位数自己就是内容色 ⇒ 永远判干净）。
+# ⚠️ 阈值 28 是**真机标定**：合法列表帧实测离散度 ≈0.0（右端之后整片同一色，如 250,250,250）。
+_im_dirty = Image.new("RGB", (1000, 400), (250, 250, 250))
+_dd = ImageDraw.Draw(_im_dirty)
+_dd.rectangle([20, 100, 500, 190], fill=(77, 163, 110))        # 从左侧起铺的绿块（像绿底）
+# 右端之后画**真实感**的聊天内容：气泡只占带内一段高度 + 深色文字行（不是整带同高）
+for _bx in range(515, 980, 120):
+    _dd.rectangle([_bx, 110, _bx + 95, 150], fill=(205, 225, 252))   # 气泡
+    _dd.rectangle([_bx + 10, 160, _bx + 80, 175], fill=(80, 80, 80)) # 文字行
+ck("M8★ 绿带右侧是**真实感的聊天区内容**（离散度大）⇒ 返回 0"
+   "（挡「绿色元素 + 右侧聊天区内容」这一类，第 23 项 ②）",
+   ch.detect_green_right(_im_dirty) == 0, "实得 %s" % ch.detect_green_right(_im_dirty))
+# 反向控制：真的列表外沿（右侧**干净背景**）**必须**仍然认 —— 防 M8 把正常帧一起砍掉
+_im_clean = Image.new("RGB", (1000, 400), (250, 250, 250))
+_dc2 = ImageDraw.Draw(_im_clean)
+_dc2.rectangle([20, 100, 500, 190], fill=(77, 163, 110))
+_dc2.rectangle([502, 100, 503, 190], fill=(210, 210, 210))     # 只一条分隔线（真实列表就是这样的）
+ck("M8b（M8 的反向控制）右侧只有一条**分隔线**、其余干净 ⇒ 仍要认（别把正常列表砍了）",
+   ch.detect_green_right(_im_clean) == 500, "实得 %s" % ch.detect_green_right(_im_clean))
+# ★★ M8c：**真机帧回归** —— 真机"列表外沿合法"的帧**一张都不许被新约束杀掉 / 改动**
+#    （这是本判据最硬的一条：合成图会骗人，真机帧不会）
+for _nm, _exp in (("20261004-130046_search_entry", 386),
+                  ("20261004-130313_search_entry", 0),
+                  ("20260927-165014_search_box_row", 0)):
+    _p8 = os.path.join(ROOT, "wechatauto_logs", "fail", _nm, "shot.png")
+    if not os.path.exists(_p8):
+        continue
+    _i8 = Image.open(_p8).convert("RGB")
+    _gr8 = ch.detect_green_right(_i8)
+    ck("M8c★ 真机帧 %s 的绿带判据**不许被新约束改动**（期望 %s）" % (_nm[:24], _exp),
+       _gr8 == _exp, "实得 %s" % _gr8)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# [M+] 第 189 项接线锚：`layout_state` 必须被 `wechat._click_visible_session` **调用**，
+#      而且必须**排在 `find_row_info` 之前**（＝顺序即意图：省掉最贵的那段）。
+# ⛔ 为什么用源锚而不是只测行为：这条接线的价值就在"**早**"（早返回省下 find_row_info
+#    ＋ 再抓 3 帧）；光测"判不出会往下走"测不到顺序 ⇒ 必须锚源码里的**相对位置**。
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n[M+] 第 189 项接线锚：`layout_state` 接进 `_click_visible_session`（顺序＝意图）")
+
+
+def _func_body(src: str, name: str) -> str:
+    """取 `def name(...)` 的函数体（含签名行）。取不到返回空串。
+
+    ⚠️ 反向控制：不存在的函数名必须返回空串（否则"锚"会退化成"永远命中"）。
+    """
+    import re as _re
+    m = _re.search(r"^[ \t]*def[ \t]+%s[ \t]*\(" % _re.escape(name), src, _re.M)
+    if not m:
+        return ""
+    lines = src[m.start():].split("\n")
+    ind = len(lines[0]) - len(lines[0].lstrip())
+    out = [lines[0]]
+    for ln in lines[1:]:
+        if ln.strip() and (len(ln) - len(ln.lstrip())) <= ind:
+            break
+        out.append(ln)
+    return "\n".join(out)
+
+
+_src_wx = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+_cvs = _func_body(_src_wx, "_click_visible_session")
+ck("M+0（反向控制）`_func_body` 取不存在的函数 ⇒ 返回空串（防锚退化成永远命中）",
+   _func_body(_src_wx, "_definitely_not_a_function_xyz") == "", "")
+ck("M+1 `_click_visible_session` 里**调用**了 `layout_state`（接线在）",
+   "layout_state(" in _cvs and _cvs != "", "")
+_i_lay = _cvs.find("layout_state(")
+_i_row = _cvs.find("find_row_info(")
+ck("M+2 ★**顺序即意图**：`layout_state` 必须排在 `find_row_info` **之前**"
+   "（早返回才省得掉 find_row_info ＋ 再抓 3 帧）",
+   _i_lay >= 0 and _i_row >= 0 and _i_lay < _i_row,
+   "layout@%s row@%s" % (_i_lay, _i_row))
+ck("M+3 只做「提前放弃」：判出不可切会话 ⇒ **当场 return False**（不许继续点）",
+   'if not _lay.get("can_switch_chat")' in _cvs and "return False" in _cvs, "")
+ck("M+4 判不出（异常）⇒ **照旧往下走**（零回归：不许因判据异常就整条失败）",
+   "except Exception" in _cvs and "log.debug" in _cvs, "")
+ck("M+5 让位文案可解释：说明「列表被藏 ⇒ 让位给搜索路线」",
+   "会话列表被微信藏起来" in _cvs and "搜索路线" in _cvs, "")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# [M++] 第 23 项 ①：`full`/`narrowing` 的**结构性分界**＝搜索入口的**形态**
+#      （`box` 白框 ⇒ 列表还够宽；`icon` 只剩放大镜 ⇒ 已窄到微信退化）
+# ⛔ 这条**必须是结构量**，不许退回"宽度阈值"（临界两图只差 1px 却状态相反）。
+# ⚠️ 桩：monkeypatch `chat_ocr.find_search_entry` 的返回值，并**还原**（含反向控制）。
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n[M++] 第 23 项 ①：「`full`/`narrowing` 分界」＝搜索入口**形态**（结构性）")
+
+from agent import chat_ocr as _co2 # noqa: E402
+
+_src_ch = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
+_ls = _func_body(_src_ch, "layout_state")
+_ls_code = "\n".join(l for l in _ls.split("\n") if not l.strip().startswith("#"))
+ck("M++1 `layout_state` 里**读形态**（`variant`）作为分界依据",
+   "variant" in _ls_code, "")
+ck("M++2 形态判据**延迟导入** `chat_ocr`（防循环导入：`chat_ocr` 顶层 import 本模块）",
+   "import chat_ocr as _co" in _ls_code and "延迟导入" in _ls, "")
+ck("M++3 `box` ⇒ `narrowing`（框还在 ⇒ 列表够宽）",
+   '"box"' in _ls_code and '"narrowing"' in _ls_code, "")
+ck("M++4 兜底仍在：形态测不出 ⇒ 退回 `0.20` 比例兜底（＝行为与接线前一致）",
+   "0.20" in _ls_code, "")
+ck("M++5（反向控制）形态判据**不许越权**：`_vis` 为真时必须 `full`"
+   "（有绿底行就轮不到形态说话）",
+   "if _vis:\n        _state = \"full\"" in _ls, "看 _ls 里 _vis 分支")
+
+_orig_fse = getattr(_co2, "find_search_entry", None)
+
+
+def _with_variant(v):
+    def _stub(img, left=None, zoom=2):
+        return {"variant": v, "x": 100, "y": 30, "why": "桩"}
+    return _stub
+
+
+try:
+    # 桩 A：形态=box ⇒ 即使 pane_left 很窄，也判 narrowing（结构量优先）
+    _co2.find_search_entry = _with_variant("box")
+    _st_box = ch.layout_state(_frame_with_list(False))
+    ck("M++6 桩：形态=`box` ⇒ `narrowing`（**不看**宽度比例）",
+       _st_box["state"] == "narrowing", str(_st_box["state"]))
+    # 桩 B：形态=icon ＋ pane_left **确实很窄** ⇒ hidden
+    #    ⚠️ 必须造"面板左沿真的窄"的帧：`_frame_with_list(False)` 的 pane_left/w＝0.38
+    #       （≥0.20 ⇒ 按口径该判 narrowing）⇒ 不能拿它来测 hidden。
+    _co2.find_search_entry = _with_variant("icon")
+    _narrow = Image.new("RGB", (1000, 700), (250, 250, 250))
+    _dn = ImageDraw.Draw(_narrow)
+    _dn.rectangle([0, 0, 120, 700], fill=(235, 235, 235))       # 侧栏；面板左沿 ≈0.12w < 0.20
+    _st_icon = ch.layout_state(_narrow)
+    ck("M++7 桩：形态=`icon` 且面板左沿**确实窄**（%.2fw < 0.20）⇒ `hidden`"
+       % (ch.pane_left_for(_narrow) / 1000.0),
+       _st_icon["state"] == "hidden", str(_st_icon["state"]))
+    # 桩 C：测不出（找不到入口）⇒ 兜底
+    _co2.find_search_entry = _with_variant("")
+    _st_non = ch.layout_state(_frame_with_list(False))
+    ck("M++8 桩：形态**测不出** ⇒ 走 0.20w 兜底（与接线前一致）",
+       _st_non["state"] in ("narrowing", "hidden"), str(_st_non["state"]))
+finally:
+    if _orig_fse is not None:
+        _co2.find_search_entry = _orig_fse
+ck("M++9（桩还原的反向控制）桩已拆掉，`find_search_entry` 是原函数",
+   getattr(_co2, "find_search_entry", None) is _orig_fse, "")
+
+# ── N. `layout_ok`：**非标准布局的帧不许用来量坐标**（PLAN 第 28 项）──
+# "左侧会话列表 + 右侧聊天区"**不是每帧都成立**（客服提示页 / 聊天区占满 / 调试面板）——
+# 那几类帧里 `pane_left` 与各种"按比例取带"的量**都给出看着正常但含义不同的数**
+# ⇒ 拿它们标定坐标，标出来的值是错的、且**不报错**。
+print("\n── N. `layout_ok`（这一帧能不能用来量坐标）──")
+_im900 = Image.new("RGB", (900, 900), (240, 240, 240))
+_o_gx, _o_pl, _o_fse = ch.detect_green_right, ch.pane_left_for, _co2.find_search_entry
+try:
+    _co2.find_search_entry = lambda img, *a, **k: None      # 免得对合成图跑真 OCR
+    # ① 标准布局：有绿底行 + 面板左沿合理（0.367w、聊天区 0.633w）
+    ch.detect_green_right = lambda img, *a, **k: 330
+    ch.pane_left_for = lambda img, *a, **k: 330
+    _stN = ch.layout_state(_im900)
+    ck("N1 标准布局（有绿底行 + 面板左沿 0.367w）⇒ `layout_ok=True`",
+       _stN.get("layout_ok") is True, str(_stN.get("layout_ok")))
+    # ② 没有绿底行 ⇒ 列表不可见 / 非标准页 ⇒ False
+    ch.detect_green_right = lambda img, *a, **k: 0
+    _stN2 = ch.layout_state(_im900)
+    ck("N2 **没有绿底行**（列表隐藏 / 客服提示页 / 调试面板）⇒ `layout_ok=False`",
+       _stN2.get("layout_ok") is False, str(_stN2.get("layout_ok")))
+    # ③ 面板左沿占比过大（聊天区被压没）⇒ False
+    ch.detect_green_right = lambda img, *a, **k: 330
+    ch.pane_left_for = lambda img, *a, **k: 800
+    _stN3 = ch.layout_state(_im900)
+    ck("N3 面板左沿 0.889w（聊天区只剩 0.111w）⇒ `layout_ok=False`",
+       _stN3.get("layout_ok") is False, str(_stN3.get("layout_ok")))
+    # ④ ★反向锚：`layout_ok=False` **只否决"量坐标"，不否决发送**
+    ck("N4 ★反向锚：`layout_ok=False` 时 `can_send_if_open` 仍为 True"
+       "（会话已打开 ⇒ 照样能发，别把用户挡在门外）",
+       _stN3.get("can_send_if_open") is True, str(_stN3.get("can_send_if_open")))
+    # ⑤ 原因串里要能看出"为什么不标准"（排障要一眼看到）
+    ck("N5 不标准时 `reason` 里写明原因（否则排障只能猜）",
+       "不标准" in str(_stN3.get("reason")), str(_stN3.get("reason"))[:60])
+finally:
+    ch.detect_green_right, ch.pane_left_for = _o_gx, _o_pl
+    _co2.find_search_entry = _o_fse
+ck("N6（桩还原的反向控制）`detect_green_right` / `pane_left_for` 已还原",
+   ch.detect_green_right is _o_gx and ch.pane_left_for is _o_pl, "")
+
+# ── N7. 调用方**必须真的用** （否则布局闸等于没接）──
+# 真机取证：主窗拉窄到 868×1343（state=hidden）时，「find_search_entry」会把**导航栏的绿色气泡图标**
+# 当成搜索入口（x=55），按记住的间距推出的落点（x=31）落在**灰底空白**上 ⇒ 点下去就是点错。
+# ⇒ 「open_chat_by_search」必须先问一句 can_switch_chat，不显示列表就如实拒绝。
+_wxsrc2 = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "agent", "wechat.py"), encoding="utf-8").read()
+ck("N7 ★真机取证：「open_chat_by_search」的布局闸**只拦 `hidden`**"
+   "（`narrowing` 必须放行 —— 放大镜就是搜索入口，拦了整条搜索路就废了）",
+   __import__("_srcmatch").has(_wxsrc2, '== "hidden"') and "被藏起来了" in _wxsrc2, "")
+
+print("\n[O] 抓帧失败留证：`dump_scene`（原图 ＋ 判据中间量落到失败现场）")
+# 为什么这条判据重要：抓帧这条路上，**三种完全不同的病因表观症状一模一样** ——
+#   ① 压根没抓到画面（窗口不可见/被遮挡，PrintWindow 与抓屏都不给帧）
+#   ② 抓到了，但文字带取在了空白处（`detect_band_y0` 落点偏了）
+#   ③ 抓到了、带子也对，但锚点算错 ⇒ 裁到了会话列表
+# 它们的日志都只是"指纹是空的"。⇒ 判据要守的是"**图必须被留下**"，而不是"日志里写了什么"。
+import json as _js2
+import tempfile as _tf2
+_ch_tmp = _tf2.mkdtemp(prefix="chscene-")
+_o_root, _o_seen = ch.ROOT, dict(ch._SCENE_SEEN)
+try:
+    ch.ROOT = _ch_tmp
+    ch._SCENE_SEEN.clear()
+    _imO = Image.new("RGB", (300, 200), (250, 250, 250))
+    _dO = ch.dump_scene(_imO, "o1tag", {"why": "单测"})
+    ck("O1 存到失败现场目录并返回目录路径", bool(_dO) and os.path.isdir(_dO), _dO)
+    ck("O1b 目录里有**原图** shot.png", os.path.exists(os.path.join(_dO, "shot.png")), "")
+    _pjO = os.path.join(_dO, "probe.json")
+    _okO = False
+    if os.path.exists(_pjO):
+        with open(_pjO, encoding="utf-8") as _fO:
+            _jO = _js2.load(_fO)
+        _okO = (list(_jO.get("size") or []) == [300, 200]) and (_jO.get("extra") or {}).get("why") == "单测"
+    ck("O1c probe.json 里带**尺寸**与判据中间量（不看日志也能判断病因）", _okO, "")
+    _dO2 = ch.dump_scene(None, "o2tag", {"why": "没抓到画面"})
+    ck("O2 `img=None` 也能留证（只写 json，**绝不抛**）",
+       bool(_dO2) and os.path.exists(os.path.join(_dO2, "probe.json"))
+       and not os.path.exists(os.path.join(_dO2, "shot.png")), _dO2)
+    ch._SCENE_SEEN.clear()
+    _cnt = sum(1 for _ in range(6) if ch.dump_scene(None, "o3tag"))
+    ck("O3 同一 tag 在**本进程内**最多存 %d 份（抓帧失败会被高频调用，不加闸会一秒建一个目录）"
+       % ch.SCENE_MAX_PER_PROC, _cnt == ch.SCENE_MAX_PER_PROC, "实得 %d" % _cnt)
+    _baseO = os.path.join(_ch_tmp, "wechatauto_logs", "fail")
+    for _iO in range(7):
+        os.makedirs(os.path.join(_baseO, "0000000%d-000000_o4tag" % _iO), exist_ok=True)
+    ch._SCENE_SEEN.clear()
+    ch.dump_scene(None, "o4tag")
+    _leftO = [n for n in os.listdir(_baseO) if n.endswith("_o4tag")]
+    ck("O4 磁盘上同一 tag 只留最近 keep=%d 份（失败现场比日志更占地方）" % ch.SCENE_KEEP,
+       len(_leftO) <= ch.SCENE_KEEP, "实得 %d 份" % len(_leftO))
+finally:
+    ch.ROOT = _o_root
+    ch._SCENE_SEEN.clear()
+    ch._SCENE_SEEN.update(_o_seen)
+ck("O5（桩还原的反向控制）`ch.ROOT` 与进程内限量表都已还原",
+   ch.ROOT == _o_root and ch._SCENE_SEEN == _o_seen, "")
+# ── O6. 静态锚：两条真实失败路径**必须真的调它**（否则留证只是摆设）──
+_HERE3 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(_HERE3, "agent", "wechat.py"), encoding="utf-8") as _fA:
+    _wsrc3 = _fA.read()
+with open(os.path.join(_HERE3, "agent", "chat_header.py"), encoding="utf-8") as _fB:
+    _chsrc3 = _fB.read()
+ck("O6★ `_learn_chat_header` 在入库闸拦下时**存了原图**（不是只写一行日志）",
+   ("header_blank" in _wsrc3) and ("header_no_capture" in _wsrc3) and ("dump_scene" in _wsrc3), "")
+ck("O6b★ `grab_render` 的三条放弃路径都留证（被遮挡 / 拿不到 PID / 抛异常）",
+   all(_t in _chsrc3 for _t in ("render_occluded", "render_no_pid", "render_error")), "")
+
+print("\n[P] 渲染子窗的尺寸必须与渲染区一致（跨机错位那个洞）")
+# 现场：跨机实测里子窗是 1095×900、渲染区是 1210×900，而代码里的注释写着
+#   "渲染子窗的图就是渲染区，零换算"（那句是在**另一台机器**上量出来的 1139×890）
+#   ⇒ 图被当成渲染区用 ⇒ 所有按渲染区算的坐标整体错位，而**图本身有内容**，质量闸拦不住。
+ck("P1 尺寸一致 ⇒ 认（渲染区 1210×900 vs 子窗 1210×900）",
+   ch.child_matches_render((1210, 900), (42, 88, 1252, 988)) is True, "")
+ck("P2★ 尺寸不符 ⇒ **不认**（跨机实测那一组：子窗 1095×900 vs 渲染区 1210×900）",
+   ch.child_matches_render((1095, 900), (42, 88, 1252, 988)) is False, "")
+ck("P3 容差是**绝对像素 ±%d**（不是比例）—— 1202 差 8 认、1193 差 17 不认"
+   % ch.CHILD_SIZE_TOL,
+   ch.child_matches_render((1202, 900), (42, 88, 1252, 988)) is True
+   and ch.child_matches_render((1193, 900), (42, 88, 1252, 988)) is False, "")
+ck("P4 渲染区未知/非法 ⇒ 认（无从校验，维持旧行为，别把老路径堵死）",
+   ch.child_matches_render((100, 100), None) is True
+   and ch.child_matches_render((100, 100), (0, 0, 0, 0)) is True, "")
+
+# ── P5/P6 行为测：grab_render **真的**按这道闸改道（不是只写了个函数没人用）──
+from agent import input_backend as _ibm  # noqa: E402
+import tempfile as _tf3
+
+
+class _GStub: # 假 GUI：只提供 grab_render 要的两个字段
+    main_hwnd = 4242
+    render_rect = (42, 88, 1252, 988)
+
+
+def _noise_img(w, h):
+    """有内容（std 够大）的合成帧：**随机噪点**。
+
+    ⛔ 别用"整行条纹"当夹具：那种图**每一行都是平的**，会被 `_blocky()` 判成"两个方向里有一个整片是平的"
+      ⇒ `_frame_ok` 直接拒收 ⇒ 判据变成空转（实测踩过一次）。
+    """
+    return Image.frombytes("L", (w, h), os.urandom(int(w) * int(h))).convert("RGB")
+
+
+_FREAL, _CREAL = ch._print_window, ch._crop_render
+_FRREAL = getattr(_ibm, "find_render_child", None)
+_ROOT_REAL = ch.ROOT
+_tmpP = _tf3.mkdtemp(prefix="chgrab-")
+try:
+    ch.ROOT = _tmpP
+    _ibm.find_render_child = lambda h: 999
+    ch._crop_render = lambda img, main, render: _noise_img(1210, 900)
+    # ① 子窗尺寸**不符** ⇒ 不许返回它，要改走主窗裁剪那条路
+    ch._print_window = lambda hwnd, *a, **k: _noise_img(1095, 900)
+    ch.LAST_GRAB.clear()
+    _got = ch.grab_render(gui=_GStub(), tries=1)
+    ck("P5★ 子窗尺寸不符 ⇒ **不返回子窗图**，改走主窗裁剪（返回 1210×900）",
+       _got is not None and _got.size == (1210, 900) and ch.LAST_GRAB.get("win") == "main_crop",
+       "%s · LAST_GRAB.win=%s" % (getattr(_got, "size", None), ch.LAST_GRAB.get("win")))
+    ck("P5b 判决过程留痕（记下子窗实际尺寸，供回传定位）",
+       (ch.LAST_GRAB.get("child_size") == [1095, 900])
+       or ("render_child_mismatch" in str(ch.LAST_GRAB)), str(ch.LAST_GRAB)[:120])
+    # ③ 逻辑尺寸抓出来不符、**物理尺寸**抓出来对上 ⇒ 用它（`_print_window` 那个已知缺陷的自愈）
+    ch._print_window = (lambda hwnd, *a, **k:
+                        _noise_img(1210, 900) if k.get("physical") else _noise_img(1095, 900))
+    ch._crop_render = lambda img, main, render: _noise_img(7, 7) # 哨兵：走裁剪就露馅
+    ch.LAST_GRAB.clear()
+    _got3 = ch.grab_render(gui=_GStub(), tries=1)
+    ck("P6b★ 逻辑尺寸不符、物理尺寸对上 ⇒ 用物理那份（DPI 非 100% 时位图尺寸口径那个坑的自愈）",
+       _got3 is not None and _got3.size == (1210, 900)
+       and ch.LAST_GRAB.get("win") == "child_physical",
+       "%s · win=%s" % (getattr(_got3, "size", None), ch.LAST_GRAB.get("win")))
+    # ② 子窗尺寸**相符** ⇒ 直接用它，且**不许再裁一刀**（裁了就是整体错位）
+    ch._print_window = lambda hwnd, *a, **k: _noise_img(1210, 900)
+    ch._crop_render = lambda img, main, render: _noise_img(7, 7) # 哨兵：一旦被调用就看得出来
+    ch.LAST_GRAB.clear()
+    _got2 = ch.grab_render(gui=_GStub(), tries=1)
+    ck("P6★ 子窗尺寸相符 ⇒ 直接用子窗图、**零换算**（哨兵证明没走裁剪）",
+       _got2 is not None and _got2.size == (1210, 900) and ch.LAST_GRAB.get("win") == "child",
+       "%s · LAST_GRAB.win=%s" % (getattr(_got2, "size", None), ch.LAST_GRAB.get("win")))
+finally:
+    ch._print_window, ch._crop_render, ch.ROOT = _FREAL, _CREAL, _ROOT_REAL
+    if _FRREAL is not None:
+        _ibm.find_render_child = _FRREAL
+ck("P7（桩还原的反向控制）`_print_window`/`_crop_render`/`find_render_child`/`ROOT` 都已还原",
+   ch._print_window is _FREAL and ch._crop_render is _CREAL and ch.ROOT == _ROOT_REAL, "")
+_chsrcP = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "agent", "chat_header.py"), encoding="utf-8").read()
+ck("P8 静态锚：`grab_render` 在返回子窗图**之前**调了这道闸",
+   _sm.has(_chsrcP, "child_matches_render(img.size, render)"), "")
+ck("P9 静态锚：尺寸不符时**先试物理尺寸再抓一次**（`physical=True` 的自愈路径）",
+   _sm.has(_chsrcP, "_print_window(hwnd, physical=True)"), "")
 
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:

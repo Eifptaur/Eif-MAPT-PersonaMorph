@@ -4,7 +4,7 @@
 
 跑法： runtime\\python\\python.exe scripts\\send_retry_selftest.py   退出码 0=全过 / 1=有失败
 
-为什么（
+为什么
 ＋ 业界调研：TOCTOU 的正解是"让动作发生在已绑定的句柄上"，判不了的那条应进**失败可见的重试队列**
 而不是直接丢）：
 

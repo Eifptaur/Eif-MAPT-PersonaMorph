@@ -92,5 +92,80 @@ _RF = _srcslice.from_func(_SRC, "_restore_fg_until")[:2600]
 ok("B7 `_restore_fg_until` 不再把「微信自己」当「用户窗口」还（否则会假报 ✅）",
    _sm.has(_RF, "_fg_stash_ok()"))
 
+# ── B8/B9：**全 agent 反向锚：收窗口一律不许用 `SW_MINIMIZE`(6)** ─────────────────
+#   为什么：`SW_MINIMIZE` 的文档语义是**「最小化**并激活 Z 序里的下一个顶层窗**」**。
+#   本项目每个独立窗都是主窗的 **owned window** ⇒ Z 序里紧挨着的下一个就是**微信主窗**
+#   ⇒ 每收一次独立窗，**用户的主窗就被顶到前台一次**（他什么都没做）。
+#   ✅ 只用 `SW_SHOWMINNOACTIVE`(7)：「显示成最小化，**不激活**」（也不激活别人）。
+#   ⚠️ 判据按 **AST 调用形式**判，不按文本包含判 —— 注释/docstring 里的历史叙述不算
+#     （`wechat.py` 里就有好几处"以前这里 ShowWindow(hwnd, 6)…"的说明，不能当违规）。
+import ast as _ast
+import glob as _glob
+
+
+def _minimize_calls(src):
+    """源码里"最小化"类的**调用形式** ⇒ `[(行号, 说明)]`（纯函数，注释/docstring 免疫）。"""
+    out = []
+    try:
+        tree = _ast.parse(src)
+    except Exception:  # noqa: BLE001
+        return out
+    for n in _ast.walk(tree):
+        if not isinstance(n, _ast.Call):
+            continue
+        f = n.func
+        nm = f.attr if isinstance(f, _ast.Attribute) else (f.id if isinstance(f, _ast.Name) else "")
+        if nm in ("ShowWindow", "ShowWindowAsync"):
+            if any(isinstance(a, _ast.Constant) and a.value == 6 for a in n.args):
+                out.append((n.lineno, "ShowWindow(...,6)=SW_MINIMIZE"))
+        elif nm == "SW_MINIMIZE":
+            out.append((n.lineno, "SW_MINIMIZE"))
+    return out
+
+
+_BAD_MIN = []
+for _p in sorted(_glob.glob(os.path.join(ROOT, "agent", "*.py"))):
+    _t = io.open(_p, encoding="utf-8", errors="ignore").read()
+    for _ln, _w in _minimize_calls(_t):
+        _BAD_MIN.append("%s:%d %s" % (os.path.basename(_p), _ln, _w))
+ok("B8 ⛔ **agent/ 里不许出现 `SW_MINIMIZE`(6) 的调用**（它会把独立窗的 owner＝微信主窗顶到前台）",
+   not _BAD_MIN, "; ".join(_BAD_MIN[:4]))
+_VS = io.open(os.path.join(ROOT, "agent", "voice_strip.py"), encoding="utf-8").read()
+_WW = io.open(os.path.join(ROOT, "agent", "wechat_windows.py"), encoding="utf-8").read()
+_OFF = _VS.split("class _OffscreenShown")[1].split("def _get_window_placement")[0]
+ok("B9 收独立窗的三处都改成「不激活的最小化」"
+   "（`park_popup` 用 `7`；`_OffscreenShown._restore` 两处用 `_SW_SHOWMINNOACTIVE`）",
+   "ShowWindow(_wt.HWND(int(hwnd)), 7)" in _WW
+   and _OFF.count("_SW_SHOWMINNOACTIVE") >= 2, "_OFF×%d" % _OFF.count("_SW_SHOWMINNOACTIVE"))
+
+print("== C. 救援与自愈：窗口不许被留在屏外 ==")
+# 现场：最小化档要用"屏外显示"才投得进鼠标消息，收尾若没跑到（进程被杀/异常出口），
+#   窗口就停在屏外且 `iconic=False` ⇒ 表现是"窗口不见了、从任务栏点它还往外飞"，只能关掉重开。
+_WW_SRC = io.open(os.path.join(ROOT, "agent", "wechat_windows.py"), encoding="utf-8").read()
+_VS_SRC = io.open(os.path.join(ROOT, "agent", "voice_strip.py"), encoding="utf-8").read()
+# ⛔ 断言只认**代码**：docstring 里会**引用**被禁的写法做反面说明（"-10000 那种哨兵判据不行"），
+#    拿整份函数体做子串匹配会把"叙述"当成"违规"（本项目踩过多次）。
+import re as _re2
+_UN = _re2.sub(r'""".*?"""', "", _srcslice.func_src(_WW_SRC, "unstick_window_to_screen"),
+               flags=_re2.S)
+ok("C1 ⛔ 救援判据＝「与**虚拟屏**无交集」（`rect_outside_screen`）；不许再用哨兵判据 `-10000` "
+   "（实测「屏外显示」给的坐标是 -1119/-1171，**过不了**哨兵判据 ⇒ 工具形同不存在）",
+   "rect_outside_screen(" in _UN and "-10000" not in _UN)
+ok("C2 ★ 同时修 `rcNormalPosition`（它是「从任务栏还原」的目标；只挪当前 rect ⇒ 用户一点又飞出去）",
+   "rcNormalPosition" in _UN and "SetWindowPlacement" in _UN)
+ok("C3 收窗口只用 `SW_SHOWMINNOACTIVE`(7)；⛔ 不许出现 `SW_MINIMIZE`"
+   "（6 会最小化**并激活** Z 序下一个顶层窗 ⇒ 独立窗的邻居正是主窗 ⇒ 主窗被顶到前台）",
+   "SW_SHOWMINNOACTIVE" in _UN and "SW_MINIMIZE" not in _UN)
+ok("C4 尺寸取「当前 rect → rcNormalPosition → 600×400」里第一个合理的（不顺手放大用户的窗）",
+   ">= 300 and" in _UN and ">= 200" in _UN)
+_HEAL = _srcslice.func_src(_WW_SRC, "find_popup")
+ok("C5 `find_popup` 里有**自愈**：一发现独立窗在屏外就顺手救回来（不必等用户报故障）",
+   "rect_outside_screen(" in _HEAL and "unstick_window_to_screen(" in _HEAL)
+ok("C6 `_OffscreenShown` 有**退出兜底**：进程在还原前退出，`atexit` 也会把窗口还回去",
+   "_LIVE_BOXES" in _VS_SRC and "atexit" in _VS_SRC and "_restore_live_boxes" in _VS_SRC)
+ok("C7 屏外位置按**虚拟屏原点**算（多显示器机器上才不会停到「另一块屏」上 ⇒ 判据①才成立）",
+   "_virtual_screen(u)" in _VS_SRC.split("class _OffscreenShown")[1]
+   .split("def _get_window_placement")[0])
+
 print("== 放回策略判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))
 sys.exit(1 if FAIL[0] else 0)

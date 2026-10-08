@@ -299,9 +299,16 @@ def main():
         else:
             ok("⑨ 夹具：**放大 3x 后读出「拍一拍」**（＝修法成立）",
                any("拍一拍" in x for x in _ztxt), _ztxt)
-        ok("⑨ 静态：`menu_click` 里有「原尺寸读不出就放大重读」的兜底",
-           "放大 %dx 后读出" in open(os.path.join(ROOT, "agent", "input_backend.py"),
-                                  encoding="utf-8").read())
+        _ib_mc = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
+        # ⚠️ 这条原先锚的是**日志文案**⇒ 改文案就假红。
+        #   改成锚**行为表达式**：放大的触发条件是"目标没命中"（比"一项都没读到"更强），
+        #   且放大那一步真的在读图。
+        ok("⑨ 静态：`menu_click` 的「放大重读」兜底仍在，且触发条件是**目标没命中**"
+           "（不是『一项都没读到』——后者会把『读到几项但漏掉目标』判成『菜单里没有』）",
+           "_pick(items)[2] < 0.8" in _ib_mc and "_co.recognize(_big" in _ib_mc)
+        ok("⑨ 三条容错在位：多轮重截（`rounds` ＋ 0.35s 间隔）＋ 菜单窗存活守卫（`_menu_alive`）",
+           "def _menu_alive" in _ib_mc and "_menu_alive(hwnd_menu)" in _ib_mc
+           and "time.sleep(0.35)" in _ib_mc)
         # ⭐ 真拍成功后补的三条（都是"真机才发现"的雷）
         _ibsrc = open(os.path.join(ROOT, "agent", "input_backend.py"), encoding="utf-8").read()
         _wsrc2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
@@ -336,11 +343,11 @@ def main():
     ok("⑩ 方向判据：真机原文与自定义后缀全判对（认方向词，不认固定串）", not _bad, _bad)
 
     # ⑪ ⭐ "这条 [拍一拍] 是不是我们自己拍出去的回执"——**
-    #    （session 实锤：`trigger="[拍一拍]"`（**没有名字**）→ `send_message("谁拍我")`）。
+    #    （session 实锤：`trigger="[拍一拍]"`（**没有名字**）→ `send_message`）。
     #    根因：解析侧"我拍别人"的 title 是 `我拍拍「某甲」`，抠不出名字 ⇒ 文本就是光秃秃 `[拍一拍]`；
     #    而监听分支原来**不分方向**，一律 `orch.on_incoming` ⇒ 回执被当成"别人拍我"喂给模型。
     from agent.wechat import poke_event_is_ours as _ours
-    _SELF = "wxid_" + "ukl2ti5eyhu029" # 运行时拼：字面量 wxid_ 会被打包隐私闸当成真账号
+    _SELF = "wxid_" + "sample0007" # 运行时拼：字面量 wxid_ 会被打包隐私闸当成真账号
     _ocases = [
         ({"text": "[拍一拍]（E）", "poker_wxid": "wxid_" + "ctkh6fu5iuri22"}, False, "别人拍我（有名字有 wxid）"),
         ({"text": "[拍一拍]", "poker_wxid": _SELF}, True, "我拍别人（patinfo=自己）"),
@@ -438,6 +445,28 @@ def main():
        bool(b_probe) and "menu_click" not in _code_only(b_probe))
     ok("⑬ 简易检测（控制台「拍一拍检测」）也走同一个 _probe_poke_menu（一处实现，防两边分叉）",
        "_probe_poke_menu" in _code_only(b_vmenu))
+
+    # ── ⑭ 左右分界用「方块自己的最大间隙」，不是「会话区中点」（PLAN 第 29 项）──
+    # 为什么：中点**依赖 `pane_left` 准不准**，而它一旦估大（真机 507 vs 真实 345）中点就被拉偏
+    #   ⇒ 对方头像被判成"右侧（自己）"（实测窗口拉宽后 x=890 的对方头像中招）。
+    from agent.wechat import split_x_by_gap as _sg
+    _two = [(100, 10, 140, 50), (120, 60, 160, 100), (700, 10, 740, 50), (720, 60, 760, 100)]
+    _g = _sg(_two, 900, 200)
+    ok("⑭ 两组方块（x≈120 与 x≈730）⇒ 分界落在**两组之间**（%s），不受 pane_left 影响" % _g,
+       300 < _g < 700, _g)
+    _g_shift = _sg(_two, 900, 800)      # 故意把 pane_left 给错（0.889w）
+    ok("⑭ ★反向锚：`pane_left` 给错（800）分界**照样在两组之间**（%s）—— 中点法这里会判反" % _g_shift,
+       300 < _g_shift < 700, _g_shift)
+    ok("⑭ 只有一簇（视口里只有自己发的）⇒ 返回 0（不猜，交给调用方回退中点）",
+       _sg([(700, 10, 740, 50), (720, 60, 760, 100)], 900, 200) == 0, "")
+    ok("⑭ 左侧窄栏里的方块（x < 0.12w）不算头像 ⇒ 不参与分界",
+       _sg([(20, 10, 40, 30), (700, 10, 740, 50)], 900, 200) == 0, "")
+    _wxsrc = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "agent", "wechat.py"), encoding="utf-8").read()
+    ok("⑭ ★源码锚：两处左右分界**都走同一个** `split_x_by_gap`（不许一处改一处漏）",
+       _wxsrc.count("split_x_by_gap(blocks, rw, pane_left)") >= 2, "")
+    ok("⑭ ★源码锚：`pane_left`（准确）与扫描起点（宁小）**分开两个变量**",
+       "_scan_lo = min(pane_left, _lib_pl)" in _wxsrc, "")
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

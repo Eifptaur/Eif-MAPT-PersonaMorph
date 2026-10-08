@@ -48,7 +48,7 @@ def load() -> dict:
     """读状态；**坏档走统一招式 `persist.load_or_quarantine`**（改名 `.bad.<时间戳>` 留证 + 记一条 warn）。
 
     老写法是 `except: pass` ⇒ 坏档静默变默认值，紧接着 `_save()` **整体覆盖**
-    ⇒ "坏文件 + 一次写入 = 旧提醒全没"，而 `add()` 还照旧回 `ok=True`（模型据此对用户说"已定好"）。
+    ⇒ "坏文件 + 一次写入 = 旧提醒全没"，而 `add()` 还照旧回 `ok=True`（模型据此对"已定好"）。
     改成留证后，坏档一个字节都不丢、还能人工修回来。
 
     **留证本身也会失败**（ACL 拒读 / 另一进程独占句柄）
@@ -139,7 +139,7 @@ def add(chat_key: str, note: str, seconds=None, minutes=None, by: str = "", now=
         st.setdefault("items", []).append(item)
         saved = _save(st)
     if not saved:
-        # V10：写不进去就**不许**回 ok:True——模型会拿它当依据对用户说"已定好"，而它永远不会响
+        # V10：写不进去就**不许**回 ok:True——模型会拿它当依据对"已定好"，而它永远不会响
         return {"ok": False, "error": "登记没能落盘（data/ 可写？）"}
     return {"ok": True, "id": tid, "fire_at": item["fire_at"], "seconds": secs,
             "note": text, "clamped": clamped, "max_per_chat": MAX_PENDING_PER_CHAT}

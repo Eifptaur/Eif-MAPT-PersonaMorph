@@ -24,6 +24,8 @@ import sys
 import tempfile
 import time
 
+import logging
+log = logging.getLogger("persona-morph")
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
@@ -73,7 +75,7 @@ for item in cat:
        all(x in r["report"] for x in ("症状：", "判决：", "逐项证据", "粘进「反馈」")), r["report"][:80])
 
 print("── B2. 报告**不许带账号/群号原名**（它是设计给人粘进「反馈」发出去的）──")
-# ⛔ 2026-09-28 现场：用户在控制台提交反馈，消息里带着 `账号=wxid_<真号>` 发到了群里。
+# ⛔ 现场：用户在控制台提交反馈，消息里带着 `账号=wxid_<真号>` 发到了群里。
 #    症状检验器的报告是同一条出口（本段上面那句"可粘进反馈"就是它的用途）⇒ 两向锚：
 #    塞一个**真实形态**的账号/群号进去，报告里不许出现原名；同时掩码要可辨认。
 #    夹具运行时拼（与其它 PII 夹具同规矩），免得判据文件自己命中出包 PII 闸门。
@@ -296,7 +298,8 @@ try:
         try:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("{}\n")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     _wxL.LEDGER_WRITE_ERR.update({"err": "", "n": 0, "at": 0.0})
     _old_write_L(os.path.join(_blockerL, "switch_fails.jsonl"))
@@ -416,6 +419,8 @@ finally:
 print("\n── C7. 反馈「艾特它 它不会回复」：报告里要能看见「群里 @ 的是谁」（说明格，不误判）──")
 from agent import thought_trace as _ttJ # noqa: E402
 from agent import prompt as _prJ # noqa: E402
+import logging
+
 _keep_ttf = _ttJ.FILE
 _tmp7 = tempfile.mkdtemp(prefix="pm-vf7-")
 _ttJ.FILE = os.path.join(_tmp7, "thoughts.jsonl")

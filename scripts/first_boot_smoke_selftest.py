@@ -87,7 +87,10 @@ def copy_pids(marker):
 
 
 def newest_zip():
-    cands = glob.glob(os.path.join(os.path.dirname(ROOT), "群相-在线包-*.zip"))
+    # 产物名前缀改过（`群相-在线包-*` → `群相-安装包-*`）⇒ 两种都要认，
+    # 否则本判据在改名后**静默找不到任何包**、跳过整段真机冒烟（假绿）。
+    cands = glob.glob(os.path.join(os.path.dirname(ROOT), "群相-安装包-*.zip"))
+    cands += glob.glob(os.path.join(os.path.dirname(ROOT), "群相-在线包-*.zip")) # 历史名，留一段兼容
     cands += glob.glob(os.path.join(ROOT, "_outbox", "*.zip"))
     return max(cands, key=os.path.getmtime) if cands else None
 

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """probe_popup_layout.py —— 抓「独立会话弹窗」的图，看它的布局（T12 关键验证）
 
-用途：用户提出「让目标群变成独立弹窗，程序只对那个弹窗操作」⇒ 需要先看清独立窗里**到底有什么**：
+用途：弹窗，程序只对那个弹窗操作」⇒ 需要先看清独立窗里**到底有什么**：
      有没有会话列表？输入框在哪？标题栏什么样？
 输出：`报告/ocr瓶颈-20260930/_临界样本/popup-<名字>.png` + 控制台打印布局要素
 用法：./runtime/python/python.exe -u scripts/probe_popup_layout.py [会话名]
 """
 import ctypes as ct
-import ctypes.wintypes as wt
+
 import logging
 import os
 import sys

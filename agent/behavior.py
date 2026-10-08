@@ -24,7 +24,7 @@ from __future__ import annotations
 import random
 import time
 
-from .config import get_config
+from .config import get_config, normalize_prob
 
 
 # 行为默认表（系数 1=标准；冷却/上限防刷屏）
@@ -79,7 +79,7 @@ class BehaviorDecider:
 
     def should(self, action: str, context: dict | None = None) -> bool:
         """是否执行某个行为。context 可带:
-          force=True（用户明确要求 → 绕过概率只查上限）
+          force=True（要求 → 绕过概率只查上限）
           triggers（如 "对方发了表情"）。"""
         spec = {**DEFAULTS.get(action, {}), **self._cfg().get(action, {})}
         if not spec.get("enabled", True):
@@ -88,7 +88,7 @@ class BehaviorDecider:
         mul = self.multipliers()
         # 表情类乘 sticker，其他乘 activity
         factor = mul["sticker"] if "emoji" in action else mul["activity"]
-        # 冷却（用户明确要求 force 时跳过冷却，只留每日上限防刷屏）
+        # 冷却（要求 force 时跳过冷却，只留每日上限防刷屏）
         s = self._tick(action)
         now = time.time()
         if not ctx.get("force") and spec.get("cooldown_s") and now - s["last"] < float(spec["cooldown_s"]):
@@ -96,9 +96,11 @@ class BehaviorDecider:
         # 每日上限
         if spec.get("daily_limit") and s["today"] >= int(spec["daily_limit"]):
             return False
-        # 概率（受角色系数影响；用户明确要求 force=True 时跳过概率）
+        # 概率（受角色系数影响；要求 force=True 时跳过概率）
         if not ctx.get("force"):
-            prob = max(0.0, min(1.0, float(spec.get("probability", 0)) * factor))
+            # ⚠️ 概率先归一化再乘角色系数：原写法 `min(1.0, float(x))` 会把用户填的
+            #    `90`（想表达 90%）截成 `1.0` ⇒ **变成"每次必做"**（与意图相反）。
+            prob = max(0.0, min(1.0, normalize_prob(spec.get("probability", 0)) * factor))
             if random.random() > prob:
                 return False
         s["last"] = now

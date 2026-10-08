@@ -222,7 +222,7 @@ try:
 finally:
     _C2.get_config = _real_gc
 
-# 文案不许对一般用户说黑话
+# 文案不许对一般黑话
 _bad_words = ["EDGE_VOICES", "edge_tts_selftest", "voice_models", "bilibili.enabled",
               "判据", "_selftest", "config.json 里改"]
 _seg_bili = H[H.find('data-cfg="bilibili.enabled"'): H.find('data-cfg="bilibili.enabled"') + 700]

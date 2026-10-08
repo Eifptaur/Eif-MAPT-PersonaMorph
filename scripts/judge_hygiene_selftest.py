@@ -19,6 +19,9 @@ from __future__ import annotations
 import ast
 import os
 import sys
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERE = os.path.join(ROOT, "scripts")
@@ -36,7 +39,6 @@ def ok(name, cond, detail=""):
     print(("  PASS " if cond else "  FAIL ") + name + (("  [" + str(detail) + "]") if detail else ""))
 
 
-_NAME_WORDS = {"name", "title", "label", "desc", "what", "case", "why", "msg"}
 _SELF = os.path.basename(os.path.abspath(__file__))
 #: 脆断言（`"带空白的整段源码" in SRC_xxx`）的**基线**。
 # ⛔ 原来只看"右边变量名匹配 `src|web|html|body|code|h$`"，
@@ -46,22 +48,43 @@ _SELF = os.path.basename(os.path.abspath(__file__))
 # ⬇ 最脆的五个文件共 **246 条**机械换成 `_srcmatch.has()`
 #   （background 100 + console_chrome 44 + send_file_posted 39 + session_pick 38 + console_open 25）
 #   ⇒ 851 → **605**（实测 605）。
-# ⚠️ 2026-09-29 由 605 → 606（**不是静默放过，如实记录**）：
+# ⚠️ 由 605 → 606（**不是静默放过，如实记录**）：
 #   本轮加了 4 个新判据（真值流水线 / 无界面对等 / 多模板 / 点后回填）后总数 +1。我按三种口径
 #   逐文件对比过（含 `git diff` 按提交对比，我这一侧读数是 +0），**没能把它归因到具体某一行**
-#   —— 判据自己的口径更宽（"左边是带空白字符串常量、右边取了某个变量"），与我的读取器不完全重合。
+#   —— 判据自己的口径更宽，与我的读取器不完全重合。
 #   已做的处置：① 新写的这类断言一律优先用 `scripts/_srcmatch.py::has()`（本轮已把 3 处裸 `in` 换掉）；
 #   ② 这条棘轮**继续生效**（后续只许降，降下来请把这里改小）。
-BRITTLE_BASELINE = 606
+# ✅ 787 → **599**（已把这里改小）：最脆的 6 个文件共 188 条**机械换成 `_sm.has()`**
+#   （voice_strip 85 + cursor_webview 22 + cmd_entry 21 + watermark 21 + search_ui 20 + decide_ui 19）；
+#   逐个复跑比对通过数：**5 个持平**（86/0 · 58/0 · 73/1 · 86/0 · 40/0）。
+#   ⛔ `cursor_webview` 那一次 45/1 → 46/0 **不是这次改出来的**：把旧版单独复跑两遍
+#     —— 一遍 45/1、一遍 46/0 ⇒ 是 **B12 本身在抖**（活体探针读 `spin_reverted`，时序相关），
+#     与空白容忍无关；如实记在这儿，别把它算成本次的功劳。
+# ✅ 599 → **598**：本轮新增 5 处源码锚（`only_popup_selftest` 的 B4/C1~C4）**一律直接用 `_sm.has()`**
+#   ⇒ 净 -1。**新写这类断言请照这个做法**：一开始就用 `has()`，别先写裸 `in` 再回来改。
+BRITTLE_BASELINE = 598
+
+
+#: 断言助手**允许的函数名**。⛔ 收窄会整份跳过文件（那个门就废了），放宽会误认业务函数
+#   ⇒ 只收"判据里真的用过的"：各文件分别叫 `ok` / `ck` / `chk` / `T`（实测漏过 `chk`×3、`T`）。
+#   漏了名字不算灾难：门 ① 会**点名**跳过哪个文件 ⇒ 补一个名字即可（1 个词的改动）。
+_HELPER_NAMES = ("ok", "ck", "check", "_ok", "assert_ok", "ck_ok", "chk", "_ck", "T")
+_NAME_WORDS = {"name", "title", "label", "desc", "what", "case", "why", "msg"}
 
 
 def _helper_styles(tree: ast.AST) -> dict:
-    """本文件里 `ok/ck/check` 这类断言的 (名字位下标, 条件位下标)。认不出就不给。"""
+    """本文件里断言助手的 (名字位下标, 条件位下标)。认不出就不给。
+
+    ⛔ 原先只扫 **模块级** 定义 ⇒ 助手写在 `main()` 里的文件被整份跳过
+    （实测 `t7b4_rowgeom`：`def ck(...)` 嵌在 `main` 里）⇒ 现在走 `ast.walk`，**嵌套也认**。
+    ⛔ 名字表**必然不全**（这正是当初漏掉 5 个文件的原因）。所以配门 ①：
+    **跳过只许来自白名单** ⇒ 一旦有新名字出现，判据会点名，不会静默放过。
+    """
     out = {}
-    for node in tree.body if hasattr(tree, "body") else []:
+    for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef) or len(node.args.args) < 2:
             continue
-        if node.name not in ("ok", "ck", "check", "_ok", "assert_ok", "ck_ok"):
+        if node.name not in _HELPER_NAMES:
             continue
         params = [a.arg for a in node.args.args]
         named = [i for i, p in enumerate(params[:3]) if p.lower() in _NAME_WORDS]
@@ -130,8 +153,10 @@ def main():
         print("   （没认出击签名、按规矩跳过的：%s）" % ("、".join(skipped[:12]) + ("…" if len(skipped) > 12 else "")))
 
     # ③ 负例：把两种错法各造成一段源码，同一个判定器必须都能抓出来
+    #    桩的**函数体要有代表性**（打印 + 拿参数当条件）—— 识别器认的是「签名＋行为」，
+    #    拿 `pass` 当体的桩会认不出来 ⇒ 这条负例就变成空转（看着绿、其实什么都没测）。
     _old = ("def ok(name, cond, detail=\"\"):\n"
-            "    pass\n"
+            "    print((\"OK \" if cond else \"FAIL\") + name)\n"
             "ok(1 == 1 and 2 == 2, \"口令文件已存在 ⇒ 读回它\", \"got=X\")\n"
             "ok(True, \"这条也写反了\")\n")
     _tree = ast.parse(_old)
@@ -146,6 +171,21 @@ def main():
                 _hits.append("名字位是布尔")
     ok("③ 负例：写反的两条（条件位放描述文本 / 名字位放 True）都被同一判定器抓出",
        len(_hits) == 3 and "条件位是字符串" in _hits and "名字位是布尔" in _hits, _hits)
+    # ③b 反向锚 + 正向锚：识别器认的是「名字在表里 ＋ 参数里有名字位」。
+    #     · `_say(case, text)`：参数像助手，但名字不在表里 ⇒ **不认**（否则会误判业务函数）；
+    #     · `_helper(a, b)`：名字不在表里 ⇒ 不认；
+    #     · 嵌套定义 `def ck(label, ok)` **要认**（这正是本轮补的那个洞）。
+    _neg2 = ("def _say(case, text):\n"
+             "    print(\"[\" + case + \"] \" + text)\n"
+             "def _helper(a, b):\n"
+             "    return b\n"
+             "def main():\n"
+             "    def ck(label, ok, extra=\"\"):\n"
+             "        print(label)\n"
+             "    ck(\"x\", 1 == 1)\n")
+    _st2 = _helper_styles(ast.parse(_neg2))
+    ok("③b 名字不在表里的一律不认（防误判业务函数）；嵌套定义的助手要认",
+       _st2 == {"ck": (0, 1)}, _st2)
 
     # ── ④ 源码文本的**脆断言**普查────────────────────────
     #   定义：`"带空白的整段源码" in SRC_xxx` —— 源码一改缩进/换行就红（行为没变）。
@@ -154,7 +194,6 @@ def main():
     #        ②这个数**只许降不许升**（把旧的换成 `_srcmatch.has` 就会降）。
     import ast as _ast
     import re as _re3
-    _SRCISH = _re3.compile(r"src|web|html|body|code|h$", _re3.I)
 
     def _brittle_in(src_text):
         """返回这份判据里"脆断言"的条数与位置（只看 `"…" in <src 变量>`）。"""
@@ -189,7 +228,8 @@ def main():
     for _fn in files:
         try:
             _txt = open(os.path.join(HERE, _fn), encoding="utf-8").read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         _h = _brittle_in(_txt)
         if _h:
@@ -226,7 +266,8 @@ def main():
     for _fn in files:
         try:
             _t = open(os.path.join(HERE, _fn), encoding="utf-8").read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         if ("pick_backend(" in _t) or ("ensure_running(" in _t):
             if ("ensure_running = lambda" not in _t) and ("ensure_running = _orig" not in _t):
@@ -245,7 +286,8 @@ def main():
     for _fn in files:
         try:
             _t2 = open(os.path.join(HERE, _fn), encoding="utf-8").read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         try:
             _tr = _ast.parse(_t2)
@@ -264,7 +306,11 @@ def main():
     #   一种写法 ⇒ `X or True` / 自比较 `x == x` / 常量可折叠 三族全在盲区（本轮实测各有命中）。
     #   ⚠️ **只看"判据辅助函数的实参"**：`lambda …: (lst.append(x) or True)` 这类**打桩**是正当写法，
     #   不该被判据卫生网误伤（第一版就是这么误报的）。
-    _HELPERS = ("ok", "ck", "check", "_ok", "assert_ok", "ck_ok")
+    # ⛔ 认得出的断言助手名 —— **判据文件里自己定义**的那种"（名字, 条件, 细节）"形状。
+    #    加名字是**加强**这条判据（认得出 ⇒ 才会去扫它），不是放宽：
+    #      · `chk`（already_sent / outbound_leak / poll_interval）、`T`（rhythm）与 `ok`/`ck` 同形；
+    #      · 名字不在表里 ⇒ 那个文件被**静默跳过** ⇒ 它里面再离谱的断言也没人看。
+    _HELPERS = ("ok", "ck", "check", "_ok", "assert_ok", "ck_ok", "chk", "T")
 
     def _assert_args(_tree):
         out = []
@@ -279,7 +325,8 @@ def main():
         try:
             _t3 = open(os.path.join(HERE, _fn), encoding="utf-8").read()
             _tr3 = _ast.parse(_t3)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         for _arg in _assert_args(_tr3):
             _baseline = getattr(_arg, "lineno", 0)

@@ -45,7 +45,7 @@ FILES = {
 #: 扫描"产品自身文本"的目录与扩展名（口径固定下来，免得每次生成结果漂移）
 TEXT_DIRS = ("ui_qt", "agent", "assets", "scripts", "tools.d", "launcher-src")
 TEXT_EXTS = (".py", ".html", ".js", ".css", ".json", ".txt", ".md", ".ps1", ".cs", ".vbs")
-TEXT_ROOT_FILES = ("README.md", "更新日志.md")   # 使用说明.md 已合并进 README（2026-09-29）
+TEXT_ROOT_FILES = ("README.md", "更新日志.md")   # 使用说明.md 已合并进 README
 
 #: 符号区段余量：源码里当前没用到、但界面很容易用到的那几段（字幅小、代价低）
 SYMBOL_MARGIN = (

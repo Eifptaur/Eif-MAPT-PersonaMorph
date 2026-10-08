@@ -360,10 +360,23 @@ def main():
            _InitGUI.calls == [], _InitGUI.calls)
 
         # ⑩ 静态：类闸必须**在构造之前**装上
+        # ⛔ 锚点改成 **AST**（原来是 `b_get.find("WeChatGUI(")` 这种**文本**锚 ——
+        #    注释里**提到**那个名字就会命中，把先后判反。实测：给 `_get_gui()` 加了一句说明注释，
+        #    这条就从绿变红，而代码顺序其实没变）。要守的语义是"**两个调用**的先后"，就该按调用节点比。
+        import ast as _ast # noqa: E402
         b_get = func_body(wsrc, "_get_gui")
-        ok("⑩ `_get_gui()` 里 `harden_gui_class()` 出现在 `WeChatGUI(` **之前**",
-           bool(b_get) and "harden_gui_class" in b_get
-           and 0 <= b_get.find("harden_gui_class") < b_get.find("WeChatGUI("))
+        _ln_harden = _ln_new = None
+        for _n in _ast.walk(_ast.parse(wsrc)):
+            if not isinstance(_n, _ast.Call):
+                continue
+            _fn = _ast.unparse(_n.func)
+            if _ln_harden is None and _fn.endswith("harden_gui_class"):
+                _ln_harden = _n.lineno
+            if _ln_new is None and _fn == "WeChatGUI":
+                _ln_new = _n.lineno
+        ok("⑩ `_get_gui()` 里 `harden_gui_class()` 出现在构造 GUI **之前**（AST 比先后，不看注释）",
+           bool(b_get) and _ln_harden is not None and _ln_new is not None and _ln_harden < _ln_new,
+           "harden@%s 构造@%s" % (_ln_harden, _ln_new))
         _ra = open(os.path.join(ROOT, "agent", "replica_adapter.py"), encoding="utf-8").read()
         ok("⑩ `patch_driver_quirks()` 也顺手把类闸装上（它总在构造之前被调）",
            "harden_gui_class" in _ra)

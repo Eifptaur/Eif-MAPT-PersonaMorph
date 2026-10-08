@@ -3,9 +3,9 @@
 
 为什么要有它：判据里有大量这种写法 ——
 
-    _seg = SRC[SRC.index("def send_text_posted("):]
-    _seg = SRC[SRC.index("def send_text_posted("):SRC.index("def send_image_posted(")]
-    body = SRC.split("def emoji_panel_open(")[1][:3000]
+    _seg = SRC[SRC.index:]
+    _seg = SRC[SRC.index:SRC.index]
+    body = SRC.split[1][:3000]
 
 它们靠"某个 `def` 行在文件里的**位置**"来定边界。项目做过多次"把整块函数搬到模块级"的
 **等价搬家**（文件里函数的位置因此改变）⇒ 这类写法就会：
@@ -63,12 +63,12 @@ def func_src(src: str, name: str, ordinal: int = 0) -> str:
 
 
 def from_func(src: str, name: str, ordinal: int = 0) -> str:
-    """从该函数的 `def` 行到**文件末尾**（原来是 `SRC[SRC.index("def X"):]` 的写法）。"""
+    """从该函数的 `def` 行到**文件末尾**（原来是 `SRC[SRC.index:]` 的写法）。"""
     n = func_node(src, name, ordinal)
     return "\n".join(src.split("\n")[n.lineno - 1:])
 
 
 def before_func(src: str, name: str, ordinal: int = 0) -> str:
-    """该函数 `def` 行**之前**的全部内容（原来是 `SRC[:SRC.index("def X")]` 的写法）。"""
+    """该函数 `def` 行**之前**的全部内容（原来是 `SRC[:SRC.index]` 的写法）。"""
     n = func_node(src, name, ordinal)
     return "\n".join(src.split("\n")[:n.lineno - 1])

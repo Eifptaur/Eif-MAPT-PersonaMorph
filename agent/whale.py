@@ -38,6 +38,9 @@ from .model_prices import ( # noqa: F401  （价目表唯一来源，见该模�
     price_for, is_peak_time, cost_of, usage_parts, billable_output,
 )
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 # ── 峰谷定价 / 计费口径 ─────────────────────────────────────────────────────
 # ⛔ 价目表**不再写在本文件**，全部来自 `agent/model_prices.py`（照抄上游
@@ -85,7 +88,8 @@ class WhaleWidget:
                 data.setdefault("usageSettings", {})
                 data.setdefault("apiModels", [])
                 return data
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return {"size": {}, "days": {}, "lastTurn": {}, "roles": [],
                 "assets": {}, "audioGroups": [],
@@ -93,11 +97,12 @@ class WhaleWidget:
 
     def _save_state(self):
         try:
-            tmp = self._state_path + ".tmp"
+            tmp = persist.tmp_for(self._state_path)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._state, f, ensure_ascii=False, indent=1)
             persist.replace_into(tmp, self._state_path)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     def _usage_cost(self, usage: dict, model: str, ts: float) -> tuple:
@@ -145,7 +150,8 @@ class WhaleWidget:
             try:
                 keep = sorted(k for k in days if k <= day)[-30:]
                 self._state["days"] = {k: days[k] for k in keep} if len(days) > 30 else days
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             self._save_state()
             return last
@@ -185,7 +191,13 @@ class WhaleWidget:
     # `if (d && d.ok && d.config)` / `if (!d || !d.ok …) return`），所以界面是**干净降级**。
     # 上游有、本移植版**确实没有**的接口（如实返回"不支持"，客户端保留默认值）。
     # 注意：随着能力补齐，条目要从这里**删掉** —— 留在表里等于把已实现的功能继续报成"不支持"。
-    _UNSUPPORTED = ("sound/",)  # 上游这个"目录式"入口没有对应实现；press/release 两条老路由由 webui 显式处理
+    #: 上游 0.3.x 有、本移植版**没有**的接口 —— 如实说不支持（客户端会保留默认值 ⇒ 干净降级）。
+    #:   · `sound/`：那个"目录式"入口没有对应实现；`press.mp3` / `release.mp3` 两条老路由由 webui 显式处理。
+    #:   · `wait.json`（**上游 0.3.14 起新增**）：客户端每秒轮询它，用来知道"有没有挂起的交互
+    #:     （提问 / 授权）、哪一类、对话名"，据此弹**常驻泡泡** + 提示音，并给文案里的 `{session}` 占位符取值。
+    #:     我们暂时没有"挂起交互"这个状态 ⇒ 如实回不支持（客户端走默认值：不弹挂起泡泡、`{session}` 显示"当前对话"）。
+    #:     ⚠️ **将来可接**：`agent/pending_decisions.py` 里就有"等人工拍板"的队列 ⇒ 接上它这条就能亮起来。
+    _UNSUPPORTED = ("sound/",)
 
     _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
     _CFG_MAX = 256 * 1024 # 配置上限（防一个前端 bug 把 state 撑爆）
@@ -758,7 +770,8 @@ class WhaleWidget:
         try:
             with open(path, "rb") as f:
                 return f.read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return None
 
     def sound_bytes(self, kind: str, sound_set: str) -> bytes | None:

@@ -32,6 +32,9 @@ from agent.config import get_config # noqa: E402
 from agent.wechat import WeChatAdapter # noqa: E402
 from agent import chat_ocr as co # noqa: E402
 from agent import chat_header as ch # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 def main() -> int:
@@ -48,7 +51,8 @@ def main() -> int:
     gui = ad._get_gui()
     try:
         gui._update_render_rect()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     r = getattr(gui, "render_rect", None) or (0, 0, 0, 0)
     print("① 窗口：main=%s 渲染区=%s %sx%s"

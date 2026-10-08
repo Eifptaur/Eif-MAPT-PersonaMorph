@@ -90,7 +90,8 @@ def _read_json(file, fallback):
         with open(file, "r", encoding="utf-8-sig") as f:
             parsed = json.load(f)
         return parsed if isinstance(parsed, dict) else fallback
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return fallback
 
 
@@ -151,6 +152,588 @@ def audit_overwrite(chat_key: str, user_id: str, before, after) -> dict:
     return rec
 
 
+# ── 事实抽取────────────────────────────────────────────
+#   目标：把聊天里的「谁喜欢什么、约过什么事」抽成**结构化条目**，每条带**时效**：
+#   待跟进类到点过期、情感与重要节点**永不淡出**（这正是"养久了也不失忆"的地基）。
+#   ⛔ 本函数**只做规则解析、不调模型**（免得这里变成隐性网络调用，也与"闲时跑批"解耦）；
+#     抽不出就返回空，**绝不编**。调模型做深抽取是上层的事。
+FACT_TTL_DAYS = 30
+_PROMISE_HINTS = ("明天", "后天", "下周", "下个月", "几点", "记得", "约好", "说好", "要交", "要发")
+_FOREVER_HINTS = ("生日", "纪念日", "喜欢", "讨厌", "忌口", "过敏", "习惯")
+
+
+def extract_facts(msgs) -> list:
+    """从消息里抽**结构化事实** ⇒ `[{"who", "what", "kind", "expires_at"}, ...]`。
+
+    `kind`：`followup`（**待跟进**，`FACT_TTL_DAYS` 天后过期）｜`memory`（情感/重要节点，**不设过期**）。
+    `expires_at`：`"YYYY-MM-DD"`；`memory` 类为 `""`（**永不淡出**）。
+
+    ⛔ 规则保守：**认不出就返回空列表**（不编）。判断依据只是关键词命中，宁缺毋滥 ——
+      宁可漏掉一条事实，也不能凭空造一条"它以为你说过"的话。
+    """
+    import time as _t
+    out = []
+    try:
+        _rows = list(msgs or [])
+    except Exception: # noqa: BLE001
+        return []
+    for m in _rows:
+        try:
+            if isinstance(m, dict):
+                _who = str(m.get("sender_name") or m.get("who") or "").strip()
+                _txt = str(m.get("text") or m.get("content") or "")
+            else:
+                _who, _txt = "", str(m or "")
+        except Exception: # noqa: BLE001
+            continue
+        _t2 = _txt.strip()
+        if not _t2 or len(_t2) > 200:      # 太长的多半不是"一句事实"，跳过
+            continue
+        _kind = ""
+        if any(h in _t2 for h in _FOREVER_HINTS):
+            _kind = "memory"
+        elif any(h in _t2 for h in _PROMISE_HINTS):
+            _kind = "followup"
+        if not _kind:
+            continue
+        _exp = "" if _kind == "memory" else _t.strftime(
+            "%Y-%m-%d", _t.localtime(_t.time() + FACT_TTL_DAYS * 86400))
+        out.append({"who": _who, "what": _t2, "kind": _kind, "expires_at": _exp})
+    return out
+
+
+def add_event(chat_key: str, what: str, *, who: str = "", kind: str = "note",
+              emotion: str = "", long_term: bool = False, date: str = "") -> dict:
+    """往「事件簿」追加一条（**append-only**，JSONL 一行一条）。返回落库的那条。
+
+    事件簿的用途：把"这个群里发生过什么"沉淀下来（谁的事、什么时候），
+    上层据此做"关系脉络总结"与"用户勾选保留/遗忘"（W3 的两半）。
+
+    ⛔ **写不进去就抛** —— 调用方需要知道"没记上"，不许静默当成记上了。
+
+    四个可选字段（第 114 项起）：
+      · `emotion`   —— `good` / `bad` / 空。**记好也记仇**：难过的事回话时**先共情、别说教**；
+      · `long_term` —— 重要的**永不过期**（不填就按 `memory.event_expire_days` 淡出）；
+      · `date`      —— `YYYY-MM-DD` 或 `MM-DD` ⇒ 供"**纪念日到点**"用（跨年自动重复生效）。
+      ⛔ 老行没有这几个字段 ⇒ 读的时候按"空 / False"处理（**旧数据照旧能读**，无需迁移）。
+    """
+    import time as _t
+    rec = {"ts": _t.time(), "when": _t.strftime("%Y-%m-%d %H:%M:%S"),
+           "who": str(who or ""), "kind": str(kind or "note"), "what": str(what or "").strip()}
+    _em = str(emotion or "").strip().lower()
+    if _em not in ("", "good", "bad"):
+        _em = ""
+    if _em:
+        rec["emotion"] = _em
+    if long_term:
+        rec["long_term"] = True
+    _d = str(date or "").strip()
+    if _d:
+        rec["date"] = _d
+    if not rec["what"]:
+        raise ValueError("事件内容为空")
+    p = _events_file(chat_key)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return rec
+
+
+def list_events(chat_key: str, limit: int = 50) -> list:
+    """读事件簿（**新→旧**）。读不出来 ⇒ 空表（不抛）。"""
+    out = []
+    try:
+        with open(_events_file(chat_key), "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except Exception: # noqa: BLE001
+                    continue
+    except Exception: # noqa: BLE001
+        return []
+    return list(reversed(out))[: max(1, int(limit or 50))]
+
+
+def _events_file(chat_key: str) -> str:
+    """事件簿的落盘路径（与历史审计同目录，便于一起备份/导出）。"""
+    return os.path.join(_chat_dir(chat_key), "events.jsonl")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 时效 / 纪念日 / 待跟进（第 113·114·121·125 项）
+#
+# 这几件事**共用一份口径**，所以放在一起：
+#   · 一条记录**要么会淡出、要么永不过期**（`long_term`）；
+#     ⛔ 「淡出」不等于「删」—— 文件是 append-only，淡出只是**不再往提示词里塞**（历史留着能查）。
+#   · 过期天数 `<=0` ＝ **全部不过期**（有人就想要"全都记得"）。
+#   · **纪念日按 `MM-DD` 比**（`date` 允许写 `YYYY-MM-DD` 或 `MM-DD`）⇒ 跨年自动重复生效。
+#   · 「待跟进」比事件多两件事：**问过几次**、**答没答**（第 125 项：问过没答才再提，答过就不提）。
+# ══════════════════════════════════════════════════════════════════════
+
+#: 没配 `memory.event_expire_days` / `followup_expire_days` 时的兜底天数
+_DEFAULT_EVENT_EXPIRE_DAYS = 60
+_DEFAULT_FOLLOWUP_EXPIRE_DAYS = 30
+_DEFAULT_FOLLOWUP_SHOW_MAX = 3
+
+
+def _mem_cfg(cfg=None) -> dict:
+    """取 `memory` 段配置；拿不到 ⇒ 空 dict（调用方一律走默认值，不抛）。"""
+    try:
+        if cfg is None:
+            from .config import get_config
+            cfg = get_config()
+        return dict((cfg or {}).get("memory") or {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+#: 「账号形状」的兜底显示名 —— 判不出昵称时**只给这个**，绝不把 uid 写进提示词
+_NO_NAME = "某位群友"
+
+
+def _safe_name(who: str, fallback: str = _NO_NAME) -> str:
+    """把一个"可能是 wxid、也可能是昵称"的标识转成**能进提示词**的显示名。
+
+    ⛔ 红线：**模型输入里不许出现真实账号（wxid）**，只能出现昵称。
+      而 `who` 在很多链路里拿到的就是 `sender_id`（＝wxid）⇒ 这里统一挡一道：
+      看起来像账号形状的（`wxid_…` / 长串纯 ascii 且无空格）⇒ **换成占位名**，不是删掉整行。
+    ⛔ 别写成"删掉这个字段"：那样模型就不知道"这是另一个人"了（会当成同一个人在说）。
+    """
+    s = str(who or "").strip()
+    if not s:
+        return fallback
+    low = s.lower()
+    if low.startswith("wxid_") or low.startswith("wxid-"):
+        return fallback
+    if " " not in s and len(s) >= 12 and all(c.isascii() for c in s):
+        return fallback       # 长串无空格的纯 ascii：账号/哈希形状
+    return s
+
+
+def _int_or(cfg: dict, key: str, default: int) -> int:
+    try:
+        v = cfg.get(key)
+        return int(default if v is None else v)
+    except Exception:  # noqa: BLE001
+        return int(default)
+
+
+def _mmdd(s: str) -> str:
+    """从 `YYYY-MM-DD` / `M-D` / `MM-DD` 里取「月-日」（补齐两位）⇒ 取不出 ⇒ 空串。"""
+    t = str(s or "").strip()
+    if not t:
+        return ""
+    parts = [p for p in re.split(r"[^0-9]+", t) if p]
+    if len(parts) >= 3:
+        mm, dd = parts[-2], parts[-1]
+    elif len(parts) == 2:
+        mm, dd = parts[0], parts[1]
+    else:
+        return ""
+    try:
+        return "%02d-%02d" % (int(mm), int(dd))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _age_days(ts, now=None) -> float:
+    try:
+        t = float(ts or 0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+    if t > 1e11:      # 毫秒
+        t = t / 1000.0
+    if t <= 0:
+        return 0.0
+    n = float(now if now is not None else __import__("time").time())
+    return max(0.0, (n - t) / 86400.0)
+
+
+def pending_events(chat_key: str, limit: int = 8, *, cfg=None, now=None) -> list:
+    """还在时效内的情感/事件记录（**新→旧**）⇒ 供提示词注入。
+
+    `long_term=True` 的**永不过期**；否则从记录时间起超过 `memory.event_expire_days`
+    （**≤0 ⇒ 全部不过期**）就**不再出现**（文件里那条仍在，只是不进提示词）。
+    """
+    c = _mem_cfg(cfg)
+    _days = _int_or(c, "event_expire_days", _DEFAULT_EVENT_EXPIRE_DAYS)
+    out = []
+    for rec in list_events(chat_key, limit=500):
+        if not isinstance(rec, dict):
+            continue
+        if bool(rec.get("long_term")):
+            out.append(rec)
+            continue
+        if _days <= 0 or _age_days(rec.get("ts"), now) <= _days:
+            out.append(rec)
+    return out[: max(1, int(limit or 8))]
+
+
+def due_anniversaries(chat_key: str, today_md: str = "", *, limit: int = 5) -> list:
+    """**今天到点的纪念日**（`date` 的月-日 ＝ 今天）⇒ 新→旧。
+
+    ⛔ `date` 里**必须**有月日才可能命中（只写"明年结婚"这种抽不出日期的，不进这一档，
+      它属于"待跟进/事件"）。跨年**自动重复生效**（只比 `MM-DD`）。
+    """
+    want = _mmdd(today_md) or __import__("time").strftime("%m-%d")
+    out = []
+    for rec in list_events(chat_key, limit=1000):
+        if not isinstance(rec, dict):
+            continue
+        if _mmdd(rec.get("date")) == want:
+            out.append(rec)
+    return out[: max(1, int(limit or 5))]
+
+
+def _followups_file(chat_key: str) -> str:
+    return os.path.join(_chat_dir(chat_key), "followups.jsonl")
+
+
+def _append_followup_raw(chat_key: str, rec: dict) -> dict:
+    """追加一条（**append-only**）—— 写不进去就抛（调用方需要知道"没记上"）。"""
+    p = _followups_file(chat_key)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return rec
+
+
+def append_followup(chat_key: str, what: str, *, who: str = "", due: str = "",
+                    long_term: bool = False) -> dict:
+    """记一件"以后要问问"的事（短期的如「明天考试」；长期的如「明年结婚」标 `long_term`）。"""
+    import time as _t
+    body = str(what or "").strip()
+    if not body:
+        raise ValueError("待跟进内容为空")
+    return _append_followup_raw(chat_key, {
+        "op": "add", "ts": _t.time(), "what": body, "who": str(who or ""),
+        "due": str(due or ""), "long_term": bool(long_term)})
+
+
+def resolve_followup(chat_key: str, what: str, *, answered: bool = True) -> dict:
+    """给一条待跟进**记状态**：`answered=True` ＝问到了答案（**以后不再提**）；
+    `answered=False` ＝**这次问了、对方没答**（第 125 项：过一阵可以自然地再提一次）。
+
+    ⛔ 用"再追加一条状态行"而不是改原行：文件保持 append-only（谁/什么时候问的留痕，
+      与"记忆覆盖要留审计"同一条口径）。读的时候折叠（`_fold_followups`）。
+    """
+    import time as _t
+    body = str(what or "").strip()
+    if not body:
+        raise ValueError("待跟进内容为空")
+    return _append_followup_raw(chat_key, {
+        "op": ("answered" if answered else "asked"), "ts": _t.time(), "what": body})
+
+
+def _read_followups(chat_key: str) -> list:
+    out = []
+    try:
+        with open(_followups_file(chat_key), "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception:  # noqa: BLE001
+        return []
+    return out
+
+
+def _fold_followups(rows) -> list:
+    """把 append-only 的行**折叠**成条目（`add` 建条目，`asked`/`answered` 累状态）。"""
+    book, order = {}, []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        what = str(r.get("what") or "").strip()
+        if not what:
+            continue
+        key = what
+        if r.get("op") == "add":
+            if key not in book:
+                order.append(key)
+                book[key] = {"what": what, "who": str(r.get("who") or ""),
+                             "due": str(r.get("due") or ""), "long_term": bool(r.get("long_term")),
+                             "ts": r.get("ts") or 0, "asked_count": 0, "last_asked": 0,
+                             "answered": False, "answered_at": 0}
+            continue
+        it = book.get(key)
+        if it is None:      # 没有 add 行（手改/截断）⇒ 不凭空造条目
+            continue
+        if r.get("op") == "asked":
+            it["asked_count"] = int(it.get("asked_count") or 0) + 1
+            it["last_asked"] = r.get("ts") or 0
+        elif r.get("op") == "answered":
+            it["answered"] = True
+            it["answered_at"] = r.get("ts") or 0
+    return [book[k] for k in order]
+
+
+def pending_followups(chat_key: str, user_ids=None, *, limit=None, cfg=None, now=None) -> list:
+    """**该问还没问成**的待跟进（新→旧）⇒ 供提示词注入 / 主动私聊挑话题。
+
+    三条筛法：
+      · **答过的** ⇒ 不再出现（第 125 项：「对方答过 ⇒ 不再提」）；
+      · **过期**的 ⇒ 不再出现（`memory.followup_expire_days`，**≤0 ⇒ 全部不过期**；
+        `long_term=True` 的**永不过期** —— 「真人两三年后都记得」）；
+      · `user_ids` 给了 ⇒ 只要这些人的（`who` 匹配）。
+    `limit` 不给 ⇒ 用 `memory.followup_show_max`（防提示词被塞爆）。
+    """
+    c = _mem_cfg(cfg)
+    days = _int_or(c, "followup_expire_days", _DEFAULT_FOLLOWUP_EXPIRE_DAYS)
+    if limit is None:
+        limit = _int_or(c, "followup_show_max", _DEFAULT_FOLLOWUP_SHOW_MAX)
+    want = {str(x) for x in (user_ids or []) if str(x or "").strip()}
+    out = []
+    for it in _fold_followups(_read_followups(chat_key)):
+        if it.get("answered"):
+            continue
+        if not bool(it.get("long_term")) and days > 0 and _age_days(it.get("ts"), now) > days:
+            continue
+        if want and str(it.get("who") or "") and str(it.get("who")) not in want:
+            continue
+        out.append(it)
+    out.sort(key=lambda x: -(x.get("ts") or 0))
+    return out[: max(0, int(limit or 0))] if limit else out
+
+
+def proactive_seeds(chat_key: str, user_ids=None, *, cfg=None, now=None) -> dict:
+    """**主动/自然提起要用的数据源**（第 121 项）⇒ `{followups, anniversaries, events}`。
+
+    为什么要有这一个入口：以前这三样各有各的读法，谁想用谁自己拼（于是没人拼）。
+    ⇒ 收成一个函数：**到点纪念日** ＋ **该问还没问的** ＋ **还在时效内的事件**，
+    提示词注入与（将来的）主动私聊都从这里取（第 124 项的"纪念日提醒"也接这里）。
+    """
+    return {"followups": pending_followups(chat_key, user_ids, cfg=cfg, now=now),
+            "anniversaries": due_anniversaries(chat_key),
+            "events": pending_events(chat_key, limit=6, cfg=cfg, now=now)}
+
+
+def seeds_for_prompt(chat_key: str, user_ids=None, *, cfg=None, now=None) -> str:
+    """把 `proactive_seeds()` 渲染成**一段提示词**（没有内容 ⇒ 空串，绝不硬凑）。"""
+    s = proactive_seeds(chat_key, user_ids, cfg=cfg, now=now)
+    lines = []
+    for a in s.get("anniversaries") or []:
+        lines.append("· 今天是「%s」（%s 的事）——要提就自然提一句，别硬念日期"
+                     % (str(a.get("what") or "").strip()[:60], _safe_name(a.get("who"), "某人")))
+    for f in s.get("followups") or []:
+        _n = int(f.get("asked_count") or 0)
+        _who = _safe_name(f.get("who"), "")
+        _hint = ("（问过 %d 次还没答：这次换个说法自然提，别催）" % _n) if _n else "（还没问过）"
+        lines.append("· 有件事该问一下：%s%s %s"
+                     % (str(f.get("what") or "")[:60],
+                        ("（关于 %s）" % _who) if _who else "", _hint))
+    for e in s.get("events") or []:
+        _em = {"good": "（他高兴的事）", "bad": "（他难过的事，先共情、别说教）"}.get(
+            str(e.get("emotion") or ""), "")
+        lines.append("· 记着：%s %s" % (str(e.get("what") or "")[:60], _em))
+    if not lines:
+        return ""
+    return "【你记得的事】\n" + "\n".join(lines[:10])
+
+
+# ── 亲近度 / 活跃时段（第 115·116 项）──────────────────────────────
+#   数据源＝成员档里那串印象记录（`impressions: [{content, createdAt(ms)}]`），
+#   它**本来就在落盘**（`_append_raw`）⇒ 这两个量不需要新采集，算出来即可。
+#   ⛔ 两者都**只读**、**不抛**（拿不到数据 ⇒ 返回 0 / 空表，不许编）。
+
+def _member_impressions(chat_key: str, user_id: str = "", name: str = "") -> list:
+    """该成员在**这个群**里的印象记录（`createdAt` 已归一成**秒**；读不出 ⇒ 空表）。"""
+    out = []
+    try:
+        d = _chat_dir(chat_key)
+        want_id, want_nm = str(user_id or ""), str(name or "")
+        for fn in os.listdir(d):
+            if not fn.endswith(".json") or fn == "_meta.json":
+                continue
+            raw = _read_json(os.path.join(d, fn), None)
+            if not isinstance(raw, dict):
+                continue
+            if want_id and str(raw.get("userId") or "") != want_id:
+                continue
+            if not want_id and want_nm and str(raw.get("name") or "") != want_nm:
+                continue
+            for it in raw.get("impressions") or []:
+                try:
+                    ts = float(it.get("createdAt") or 0)
+                except Exception:  # noqa: BLE001
+                    continue
+                if ts > 1e11:
+                    ts = ts / 1000.0
+                if ts > 0:
+                    out.append(ts)
+    except Exception:  # noqa: BLE001
+        return []
+    return sorted(out)
+
+
+def closeness(chat_key: str, user_id: str = "", *, name: str = "", now=None,
+              msgs_for_close: int = 50, half_life_days: float = 7.0) -> float:
+    """**亲近度** 0~1 ＝ `频率×0.6 + 最近活跃衰减×0.4`（第 115 项）。
+
+    · 频率：印象条数 / `msgs_for_close`（默认 50 条算"熟"，**封顶 1**）；
+    · 最近活跃：`exp(-距今天数 / half_life_days)`（半衰期 7 天）。
+    ⛔ 没有记录 ⇒ **0.0**（不当成"不熟但也没疏远"的中位数去编）。
+    """
+    ts = _member_impressions(chat_key, user_id, name)
+    if not ts:
+        return 0.0
+    n = float(len(ts))
+    freq = min(1.0, n / float(max(1, int(msgs_for_close))))
+    last_age = _age_days(ts[-1], now)
+    fresh = 2.718281828459045 ** (-(last_age / max(0.1, float(half_life_days))))
+    try:
+        v = float(freq) * 0.6 + float(fresh) * 0.4
+    except Exception:  # noqa: BLE001
+        return 0.0
+    return round(max(0.0, min(1.0, v)), 4)
+
+
+def active_hours(chat_key: str, user_id: str = "", *, name: str = "", now=None) -> list:
+    """**活跃时段直方图**（第 116 项）⇒ `[0..23]` 每个小时的出现次数（本地时区）。
+
+    用途：主动私聊"挑对方常在的时段"（第 122 项的 `time_aware`）。
+    ⛔ 读不到 ⇒ 全 0（**不编**）；这里是"什么时候说过话"的**原始计数**，
+      要不要按样本量归一由调用方决定（判据只认"晚上活跃的样本 ⇒ 晚上计数高"）。
+    """
+    buckets = [0] * 24
+    for ts in _member_impressions(chat_key, user_id, name):
+        try:
+            buckets[int(__import__("time").localtime(ts).tm_hour) % 24] += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return buckets
+
+
+def busiest_hours(chat_key: str, user_id: str = "", *, name: str = "", n: int = 3) -> list:
+    """最活跃的几个小时（**降序**，并列时取早的）⇒ 主动排程直接可用。"""
+    b = active_hours(chat_key, user_id, name=name)
+    pairs = sorted(range(24), key=lambda h: (-b[h], h))
+    return [h for h in pairs[: max(1, int(n or 3))] if b[h] > 0]
+
+
+def _fold_same_name(rows: list) -> list:
+    """折叠「同名两套键」（第 117 项）：**按 wxid 的档** vs **按名字的 `_n_` 档**。
+
+    为什么会两套：`_n_` 那一档来自"关机总结"这类**拿不到精确 userId** 的路径
+    ⇒ 同一个人在两处各留一份档案 ⇒ 面板上**显示两行**。
+
+    ⛔ **只在"分得清是同一个人"时才折**（与「『唯一』这类最强结论要配最强证据」同一条口径）：
+      · 名字在整表里**只出现两次**（一条有 wxid、一条没有）⇒ 折成一条（**保留 wxid 那条**，
+        印象**并集**去重、更新时间取较新）；
+      · 名字出现**三次以上**（可能真是两个同名的人）⇒ **不折**，只给这些行标
+        `ambiguous_name=True` —— **宁可多显示一行，也不把两个人的记忆串到一起**。
+    """
+    by_name = {}
+    for r in rows or []:
+        nm = str(r.get("name") or "").strip()
+        if nm:
+            by_name.setdefault(nm, []).append(r)
+    drop = set()
+    for nm, group in by_name.items():
+        if len(group) != 2:
+            continue
+        with_id = [r for r in group if str(r.get("userId") or "")]
+        no_id = [r for r in group if not str(r.get("userId") or "")]
+        if len(with_id) != 1 or len(no_id) != 1:
+            continue
+        keep, merge = with_id[0], no_id[0]
+        seen = {str(e.get("content") or "") for e in (keep.get("impressions") or [])}
+        for e in (merge.get("impressions") or []):
+            c = str(e.get("content") or "")
+            if c and c not in seen:
+                keep.setdefault("impressions", []).append(e)
+                seen.add(c)
+        keep["updatedAt"] = max(int(keep.get("updatedAt") or 0), int(merge.get("updatedAt") or 0))
+        keep["folded_from_name_key"] = True
+        drop.add(id(merge))
+    out = []
+    for r in rows or []:
+        if id(r) in drop:
+            continue
+        out.append(r)
+    # ⛔ 这一步**与"折没折成"无关**：折过之后如果同一个名字还剩多行 ⇒ 如实标"分不清"，
+    #   不装作已经干净（旧写法把它放在 `if not drop: return` 后面 ⇒ **一行都没折时它永远不跑**）。
+    _cnt = {}
+    for r in out:
+        _cnt[str(r.get("name") or "")] = _cnt.get(str(r.get("name") or ""), 0) + 1
+    for r in out:
+        if _cnt.get(str(r.get("name") or ""), 0) > 1:
+            r["ambiguous_name"] = True
+    return out
+
+
+# ── 热词统计────────────────────────────────────────────
+#   群梗词典的第一步就是"最近大家老在说什么词"。
+#   ⛔ **不引分词库**（装不装 jieba 都能跑）：按**连续的汉字/字母数字串**切片，
+#      再用停用词表滤掉"的/了/是"这类噪声 ⇒ 零依赖、可判定、结果可复算。
+_STOP = {"的", "了", "是", "在", "我", "你", "他", "她", "它", "们", "和", "就", "都", "也",
+         "有", "没有", "这个", "那个", "什么", "怎么", "为什么", "但是", "然后", "所以",
+         "一下", "一个", "可以", "不是", "还是", "因为", "如果", "可能", "自己", "觉得"}
+
+
+def hot_words(chat_key: str, limit: int = 30, min_len: int = 2, top_scan: int = 2000) -> list:
+    """这个群的**热词** ⇒ `[(词, 次数), ...]`（降序）。
+
+    `min_len`：短于这个长度的词不算（默认 2 ⇒ 滤掉单个字）；`top_scan`：最多看多少条消息。
+    ⛔ **样本为空 ⇒ 返回空**（不编）；结果**可复算**（同样的历史同一次序）。
+    """
+    import re as _re
+    from collections import Counter as _C
+    cnt = _C()
+    try:
+        rows = history(chat_key, limit=int(top_scan or 2000)) or []
+    except Exception: # noqa: BLE001
+        return []
+    for m in rows:
+        _t = str((m or {}).get("text") or (m or {}).get("content") or "")
+        if not _t:
+            continue
+        for seg in _re.findall(r"[\u4e00-\u9fa5A-Za-z0-9]+", _t):
+            # ⛔ **不能把整段当一个词** —— 那会把「今天的考试好难啊」整句算成"热词"（实测踩过）。
+            #    改用 **2–4 字滑窗**取 n-gram（零依赖、可复算）：真正高频的短串自然浮上来，
+            #    再由调用方按频次取前 N。
+            _L = len(seg)
+            for _n in (2, 3, 4):
+                if _L < _n:
+                    continue
+                for _i in range(_L - _n + 1):
+                    _w = seg[_i:_i + _n]
+                    if _w in _STOP or len(_w) < max(1, int(min_len or 2)):
+                        continue
+                    cnt[_w] += 1
+    if not cnt:
+        return []
+    return cnt.most_common(max(1, int(limit or 30)))
+
+
+def search(chat_key: str, keyword: str, limit: int = 20) -> list:
+    """在这个群的历史里**按关键词搜**（大小写不敏感）⇒ 命中的消息列表（新→旧）。
+
+    ⛔ 两条边界：**`keyword` 为空 ⇒ 返回空**（不许"空串匹配所有"）；搜不到 ⇒ 空列表（**不编**）。
+    """
+    kw = str(keyword or "").strip().lower()
+    if not kw:
+        return []
+    out = []
+    try:
+        for m in (history(chat_key, limit=2000) or []):
+            _t = str((m or {}).get("text") or (m or {}).get("content") or "")
+            if kw in _t.lower():
+                out.append(m)
+                if len(out) >= max(1, int(limit or 20)):
+                    break
+    except Exception: # noqa: BLE001
+        return []
+    return out
+
+
 def history(chat_key: str, limit: int = 50) -> list:
     """读回这个群的覆盖审计（旧 → 新，最多 `limit` 条）。读不出来就返回空表，不抛。"""
     out = []
@@ -162,7 +745,8 @@ def history(chat_key: str, limit: int = 50) -> list:
                     continue
                 try:
                     rec = json.loads(line)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue
                 if isinstance(rec, dict):
                     out.append(rec)
@@ -177,15 +761,6 @@ def history(chat_key: str, limit: int = 50) -> list:
 def _data_dir() -> str:
     """记忆根目录（互通池枚举用）。"""
     return MEMORY_DIR
-
-
-def _unname_dir(name: str) -> str:
-    """把加密目录名还原为原始 chat_key 近似值（缺省 = 原名，够用于 pool 合并）。"""
-    return str(name or "").replace("memory_", "", 1)
-
-
-def _chat_dir_meta_path(dir_name: str) -> str:
-    return os.path.join(MEMORY_DIR, dir_name, "_meta.json")
 
 
 def chat_keys_on_disk() -> list:
@@ -334,7 +909,8 @@ class MemoryStore:
                     if not str(meta.get("chat_key") or "").strip():
                         os.makedirs(cdir, exist_ok=True)
                         _write_json(mp, {**meta, "chat_key": str(chat_key)})
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
             self.cache[chat_key] = m
         return self.cache[chat_key]
@@ -369,7 +945,8 @@ class MemoryStore:
                         continue
                     try:
                         raw = _read_json(os.path.join(cdir, fn), None)
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         continue
                     if not raw:
                         continue
@@ -380,7 +957,8 @@ class MemoryStore:
                         if c and len(c) >= 4 and c not in seen:
                             seen.add(c)
                             texts.append(c)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return texts
 
@@ -424,7 +1002,10 @@ class MemoryStore:
                 if ident not in merged:
                     merged[ident] = {
                         "userId": mem.get("userId") or "",
-                        "name": str(mem.get("name") or mem.get("userId") or "某人"),
+                        # ⛔ `name` **不许**回落成 `userId`（那是 wxid）：这个 dict 会一路走到
+                        #   `format_for_prompt` ⇒ 回落等于把真实账号喂给模型。没昵称就留空，
+                        #   由消费方用 `_safe_name()` 兜一个占位名；要看 uid 的地方用 `userId`。
+                        "name": str(mem.get("name") or ""),
                         "impressions": list(mem.get("impressions") or []),
                         "updatedAt": mem.get("updatedAt") or 0,
                         "lastConsolidatedAt": mem.get("lastConsolidatedAt") or 0,
@@ -434,7 +1015,11 @@ class MemoryStore:
                     merged[ident]["updatedAt"] = max(merged[ident]["updatedAt"], mem.get("updatedAt") or 0)
         out = [dict(v, impressions=[dict(e) for e in v["impressions"]]) for v in merged.values()]
         out.sort(key=lambda x: -(x["updatedAt"] or 0))
-        return out
+        return _fold_same_name(out)
+
+    def list_members(self, chat_key: str):
+        """同上（`members()` 的别名，面板/工具两处都在用）。"""
+        return self.members(chat_key)
 
     def remove(self, chat_key: str, category: str, user_id="", target="", content="", scope="all"):
         """删成员印象。`scope`＝**删除范围**：
@@ -476,7 +1061,8 @@ class MemoryStore:
                     m.pop(mk, None)
                     try:
                         os.remove(_member_file(key, mem.get("userId"), mem.get("name")))
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass  # 清理型：静默合法
                 else:
                     mem["updatedAt"] = int(__import__("time").time() * 1000)
@@ -612,7 +1198,8 @@ class MemoryStore:
             return ""
         lines = ["【对群友的印象】"]
         for m in picked:
-            who = notes.get(str(m["userId"])) or m["name"] or str(m["userId"] or "") or "某人"
+            # ⛔ 显示名**只从备注/昵称来**，并且过一道 `_safe_name`（防上游某处又把 uid 塞进 name）
+            who = _safe_name(notes.get(str(m["userId"])) or m.get("name"))
             for e in m["impressions"][-3:]:
                 lines.append("- %s：%s" % (who, e["content"]))
             lt = self._last_talk(m, store, chat_key, exclude_ids=exclude_ids)
@@ -620,6 +1207,31 @@ class MemoryStore:
                 ago = self._rel_time(lt["ts"])
                 lines.append("- %s：上次聊过「%s」%s" % (who, lt["text"], ("（%s）" % ago) if ago else ""))
         return "\n".join(lines)
+
+    # ── 时效 / 纪念日 / 待跟进 / 亲近度 / 活跃时段（第 113·114·115·116·121·125 项）──
+    #   ⛔ **薄封装**：实现只有模块级那一份，这里只是让 `ctx["memory"].xxx()` 能直接调
+    #     （提示词注入走的就是这个入口 —— 别在类里再写一份，"两处实现"必然漂）。
+
+    def pending_followups(self, chat_key: str, user_ids=None, *, limit=None, cfg=None, now=None):
+        return pending_followups(chat_key, user_ids, limit=limit, cfg=cfg, now=now)
+
+    def pending_events(self, chat_key: str, limit: int = 8, *, cfg=None, now=None):
+        return pending_events(chat_key, limit, cfg=cfg, now=now)
+
+    def due_anniversaries(self, chat_key: str, today_md: str = "", *, limit: int = 5):
+        return due_anniversaries(chat_key, today_md, limit=limit)
+
+    def proactive_seeds(self, chat_key: str, user_ids=None, *, cfg=None, now=None):
+        return proactive_seeds(chat_key, user_ids, cfg=cfg, now=now)
+
+    def seeds_for_prompt(self, chat_key: str, user_ids=None, *, cfg=None, now=None):
+        return seeds_for_prompt(chat_key, user_ids, cfg=cfg, now=now)
+
+    def closeness(self, chat_key: str, user_id: str = "", *, name: str = "", **kw):
+        return closeness(chat_key, user_id, name=name, **kw)
+
+    def active_hours(self, chat_key: str, user_id: str = "", *, name: str = ""):
+        return active_hours(chat_key, user_id, name=name)
 
     # ── 自动整理 ─────────────────────────────────────────────────────────
 
@@ -697,7 +1309,8 @@ class MemoryStore:
                 if meta:
                     meta.pop("lastConsolidatedAt", None)
                     _write_json(mp, meta)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         self.cache.clear()
         if failed:

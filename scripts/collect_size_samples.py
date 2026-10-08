@@ -38,6 +38,9 @@ import json
 import os
 import sys
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -50,8 +53,38 @@ def _wx_version():
     """微信 exe 的文件版本（版本分档要用它）。取不到给空串。"""
     try:
         import win32api # type: ignore
-        for p in (r"M:\WX\Weixin", r"C:\Program Files\Tencent\Weixin"):
-            if not os.path.isdir(p):
+        # ⭐ **三来源**：原来只扫两个硬编码目录 ⇒ 用户装在别处就**取不到版本号**。
+        #    ① 注册表（微信自己的项里带 InstallPath）② 常见默认路径 ③ **从正在运行的进程拿 exe 路径**。
+        _cands = []
+        try:
+            import winreg as _wr
+            for _root, _key in ((_wr.HKEY_CURRENT_USER, r"Software\Tencent\Weixin"),
+                               (_wr.HKEY_LOCAL_MACHINE, r"Software\Tencent\Weixin"),
+                               (_wr.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Tencent\Weixin")):
+                try:
+                    with _wr.OpenKey(_root, _key) as _k:
+                        _v, _ = _wr.QueryValueEx(_k, "InstallPath")
+                        if _v:
+                            _cands.append(str(_v))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        _cands += [r"M:\WX\Weixin", r"C:\Program Files\Tencent\Weixin",
+                   os.path.join(os.environ.get("ProgramFiles(x86)", ""), r"Tencent\Weixin")]
+        try:
+            import psutil
+            for _p in psutil.process_iter(["name", "exe"]):
+                _nm = (_p.info.get("name") or "").lower()
+                if _nm.startswith(("weixin", "wechat")):
+                    _e = _p.info.get("exe")
+                    if _e:
+                        _cands.append(os.path.dirname(_e))
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            pass
+        for p in _cands:
+            if not p or not os.path.isdir(p):
                 continue
             for d in sorted(os.listdir(p), reverse=True):
                 exe = os.path.join(p, d, "Weixin.exe")
@@ -59,7 +92,11 @@ def _wx_version():
                     info = win32api.GetFileVersionInfo(exe, "\\")
                     ms, ls = info["FileVersionMS"], info["FileVersionLS"]
                     return "%d.%d.%d.%d" % (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
-    except Exception:
+        # ⛔ 取不到时**说清试过哪些路径**（不然"版本号空着"根本没法排障 —— 这条是讲人话的底线）
+        print("  [版本号] 三个来源都没命中，试过：%s"
+              % "；".join((p or "(空)") for p in _cands[:6]))
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return ""
 
@@ -112,7 +149,8 @@ def main():
         if int(_rr[0]) < -10000:
             print("  ⛔ 窗口是最小化/屏幕外（render_rect=%s）⇒ 先点开微信窗口再跑" % (_rr,))
             return 2
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     print("  ✓ GUI 就绪（main_hwnd=%s, dpi=%d）" % (_main, _dpi(_main)))
     print("  微信版本 = %s" % (_ver or "?"))
@@ -135,7 +173,8 @@ def main():
                 _rec.update({"w": _w, "h": _h, "dpi": _dpi(_main)})
                 try:
                     _rec["theme"] = CH.detect_polarity(_img)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     _rec["theme"] = ""
                 _pl = 0
                 try:
@@ -155,7 +194,8 @@ def main():
                         _c = _img.crop(_tb)
                         _c = _c.resize((_c.width * 2, _c.height * 2))
                         _ttl = "".join(str(x[0]) for x in CO.recognize_dual(_c)).strip()
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     _ttl = ""
                 _rec["title"] = _ttl[:40]
                 if _ttl:
@@ -163,7 +203,8 @@ def main():
                 try:
                     _hl = CO.highlight(_img)
                     _rec["hl_name"] = str((_hl or {}).get("name") or "")[:32]
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     _rec["hl_name"] = ""
                 try:
                     _img.save(os.path.join(_out, "frame-%03d.png" % _i))

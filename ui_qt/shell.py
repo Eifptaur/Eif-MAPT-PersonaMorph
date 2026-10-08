@@ -63,12 +63,13 @@ from cursor_fx import WhaleCursor # noqa: E402
 from heal import Health, Probe, plan_for, probe_backend # noqa: E402
 from ocean import OceanWaves, paint_backdrop # noqa: E402
 from panels_qt import BATCH_SECS, build_panel # noqa: E402
-from stylekit_qt import (THEMES, Tokens, apply_font_to_app, field_qss, pill, qfont,  # noqa: E402
-                         resolve_family, rgba, surface_bg)
+from stylekit_qt import (THEMES, Tokens, apply_font_to_app, bevel, bevel_edges, field_qss,  # noqa: E402
+                         mix, pill, qfont, qss, resolve_family, rgba, surface_bg)
 from widgets import ( # noqa: E402
     Badge,
     Btn,
     Card,
+    emboss,
     Field,
     FieldCombo,
     IconBtn,
@@ -84,25 +85,23 @@ from widgets import ( # noqa: E402
 # ---------------------------------------------------------------- DPI 纪律
 
 
-def _add_text_shadow(lab, blur: float = 2.4, alpha: int = 230) -> None: # noqa: ANN001
-    """给顶栏文字加「描边式」深色投影（0 偏移），在任何底图上都能把字廓出来。
+def _read_auto_apply() -> bool:
+    """读「改完即生效」开关（QSettings 键 `auto_apply`，默认开）。
 
-    ⚠️ 为什么不用 QSS：Qt 样式表**不支持 text-shadow**（写了不报错、静默丢弃 ——
-    实跑像素验证暗像素=0）。唯一可行路径是 QGraphicsDropShadowEffect。
-    0 偏移 + 小 blur = 四周一圈暗边（不是投影），正好抵消底图亮部对字边的冲刷。
-    主题重建会销毁整个顶栏，effect 随控件一起回收，不需要手工解引用。
+    ⚠️ 必须与 `panels_qt` / `panels_custom` 各面板底部那颗开关**同一个键** ——
+    顶栏的胶囊只负责把它摆到"一眼看得见"的位置，**不另起一套状态**；
+    否则两处会各说各话（顶栏显示关、面板里却是开）。
     """
-    try:
-        from PySide6.QtGui import QColor as _QC # noqa: PLC0415
-        from PySide6.QtWidgets import QGraphicsDropShadowEffect # noqa: PLC0415  # 在 QtWidgets，不在 QtGui
+    from PySide6.QtCore import QSettings # noqa: PLC0415
 
-        eff = QGraphicsDropShadowEffect(lab)
-        eff.setBlurRadius(float(blur))
-        eff.setOffset(0.0, 0.0) # 0 偏移 = 描边而非投影
-        eff.setColor(_QC(0, 8, 20, int(alpha)))
-        lab.setGraphicsEffect(eff)
-    except Exception: # noqa: BLE001 — 投影是增强，失败不影响文字本体
-        pass
+    return bool(QSettings("WXAgent", "persona-morph-ui").value("auto_apply", True, type=bool))
+
+
+# 曾有一个 `_add_text_shadow()`：给顶栏文字加 0 偏移的深色投影，用来抵消
+# "底图亮部把字边冲掉"。顶栏底色改成**实心浅蓝**、文字随之走深色档之后，
+# 这个投影不再需要（深字叠深投影只会让笔画发脏）⇒ 已移除。
+# ⚠️ 若将来顶栏回到"半透、透出底图"的形态，需要把它重新引入
+#    （QSS 无 text-shadow，只能走 QGraphicsDropShadowEffect，0 偏移 = 描边）。
 
 
 def set_per_monitor_dpi() -> str:
@@ -128,7 +127,7 @@ def set_per_monitor_dpi() -> str:
 # ---------------------------------------------------------------- 导航数据
 
 
-# 5 组 27 项 —— 组名 / key / 项名 / 顺序逐项抄自 assets/console/index.html 的
+# 5 组 28 项 —— 组名 / key / 项名 / 顺序逐项抄自 assets/console/index.html 的
 # <aside class="side">（nav 区，L936 起），hint 摘自各面板 <div class="desc"> 第一句。
 # **以 web 源码为唯一真值**：不自造组名、不用比喻命名（
 # 分区按功能来；文案对齐 web 侧朴素直给的口吻）。
@@ -147,6 +146,7 @@ NAV: list[tuple[str, str, list[tuple[str, str, str]]]] = [
         ("共享", "记忆怎么存、怎么共享、什么时候整理", "memory-set"),
         ("搜索", "搜索引擎与参数，保存后真实落盘生效", "search"),
         ("社区", "金句与意见的本地导出、反应评分引擎", "community"),
+        ("表情", "自定义表情的语义索引：这张图是什么梗、什么时候用", "emoji"),
     ]),
     ("内容", "media", [
         ("媒体", "发图、发语音、发文件，开关默认都是关的", "media"),
@@ -231,7 +231,12 @@ class Shell(QWidget):
         #   波纹要跟着光标自由移动就必须开 mouseTracking（web 侧波纹随鼠标即动，
         #   没有「必须先按住」这一说）。不开就只在拖窗口时才见波纹，等于失效。
         self.setMouseTracking(True)
-        self.resize(1120, 720)
+        # 启动尺寸：按用户指定的 1088×632。
+        # ⚠️ 原来 1120×720 —— 那个宽度下**顶栏放不下**：胶囊被挤到换行、
+        #    文字互相叠（截图取证）。窗口比 1120 窄时更糟。
+        #    ⇒ 这里只是把默认值调到位；真正的兜底是 `resizeEvent` 里的**顶栏收缩态**
+        #      （窄到装不下就把胶囊收成图标）。
+        self.resize(1088, 632)
         self.setMinimumSize(860, 560)
         self._build()
         self._setup_tray(icon)
@@ -290,7 +295,7 @@ class Shell(QWidget):
         self._pause_timer.start()
         # P0-A①：面板徽章全量接线 —— 一个 8 秒轮询拉 /api/status
         # （+ /api/personas 人设计数），按 panels_qt.badge_for 的 web 同款
-        # 口径分发到 27 个面板徽章。旧病根：徽章建出来后全文件无 set，
+        # 口径分发到 28 个面板徽章。旧病根：徽章建出来后全文件无 set，
         # 用户永远看到「读取中」。
         QTimer.singleShot(1200, self._poll_badges)
         self._badge_timer = QTimer(self)
@@ -314,7 +319,7 @@ class Shell(QWidget):
 
     # 上传背景的落盘扩展名（后端按魔数探测后写 ui_bg.<ext>；见 webui 背景上传处理）。
     # ⛔ 不能只认 jpg：后端存的是 ui_bg.png/webp/gif/mp4/…，只找 jpg ⇒ 上传后永远
-    #   找不到文件、静默回默认海（用户「上传背景完全无效」的根因）。
+    #   找不到文件、静默回默认海（的根因）。
     _BG_EXTS = ("jpg", "jpeg", "png", "webp", "gif")
 
     def _wallpaper_source(self) -> Path:
@@ -465,6 +470,32 @@ class Shell(QWidget):
         btn = getattr(self, "btn_max", None)
         if btn is not None:
             btn.update()
+        # 顶栏收缩态：窗口窄到装不下整条顶栏时，胶囊收成图标（见 `_set_bar_tight`）
+        _tb = getattr(self, "titlebar", None)
+        if _tb is not None and getattr(self, "_chip_wide", None):
+            if not self._bar_tight:
+                # ⚠️ **必须在展开态测**：收起后文字/值被隐藏，顶栏自己就变窄了，
+                #    拿"收起后的宽度"去判会读成"装得下" ⇒ 又展开 ⇒ 永远来回抖。
+                #    所以只在展开态更新这个"原样摆开需要多宽"，收起态沿用上次的值。
+                self._bar_need = _tb.sizeHint().width()
+            self._set_bar_tight(int(getattr(self, "_bar_need", 0)) > self.width())
+
+    def _set_bar_tight(self, on: bool) -> None:
+        """顶栏收缩态：装不下时，胶囊收成**只有一颗图标**（全文交给 tooltip）。
+
+        约定：顶栏装不下时收成图标，拉宽后自动变回完整形态。
+
+        ⚠️ 判据必须**实测**（顶栏 `sizeHint().width()` 与窗口宽比），不能写死像素阈值：
+           胶囊数量、文案语种（鲸语比正常长一截）、主题字号都会改变"装不装得下"。
+        ⚠️ 切换用 `setVisible` 而不是重建控件 —— 重建会丢掉余额/监听那些正在轮询的值。
+        """
+        if on == self._bar_tight:
+            return
+        self._bar_tight = on
+        for w in getattr(self, "_chip_wide", []):
+            w.setVisible(not on)
+        for w in getattr(self, "_chip_narrow", []):
+            w.setVisible(on)
 
     def showEvent(self, ev) -> None: # noqa: N802
         super().showEvent(ev)
@@ -562,7 +593,7 @@ class Shell(QWidget):
           ① #7 每页套 QScrollArea 后内容控件铺满四缘：左缘命中 Side、
              右缘命中页面滚动条（宽 6px 恰好躺在 8px 热区里）、下缘命中页面
              QLabel ⇒ on_widget 恒 True ⇒ 四边四角分支**永远到不了**，
-             用户实测「不能放大缩小」；
+             「不能放大缩小」；
           ② 顶栏左侧标题带是纯显示 QLabel（「群相 控制台」/「原生界面 v1.0」），
              命中即 HTCLIENT ⇒ 视觉标题栏一半拖不动。
         修复 = 顺序翻转 + 命中分类：
@@ -825,6 +856,18 @@ class Shell(QWidget):
 
         root.addWidget(self._build_titlebar())
 
+        # ── 更新公告条：**顶栏下方独立一条**（web `#updBar`，assets/console/index.html L759）──
+        #   ⚠️ 不要挪进顶栏：四个按钮会被挤成"每行一两个字"（web 自己也是独立一行）。
+        #   隐藏时这里高度为 0（左右留白交给 layout 的 margin），不会在顶栏下方留空档。
+        from updbar import UpdateBar # noqa: PLC0415
+
+        self.updbar = UpdateBar(self.t)
+        self.updbar.apply_state(getattr(self, "_upd_state", None))
+        _upd_row = QHBoxLayout()
+        _upd_row.setContentsMargins(18, 0, 18, 0) # web `.updbar{margin:0 18px 10px}` 的左右缩进
+        _upd_row.addWidget(self.updbar)
+        root.addLayout(_upd_row)
+
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
@@ -866,63 +909,199 @@ class Shell(QWidget):
 
         lay.addWidget(WhaleBadge())
 
+        # ── 顶栏文字 / 图标色档 ──
+        # whale 的顶栏底是**天蓝**（#3E7FA8）：白字在其上 ≈4.4:1 且笔画醒目，
+        # 深字只有 ≈4.1:1、整条顶栏看着发暗 —— 实测同一底色下白字更清爽。
+        # ⚠️ 这条只跟"底的明度落在哪一段"有关，与"底是不是彩色"无关：
+        #    若底再往上亮一档（回到灰蓝 #5C8094 那种），就该换回深字，否则白字发飘。
+        # light/dark 的顶栏底与各自主题同向，直接用各自的 `t.tx` / `t.tx2`。
+        # （`bar_tx2` 写成 8 位 hex 而不是 `rgba(...)`：Qt 样式表只认 `#AARRGGBB`）
+        bar_tx = "#FFFFFF" if self.t.glass else self.t.tx
+        bar_tx2 = "#DBFFFFFF" if self.t.glass else self.t.tx2
+        # 顶栏**按钮**走的也是"浅底档"（只有浅色底才需要它）：
+        # light 的顶栏是白底、dark 是近黑底，它们照旧走主题自己的按钮档 ——
+        # 传空串即"不启用"。⚠️ 别把 `bar_tx` 直接传下去：light 的 `tx` 是深字，
+        # 一旦被当成浅底档，白底上会画出"白描边按钮"（边界消失）。
+        bar_ink = "#FFFFFF" if self.t.glass else ""
+
+        # 顶栏信息胶囊（web `.chip`）的底/边/字三色。
+        # whale 的顶栏是**天蓝** ⇒ 胶囊要比它更"沉"才成块（半透深色，即"深一层"）；
+        # light/dark 的顶栏与各自主题同向，照 web 用 `t.card`（web 那边 `.chip` 的底就是 `--bg-solid`）。
+        if self.t.glass:
+            # ⚠️ **实色、不透明**。半透明时底图的海浪纹理会从胶囊里透出来（深浅不均），
+            #    看着发脏。顶栏那层"透"是设计（要透出海面），但**胶囊是控件** ——
+            #    控件要"实"才像一块东西。这里取半透时的等效显示色，观感一致、只是不透了。
+            #    （右边那排按钮/图标钮不走这套，它们保持原来的半透档。）
+            _chip_base = QColor("#2A5B7A")
+            _chip_bd = "#1E4460"
+            _chip_tx, _chip_v = "#DBFFFFFF", "#FFFFFF"
+        else:
+            _chip_base = self.t.q("card")
+            _chip_bd = self.t.bd
+            _chip_tx, _chip_v = self.t.tx2, self.t.tx
+
+        def _chip_style() -> str:
+            """胶囊的**实体感**：渐变底 ＋ 上受光/下背光边（与 `Btn` 同一套做法）。
+
+            QSS 没有 box-shadow / inset-shadow，所以"厚度"只能靠
+            ① 垂直渐变（上亮下暗）② 分段边框（顶亮底暗）。
+            底色由三主题各自推导 ⇒ 不用为每套主题单独配色。
+            """
+            _up = qss(mix(_chip_base, QColor(255, 255, 255), 0.26))
+            _dn = qss(mix(_chip_base, QColor(0, 0, 0), 0.24))
+            return (
+                f"QFrame#TopChip{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                f"stop:0 {qss(mix(_chip_base, QColor(255, 255, 255), 0.09))},"
+                f"stop:1 {qss(mix(_chip_base, QColor(0, 0, 0), 0.09))});"
+                f"border:1px solid {_chip_bd};"
+                f"border-top:1px solid {_up};"
+                f"border-bottom:1px solid {_dn};"
+                f"border-radius:13px;}}"
+                f"QFrame#TopChip QLabel{{background:transparent;border:none;}}")
+
+        # ── 顶栏胶囊工厂（web `.chip`，assets/console/index.html L462-469 的 Qt 版）──
+        #   形态照抄 web：26px 高 / 16px 圆角 / 12px 字 / 淡底 + 细描边；
+        #   内容是「标签 + 值」，值比标签亮一档（web `.chip b{color:var(--tx)}`）。
+        #   放在最前面：余额、监听、模型、自动生效四颗都从它建 —— 余额还要往胶囊**内部**
+        #   塞一颗掩码小钮（web `#balance-badge` 就是这么长的）。
+        #   ⛔ 顶栏**不放「主人登记」**：那是设置项，面板里已经有了；
+        #      顶栏只留"一眼要看的"：连接态、监听量、模型、余额、自动生效。
+        from widgets import Switch # noqa: PLC0415
+
+        # 顶栏收缩态的两组控件：常态显示哪些、收缩后显示哪些（见 `_set_bar_tight`）。
+        # 用两个平表而不是"三元组"，是因为各胶囊收起来的形态不一样 ——
+        # 监听/模型/余额收成一颗图标，而"改完即生效"的图标就是那个开关本身。
+        self._chip_wide: list = []
+        self._chip_narrow: list = []
+        self._bar_tight: bool | None = None # None = 还没判过（首次 resize 才判）
+
+        def _mk_chip(label: str, icon_key: str = "") -> tuple[QFrame, QLabel]:
+            """建一个顶栏胶囊。返回 (胶囊, 值标签) —— 值单独返回，才能只改数字不动标签。
+
+            `icon_key` 是**收缩态**用的图标（见 `_set_bar_tight`）：窗口窄到装不下时，
+            胶囊只留这颗图标 —— 文案会互相叠，图标至少还认得出是谁。
+            """
+            import icons as _icons # noqa: PLC0415
+
+            box = QFrame(bar)
+            box.setObjectName("TopChip")
+            box.setFixedHeight(26)
+            hb = QHBoxLayout(box)
+            hb.setContentsMargins(10, 0, 10, 0)
+            hb.setSpacing(6)
+            _cap = QLabel(label)
+            _cap.setFont(qfont(self.t, 12))
+            _cap.setStyleSheet(f"color:{_chip_tx};background:transparent;")
+            _val = QLabel("—")
+            _val.setFont(qfont(self.t, 12, 600))
+            _val.setStyleSheet(f"color:{_chip_v};background:transparent;")
+            _ic = QLabel()
+            _ic.setStyleSheet("background:transparent;")
+            if icon_key:
+                _ic.setPixmap(_icons.svg_pixmap(_icons.INNER.get(icon_key, ""), _chip_v, 15))
+            _ic.setVisible(False) # 常态隐藏：只有收缩态才露面
+            hb.addWidget(_ic)
+            hb.addWidget(_cap)
+            hb.addWidget(_val)
+            self._chip_wide += [_cap, _val]
+            self._chip_narrow.append(_ic)
+            box.setStyleSheet(_chip_style())
+            return box, _val
+
         name = QLabel("群相 控制台")
         name.setFont(qfont(self.t, 14, 600, display=True))
-        name.setStyleSheet(f"color:{self.t.tx};background:transparent;")
-        # 顶栏文字加一圈深色投影 —— 「顶栏那些文字对比度做强，不然又被
-        # 背景影响了」。加实顶栏底色不够：底图亮部（浪花）照样能在字边形成光晕，
-        # 把笔画吃掉。⚠️ QSS **没有** text-shadow（Qt 静默忽略，实跑像素验证
-        # 暗像素=0）⇒ 只能用 QGraphicsDropShadowEffect（0 偏移 = 描边式投影）。
-        _add_text_shadow(name, blur=2.4, alpha=230)
+        name.setStyleSheet(f"color:{bar_tx};background:transparent;")
+        # 文字的立体感：一圈描边式暗边，让白字从天蓝底上"浮"起来。
+        # （只在父链没有 effect 的地方挂得上 —— 见 `widgets.emboss` 的嵌套限制说明。）
+        emboss(name, 130, 1.8)
         lay.addWidget(name)
 
         ver = QLabel("原生界面 v1.0") # 落位适配：版本标签摘掉「原型」字样
         ver.setFont(qfont(self.t, 11))
-        ver.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
-        _add_text_shadow(ver, blur=2.0, alpha=200)
+        ver.setStyleSheet(f"color:{bar_tx2};background:transparent;")
         lay.addWidget(ver)
 
-        # 更新公告胶囊：顶栏只留胶囊，
-        # 点开从下方滑出面板（notes 逐条 + 三按钮 + 进度态）—— 把三按钮
-        # 塞进顶栏是设计失误（用户截图：三按钮挤成墨块；web 真值 updBar 本是
-        # 顶栏下方独立一行）。API 链路沿用只换 UI 形态。
-        from updbar import UpdateBar # noqa: PLC0415
+        # 更新公告条**不在这里** —— 它是顶栏下方独立一条（web `#updBar` 的落点），
+        # 在 `_build()` 里装配。塞进顶栏会把四个按钮挤成墨块。
+        # ⚡ 常驻公告也不在这里 —— 它落在**内容区顶部**（`_build_notice`，web `#noticeBar` 同落点）。
 
-        self.updbar = UpdateBar(self.t)
-        self.updbar.apply_state(getattr(self, "_upd_state", None))
-        lay.addWidget(self.updbar)
-        # ⚡ 常驻公告**不在这里** —— 顶栏横向空间不足，长句会被挤成「每行一两个字」。
-        #    已移到**内容区顶部**（`_build_notice`，与 web 侧 `#noticeBar` 同一落点）。
-
-        # ── 余额徽章（web balance-badge :703 + loadBalance :3208-3221 + 30s 轮询 :7419）──
-        #    显示模式（照实/隐藏/改数字）存 config 的 ui.balance_*，只改显示不动真实余额。
-        self.bal_badge = QLabel("余额 查询中…")
-        self.bal_badge.setObjectName("balanceBadge")
-        self.bal_badge.setFont(qfont(self.t, 11.5))
-        self.bal_badge.setStyleSheet(f"color:{self.t.tx2};background:transparent;")
+        # ── 余额（web `#balance-badge` L751 ＋ loadBalance ＋ 30s 轮询）──
+        #    显示模式（照实/隐藏/改数字）存 config 的 `ui.balance_*`，只改显示、不动真实余额。
+        #    ⚠️ 结构与 web 一致：**一个胶囊里装「标签 ＋ 值 ＋ 掩码小钮」**。
+        #       原来这里是"一个裸 QLabel 再并排一个裸 QPushButton" ——
+        #       没有胶囊承载，看着就是"一堆字符"，和旁边几颗胶囊不是一套东西。
+        self.bal_chip, self.bal_badge = _mk_chip("余额", "chip_balance")
+        self.bal_badge.setText("查询中…")
         self.bal_badge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bal_badge.setToolTip("点击刷新余额（只读查询）")
         self.bal_badge.mousePressEvent = lambda _e: self._load_balance()
-        self.bal_mask = QPushButton("显示", bar)
+
+        self.bal_mask = QPushButton("显示", self.bal_chip)
         self.bal_mask.setObjectName("balMask")
-        self.bal_mask.setFixedHeight(26)
+        self.bal_mask.setFixedHeight(18)
+        self.bal_mask.setFont(qfont(self.t, 11))
         self.bal_mask.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bal_mask.setToolTip("余额显示（只改界面上的数字，不动真实余额）")
-        # 形状：26px 高的文字小钮 ⇒ **胶囊**（半高 13）。顶栏图标钮走正圆，见下方
-        # btn_look —— 「一类按钮一种形状」：文字钮=胶囊、图标钮=圆、块状=方中带圆。
+        # 掩码钮活在**深色胶囊内部** ⇒ 层次要反转：外层比顶栏"深"、内层比外层"亮"，
+        # 才分得出"胶囊里还嵌着一颗按钮"。胶囊内可用高只有 26-2×1=24 ⇒ 取 18px。
+        _mask_bg = (rgba(QColor(255, 255, 255), 46) if self.t.glass
+                    else rgba(self.t.q("tx"), 34))
+        _mask_bg_h = (rgba(QColor(255, 255, 255), 78) if self.t.glass
+                      else rgba(self.t.q("tx"), 58))
         self.bal_mask.setStyleSheet(
-            "QPushButton{background:transparent;border:none;"
-            f"border-radius:{pill(26)}px;"
-            f"color:{self.t.tx3};padding:0 6px;}}"
-            f"QPushButton:hover{{background:{rgba(self.t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};}}"
-        )
+            "QPushButton{background:%s;border:none;border-radius:9px;color:%s;padding:0 8px;}"
+            "QPushButton:hover{background:%s;}"
+            % (_mask_bg.name(QColor.NameFormat.HexArgb), _chip_v,
+               _mask_bg_h.name(QColor.NameFormat.HexArgb)))
         self.bal_mask.clicked.connect(self._balance_mask)
+        self.bal_chip.layout().addWidget(self.bal_mask)
+        self._chip_wide.append(self.bal_mask) # 收缩态要连它一起收
+
         self.bal_timer = QTimer(self)
-        self.bal_timer.setInterval(30000) # web :7419 同款 30s
+        self.bal_timer.setInterval(30000) # web 同款 30s
         self.bal_timer.timeout.connect(self._load_balance)
         self.bal_timer.start()
-        lay.addWidget(self.bal_badge)
-        lay.addWidget(self.bal_mask)
+        lay.addWidget(self.bal_chip)
+
+        _box_l, self.chip_listen = _mk_chip("监听", "chip_listen")
+        self.chip_listen.setToolTip("正在监听的会话数（群 + 私聊）；白名单与私聊档位在「微信」页")
+        lay.addWidget(_box_l)
+
+        _box_m, self.chip_model = _mk_chip("模型", "chip_model")
+        lay.addWidget(_box_m)
+
+        # ── 「改完即生效」胶囊（web `#autoChip` L752）──
+        #   与各面板底部那颗开关**共用同一个 QSettings 键**（`auto_apply`，默认开），
+        #   所以两边永远一致；顶栏这颗只是把它挪到"一眼看得见"的位置，不动落盘链路。
+        self.chip_auto = QFrame(bar)
+        self.chip_auto.setObjectName("TopChip")
+        self.chip_auto.setFixedHeight(26)
+        _ha = QHBoxLayout(self.chip_auto)
+        _ha.setContentsMargins(10, 0, 10, 0)
+        _ha.setSpacing(6)
+        self.sw_auto = Switch(self.t)
+        self.sw_auto.setChecked(_read_auto_apply())
+        _la = QLabel("改完即生效")
+        _la.setFont(qfont(self.t, 12))
+        _la.setStyleSheet(f"color:{_chip_tx};background:transparent;")
+        _ha.addWidget(self.sw_auto)
+        _ha.addWidget(_la)
+        self._chip_wide.append(_la) # 收缩后只留开关（它本身就是图标）
+        self.chip_auto.setStyleSheet(_chip_style())
+        self.chip_auto.setToolTip(
+            "勾选＝改完立即写入 config.json（不用再点各面板的「保存设置」）；"
+            "取消＝回到手动保存模式。与面板底部那颗开关是同一个开关。")
+        self.sw_auto.toggled.connect(self._on_auto_apply)
+        lay.addWidget(self.chip_auto)
+
+        # ── 撤销钮（web `#undoBtn`：位置在「改完即生效」与「暂停」之间）──
+        # 语义与 web 完全一致：**改完即生效与手动保存各记一步，最多 10 步**；
+        # 空栈禁用、栈深写在 tooltip 里（web 写 title 同款）。
+        self.btn_undo = Btn("撤销", self.t, "ghost", ink=bar_ink)
+        self.btn_undo.clicked.connect(self._on_undo)
+        lay.addWidget(self.btn_undo)
+        config_io.on_undo_changed(self._sync_undo_btn, replace=True)
+        self._sync_undo_btn(config_io.undo_depth(), config_io.undo_top_label())
 
         lay.addStretch(1)
 
@@ -933,7 +1112,7 @@ class Shell(QWidget):
 
         self.btn_look = QPushButton(bar)
         self.btn_look.setFixedSize(36, 34)
-        self.btn_look.setIcon(QIcon(_icons.appearance_pixmap(self.t.tx, 20))) # F：tx2 太灰，提亮到全亮字色
+        self.btn_look.setIcon(QIcon(_icons.appearance_pixmap(bar_tx, 20))) # 顶栏浅底 ⇒ 笔画走深色档
         self.btn_look.setIconSize(QSize(20, 20))
         self.btn_look.setToolTip("外观切换（文案 / 主题）")
         self.btn_look.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -942,7 +1121,7 @@ class Shell(QWidget):
         # 正圆 hover 底比圆角方底更好认，也和旁边的胶囊文字钮区分开。
         self.btn_look.setStyleSheet(
             "QPushButton{background:transparent;border:none;border-radius:17px;}"
-            f"QPushButton:hover{{background:{rgba(self.t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};}}"
+            f"QPushButton:hover{{background:{rgba(QColor(bar_tx) if self.t.glass else self.t.q('tx'), 30).name(QColor.NameFormat.HexArgb)};}}"
         )
         self.btn_look.clicked.connect(
             lambda: self._look_pop.toggle_at(self.btn_look, width=250, align="right"))
@@ -984,7 +1163,7 @@ class Shell(QWidget):
         # 语义：暂停 = 进程活着只是不回任何消息（≠ 停止 = 进程退出）⇒
         # 轻按钮 ghost 档、不需要危险确认。方向唯一依据 = /api/status 的
         # paused 字段（web 血泪注释：不许读按钮文字做依据）。
-        self.btn_pause = Btn("暂停", self.t, "ghost")
+        self.btn_pause = Btn("暂停", self.t, "ghost", ink=bar_ink)
         self.btn_pause.setToolTip("暂停后机器人不回复任何消息（进程还活着，不是停止）")
         self.btn_pause.clicked.connect(self._on_pause_click)
         lay.addWidget(self.btn_pause)
@@ -992,11 +1171,11 @@ class Shell(QWidget):
         # 机器人控制：重启/停止 —— web 侧顶栏同款动作，走原生确认弹窗。
         # 路由是 /api/restart、/api/shutdown（POST），经 agent_bridge.post_api 发出，
         # agent/ 一行不改。danger 红钮只给「停止」—— 它不可一键反悔。
-        self.btn_restart = Btn("重启", self.t, "ghost")
+        self.btn_restart = Btn("重启", self.t, "primary", ink=bar_ink)
         self.btn_restart.clicked.connect(self._bot_restart)
         lay.addWidget(self.btn_restart)
 
-        self.btn_stop = Btn("停止", self.t, "danger")
+        self.btn_stop = Btn("停止", self.t, "danger", ink=bar_ink)
         self.btn_stop.clicked.connect(self._bot_stop)
         lay.addWidget(self.btn_stop)
 
@@ -1004,12 +1183,12 @@ class Shell(QWidget):
         # 最小化=粗横线、最大化/还原=直角方框（还原态双框交叠），无边框无底色
         # hover 浅底，笔画 2px。**没有叉号** ——
         # 关窗≠停机：Alt+F4/任务栏关闭收进托盘，真正的关停语义在「停止」钮。
-        self.btn_min = IconBtn(self.t, "min", bar)
+        self.btn_min = IconBtn(self.t, "min", bar, ink=bar_ink)
         self.btn_min.setToolTip("最小化")
         self.btn_min.clicked.connect(self.showMinimized)
         lay.addWidget(self.btn_min)
 
-        self.btn_max = IconBtn(self.t, "max", bar)
+        self.btn_max = IconBtn(self.t, "max", bar, ink=bar_ink)
         self.btn_max.setToolTip("最大化 / 还原（双击顶栏同款）")
         self.btn_max.clicked.connect(self._toggle_max)
         lay.addWidget(self.btn_max)
@@ -1086,6 +1265,7 @@ class Shell(QWidget):
         side = QFrame()
         side.setObjectName("Side")
         side.setFixedWidth(232)
+        self.side = side # 侧栏根：`_set_tight` 要改它的宽度（别再靠 parentWidget 上溯找）
         lay = QVBoxLayout(side)
         lay.setContentsMargins(0, 12, 0, 12)
         lay.setSpacing(8)
@@ -1111,22 +1291,67 @@ class Shell(QWidget):
         # ）/ radius 10 / padding 10 12；标题 b 13px 蓝；正文 p 12px。
         sbox = QFrame()
         sbox.setObjectName("SideStatusBox")
+        # 状态卡：**whale 用"图3 那支浅蓝"实心 + 深字**。
+        # 侧栏底是不透深蓝，卡片若照 web 走 `blue_soft`（14% 淡蓝），
+        # 在这种底上会几乎融进去、读不出"这是一块卡"。
+        # 浅蓝实心同时做两件事：把这一块单独点亮 + 与顶栏呼应成同一支调子。
+        # light/dark 的侧栏底与各自主题同向，照旧用 `blue_soft` / `blue_line`。
+        # 配色照「标题走强调色、正文走次要字色、卡底半透」这一套 ——
+        # 之前动手把它改成"深色字 + 亮描边"是错的：那张卡浮在天蓝侧栏上，
+        # 深字压浅底只能靠描边硬撑，观感又脏又假。**改回来**。
+        if self.t.glass:
+            # 半透明（明确要求）：底取强调色 16% 左右，与 `blue_soft` 同一量级。
+            _sb_base = rgba(self.t.q("blue"), 40)
+            _sb_cap, _sb_tx = self.t.blue, self.t.tx2
+        else:
+            _sb_base = rgba(self.t.q("blue"), 30)
+            _sb_cap, _sb_tx = self.t.blue, self.t.tx2
+        # 立体感照公共实现（半透底要 `keep_alpha`；边框抬 floor，否则棱看不见）
+        _e_up, _e_dn = bevel_edges(_sb_base, 0.70, 0.55, floor=74)
         sbox.setStyleSheet(
-            "QFrame#SideStatusBox{background:%s;border:1px solid %s;border-radius:10px;}"
+            "QFrame#SideStatusBox{background:%s;"
+            "border:1px solid transparent;"
+            "border-top:1px solid %s;border-bottom:1px solid %s;"
+            "border-radius:10px;}"
             "QFrame#SideStatusBox QLabel{background:transparent;border:none;}"
-            % (self.t.blue_soft, self.t.blue_line))
+            % (bevel(_sb_base, 0.55, 0.45, keep_alpha=True), _e_up, _e_dn))
         sv = QVBoxLayout(sbox)
         sv.setContentsMargins(12, 10, 12, 10)
         sv.setSpacing(4)
-        t_cap = QLabel("运行状态")
-        t_cap.setFont(qfont(self.t, 13, 600))
-        t_cap.setStyleSheet(f"color:{self.t.blue};")
-        sv.addWidget(t_cap)
+        self.sb_cap = QLabel("运行状态")
+        self.sb_cap.setFont(qfont(self.t, 13, 600))
+        self.sb_cap.setStyleSheet(f"color:{_sb_cap};")
+        sv.addWidget(self.sb_cap)
         self.side_status = QLabel("未连接") # web 真值初值（assets/console/index.html L929）
         self.side_status.setFont(qfont(self.t, self.t.body_size - 1))
-        self.side_status.setStyleSheet(f"color:{self.t.tx2};")
+        self.side_status.setStyleSheet(f"color:{_sb_tx};")
         self.side_status.setWordWrap(True)
         sv.addWidget(self.side_status)
+
+        # ── 收起态（窄栏）：文字放不下，改走**图标列** ──
+        # 约定：窄栏走**图标列** —— 标题一颗、每条明细各一颗，靠形状区分。
+        # 语义全靠**颜色 ＋ tooltip** 承载（窄栏里放不下文字，这是唯一还读得出来的表达）。
+        import icons as _icons_sb # noqa: PLC0415
+
+        self.sb_narrow = QWidget()
+        _nv = QVBoxLayout(self.sb_narrow)
+        _nv.setContentsMargins(0, 0, 0, 0)
+        _nv.setSpacing(6)
+
+        def _narrow_icon(key: str, tip: str) -> QLabel:
+            _l = QLabel()
+            _l.setPixmap(_icons_sb.svg_pixmap(_icons_sb.INNER.get(key, ""), _sb_tx, 16))
+            _l.setToolTip(tip)
+            _l.setStyleSheet("background:transparent;")
+            _nv.addWidget(_l, 0, Qt.AlignmentFlag.AlignHCenter)
+            return _l
+
+        self.sb_ic_state = _narrow_icon("state_pulse", "运行状态")
+        self.sb_ic_wx = _narrow_icon("wechat", "微信：未连接") # 同义复用：它就是"微信"
+        # 第三颗不是"模型"（侧栏状态里没有模型这一项）—— 是**启动时间**，故用时钟。
+        self.sb_ic_boot = _narrow_icon("state_boot", "启动时间")
+        self.sb_narrow.setVisible(False) # 常态（宽栏）不露面
+        sv.addWidget(self.sb_narrow)
         # 左右各缩 10px——
         #   搜索框同款做法（wrap+margins），视觉上与下方导航对齐但略收。
         swrap = QWidget()
@@ -1176,14 +1401,15 @@ class Shell(QWidget):
         fl.setContentsMargins(12, 0, 12, 0)
         self.btn_tight = Btn("‹ 收起", self.t, "ghost")
         self.btn_tight.clicked.connect(self._toggle_tight)
-        fl.addWidget(self.btn_tight)
+        # 居中：收起态按钮收窄成"图标钮"，靠居中与下面那列导航图标对齐
+        fl.addWidget(self.btn_tight, 0, Qt.AlignmentFlag.AlignHCenter)
         lay.addWidget(foot)
         return side
 
     def _build_main(self) -> QWidget:
         """主区 = 页栈：机器人主面板（原型既有那张）+「日常」「智能」组 8 张新面板。
 
-        web 侧 27 个 sec 本是同一滚动页里显隐切换；原生壳用 QStackedWidget
+        web 侧 28 个 sec 本是同一滚动页里显隐切换；原生壳用 QStackedWidget
         做真正的换页 —— 这是"切页"这个交互在 Qt 里比 web 侧更直接的地方。
 
          J（性能取证实锤：主题切换 _rebuild 全量重建 27 面板 19-21s，
@@ -1560,6 +1786,19 @@ class Shell(QWidget):
         veil.raise_() # _rebuild 后新控件 z 序更高 —— veil 必须再抬到最上
         eff = QGraphicsOpacityEffect(veil)
         veil.setGraphicsEffect(eff)
+        # 先记引用再决定走不走动画：`_fade_veil_done()` 靠它删覆盖层，
+        # 少了这一句（跳过动画的那条路）会把 veil 永久留在最上层。
+        self._fade_veil = veil # 保活到动画完；重入时旧 veil 被新的盖住、各自收敛
+        # 系统要求减少动效 ⇒ **不走动画，直接给终态**（立刻移除 veil）。
+        # 不能"缩短时长"敷衍：位移/淡入本身才是引起眩晕的东西（WCAG 2.3.3）。
+        try:
+            from .stylekit_qt import motion_ok # noqa: PLC0415
+            _motion = motion_ok()
+        except Exception: # noqa: BLE001
+            _motion = True
+        if not _motion:
+            self._fade_veil_done()
+            return
         an = QPropertyAnimation(eff, b"opacity", self)
         an.setDuration(180)
         an.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -1567,7 +1806,6 @@ class Shell(QWidget):
         an.setEndValue(0.0)
         an.finished.connect(self._fade_veil_done)
         an.start()
-        self._fade_veil = veil # 保活到动画完；重入时旧 veil 被新的盖住、各自收敛
 
     def _fade_veil_done(self) -> None:
         """淡出完成：清引用（防悬挂）+ 删覆盖层。"""
@@ -1775,13 +2013,22 @@ class Shell(QWidget):
             #    各控件自带显式背景，全局透明只影响容器层 —— 卡片仍是半透玻璃。
             self.setStyleSheet(
                 f"QWidget{{background:transparent;}}"
-                # 顶栏/侧栏压底图：**比 web 的 .7 更实**。
-                # web 有 backdrop-filter:blur(8px)（assets/console/index.html L432）帮它把底下
-                # 的浪纹糊掉；Qt 无等价模糊 ⇒ 同样 .7 会让海水的亮/暗直接透过文字。
-                # 用 .84 顶栏 / .90 侧栏换取「顶栏文字不再被背景洗」——这是平台差异
-                # 下的有意取值，不是抄错数字（web 真值仍是 .7）。
-                f"#TitleBar{{background:rgba(7,21,42,214);border-bottom:1px solid {t.bd};}}"
-                f"#Side{{background:rgba(10,29,54,230);border-right:1px solid {t.bd};}}"
+                # ── 顶栏 / 侧栏底色：**天蓝**（中等明度、饱和度提上去）──
+                # 一路踩过的两个极端，都别再回去：
+                #   · 太暗 —— 近黑基色算出来的显示色比 web 同位置暗一截
+                #     （实测顶栏 #0F2136 vs web #2A405A），像贴了两块补丁；
+                #   · 太灰 —— 低饱和灰蓝（s≈24%）看着"发白、没颜色"。
+                # 正解是**天蓝**：色相锁 205° 附近、饱和度 40%+、明度保持中段
+                # —— 再亮就"浅"，再暗就掉进深蓝。
+                # 不透明度保持高：Qt 没有 backdrop-filter，"压住底图"这层只能靠底色自己扛
+                # （web 真值 .7 是因为它有 blur(8px) 帮忙糊底纹）。
+                # 基色按 显示色 = α·基色 + (1-α)·底图 反推（底图实测 #082038）：
+                #   顶栏 目标显示 #3E7FA8 ⇒ 基色 (71,143,186)，α=219
+                #   侧栏 目标显示 #2A6288（比顶栏沉一档，要托住浅色导航文字）
+                #        ⇒ 基色 (44,102,141)，α=240
+                # 改基色/α 时按上式重算三个分量，别只挪一个。
+                f"#TitleBar{{background:rgba(71,143,186,219);border-bottom:1px solid {t.bd};}}"
+                f"#Side{{background:rgba(44,102,141,240);border-right:1px solid {t.bd};}}"
                 f"#Main{{background:transparent;}}"
                 f"QLabel{{background:transparent;color:{t.tx};}}"
                 f"QScrollArea{{background:transparent;border:none;}}"
@@ -1830,19 +2077,46 @@ class Shell(QWidget):
         行距加宽。展开全部还原。"""
         import icons as _icons # noqa: PLC0415
 
-        side = self.find.parentWidget().parentWidget()
+        # ⚠️ 别用 `self.find.parentWidget().parentWidget()` 反推侧栏：那是**按控件层级猜**的，
+        #    中间任何一个 wrap 层被加/删/换，猜中的对象就变了（而且它不报错，只会默默改错东西）。
+        #    `_build_side` 已把侧栏根存成 `self.side`，直接用它。
+        side = getattr(self, "side", None)
+        if side is None:
+            return
         side.setFixedWidth(76 if on else 232)
         for _it, g, _sec, _label in self.items:
             g.set_tight(on)
             _it.set_tight(on)
+        # 运行状态卡：宽栏走文字、窄栏收成图标列（见 `_build_side` 的 sb_narrow）。
+        # 窄栏里那段"微信已连接 · 启动于 …"会被拦腰截断（实测截成"已连 / 接·/ 启动/工"），
+        # 与其放一段读不了的字，不如换成图标 ＋ tooltip。
+        for _w in (getattr(self, "sb_cap", None), getattr(self, "side_status", None)):
+            if _w is not None:
+                _w.setVisible(not on)
+        _nb = getattr(self, "sb_narrow", None)
+        if _nb is not None:
+            _nb.setVisible(on)
         if on: # 收起态
             self.btn_tight.setText("")
             self.btn_tight.setIcon(QIcon(_icons.chevs_pixmap(self.t.tx2, collapsed=True)))
             self.btn_tight.setToolTip("展开侧栏")
+            # ⚠️ 只清文字不收窄的话，按钮会**继续撑满侧栏宽度** ⇒
+            #    变成底部一个宽方的圆角胶囊，与上面那列 20px 的导航图标完全不搭。
+            # ⛔⛔ **光设 `setMaximumWidth(44)` 不生效**：`Btn.__init__` 在"有文字"时设过
+            #    `setMinimumWidth(文字宽提示)` ⇒ **最小宽 > 44** ⇒ 上限被无视，
+            #    底部还是留一颗撑满侧栏的胶囊（实测就是这样）。
+            #    ⇒ 必须**先把最小宽放开**，44 的上限才真的管用；居中由
+            #      `addWidget(AlignHCenter)` 负责（这里不用管）。
+            self.btn_tight.setMinimumWidth(0)
+            self.btn_tight.setMaximumWidth(44)
         else: # 展开态
             self.btn_tight.setIcon(QIcon())
             self.btn_tight.setText("‹ 收起")
             self.btn_tight.setToolTip("")
+            # 两个宽度约束都要放开：最小宽留给布局按 `sizeHint`（= 文字宽）自己算，
+            # 否则收起一次之后文字会被压窄（最小宽还停在收起态那档）。
+            self.btn_tight.setMinimumWidth(0)
+            self.btn_tight.setMaximumWidth(16777215) # QWIDGETSIZE_MAX：恢复可拉伸
 
     # ------------------------------------------------------------ 交互
 
@@ -2023,6 +2297,109 @@ class Shell(QWidget):
 
         run_async(_work, _apply, page=self, interval=150, name="badge-poll")
 
+    def _apply_top_chips(self, s: dict) -> None:
+        """顶栏胶囊的真值（web `refreshBadges` 里那两行的 Qt 版）。
+
+        · 监听 = `status.listen.groups + privates`（web `#listen-badge`）
+        · 模型 = `status.model`（web `#model-badge`）
+
+        ⚠️ 模型这一项后端有时给对象 `{name, configured}`、有时给纯字符串 —— 两种都接住
+        （`overview_panel` 里是同一套兼容写法，别只认一种，否则胶囊会显示成 `{'name':…}`）。
+        拿不到就保持原值不动，**不编数**。
+        """
+        if not isinstance(s, dict):
+            return
+        lb = getattr(self, "chip_listen", None)
+        if lb is not None:
+            lis = s.get("listen") or {}
+            n = (lis.get("groups", 0) + lis.get("privates", 0)
+                 if isinstance(lis, dict) else 0)
+            lb.setText(str(n))
+        mo = getattr(self, "chip_model", None)
+        if mo is not None:
+            m = s.get("model")
+            if isinstance(m, dict):
+                txt = str(m.get("name") or ("已配置" if m.get("configured") else "没填密钥"))
+            else:
+                txt = (str(m).strip() if m else "") or "—"
+            mo.setText(txt)
+
+    def _on_auto_apply(self, on: bool) -> None:
+        """顶栏「改完即生效」开关 —— 与各面板底部那颗写**同一个 QSettings 键**。
+
+        面板是在**构建时**读初值，所以这里不用回调已建好的面板：
+        切页重建时会自然读到新值（与 web 把状态存在 localStorage 的语义一致）。
+        """
+        from PySide6.QtCore import QSettings # noqa: PLC0415
+
+        QSettings("WXAgent", "persona-morph-ui").setValue("auto_apply", bool(on))
+
+    # ------------------------------------------------------------ 撤销（web `#undoBtn`）
+
+    def _sync_undo_btn(self, depth: int, label: str) -> None:
+        """撤销钮跟着栈深变：空栈禁用，栈深与"撤的是哪一步"写进 tooltip（web 写 title 同款）。"""
+        b = getattr(self, "btn_undo", None)
+        if b is None:
+            return
+        b.setEnabled(depth > 0)
+        b.setToolTip(
+            ("撤销上一步修改：%s（栈内 %d 步，最多 %d 步）" % (label or "上一步", depth,
+                                                              config_io.UNDO_MAX))
+            if depth else
+            "没有可撤销的修改（只记最近 %d 步）" % config_io.UNDO_MAX)
+
+    def _on_undo(self) -> None:
+        """撤销一步。
+
+        ⚠️ 撤完**必须重建当前那一页**：面板的值是**构建时**读进控件的
+        （`config_io.read_path` 只在建面板那一刻调一次），不重建则显示还是撤销前的样子 ——
+        用户会以为"点了没反应"。
+        """
+        ok, note = config_io.undo_last()
+        self._sync_undo_btn(config_io.undo_depth(), config_io.undo_top_label())
+        if not ok:
+            self._flash_note(note)
+            return
+        sec = self._cur_sec()
+        if sec:
+            self._reload_page(sec)
+        self._flash_note(note)
+
+    def _cur_sec(self) -> str:
+        """当前页对应的 sec；找不到返回空串。"""
+        idx = self.stack.currentIndex()
+        for k, v in getattr(self, "_page_of", {}).items():
+            if v == idx:
+                return k
+        return ""
+
+    def _reload_page(self, sec: str) -> None:
+        """重建某一页（撤销后让界面跟上真值）。
+
+        ⚠️ 删页会让**其后所有页的索引整体前移一位** ⇒ 必须同步重排 `_page_of`，
+        否则下一次 `_go` 会切到错的那一页。
+        """
+        idx = getattr(self, "_page_of", {}).get(sec)
+        if idx is None:
+            return
+        w = self.stack.widget(idx)
+        self.stack.removeWidget(w)
+        if w is not None:
+            w.deleteLater()
+        self._page_of = {k: (v - 1 if v > idx else v)
+                         for k, v in self._page_of.items() if k != sec}
+        self._lazy.add(sec) # 放回"未建"集合，让 `_ensure_page` 重建它
+        self._ensure_page(sec)
+
+    def _flash_note(self, text: str) -> None:
+        """一眼回显（暂借顶栏状态徽章）。回显失败**不能影响撤销本身** ⇒ 全包住。"""
+        if not text:
+            return
+        try:
+            self.st_panel.set("info", text)
+        except Exception: # noqa: BLE001
+            pass
+
     def _apply_side_status(self, s: dict) -> None:
         """侧栏微信连接状态。
 
@@ -2038,6 +2415,18 @@ class Shell(QWidget):
         else:
             short = wa.get("short")
             txt = "微信未连接" + ((" · 原因：" + str(short)) if short else "")
+        # 窄栏那列图标同步（颜色=状态、tooltip=全文）：
+        # 连接态绿、未连接红，看颜色就知道通没通，不必读字。
+        _wx_ic = getattr(self, "sb_ic_wx", None)
+        if _wx_ic is not None:
+            import icons as _icons_wx # noqa: PLC0415
+
+            _col = self.t.ok if s.get("wechat_connected") else self.t.err
+            _wx_ic.setPixmap(_icons_wx.svg_pixmap(_icons_wx.INNER.get("wechat", ""), _col, 16))
+            _wx_ic.setToolTip(txt)
+        _st_ic = getattr(self, "sb_ic_state", None)
+        if _st_ic is not None:
+            _st_ic.setToolTip("运行状态：" + ("正常" if s.get("wechat_connected") else "未连接"))
         if wa.get("targets_zero"):
             txt += " · 监听目标 0 个（去「微信」面板勾群）"
         started = str(s.get("started_at") or "")
@@ -2069,6 +2458,7 @@ class Shell(QWidget):
 
         pq.refresh_status_rows(s) # 面板内状态位跟随 8s 轮询刷新（「读不到」主治）
         self._apply_side_status(s) # 收尾：侧栏微信连接状态（web #sideStatus 同款）
+        self._apply_top_chips(s) # 顶栏信息胶囊（监听 / 模型，web #listen-badge / #model-badge）
 
         bot_badge = getattr(self, "st_panel", None)
         if bot_badge is not None:
@@ -2184,7 +2574,7 @@ class Shell(QWidget):
         self.btn_sim_alive = p.health is Health.OK
 
     def _simulate_dead(self) -> None:
-        """演示"服务死了但窗口还开着"—— 这正是用户报的那个场景。
+        """演示"服务死了但窗口还开着"—— 这正是的那个场景。
 
         web 壳在这里只能给你一屏 Edge 错误页；
         原生壳能**明确说出**发生了什么，并给一个真能点的按钮。

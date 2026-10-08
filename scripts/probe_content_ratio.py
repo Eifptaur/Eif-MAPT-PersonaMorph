@@ -5,7 +5,7 @@
      再统计内容像素占比 + 输出可视化图。用来对比：
        · 我方 PrintWindow 抓的独立窗
        · 我方 BitBlt 抓的（含抓到别人窗口那张）
-       · 用户给的完整截图（真值参照）
+       · 完整截图（真值参照）
 用法：./runtime/python/python.exe -u scripts/probe_content_ratio.py
 """
 import logging

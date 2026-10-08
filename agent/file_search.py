@@ -12,6 +12,9 @@ from __future__ import annotations
 import os
 import time
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "AppData", "$RECYCLE.BIN",
@@ -61,12 +64,14 @@ def is_inside(path: str, allow=None) -> bool:
     """路径是否落在允许目录内（realpath 判定，防 `..`/软链接越界）。"""
     try:
         p = os.path.realpath(os.path.abspath(str(path or "")))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     for d in (allow or dirs()):
         try:
             base = os.path.realpath(os.path.abspath(d))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         if p == base or p.startswith(base + os.sep):
             return True
@@ -151,7 +156,8 @@ def recent_sent(limit: int = 10) -> list:
             d = json.load(fh)
         rows = d.get("sent") if isinstance(d, dict) else d
         return list(rows or [])[-limit:][::-1]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
 
 
@@ -164,15 +170,17 @@ def note_sent(path: str, chat_id: str = "") -> None:
         try:
             with open(p, "r", encoding="utf-8") as fh:
                 d = json.load(fh)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             d = {"sent": []}
         d.setdefault("sent", []).append({"path": path, "chat_id": chat_id, "ts": int(time.time())})
         d["sent"] = d["sent"][-200:]
-        tmp = p + ".tmp"
+        tmp = persist.tmp_for(p)
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False, indent=1)
         persist.replace_into(tmp, p)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 

@@ -7,7 +7,7 @@
 
 跑法：`runtime\\python\\python.exe scripts\\autostart_selftest.py`
 """
-import importlib
+
 import io
 import os
 import shutil

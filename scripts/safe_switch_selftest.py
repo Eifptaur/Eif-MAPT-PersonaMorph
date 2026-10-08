@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """「不打扰」开关守卫判据（`wechat.background_only` / `input.allow_real_fallback` / `ui.allow_foreground`）。
 
-**为什么有这条**：2026-09-29 群相反馈（另一台机器）——用户报告"抢窗口/动鼠标"，而报告里
+**为什么有这条**：群相反馈（另一台机器）——告"抢窗口/动鼠标"，而报告里
 `wechat.background_only=False`、`input.allow_real_fallback=True`。查证：默认值、一次性迁移、
 示例配置**三者都是安全侧**，后端也是"提交里有才覆盖" ⇒ 唯一能翻过去的形态是
 **前端整份回写**把**没被正确回填**的复选框（undefined ⇒ checked=false）写下了盘。

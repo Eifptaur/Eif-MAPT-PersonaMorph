@@ -20,7 +20,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "一键启动.exe")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # ⛔ 先补路径再 import
+EXE = __import__("agent.autostart", fromlist=["x"]).find_launcher_exe()
 SRC = os.path.join(ROOT, "launcher-src", "launcher.cs")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 

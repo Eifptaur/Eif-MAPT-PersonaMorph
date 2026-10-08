@@ -10,7 +10,7 @@
     runtime\\python\\python.exe scripts\\ocr_corpus_harvest.py --target 100
     runtime\\python\\python.exe scripts\\ocr_corpus_harvest.py --check-only   # 只体检现有素材
 
-## 网络可达性（实测，2026-09-29）
+## 网络可达性（实测，）
   · `raw.githubusercontent.com` ✅ 通；`api.github.com`（走 gh）✅ 通
   · Wikimedia Commons ❌ SSL 握手超时（被网络拦）
   · tavily ❌ 环境里没有 API Key
@@ -29,9 +29,9 @@ import json
 import os
 import re
 import ssl
-import subprocess
+
 import sys
-import tempfile
+
 import urllib.error
 import urllib.request
 
@@ -126,7 +126,7 @@ def hashes() -> dict:
 def tree(repo: str):
     """列仓库文件树 —— **走 Python urllib 直连 GitHub API**。
 
-    ⛔ 两条都试过并撞墙（2026-09-29 实测，都写在这里省得下次再撞）：
+    ⛔ 两条都试过并撞墙（实测，都写在这里省得下次再撞）：
       · `gh api`：未认证直接失败；即便有认证也受 **60 次/小时匿名速率限制**，大仓库递归列树还会卡很久；
       · `git clone`（含 `-c http.schannelCheckRevoke=false`）：Windows schannel 报
         `CRYPT_E_NO_REVOCATION_CHECK (0x80092012)`，**关开关也压不住**（换了层）。
@@ -218,7 +218,7 @@ def main() -> int:
     # ⛔ 目标口径修正（本轮）：`--target` 是**素材总数**（含本机真实截图），不是 web 单目录。
     #    原来只数 web ⇒ 已经有 16 张 `local/` 时还硬要 web 再凑够 100，
     #    "现有 72 / 目标 100" 这个数就永远对不上（72 = web 56 + local 16）。
-    #    ⇒ 先把 `local/` 那批算进来，本轮只为**差额**采网图。
+    #    ⇒ 先把 `local/`那批算进来，本轮只为**差额**采网图。
     _local = os.path.abspath(os.path.join(os.path.dirname(WEB), "local"))
     n_local = len([f for f in os.listdir(_local)
                    if f.lower().endswith((".png", ".jpg", ".jpeg"))]) if os.path.isdir(_local) else 0

@@ -237,7 +237,7 @@ try:
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 
-# ── F 段（2026-09-30）：页 1 模式**以磁盘事实为准** —— 修「file is not a database / 数据库合并失败」──
+# ── F 段：页 1 模式**以磁盘事实为准** —— 修「file is not a database / 数据库合并失败」──
 #  症状／根因见 `agent/replica_adapter.py::fix_page1_plaintext_header`（那里有完整来龙去脉）。
 #  ⚠️ **机制澄清（重要）**：我方 **不是**改 site-packages 里那个 db.py ——
 #     那份文件重装依赖/更新就会被覆盖（`runtime/` 还是 gitignore 的）。正解是

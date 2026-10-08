@@ -45,6 +45,9 @@ from agent import image_lib as IL # noqa: E402
 from agent import image_sources as IS # noqa: E402
 from agent import prompt as PR # noqa: E402
 from agent import config as CFG # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 print("── A. 工具注册 ──")
 d = {x["name"]: x for x in TL.build_tool_defs()}
@@ -171,7 +174,7 @@ ok("image_reply.trigger_mode 存在", "trigger_mode" in (_dflt.get("image_reply"
 ok("voice_reply.trigger_mode 存在", "trigger_mode" in (_dflt.get("voice_reply") or {}))
 
 print("── G. 关键词真的进查询 + 标签校验 + 不许拿旧图冒充──")
-# 动漫角色图（用户当场发现「跟我要的完全不一样」）。两个真根因：
+# 动漫角色图（的完全不一样」）。两个真根因：
 #   ① 图源查询**根本没带关键词**（safebooru 写死 `tags=rating:safe`、booru 只用配置里的固定 tag）
 #      ⇒ "要图"实际是"从图源随便抓一张"；② 在线没取到时**拿旧缓存图冒充**，工具回执照样写
 #      「已找到并发出一张「鲸鱼」的图」。
@@ -251,7 +254,8 @@ finally:
     IL.fetch_filtered = _f_real
     try:
         os.remove(_old_img)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
 
 # G4 一批里随机挑（`limit=1` 时同一标签永远同一张，那张被过滤链拦掉就永远过不去）

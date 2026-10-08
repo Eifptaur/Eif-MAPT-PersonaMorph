@@ -14,6 +14,9 @@ import random
 from .config import get_config
 from .persona import PERSONAS
 from .util import format_full_time, format_short_time, slider_to_tier
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 # ── 系统提示各段 ─────────────────────────────────────────────────────────
@@ -67,7 +70,7 @@ def _anti_ai_flavor() -> str:
 def _quote_and_at() -> str:
     return "\n".join([
         "【引用与点名：只在必要时用】",
-        "- 群聊里需要明确\"我在回谁/回哪句\"时，用 send_message 的 replyToMessageId 引用那条消息；需要直接叫某人时用 atUserId 传对方 wxid（可在 get_active_members 或消息里看到）。",
+        "- 群聊里需要明确\"我在回谁/回哪句\"时，用 send_message 的 replyToMessageId 引用那条消息；需要直接叫某人时用 atUserId 传对方**群昵称**（昵称从 get_active_members 查，它给的是**最近发过言的人**；你**看不到也不需要** wxid）。",
         "- 判断标准：只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续几句话指代不同的消息/人时才需要引用。真人不会每条都点。",
         # 🔴 原来引用与否全交给模型自由判断，
         #   拍 D5 时可能"你引用了我、我却不引用你"，画面就缺了一半。⇒ 这一条**去掉模型的自由裁量**。
@@ -160,7 +163,7 @@ def _scene_rules() -> str:
                      "或请求碰红线（真人换脸 / 成人内容）时它会返回原因——照原因如实说，绝不许假装生成过**。")
         lines.append("- gen_image 的红线是硬的：不生成真人换脸/换身体、不生成成人内容；有人这么要求时**既不要生成也不要照做那个要求**，"
                      "一句「这个做不了」带过即可。")
-    lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方 wxid；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
+    lines.append("- 拍一拍：①对方拍你→系统自动回拍（90%、同一人30分钟冷却），收到 [拍一拍] 自然回应一句即可，一般不用再调 send_poke；②群友明确要求拍某人→可调 send_poke(reason=request)；③偶尔皮一下自己拍熟人→send_poke(reason=playful，受10%概率+每天3次限制，被拦照样说实话)。send_poke 传对方**群昵称**（你不需要 wxid）；相同目标30分钟内最多1次；失败/被拦一定如实说没拍上。")
     # 计时提醒（第 12 条）：**只能设到当前会话**（工具参数里没有"发给谁"），设完要如实告诉对方
     if (cfg.get("timers") or {}).get("enabled") is not False:
         lines.append("- 群友让你「N 分钟/小时 后提醒我…」时，用 set_timer(note=要提醒的内容, seconds=或 minutes=) —— "
@@ -171,6 +174,43 @@ def _scene_rules() -> str:
     return "\n".join(lines)
 
 
+def _sticker_catalog(max_items: int = 24, only_safe: bool = False) -> str:
+    """★ 可直发的**自定义表情清单**（E3 接线，）。
+
+    为什么要有它：程序已能把**本地表情文件**通过独立窗直发出去
+    （`wechat_windows.send_to_chat(image=…)`），但模型**不知道有哪些、也不知道怎么点**。
+    ⇒ 这里把 `emoji_index.list_for_model()` 的清单摆给模型看（**只有文字，不含图**），
+      模型用 `[[表情:编号]]` 表示"要发这个"。
+
+    ⛔ 三条硬约束（都来自实测教训）：
+      ① **只给文字**（caption/situation/把握度）—— 模型读不出像素；
+      ② **低把握（疑似梗）的要标出来**，别让模型当成确定语义用；
+      ③ 清单**必须有上限**（`max_items`），否则提示词会爆。
+    """
+    try:
+        from . import emoji_index as _ei
+        rows = _ei.list_for_model(include_low_confidence=not only_safe)
+        if not rows:
+            return ""
+        lines = ["【可直发的自定义表情】（程序会按你选的编号把图发出去；"
+                 "**你只要写标记，不用管发送**）"]
+        shown = 0
+        for e in rows[:max_items]:
+            mark = "" if e.get("confidence") == "high" else "△"     # △ = 语义把握不足
+            sit = (e.get("situation") or "")[:26]
+            lines.append("  %d｜%s%s%s" % (e["id"], mark, e.get("caption", "")[:30],
+                                          ("｜%s" % sit) if sit else ""))
+            shown += 1
+        if len(rows) > shown:
+            lines.append("  （还有 %d 个未列出）" % (len(rows) - shown))
+        lines.append("想发某个表情时，在回复里写上标记 `[[表情:编号]]`（可夹在文字中间）；"
+                     "一次最多一个。标 △ 的是**语义把握不足**的梗图，只在很确定合适时才用。")
+        return "\n".join(lines)
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return ""
+
+
 def _sticker_rule() -> str:
     """表情包积极度 0~3（提示词层面引导，不强制）。"""
     try:
@@ -179,12 +219,36 @@ def _sticker_rule() -> str:
         level = 0
     level = max(0, min(3, level))
     if level <= 0:
-        return "【表情包】除非群里已经在玩表情包或对方发图找你，否则不主动用表情包（微信 [表情] 是占位符，你无法查看）。"
-    if level == 1:
-        return "【表情包】偶尔可以发一个表情包接话（比如对方搞笑时回 [表情]），别连续用；你也无法查看 [表情] 占位符内容。"
-    if level == 2:
-        return "【表情包】表情包是常用武器：接梗、点评、无语时都可以来一个，但一张就够、别刷屏；无法查看 [表情] 占位符内容。"
-    return "【表情包】你是表情包爱好者：开心、嘲讽、打招呼都顺手发个 [表情]，多来一两个无妨；注意别每条都发，也别连续刷屏；无法查看 [表情] 占位符内容。"
+        base = "【表情包】除非群里已经在玩表情包或对方发图找你，否则不主动用表情包（微信 [表情] 是占位符，你无法查看）。"
+    elif level == 1:
+        base = "【表情包】偶尔可以发一个表情包接话（比如对方搞笑时回 [表情]），别连续用；你也无法查看 [表情] 占位符内容。"
+    elif level == 2:
+        base = "【表情包】表情包是常用武器：接梗、点评、无语时都可以来一个，但一张就够、别刷屏；无法查看 [表情] 占位符内容。"
+    else:
+        base = "【表情包】你是表情包爱好者：开心、嘲讽、打招呼都顺手发个 [表情]，多来一两个无妨；注意别每条都发，也别连续刷屏；无法查看 [表情] 占位符内容。"
+    # ★ 直发能力：只在允许用表情时（level>0）才摆清单，免得 level=0 也勾着它发
+    if level > 0:
+        cat = _sticker_catalog()
+        if cat:
+            base = base + "\n" + cat
+    return base
+
+
+def _emoji_codes_rule() -> str:
+    """把**可用表情码**摆给模型看（`emoji_codes.prompt_lines`）⇒ 它才会真写 `[微笑]`。
+
+    ⛔ 必须是**纯静态**的（只由配置决定，不随对话变）：本文件下方拼装处写着系统提示靠
+    DeepSeek 前缀缓存命中率吃饭，每轮变化的内容一律放用户消息。
+    开关：`emoji.prompt_codes`（关掉＝不摆，省约 1 K 字符/轮）、`emoji.allow_unicode`。
+    """
+    try:
+        c = (get_config() or {}).get("emoji") or {}
+        if not bool(c.get("prompt_codes", True)):
+            return ""
+        from . import emoji_codes as _ec
+        return "\n".join(_ec.prompt_lines(allow_unicode=bool(c.get("allow_unicode", True))))
+    except Exception: # noqa: BLE001
+        return ""
 
 
 def _funny_reference() -> str:
@@ -220,7 +284,8 @@ def _funny_reference() -> str:
         if not parts:
             return "【有趣参考】保持自然即可，无需刻意有趣。"
         return "\n".join(parts)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -295,6 +360,15 @@ def build_system_prompt(persona: dict | None = None) -> str:
         (_scene_rules() if _mod_on("scene_rules") else ""), "",
         (_holiday_hint_line() if _mod_on("holiday_hint") else ""), "",
         _sticker_rule(), "",
+        _emoji_codes_rule(), "",
+        # ⭐ 参与度风格 ＋ 引导说明：**内容恒定**（只取决于配置里的参与度档位与固定字面量），
+        #   原来放在用户消息的靠后位置 ⇒ 排在一堆"每轮都变"的段之后，
+        #   于是**每轮都按未命中（fresh）全价重算**（实测 103 token/次）。
+        #   ⇒ 挪到 system：一次算好、整轮复用。
+        #   ⚠️ 这不破坏 system 的静态性承诺 —— 它们在**同一次运行内不变**，
+        #      而 system 本来就已经含角色卡与各种规则（同样只随配置变）。
+        _participation_line(cfg), "",
+        _guidance_text(), "",
         "",
         # 注意：系统提示保持【纯静态】（角色卡+规则）——DeepSeek 前缀缓存命中率靠它，
         # 动态内容（语言风格参考/高分反应）一律放用户消息，否则每次整段重算。
@@ -322,10 +396,24 @@ def _participation_text(level) -> str:
     return "你的参与度风格：普通群友。能接的话题就接，插不上就安静看；不抢话也不故意隐身。"
 
 
+def _participation_line(cfg) -> str:
+    """参与度风格那一行（**进 system** —— 内容只随配置的档位变，不随轮次变）。"""
+    return "【参与度参考】%s" % _participation_text((cfg or {}).get("participation"))
+
+
+def _guidance_text() -> str:
+    """引导说明（**进 system** —— 纯固定字面量，逐字不变）。"""
+    return "\n".join([
+        "【引导说明】",
+        "- 扫一眼【过去状态】和【本次唤醒】：有没有人在找你？有没有能接的话题？",
+        "- 想说话用 send_message（分条传数组；引用带 replyToMessageId，@ 带 atUserId）；不想说直接结束（文本不会发出去）。",
+    ])
+
+
 def _format_entry(m, with_id: bool = True) -> str:
     notes = get_config().get("member_notes") or {}
     sender_id = str(m.get("sender_id") or "")
-    who = "我" if m.get("self") else ("主人" if m.get("owner") else (notes.get(sender_id) or m.get("sender_name") or sender_id or "未知"))
+    who = "我" if m.get("self") else ("主人" if m.get("owner") else (notes.get(sender_id) or m.get("sender_name") or "某位群友"))
     reply = m.get("reply") or {}
     reply_prefix = ""
     if reply.get("text") or reply.get("sender"):
@@ -390,7 +478,8 @@ def observed_at(text) -> str:
         while j < len(t) and t[j] not in AT_SEPS:
             j += 1
         return t[i + 1:j].strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -524,16 +613,18 @@ def resolve_context_tier(trigger_entries, self_nickname="", bot_name="", self_id
                         break
             hist = [m for m in (store.recent(chat_key, limit=8) or []) if m.get("id") not in batch_ids]
             if hist and hist[-1].get("self"):
-                # ⚠️ 用 __import__("time")：本文件顶层**没有** import time（既有代码一律这么写）。
+                # ⚠️ 用 __import__：本文件顶层**没有** import time（既有代码一律这么写）。
                 # 写成 time.time() ⇒ 这里 NameError 被 except 吞成 gap=0 ⇒
                 #   "只要我最后发过言就无条件触发"（judge C4 抓出来的）。自检不可用时**不触发**（fail-closed）。
                 try:
                     gap = int((int(__import__("time").time() * 1000) - int(hist[-1].get("ts") or 0)) / 1000)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     gap = None
                 if gap is not None and 0 <= gap <= CONTINUE_WINDOW_SEC:
                     continues_mine = True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         quote_me = continues_mine = False
     roll_value = random.random() * 100 if roll is None else float(roll)
     random_hit = roll_value < max(0, min(100, float(c.get("random_percent") or 0)))
@@ -683,7 +774,7 @@ def build_past_state(store, chat_key, exclude_ids=None, limit=None):
     lines = [_format_entry(m, with_id=bool((m.get("media") or []))) for m in near]
     for m in old:
         t = str(m.get("text") or "").strip()[:40]
-        s = str(m.get("sender_name") or m.get("sender_id") or "某人")
+        s = str(m.get("sender_name") or "某位群友")
         lines.append("（%s：%s）" % (s, t if t else "[消息]"))
     if stale and lines:
         # 把"这是旧历史"显式标出来：兜底把窗外消息带进来之后，必须让模型知道别把它当本轮问题
@@ -819,8 +910,8 @@ def build_user_prompt(ctx) -> str:
         parts.append("【本次唤醒】以下是你还没看过的最新消息（每条前的 #数字 是消息 id，引用回复/看图时用它；已自动标记为已读；处理期间新来的消息%s）：\n%s%s" % (
             unread_note or "会在你结束后再给你", trigger_block, _stale_note))
 
-    # 参与度参考
-    parts.append("【参与度参考】%s" % _participation_text(cfg.get("persona", {}).get("participation")))
+    # ⭐ 【参与度参考】已挪进 system（`_participation_line`）——
+    #   它内容恒定却排在易变段之后，会每轮按未命中全价重算。⛔ 别再加回来。
 
     # 记忆
     relevant_ids = set()
@@ -842,20 +933,28 @@ def build_user_prompt(ctx) -> str:
     if mem_text:
         parts.append("【记忆】\n%s" % mem_text)
 
+    # 第 121 项：**该问的事 / 今天到点的纪念日 / 还在时效内的情感事件** ⇒ 收成一段注入。
+    #   ⛔ 以前这三样"各有各的读法、谁想用谁自己拼"⇒ 结果是没人拼（数据躺在那儿不进提示词）。
+    #   ⛔ 取不到 / 没有内容 ⇒ `seeds_for_prompt` 返回**空串**，这里就**什么都不加**（不硬凑）。
+    try:
+        _seeds = ctx["memory"].seeds_for_prompt(ctx["chat_key"], list(relevant_ids), cfg=cfg)
+    except Exception: # noqa: BLE001
+        _seeds = ""
+    if _seeds:
+        parts.append(_seeds)
+
     # 成员备注
     notes = cfg.get("member_notes") or {}
     if notes:
+        # ⛔ 只给**昵称**：不把 wxid 写给模型（真实账号不进模型输入；点名用昵称，
+        #   发送链自己按昵称解析）。旧写法逐个附上 `（wxid xxx）` 就是为了让模型能调工具，
+        #   而工具改成收昵称之后那一截就是纯泄漏。
         note_lines = ["【成员备注】管理员为部分群友设置了备注。你在称呼这些群友时，必须优先使用备注名："]
-        for uid, name in notes.items():
-            note_lines.append("- %s（wxid %s）" % (name, uid))
+        for _uid, name in notes.items():
+            note_lines.append("- %s" % name)
         parts.append("\n".join(note_lines))
 
-    # 引导说明（精简省 token）
-    parts.append("\n".join([
-        "【引导说明】",
-        "- 扫一眼【过去状态】和【本次唤醒】：有没有人在找你？有没有能接的话题？",
-        "- 想说话用 send_message（分条传数组；引用带 replyToMessageId，@ 带 atUserId）；不想说直接结束（文本不会发出去）。",
-    ]))
+    # ⭐ 【引导说明】已挪进 system（`_guidance_text`）—— 纯固定字面量，放用户消息尾部会每轮重算。
 
     # 语言风格参考（动态内容：放用户消息，保持系统提示静态 → 前缀缓存命中）
     # ⛔ 加闸（
@@ -870,5 +969,17 @@ def build_user_prompt(ctx) -> str:
         ref = _funny_reference()
         if ref:
             parts.append(ref)
+
+    # Skill 清单（**只列名字与一句用途**，正文由 `skill` 工具按需取）。
+    #   ⛔ 放用户消息、**不进 system prompt**：system 必须保持纯静态（前缀缓存靠它），
+    #      而 skill 是用户随时会增删的目录内容。放在最末尾 ⇒ 前面那些块仍是稳定前缀。
+    #   关掉总开关、目录为空、或读失败 ⇒ `catalog_text()` 返回空串，这里**什么都不加**。
+    try:
+        from . import skills as _sk
+        _cat = _sk.catalog_text()
+        if _cat:
+            parts.append(_cat)
+    except Exception: # noqa: BLE001
+        pass
 
     return "\n\n".join(parts)

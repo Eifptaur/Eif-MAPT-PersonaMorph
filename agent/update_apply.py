@@ -41,11 +41,19 @@ log = logging.getLogger(__name__)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 本体更新**一律不碰**的东西（在线包里也没有它们，这里是第二道闸）
+# 本体更新**一律不碰**的东西（在线包里也没有它们，这里是第二道闸）。
+# ⛔ **按三类分档，不是一刀切**（出包闸门 `scripts/pack_online.py` 按同一套口径分档）：
+#   ① **我方程序文件**（`agent/ scripts/ ui_qt/ client/ assets/ …`）⇒ 随包发布；
+#      升级时**逐文件比对、有改动才替换**（见下方 `apply_full`：换入前比 sha256、只 copy 差异件）。
+#      ⇒ 它们**不在**这个 NEVER_TOUCH 里（要能更新），但"没改动的不换"由哈希比对保证。
+#   ② **依赖**（包里 `offline/wheels` 的轮子、`offline/python/*.zip`）⇒ `offline/` 不覆盖：
+#      那是**素材**，用户机器上装好之后由 `qt_bootstrap` / `setup_deps` 按包级清单补，
+#      不需要版本包重灌（重灌就是"更新完又装一遍"）。
+#   ③ **用户数据与用户装好的依赖**（`data/ logs/ runtime/ config.json wechatauto_logs/`）⇒
+#      **绝不覆盖**（本节列出的这些）。⛔ 注意"`runtime/` 不覆盖"**不等于**"包里不许有 runtime"：
+#      用户口径是"为啥不能有 runtime，就跟微信那种形式，setup 直接安在本地不行吗" ⇒
+#      依赖要跟包走（`offline/`），但**装好之后那棵树**属于用户机器，不许被版本包覆盖。
 NEVER_TOUCH = ("data/", "config.json", "logs/", "wechatauto_logs/", "报告/", "_scratch/", "offline/",
-               # ⛔ `runtime/` 原来**只靠"包里恰好没有"**（不是契约）⇒ 改一次打包规则
-               #   就可能把用户装好的依赖覆盖掉（用户抱怨的"更新完又装一遍"就是这一类）。
-               #    来源＝`research\更新机制-增量与实际做法.md` §五 4（Velopack 同口径：程序目录只放程序）。
                "runtime/")
 # 编译缓存不换（换它没意义，还可能被占用）
 SKIP_REL = ("__pycache__/",)
@@ -175,7 +183,8 @@ def _dl_once(url: str, dest: str, timeout: float, progress=None):
         try:
             if os.path.exists(dest + ".part"):
                 os.remove(dest + ".part")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return False, "%s: %s" % (type(e).__name__, str(e)[:100])
 
@@ -192,7 +201,8 @@ def _mirror_prefixes():
                     order.remove(m)
                     order.insert(0, m)
                 break
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return order
 
@@ -254,7 +264,8 @@ def read_local_state(target: str) -> dict:
     try:
         with open(p, encoding="utf-8") as fh:
             return json.load(fh) or {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -264,7 +275,7 @@ def write_local_state(target: str, version: str, tree: str, extra=None) -> dict:
     d = {"version": str(version), "sha256": str(tree), "appliedAt": int(time.time())}
     if extra:
         d.update(extra)
-    tmp = p + ".tmp"
+    tmp = persist.tmp_for(p)
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(d, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
@@ -287,7 +298,8 @@ def _dir_writable(p: str) -> bool:
             fh.write(b"1")
         os.remove(t)
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -330,7 +342,8 @@ def _probe_write(path: str) -> str:
         if err == 5:
             return "denied"
         return "unknown"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "unknown"
 
 
@@ -372,7 +385,8 @@ def _is_locked(e, path: str = "") -> bool:
         try:
             if not os.path.exists(path):
                 return False # 新建文件却写不进去 ⇒ 目录权限/路径问题，真故障
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return False # 连 exists 都失败 ⇒ 更可能是权限/路径问题 ⇒ 真故障
         # ⛔ **真探写权限**（只读属性位判不出 ACL）
         _p = _probe_write(path)
@@ -384,7 +398,8 @@ def _is_locked(e, path: str = "") -> bool:
         try:
             if not (os.stat(path).st_mode & 0o200): # 0o200 = S_IWRITE
                 return False
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return False
         return True
     return False
@@ -591,7 +606,8 @@ def _note_seen(version: str) -> None:
             _err = uc._write_state(st)
             if _err:
                 log.warning("更新状态落盘失败（「见过的最高版本」没记上，本次更新照常）：%s", _err)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -613,7 +629,8 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
                 _st = uc._read_state()
                 _st["lastGoodUrl"] = used
                 uc._write_state(_st)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         manifest = man
     base = (manifest or {}).get("base") or {}
@@ -708,10 +725,11 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
             os.path.abspath(os.path.join(target, CACHE_REL)):
         try:
             os.remove(zip_path)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
     # ⛔ **V4**：`apply_full(dry=True)` 返回的 detail 是 `{"dry": True}`（**没有** status
-    #   键），而下面原来只判 `detail.get("status") != "current"` ⇒ `None != "current"` 成立 ⇒
+    #   键），而下面原来只判 `detail.get != "current"` ⇒ `None != "current"` 成立 ⇒
     #   **干跑也被当成"真装成功"** ⇒ 拉起新看门狗 + `os._exit(0)` **把正在跑的机器人杀掉**
     #   （而模块 docstring 给的示例用法正是 `run_once(dry=True)`）。干跑必须"只说不做"。
     _real = bool(rc == 0) and (not dry) and (not detail.get("dry")) \
@@ -734,7 +752,7 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
 def _relaunch_after_update(version: str = "") -> None:
     """更新成功后**由我们自己做交接**：拉起"新代码的看门狗"（`--takeover --delay=3`）再立刻退出。
 
-    ⛔ 为什么不能让"更新装完 + 等用户点重启"（
+    ⛔ 为什么不能让"更新装完 + 等用户点重启"
     窗口也不关掉；我手动叉掉、点了一键关闭、再点一键启动，它仍然不起窗口」）：
       · 旧版本的进程内重启链是坏的（`watchdog.pid` 变两行 ⇒ `_kill_watchdog()` 静默失效 ⇒
         新旧看门狗互抢实例锁）⇒ **更新装上了、却没人接替** ⇒ 用户被迫自己下新包；
@@ -756,7 +774,8 @@ def _relaunch_after_update(version: str = "") -> None:
         os.makedirs(os.path.dirname(flag), exist_ok=True)
         with open(flag, "w", encoding="utf-8") as f:
             f.write(_json.dumps({"version": version, "at": _time.time()}, ensure_ascii=False))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         exe = sys.executable
@@ -776,7 +795,8 @@ def _relaunch_after_update(version: str = "") -> None:
             _set(state="error", phase="handoff",
                  why="更新已装好，但没能拉起新的看门狗：%s —— 请点「重启」，或重新打开一键启动"
                      % (str(e)[:120] or type(e).__name__))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         log.warning("更新后接管失败（本进程不退场，避免没人接替）：%s", e)
         return

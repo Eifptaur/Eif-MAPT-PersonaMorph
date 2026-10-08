@@ -19,6 +19,9 @@ import ast
 import io
 import os
 import sys
+import logging
+
+log = logging.getLogger("persona-morph")
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,7 +58,8 @@ for base in ("agent", "scripts"):
             rel = os.path.relpath(p, ROOT).replace("\\", "/")
             try:
                 tree = ast.parse(io.open(p, encoding="utf-8").read())
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):

@@ -15,7 +15,7 @@ import re
 import threading
 import time
 
-from .config import get_config
+from .config import get_config, normalize_prob
 from .util import format_clock_time, md_to_plain, rand_int, split_for_wx
 
 log = logging.getLogger("persona-morph")
@@ -23,8 +23,22 @@ log = logging.getLogger("persona-morph")
 # 同会话"短窗去重"窗口（秒）：这段时间内已经发过的同一句话，不再重复发（防"连发两次"）。
 _DEDUP_WINDOW_S = 20.0
 
+# ── 被引用对象是**媒体消息**时，跳过引用、直接普通发送（F8） ──────────────────
+# 为什么：引用定位靠"在可见画面里 OCR 找到那条消息的文字"（`wechat.reply_quote` 的
+#   `target_text` 匹配）。而语音/图片/视频/文件在屏幕上是**气泡/缩略图，不是文字** ⇒
+#   **永远定位不到**，只会白等几秒再退回普通发送。
+#   （朋友那边当天日志实证：3 次引用失败**全是**媒体消息。）
+# ⇒ 与其白试，不如**一开始就不试**。
+_QUOTE_SKIP_PREFIXES = ("[语音]", "[图片]", "[视频]", "[表情]", "[动画表情]", "[文件]", "[链接]")
+
+
+def _is_media_placeholder(text) -> bool:
+    """这条被引用的内容是不是"媒体占位符"（不是可 OCR 的文字）。见上方注释。"""
+    t = str(text or "").strip()
+    return bool(t) and t.startswith(_QUOTE_SKIP_PREFIXES)
+
 # 内部故障话术（**只许留在本机控制台与日志**）。命中即拦下、不发群。
-# 词表取自真机现场（用户截图里机器人真发进群的句子）与既有红线（prompt.py 第 7 条）。
+# 词表取自真机现场（机器人真发进群的句子）与既有红线（prompt.py 第 7 条）。
 _INTERNAL_FAIL_PHRASES = (
     "会话投递失败", "投递失败", "本轮未发言", "未能发言", "没能发言",
     "发送失败了", "发送失败", "发送没成功", "没发成功", "没发出去", "未发出",
@@ -84,18 +98,58 @@ def outbound_gate_status() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 #: 内心独白的**标记词**（出现在句首/括号开头才算）
+#: ⚠️ 只收**明确是独白腔**的：像"让我想想""我需要先…"这类在正常聊天里也会出现，
+#:   收进来会**误杀正常回复** —— 出站闸宁可漏一点，也不能把正常话拦掉。
+#: ⚠️ **裸"想法"已从词表移除**：它在句首是正常话，
+#:   而它想拦的独白形态由"我的想法是"覆盖 ⇒ 留着只会误杀。
 _THOUGHT_MARKERS = ("心想", "内心独白", "内心的想法", "我的想法是", "思考过程",
-                    "thinking:", "thinking：", "reasoning:", "reasoning：", "<thinking>")
-#: 整段"只有一个括号包裹的独白"或"整段以标记词开头"
+                    "thinking:", "thinking：", "reasoning:", "reasoning：", "<thinking>",
+                    "作为AI", "作为一个AI", "我作为AI", "<analysis>", "analysis:",
+                    "思考：", "分析：")
+#: 整段"只有一个括号包裹的独白"或"整段以标记词开头"。
+#: ⚠️ 由 `_THOUGHT_MARKERS` **构建**（不另抄一份词表）：两处各抄一份必然漂移 ——
+#:   改词表的人只改一处，另一处就永远不生效（本项目在"同一张表抄两遍"上栽过）。
 _THOUGHT_LEAD_RE = re.compile(
-    r"^[\s（(【\[]*(?:我)?(?:心想|内心独白|内心的想法|思考过程|想法)\s*[:：]?", re.I)
+    r"^[\s（(【\[]*(?:我)?(?:" + "|".join(re.escape(str(_m)) for _m in _THOUGHT_MARKERS) +
+    r")\s*[:：]?", re.I)
 _THOUGHT_TAG_RE = re.compile(r"^\s*<\s*(?:thinking|reasoning|thought)\b[^>]*>", re.I)
 #: 原始 XML / 工具调用格式（整段以这些标签开头即判泄漏）
 _RAW_XML_RE = re.compile(
-    r"^\s*<\s*(?:tool_call|tool_calls|tool_use|tool_result|function|function_call|functions|"
-    r"invoke|parameter|antml|result|output)\b", re.I)
+    # ⚠️ `\?xml`（XML 声明 `<?xml version=…?>`）与 `msg`/`message`（协议报文的常见根标签）
+    #   必须在这里 —— 模型整段吐出报文头时就是这类开头；只列 `tool_*` 一族会漏掉它们。
+    r"^\s*<\s*(?:\?xml|xml|msg|message|response|tool_call|tool_calls|tool_use|tool_result|"
+    r"function|function_call|functions|invoke|parameter|antml|result|output)\b", re.I)
 #: 模型特殊 token 形态（如 `<|im_start|>` / `<|tool▁calls▁begin|>`）
 _RAW_TOKEN_RE = re.compile(r"^\s*<\|[A-Za-z_\u2581\s]{2,40}\|>")
+
+
+def pick_sticker_owner(parts) -> int:
+    """★ 第 259 项硬闸：**一批消息里表情最多发 1 张**（"别连发"）⇒ 返回"由第几条负责发贴纸"。
+
+    返回：
+      · `>= 0` —— 由该下标那条发（本批里**第一条**能取到贴纸的）；
+      · `-1`   —— 本批**一张都不发**（没有任何一条带贴纸；或预扫描失败）。
+
+    ⛔ 为什么必须有它：原来**每条各自**解析标记、各自补发一张 ⇒ 一批三条各带一张就是"连发三张"，
+    而提示词里只有"表情包积极度"这种**频率引导**，**拦不住**（第 259 项原话："只有频率层面的引导，
+    没有硬闸门"）。
+    ⛔ 只做"**少发**"、不做"多发"：本条**不新增**任何贴纸，文本那部分照旧由 `extract_marker` 摘标记。
+    ⛔ 判不出就**不发**（预扫描异常 ⇒ `-1`）：与"宁可少发一张、也别连发"同向（fail-closed）。
+    """
+    try:
+        from . import emoji_index as _ei0
+    except Exception as _e: # noqa: BLE001
+        log.info("表情连发闸：拿不到表情索引（按'本批不发贴纸'处理）：%s", str(_e)[:60])
+        return -1
+    try:
+        for _i0, _t0 in enumerate(list(parts or [])):
+            _sid0 = _ei0.extract_marker(_t0)[1]
+            if _sid0 is not None:
+                return _i0
+    except Exception as _e: # noqa: BLE001
+        log.info("表情连发闸：预扫描失败（按'本批不发贴纸'处理）：%s", str(_e)[:60])
+        return -1
+    return -1
 
 
 def _is_thought_leak(text: str) -> str:
@@ -155,6 +209,12 @@ class SendQueue:
         self._lock = threading.Lock()
         self.minute_times: dict = {} # chatKey -> [ts]
         self.hour_times: dict = {}
+        # P0-4 弱谓词的"记账上下文代次"：**发送开始那一刻**从 wechat 侧抄一份。
+        # 发送过程中若发生"切走再切回"，wechat 侧代次会 +1 ⇒ 与本字段不等 ⇒
+        # 强谓词判"代次已过期"（那次发送的上下文确实不是原来那个了）。
+        # ⛔ 只为兼容直连构造（旧测试夹具）而在构造时同步一次；
+        #    生产链路由 `send_text_batch` 每次发送前重新对齐（见那里）。
+        self._ctx_generation = getattr(wechat, "_chat_generation", 0)
 
     def _check_rate(self, chat_key: str) -> None:
         cfg = get_config().get("send", {})
@@ -205,7 +265,9 @@ class SendQueue:
             cfg = get_config().get("send", {})
             if cfg.get("quote_on_new_talk") is False:
                 return None
-            prob = float(cfg.get("quote_reply_probability", 0.7))
+            # ⚠️ 概率过 `normalize_prob`：界面上可填 `90`（百分比）⇒ 直转会得到 90.0
+            #    ⇒ `random.random() >= 90.0` 永不成立 ⇒ "70% 概率"变成"每次必发"。
+            prob = normalize_prob(cfg.get("quote_reply_probability", 0.7), 0.7)
             gap_s = max(0, int(cfg.get("quote_new_talk_gap_s", 300)))
             msgs = self.store.recent(chat_key, limit=60)
             my_last = max((int(m.get("ts") or 0) for m in msgs if m.get("self")), default=0)
@@ -218,7 +280,8 @@ class SendQueue:
                 sid = str(m.get("sender_id") or "")
                 if not m.get("self") and sid.startswith("wxid_") and txt and not txt.startswith("["):
                     return (txt[:200], str(m.get("sender_name") or ""))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return None
 
@@ -236,6 +299,11 @@ class SendQueue:
         list_msgs = list(messages) if isinstance(messages, (list, tuple)) else [messages]
         if not list_msgs:
             raise RuntimeError("消息列表为空")
+        # ★ P0-4：**发送开始那一刻**把会话上下文代次抄到手，整批共用这一份。
+        #   为什么抄快照而不是每条现查：整个批次是"一次操作"，若中途用户切走又切回
+        #   （代次 +2），逐条现查会让后半批"看起来仍然有效" —— 而事实上这次操作
+        #   的上下文已经被打断过了。快照让整批**同命运**：要么都有效、要么都过期。
+        self._ctx_generation = getattr(self.wechat, "_chat_generation", 0)
         hard_split = int(get_config().get("send", {}).get("hard_split_at") or 0)
         parts = []
         # ⛔ `parts` 是"过 md_to_plain + 可能被 hard_split"之后的产物，
@@ -256,6 +324,25 @@ class SendQueue:
                 part_src.append(_orig)
         if not parts:
             raise RuntimeError("消息内容为空")
+
+        # ★ 「本轮回累计条数上限」的**第二处**（也是最后一道）：`tools.py::_exec_send_message`
+        #   已在**调用前**按 `session["sent"]` 截过一轮，但那条路只管模型显式调 `send_message` 的情形 ——
+        #   兜底补发、别的入口（转发/图片/语音）若也走到这里，就会绕过那道闸 ⇒ **这里必须再兜一次**
+        #   （否则"只补一处 ⇒ 半残"，正是报告里点明的那条）。
+        #   ⛔ 只**截断**、不报错（末条合并）：宁可少发一条，也不让"本来能发出去的"整批失败。
+        _cap = int(((get_config().get("send") or {}).get("max_parts_per_reply")
+                    or (get_config().get("send") or {}).get("max_total_per_reply") or 0) or 0)
+        _truncated_to = 0
+        if _cap > 0 and len(parts) > _cap:
+            log.warning("本轮回条数上限 %d，本批 %d 条 ⇒ 截断到 %d 条（末尾合并，不报错）",
+                        _cap, len(parts), _cap)
+            _truncated_to = _cap
+            # **末尾合并**：把超出配额的尾部并成一条（`\n` 连），而不是简单丢弃 ——
+            # 丢弃会丢内容，合并只是"少一个气泡"。
+            _head, _tail = parts[:_cap - 1], parts[_cap - 1:]
+            _merged = "\n".join(_tail)
+            parts = _head + [_merged]
+            part_src = part_src[:_cap - 1] + ["\n".join(part_src[_cap - 1:])]
 
         # 🔴 （用户现场截图：群里出现了「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）：
         #   **内部故障话术的机械拦网** —— 以前只写在提示词里（`prompt.py` 第 7 条），模型不听话时照样发进群。
@@ -341,12 +428,41 @@ class SendQueue:
                 reply_text = auto_quote[0]
                 reply_sender_name = auto_quote[1] or reply_sender_name
                 log.info("新对话开始，自动引用对方最近一句：%s", reply_text[:40])
+        # ★ 被引用的是媒体消息 ⇒ 跳过引用走普通发送（F8）。
+        #   上面那条是"自动引用"，这里也要挡：自动引用挑到的"对方最近一句"很可能就是一条语音/图片。
+        if _is_media_placeholder(reply_text):
+            log.info("跳过引用走普通发送：被引用的是媒体消息（%s），OCR 定位不到气泡里的内容",
+                     str(reply_text)[:20])
+            auto_quote = None
+            reply_to_mid = None
+            reply_text = ""
+            reply_sender_name = ""
         with self._lock, self.wechat.fg_hold():
+            # ★ 第 259 项硬闸：**先定"本批由谁发贴纸"**（最多一张）——
+            #   放在循环外，是因为"连发"是**批级**现象：每条自己判"我该不该发"永远判不出来。
+            _sticker_owner = pick_sticker_owner(parts)
+            if _sticker_owner >= 0:
+                log.info("表情连发闸：本批贴纸由第 %d 条负责发（其余只发文本）", _sticker_owner + 1)
             # fg_hold：整批只置前一次，全部发完才把微信送回后台（否则分条发送
             # 会「发一条切后台→下一条又置前」地闪来闪去，且每条都各自恢复易受前台锁影响）
             for i, text in enumerate(parts):
                 is_first = i == 0
                 is_last = i == len(parts) - 1
+                # ★★ **表情标记解析**（E5 接线，）：
+                #   模型按提示词里的清单写 `[[表情:12]]` ⇒ 这里**先把标记摘掉**，
+                #   文本照常发（标记**绝不发给群友**），**发完文本再补发那张表情**。
+                #   取不到文件/编号越界 ⇒ `_sid=None`，只在日志里记一句，**不影响文本发送**。
+                _sticker_id = None
+                try:
+                    from . import emoji_index as _ei
+                    _clean, _sticker_id, _swhy = _ei.extract_marker(text)
+                    if _sticker_id is not None and _clean != text:
+                        log.info("解析到表情标记：%s", _swhy)
+                        text = _clean
+                        if not text:                     # 整条只有标记 ⇒ 至少别发空串
+                            text = ""
+                except Exception as _e:
+                    log.info("表情标记解析异常（忽略）：%s", str(_e)[:80])
                 gap = self._gap(text, is_last)
                 try:
                     self._check_rate(chat_key)
@@ -372,21 +488,56 @@ class SendQueue:
                         ok, msg = self.wechat.send_text(chat_id, text, dedup_out=_dd)
                     if not ok:
                         raise RuntimeError(msg or "发送失败")
+                    # ★ 文本发成功后，**补发**模型选中的那张自定义表情
+                    #   （走 `send_image` ⇒ 独立窗盲粘贴；失败只记日志，不回滚已发出的文本）
+                    if _sticker_id is not None and i != _sticker_owner:
+                        # ★ 第 259 项硬闸：**本批已定由别人发** ⇒ 这条只发文本（标记早已被摘掉）
+                        log.info("表情连发闸：第 %d 条也带贴纸，但本批由第 %s 条发 ⇒ 这条不补发",
+                                 i + 1, (_sticker_owner + 1) if _sticker_owner >= 0 else "无")
+                        _sticker_id = None
+                    if _sticker_id is not None:
+                        try:
+                            from . import emoji_index as _ei2
+                            _sp = _ei2.resolve(_sticker_id)
+                            if _sp:
+                                _sok, _smsg = self.wechat.send_image(chat_id, _sp)
+                                log.info("补发表情 id=%s ⇒ %s（%s）",
+                                         _sticker_id, _sok, str(_smsg)[:60])
+                            else:
+                                log.info("表情 id=%s 取不到本地文件 ⇒ 不发", _sticker_id)
+                        except Exception as _e:
+                            log.info("补发表情失败（不影响文本）：%s", str(_e)[:80])
                     ts = int(time.time() * 1000)
+                    # ★ P0-4：**两个谓词分开判**（数据有效性 vs 界面可更新性）。
+                    #   实测场景：消息发出去的那一瞬间用户切到了别的会话 ——
+                    #     · `persist`（强谓词：账号+会话+代次+上下文四项全对）过了 ⇒ **记录照写**；
+                    #       不写的话下次没人知道这条已发过 ⇒ 重试会**重复发**（"怕复活"却复活了）。
+                    #     · `visible`（弱谓词：此刻还看着这个会话吗）没过 ⇒ **界面不跟**；
+                    #       此刻用户看的是另一个会话，把这条"已发送"画上去就是**串台**。
+                    #   ⛔ 顺序：先算再写 —— 两侧的判定必须基于**同一个时刻**的快照，
+                    #      分开算两次会读到不同的"当前会话"（中间用户可能又切了一次）。
+                    _vd = self._verdict_for(chat_key)
                     # 分账（幂等集中在一处）：命中 wechat 侧 3 秒去重 ⇒ 这条**没真发出去**，
                     #   但内容确实在几秒前发过：`append_self` 照旧（上下文一致），
                     #   风险窗计数**不加**（note_sent 不调），`sent` 不计、改记 `deduped`。
                     if _dd:
                         log.info("第%d条命中 3 秒去重（幂等，不重复发）：%s", i + 1, text[:40])
                         _deduped.append(text)
-                        self.store.append_self(chat_key, text, ts=ts)
-                        if self.on_sent:
-                            self.on_sent(chat_key, text)
+                        if _vd["persist"]:
+                            self.store.append_self(chat_key, text, ts=ts)
+                        else:
+                            log.warning("去重条**不记**发送台账（%s）：%s", _vd["persist_reason"], text[:40])
+                        self._notify_sent(_vd, chat_key, text)
                         continue
-                    self.store.append_self(chat_key, text, ts=ts)
+                    if _vd["persist"]:
+                        self.store.append_self(chat_key, text, ts=ts)
+                    else:
+                        # 强谓词没过 ⇒ **不写台账**。这条消息确实出去了（调用方会在 `sent` 里看到），
+                        # 但"记账"这一步的上下文已经失效 —— 写到错误的会话名下比不写更糟。
+                        log.warning("上下文已失效，**不记**发送台账（%s）：%s",
+                                    _vd["persist_reason"], text[:40])
                     _risk.note_sent(chat_key, text) # 记账（闸门的窗口计数只认机器人出站路径）
-                    if self.on_sent:
-                        self.on_sent(chat_key, text)
+                    self._notify_sent(_vd, chat_key, text)
                     # 反应评分：记录这条 reaction（群友后续回应会在 on_incoming 里加分）
                     try:
                         from .scoring import note_reaction
@@ -421,6 +572,59 @@ class SendQueue:
             except Exception: # noqa: BLE001
                 pass
         return {"sent": sent, "failed": failed, "deduped": _deduped}
+
+    def _verdict_for(self, chat_key: str) -> dict:
+        """给 `chat_key` 算一次 P0-4 两个谓词的结论（发送记录点每次调用前算一遍）。
+
+        **为什么每次重算、不缓存**：两个谓词问的都是"**此刻**"，缓存等于拿旧答案
+        回答新问题 —— 那正是"发错人"要防的东西。成本是一次属性读取 + 一次 OCR（后者
+        只在需要时走），相对发送本身的秒级开销可忽略。
+
+        ⛔ **任何一侧取不到值都必须走 fail-closed**（判无效 / 判不更新）：
+        本函数把取不到的情形交给 `verdict` 自己判空 —— 见那两个函数的 docstring。
+        """
+        from . import verdict as _vd
+        # 账号：库自报的账号目录名（`db_account` 是已有属性，不是为本功能新加的）。
+        try:
+            _acct = str(getattr(self.wechat, "db_account", "") or "")
+        except Exception:  # noqa: BLE001
+            _acct = ""
+        # 代次：`wechat` 侧维护的"会话上下文代次"。取不到时给 `None` ⇒ 强谓词判 invalid。
+        _gen = getattr(self.wechat, "_chat_generation", None)
+        _ctx_gen = getattr(self, "_ctx_generation", None)
+        # "此刻看着谁"：走已有的 `current_chat_name()`（会话列表绿底行 + OCR）。
+        #   ⛔ 不新写一套读法 —— 那会与 `chat_header` / `chat_ocr` 的口径分叉。
+        #   ★ P0-3：读到的身份**过一遍 `scope.scope_of()`** ——
+        #     读到 ⇒ 已解析 scope；**读不到 ⇒ 新建一次性隔离桶**。
+        #     为什么不让它保持空串：空串在不少地方会被 `or` 兜底成别的值（"读不到"变成"不过是那个"），
+        #     而隔离桶是个**显式对象** —— 它与任何身份都不相等，下游想误用也误用不了。
+        _vis = ""
+        try:
+            _vis, _ = self.wechat.current_chat_name()
+        except Exception:  # noqa: BLE001
+            _vis = ""
+        try:
+            from . import scope as _scope
+            _vis = _scope.scope_of(_vis)
+        except Exception:  # noqa: BLE001 — 隔离件取不到时保持原值，行为同历史（不放行新的更新）
+            pass
+        return _vd.decide(
+            account=_acct, chat_key=chat_key, generation=_gen,
+            ctx_account=_acct, ctx_chat_key=chat_key, ctx_generation=_ctx_gen,
+            visible_chat=_vis, visible_account=_acct,
+        )
+
+    def _notify_sent(self, vd: dict, chat_key: str, text: str) -> None:
+        """按弱谓词的结论决定**要不要回调界面层**。
+
+        `on_sent` 的消费者是界面/日志。用户在发送完成前
+        切走会话时，把它画到当前界面上就是串台 ⇒ 只在 `visible` 为真时回调。
+        **记录（持久层）在上游已按强谓词写过，与本函数无关** —— 两者独立。
+        """
+        if self.on_sent and vd.get("visible"):
+            self.on_sent(chat_key, text)
+        elif self.on_sent:
+            log.info("界面不更新（%s）：%s", vd.get("visible_reason") or "", str(text)[:40])
 
     def send_image(self, chat_key: str, local_path: str):
         """发送一张本地图片（微信剪贴板粘贴）。"""

@@ -24,6 +24,9 @@ import urllib.error
 import urllib.request
 
 from .config import ROOT, get_config, save_config
+import logging
+
+log = logging.getLogger("persona-morph")
 
 MODEL_NAME = "sd_xl_turbo_1.0_fp16.safetensors"
 #: 模型下载源（**先国内**：本机实测 ModelScope 5~25 MB/s，hf-mirror/GitHub 只有 0.02~0.06）
@@ -94,7 +97,7 @@ def active_id() -> str:
     return str(_cfg().get("preset") or DEFAULT_PRESET)
 
 # ——————————————— 实时进度（控制台要轮询它画进度条）———————————————
-# ⚠️ 用户 明确要求
+# ⚠️ 要求
 #   ⇒ 这里维护一份"当前在干什么 + 已下/总量/百分比/速度/预计剩余"，webui 用 `/api/image_gen/local/progress` 读它。
 _PROG = {
     "running": False, "phase": "idle", "message": "", "done_bytes": 0, "total_bytes": 0,
@@ -159,7 +162,8 @@ def _file_ok(path: str, gb: float) -> bool:
     文件当成已安装 —— 那样控制台会显示"已装好"，实际一加载就废（.part 只用于下载续传）。"""
     try:
         return bool(path) and os.path.exists(path) and os.path.getsize(path) >= int(float(gb) * 1073741824 * 0.97)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -225,7 +229,8 @@ def server_alive(port: int = None) -> bool:
         req = urllib.request.Request(u, headers=lg.client_headers(u, {"User-Agent": "PersonaMorph/probe"}))
         with urllib.request.urlopen(req, timeout=1.2) as r:
             return int(getattr(r, "status", 200) or 200) < 500
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -281,7 +286,8 @@ def _port_owner_pid(port: int):
                 continue
             if parts[1].endswith(":%d" % int(port)) and parts[3].upper() == "LISTENING":
                 return int(parts[4])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return None
 
@@ -313,7 +319,8 @@ def _proc_cmdline(pid: int) -> str:
         try:
             with open("/proc/%d/cmdline" % int(pid), "rb") as f:
                 return f.read().decode("utf-8", "replace").replace("\x00", " ").strip()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return ""
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
@@ -322,7 +329,8 @@ def _proc_cmdline(pid: int) -> str:
                            capture_output=True, text=True, timeout=8,
                            creationflags=0x08000000 if os.name == "nt" else 0)
         return str(getattr(r, "stdout", "") or "").strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -332,7 +340,7 @@ def _is_our_server(pid: int, port: int) -> tuple:
     ⛔ 原来只比"pidfile 里的 pid == 端口占用者"，
     **不验那个进程是谁** ⇒ pidfile 残留 + PID 复用（7860 恰是 Gradio / A1111 的默认口）就会
     `taskkill /F` 掉**别人的**进程。⇒ 杀之前必须能证明那是一条 `sd_local_server.py <port>` 命令行；
-    取不到命令行 ⇒ **不杀**（宁可让用户手动处理）。
+    取不到命令行 ⇒ **不杀**（宁可让处理）。
     """
     cmd = _proc_cmdline(pid)
     if not cmd:
@@ -347,7 +355,8 @@ def _drop_pidfile() -> None:
     """删掉 pidfile（过期的记录留着就是下一条误杀事故的种子）。"""
     try:
         os.remove(_pidfile())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
 
 
@@ -360,7 +369,8 @@ def kill_stale_owner(port: int) -> tuple:
     """
     try:
         pid = int(open(_pidfile(), encoding="utf-8").read().strip())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False, "没有 pidfile 记录（无法证明那是我起的 ⇒ 不替你杀）"
     owner = _port_owner_pid(port)
     if owner is None:
@@ -422,7 +432,8 @@ def probe_speed(url: str, bytes_to_read: int = 3 * 1024 * 1024, timeout: float =
             d = r.read(bytes_to_read)
         dt = max(0.05, time.time() - t0)
         return len(d) / 1048576.0 / dt
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0.0
 
 
@@ -691,7 +702,8 @@ def start_server(on_log=None) -> tuple:
     env["PYTHONIOENCODING"] = "utf-8"
     try:
         logf = open(os.path.join(ROOT, "logs", "sd_local.log"), "ab")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         logf = subprocess.DEVNULL
     try:
         p = subprocess.Popen([exe, "-u", srv, str(port)], cwd=ROOT, env=env,
@@ -719,7 +731,8 @@ def stop_server() -> tuple:
     port = int(_cfg().get("port") or 7860)
     try:
         pid = int(open(_pidfile(), encoding="utf-8").read().strip())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return True, "没有记录在案的本地服务进程"
     _ok_id, _why_id = _is_our_server(int(pid), port)
     if not _ok_id:

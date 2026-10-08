@@ -20,8 +20,12 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -66,8 +70,60 @@ def _parse(out: str):
     return None, None
 
 
+#: 开窗 / 起服务类：**上限 2**（既快又不刷屏）
 _HEAVY = re.compile(r"(console_|cursor_|whale|voice_models|local_models|restart_button|decide_link|_ui_selftest|"
                     r"first_boot_smoke)")
+
+#: ⛔ **用真 OCR 引擎的判据 ⇒ 上限 1（完全串行）** —— 实测：**两条**同时跑就会有一条读到乱码
+#:   （症状：`rows=0`、或者把文件名读成一串乱码）。表现是"套件里红、单跑绿、
+#:   **受害者每次不同**"。我前三轮把这类红归因成"判据互扰 / 环境变量"，全错；
+#:   按"①先带套件的环境变量单跑 → ②再疑并发"这个顺序查，才拿到机制。
+_OCR_SERIAL = re.compile(r"(chat_ocr|ocr_boost|ocr_cache|ocr_corpus|ocr_precision|ocr_timeout|"
+                         r"identity_minute|pick_row|session_pick|list_rows_band|locate_frame_dump)")
+
+#: **当次运行的临时根**（由 `main()` 设）：子进程的 TEMP/TMP/TMPDIR 全指到这里，跑完整根删。
+#:  ⛔ 这样判据里那约 150 种 `mkdtemp(prefix=…)` 就不必逐个枚举进清扫名单了（见 `_run_one`）。
+_TMPROOT = None
+
+
+def _rm_tmproot() -> None:
+    """删掉当次运行根。
+
+    ⛔⛔ **硬护栏：只删"我们自己的、名字带 `pm-suite-` 的、位于系统临时目录下的"那一个目录。**
+      我第一版写成"`makedirs` 失败就把 `_TMPROOT` 退回 `tempfile.gettempdir()`，结尾统一 `rmtree`"
+      —— 那等于**一旦建目录失败就去删整个系统临时目录**（别的程序的临时文件全在里头）。
+      ⇒ 现在：① 建不出来就置 `None`（不删任何东西）；② 删之前**再核一遍**名字与位置。
+    """
+    if not _TMPROOT:
+        return
+    try:
+        _nm = os.path.basename(os.path.normpath(_TMPROOT))
+        _parent = os.path.realpath(os.path.dirname(os.path.normpath(_TMPROOT)))
+        if not _nm.startswith("pm-suite-") or _parent != os.path.realpath(tempfile.gettempdir()):
+            print("  ⚠️ 拒绝删除可疑的临时根（名字或位置对不上）：%s" % _TMPROOT)
+            return
+        import shutil as _sh
+        import stat as _st
+
+        def _force(func, path, _exc):  # noqa: ANN001, ANN201
+            # ⛔ **Windows 只读属性**：判据里造过 `agent/c.py` 这类夹具（`backup` 那条会拷成只读）
+            #   ⇒ `rmtree(ignore_errors=True)` 会**静默留整个根**（实测：每跑一轮套件留一个
+            #   `pm-suite-*`，里面就一个只读文件）。去掉只读位再删。
+            try:
+                os.chmod(path, _st.S_IWRITE)
+                func(path)
+            except Exception: # noqa: BLE001
+                pass
+
+        # ⛔ **要重试**：Windows 上子进程刚退出时可能还占着句柄 ⇒ 一次 `rmtree` 会被静默咽掉。
+        for _i in range(3):
+            _sh.rmtree(_TMPROOT, ignore_errors=False, onerror=_force)
+            if not os.path.exists(_TMPROOT):
+                break
+            time.sleep(0.25)
+    except Exception: # noqa: BLE001
+        pass    # 清不掉也不许影响汇总
+
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 _BELOW_NORMAL = 0x00004000 if os.name == "nt" else 0 # 别跟用户抢 CPU：全套默认低优先级
 
@@ -84,7 +140,8 @@ def _snap_product() -> dict:
         base = os.path.join(ROOT, d)
         try:
             names = os.listdir(base)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         for n in names:
             p = os.path.join(base, n)
@@ -93,7 +150,8 @@ def _snap_product() -> dict:
                     continue
                 st = os.stat(p)
                 out["%s/%s" % (d, n)] = (int(st.st_size), int(st.st_mtime_ns))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
     return out
 
@@ -115,6 +173,8 @@ def _diff_product(a: dict, b: dict) -> list:
 #: 为什么光"判红"不够：`logs/console.url` 决定启动器
 #: 开哪个地址 —— 被判据写成死链之后，用户点「一键启动」得到的就是一屏 `ERR_CONNECTION_REFUSED`
 #: （＝网友报的「打不开控制台」）。所以仪器必须**既报出来、也不留伤**：跑每条判据前备份、跑完还原。
+#: 注：`data/console_window.txt` 由 `launcher_probe_selftest` 用真 exe 跑探针时触发
+#: （`LauncherForm.SaveGeo`），已在源码里让**探针模式不写**；该判据另做"跑前快照/跑后还原"兜底。
 _DERIVED = ("logs/console.url", "logs/browser_opened.lock")
 
 
@@ -125,7 +185,8 @@ def _snap_derived() -> dict:
         try:
             with open(p, "rb") as fh:
                 out[rel] = fh.read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             out[rel] = None
     return out
 
@@ -140,7 +201,8 @@ def _restore_derived(snap: dict) -> list:
             try:
                 with open(p, "rb") as fh:
                     cur = fh.read()
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 cur = None
             if want is None:
                 if cur is not None:
@@ -151,7 +213,8 @@ def _restore_derived(snap: dict) -> list:
                 with open(p, "wb") as fh:
                     fh.write(want)
                 back.append(rel)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     return back
 
@@ -168,7 +231,8 @@ def _watch_product(stop: threading.Event, seen: dict) -> None:
             for k, v in _snap_product().items():
                 if seen.get(k) != v:
                     seen[k] = v
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         stop.wait(0.04)
 
@@ -182,11 +246,19 @@ def _diff_seen(before: dict, after: dict, seen: dict) -> list:
     return out
 
 
-def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
-    """跑一条判据。**会开窗/开服务的那些先过 `gate`（同时只允许一条）**，其余并发跑。"""
+def _run_one(name: str, timeout: int, gate: threading.Semaphore,
+             gate_ocr: threading.Semaphore) -> dict:
+    """跑一条判据。
+
+    ⛔ **两道闸**（都算"别让它跟同类并行"）：
+      · `gate_ocr`（上限 1）：**用真 OCR 引擎**的判据 —— 两条同时跑就会有一条读到乱码（实测）；
+      · `gate`（上限 2）：开窗 / 起服务类 —— 它们是"屏幕闪窗 + 卡机"的来源。
+    其余判据**并发跑**。
+    """
     p = os.path.join(HERE, name)
-    heavy = bool(_HEAVY.search(name))
-    _hold = gate if heavy else None
+    _heavy = bool(_HEAVY.search(name))
+    _ocr = bool(_OCR_SERIAL.search(name))
+    _hold = gate_ocr if _ocr else (gate if _heavy else None)
     if _hold:
         _hold.acquire()
     t = time.time() # 计时**从真正开跑算起**（不含等闸，读数才诚实）
@@ -216,7 +288,27 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
                                #   原来那个大的"。这个标记**会被子进程继承**，一层就挡住。
                                env={**os.environ, "PYTHONIOENCODING": "utf-8",
                                     "PM_JUDGE_NO_PROC": "1", "PM_NO_WINDOW_TOUCH": "1",
-                                    "PYTHONUNBUFFERED": "1"})
+                                    # ⛔ 判据一律不许构造真 GUI（第 261 项的闸；双保险 ——
+                                    #   闸本身也会认"脚本名以 _selftest.py 结尾"，那条覆盖手动单跑）。
+                                    "PM_JUDGE_NO_GUI": "1",
+                                    "PYTHONUNBUFFERED": "1",
+                                    # ⛔ **判据的临时目录整体收进"当次运行根"** ——
+                                    #   判据里用了约 150 种 `mkdtemp(prefix=…)`（`cuj-`/`sfp_`/`cc_`/…），
+                                    #   一个个枚举进清扫名单既琐碎、又有"名字太短删到别的程序"的风险。
+                                    #   改成把子进程的 `TEMP`/`TMP`/`TMPDIR` 都指到同一个根，
+                                    #   跑完父进程**把整个根删掉** ⇒ **一次覆盖全部判据前缀**。
+                                    #   （产品自身跑的时候没有这个变量 ⇒ 行为不变；
+                                    #     产品那 20 个前缀另由 `TEMP_PREFIXES` 覆盖，且有防漂判据。）
+                                    "TEMP": (_TMPROOT or tempfile.gettempdir()),
+                                    "TMP": (_TMPROOT or tempfile.gettempdir()),
+                                    "TMPDIR": (_TMPROOT or tempfile.gettempdir()),
+                                    # ⛔ 判据并发时不许共享机器档案（`data/env_profile.json`）：
+                                    #   实测 —— `-j` 并发下同一批 OCR 判据里**每条都可能红、且受害者
+                                    #   每次不同**（证据：两个进程的 `.tmp` 同时出现在 `data/`）。
+                                    #   ⇒ 每条判据给**自己的**档案路径（放在当次运行根里，
+                                    #     跑完随根一起删 ⇒ 连这个文件也不会留）。
+                                    "PM_ENV_PROFILE_PATH": os.path.join(
+                                        (_TMPROOT or tempfile.gettempdir()), "pm-envprofile-%s.json" % name.replace("_selftest.py", ""))})
             out = (r.stdout or b"").decode("utf-8", "replace") + \
                   (r.stderr or b"").decode("utf-8", "replace")
             rc = r.returncode
@@ -240,7 +332,7 @@ def _run_one(name: str, timeout: int, gate: threading.Semaphore) -> dict:
     ok = ((rc == 0) and not fs and not _FAIL_LINE.search(out) and not _TRACE.search(out)
           and _summed)
     return {"name": name, "out": out, "rc": rc, "sec": sec, "ps": ps, "fs": fs, "ok": ok,
-            "summed": _summed, "heavy": heavy, "dirty": _dirty, "restored": _restored}
+            "summed": _summed, "heavy": _heavy or _ocr, "dirty": _dirty, "restored": _restored}
 
 
 def main() -> int:
@@ -268,12 +360,22 @@ def main() -> int:
     bad, total_p, total_f = [], 0, 0
     t0 = time.time()
     gate = threading.Semaphore(2) # 开窗/开服务类：最多两条同时（既快又不刷屏）
+    gate_ocr = threading.Semaphore(1) # ⛔ 真 OCR 类：**完全串行**（两条同跑必有一条读到乱码，实测）
+    # ⛔ **当次运行的临时根**：子进程的 TEMP/TMP/TMPDIR 全指到这里（见 `_run_one` 的说明），
+    #   跑完在 `finally` 里**整根删掉** ⇒ 判据那约 150 种前缀的残留一次清光。
+    global _TMPROOT
+    _TMPROOT = os.path.join(tempfile.gettempdir(), "pm-suite-%d" % os.getpid())
+    try:
+        os.makedirs(_TMPROOT, exist_ok=True)
+    except Exception: # noqa: BLE001
+        _TMPROOT = None   # ⛔ **不许退回成"系统临时目录本身"** —— 见下面 `_rm_tmproot` 的说明
     results = {}
     with _cf.ThreadPoolExecutor(max_workers=max(1, int(a.jobs))) as ex:
-        futs = {ex.submit(_run_one, n, a.timeout, gate): n for n in names}
+        futs = {ex.submit(_run_one, n, a.timeout, gate, gate_ocr): n for n in names}
         for fu in _cf.as_completed(futs):
             r = fu.result()
             results[r["name"]] = r
+    _rm_tmproot()
     for n in names: # 按文件名顺序输出（稳定、好对照）
         r = results[n]
         if r["ps"]:

@@ -4,11 +4,11 @@
 ## 为什么这么设计
 - **只动"当前用户的启动文件夹"**：`%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup`。
   不写注册表（`HKCU\\...\\Run`）、不建计划任务、不碰系统目录 ⇒ 免管理员、用户自己也能一眼看到并删掉。
-- **默认关**（用户口径"在前后端给选项，看用户选不选"）：不替用户决定，也不悄悄开机就跑。
+- **默认关**：不在前后端悄悄替用户决定，也不擅自开机就跑（要开必须由用户在界面上显式选）。
 - **产物可读可撤**：正常是启动文件夹里的一个快捷方式（指向 `一键启动.exe`，窗口最小化启动）；
   创建快捷方式失败（少见：PowerShell 被策略挡）⇒ 退回写一个启动脚本（**CRLF + 纯 ASCII 内容**——
   本仓血泪：cmd 按 ANSI 读文件，LF 会让它一行都跑不动、中文注释会变乱码命令）。
-- **删掉那个文件＝关闭自启**：`disable()` 就是删它；用户手动删也一样生效（`status()` 以文件为准）。
+- **删掉那个文件＝关闭自启**：`disable()` 就是删它；删也一样生效（`status()` 以文件为准）。
 
 ⚠️ 非 Windows 平台：`status()` 如实返回 `supported=False`，`enable()` 明确拒绝（不假装成功）。
 """
@@ -26,8 +26,33 @@ STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
                            "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
 LNK_NAME = "群相." + "lnk"
 CMD_NAME = "群相" + ".cmd"
-#: 首选启动目标：包内的 `一键启动.exe`（产品的正规入口）
-LAUNCHER_EXE = "一键启动.exe"
+#: 首选启动目标：包内的 `群相.exe`（产品的正规入口）。
+#: ⛔ **文件名＝产品名**（用户口径："启动器的名字就是产品的名字"）——
+#:   参照 WorkBuddy／微信：用户看到的就是一个以产品命名的 exe，直接双击就能用。
+#:   ⚠️ 改名后**必须留老名**：老安装里已经建好的快捷方式、以及"正在运行的旧版进程"
+#:   都还叫 `一键启动.exe` ⇒ 见下面的 `LEGACY_LAUNCHER_EXES`（只用于"认出来"，不用于新建）。
+LAUNCHER_EXE = "群相.exe"
+#: 历史名（**只读、只用于识别**：老快捷方式、老进程、老窗口标题）——⛔ 不要删。
+LEGACY_LAUNCHER_EXES = ("一键启动.exe",)
+
+
+def find_launcher_exe(root: str | None = None) -> str:
+    """启动器的**实际**路径：新名优先，找不到退老名；都没有 ⇒ 返回新名（报错信息更贴近现状）。
+
+    ⛔ 为什么要有它（而不是各处写字符串）：文件名刚从 `一键启动.exe` 改成 `群相.exe`，
+      而**老安装**里可能只有老名 ⇒ 取"实际存在的那个"，新老两种安装都不坏。
+      **名字的来源只有本模块一处**（`LAUNCHER_EXE` / `LEGACY_LAUNCHER_EXES`），
+      判据、`notify_ui` 等一律调这里，别各自拼字符串。
+    """
+    # ⛔ **本模块没有模块级 `ROOT`** ⇒ 这里自己按 `__file__` 算（我第一版直接用了 `ROOT`
+    #   ⇒ `NameError`，而且那异常在判据侧表现为"探针无输出/无汇总行"，很难一眼看出。
+    #   与 `wechat.py` 里少了 `import sys` 那次是**同一类错**：别假设别的模块有那个名字。）
+    _r = root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for _n in (LAUNCHER_EXE,) + tuple(LEGACY_LAUNCHER_EXES):
+        _p = os.path.join(_r, _n)
+        if os.path.exists(_p):
+            return _p
+    return os.path.join(_r, LAUNCHER_EXE)
 #: ⚠️ **老机制**（产品里原本就有）：`scripts\\开机自启.bat` 用计划任务注册，**要管理员**。
 #    两套并存时必须**互相看得见**，否则用户开了老的那套、新开关却显示"未开启"（最误导）。
 #    口径：新开关**默认只动启动文件夹**（免管理员）；老任务**只认、只删、不建**（建它要管理员，
@@ -106,7 +131,7 @@ def _remove_legacy_task() -> tuple:
 
 
 def status(dir_path: str = None) -> dict:
-    """以**文件/任务为准**报状态（用户手动删掉快捷方式、或删掉计划任务 ⇒ 这里立刻变回"未开启"）。
+    """以**文件/任务为准**报状态（删掉快捷方式、或删掉计划任务 ⇒ 这里立刻变回"未开启"）。
 
     ⚠️ 两套机制都要认：我们放的启动文件夹产物（新，免管理员）＋ 老的计划任务（要管理员）
     —— 只认一套会让"其实开着"显示成"未开启"，那是最误导用户的一种错。

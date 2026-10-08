@@ -4,7 +4,7 @@ import os
 
 from PIL import Image
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
 for d in ('local', 'wechat'):
     S = os.path.join(BASE, d)
     print('=== %s ===' % d)

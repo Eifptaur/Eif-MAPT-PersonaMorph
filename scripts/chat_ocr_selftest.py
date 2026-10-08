@@ -131,7 +131,7 @@ ck("宽容判据：修复前那两种残读认不过（反向锚）",
    and (not ocr.loose_matches("aaa偷啃使用者", "aal日月1551")), "")
 
 print("\n── F. 绿底白字多档择优（`_name_score`；真机残字不得压过完整读数）──")
-# 真机锚点（2026-09-29，`dev-workspace/persona-morph/ocr-samples/wechat/7bcf1579`，真值 `aaa偷啃使`）：
+# 真机锚点（`dev-workspace/persona-morph/ocr-samples/wechat/7bcf1579`，真值 `aaa偷啃使`）：
 #   `pane_left` 相对偏移三档扫描实测读数 = ①`''` ②`aaa亻俞`（名字后半被裁掉）③`aaa偷啃使“．`（完整+时间戳残留）。
 #   老逻辑「第一档 non-empty 且 plausible 就 return」会把 ② 的**残字**当结果收下（`_name_plausible`
 #   只挡"像时间的"、不挡"被截断的"）⇒ 命中率 0/2。修法：三档全读、按 `_name_score` 择优。
@@ -159,8 +159,8 @@ ck("F8 源码锚：`_band_name` 三档扫描改择优（不再第一档返回）
    and not _sm.has(_ocr_src, "if _w and _name_plausible(_w):\n                return _w"), "")
 ck("F9 源码锚：`_band_name` 接 `cands`（线上路径靠它择优）",
    "def _band_name(img, y_abs: int, cands=None)" in _ocr_src, "")
-# ⭐ 第一候选档＝"绿带上半行 × 绿像素全宽裸读"（2026-09-29 真机实测两例读全）
-# ⚠️ 2026-09-30 更新：调用改成**限域版** `x_max=int(_pl)`（防裁进聊天区，见 F16/F17），
+# ⭐ 第一候选档＝"绿带上半行 × 绿像素全宽裸读"（真机实测两例读全）
+# ⚠️ 更新：调用改成**限域版** `x_max=int(_pl)`（防裁进聊天区，见 F16/F17），
 #    所以这里的字面锚同步改成不依赖 `x_max` 的写法（原锚指"这一档存在"，F17 另管限域）。
 ck("F10 源码锚：`_band_name` 有「绿带上半行整宽裸读」这一档",
    _sm.has(_ocr_src, "_green_span(img, int(y0), int(y1)") and "绿带上半行整宽裸读" in _ocr_src, "")
@@ -180,7 +180,7 @@ ck("F13 反向对照：**有**候选集时完整的那份一定更高（证明�
 ck("F14 源码锚：三档循环**不再重置** `_best_*`（只允许声明一次）",
    _ocr_src.count('_best_w, _best_s = "", -1.0') == 1,
    "出现 %d 次" % _ocr_src.count('_best_w, _best_s = "", -1.0'))
-# ⛔ 回归锚（2026-09-30 发现并修）：`_green_span` **必须限域**，否则会裁进聊天区。
+# ⛔ 回归锚（发现并修）：`_green_span` **必须限域**，否则会裁进聊天区。
 #   实测：`wechat/6c29e9f4` 聊天区有一段 963px 宽的浅绿底，比列表绿底行（203px）长得多 ⇒
 #   不限域时"最长连续绿段"选中聊天区 ⇒ `_band_name` 读出聊天区英文正文
 #   `article/intertextuality-and-parallelomania`（真值 `E`）⇒ 污染 `highlight().name`。
@@ -206,7 +206,7 @@ try:
 except Exception as _e:
     ck("F18/F19 `_green_span` 限域行为验证", False, "构造图失败：%r" % (_e,))
 
-# ── 1.13 相对日词**形近误读**容错（用户 2026-09-30 当面指正：`胙`是月字旁，应是日字旁的`昨`）──
+# ── 1.13 相对日词**形近误读**容错（用户 当面指正：`胙`是月字旁，应是日字旁的`昨`）──
 # 起因：实测报告里读出 `微信团队胙天`。`昨`=U+6628（日旁）、`胙`=U+80D9（月旁）——形近误读。
 # 与注释里记的「星期六」事故**同类**：只剥正确的 `昨天` ⇒ 读成 `胙天` 的行残字进 norm ⇒
 # `matches()` 判不过 ⇒ **那一行永远认不出**（切会话第③条路失效）。
@@ -225,7 +225,7 @@ ck("F16 反向锚：真名（星期六/昨天/前天/下午茶…）一个都不
    and ocr.clean("昨天播报") == "播报",  # 这条**是**名字+时间词，剥掉才是对的
    "；".join("%s→%r" % (_s, ocr.clean(_s)) for _s in _REAL_NAMES))
 # ⛔ 最关键的一条：形近误读容错**只走 clean/定位**，`_rel_re`（授权档指纹源）**不许被扩宽**。
-#    否则 `指纹('昨天播报') == 指纹('胙天播报')` ⇒ 守恒失效 ⇒ 真有这两个群名时可能发错人。
+#    否则 `指纹 == 指纹` ⇒ 守恒失效 ⇒ 真有这两个群名时可能发错人。
 ck("F17 授权档仍严格：`胙天播报` 与 `昨天播报` 指纹**不守恒** ⇒ matches_strict 判不过（读不准就不发）",
    ocr.matches_strict("胙天播报", "昨天播报") is False
    and ocr.matches_strict("昨天播报", "胙天播报") is False
@@ -234,8 +234,8 @@ ck("F18 源码锚：`_rel_re` **只收正确的字**（形近误读在 `_rel_typ
    '(?:昨天|前天)' in _ocr_src and "_rel_typo_re" in _ocr_src
    and "_rel_re.sub" in _ocr_src and "_rel_typo_re.sub" in _ocr_src, "")
 
-# ── F″. 1.14 授权档模糊兜底的**容忍度**提升（用户 2026-09-30 追问）──
-# 用户原话："模型肯定是会读错的，就这水平吗？宁可不发也不冒险，发错人不就等于发不出去吗"
+# ── F″. 1.14 授权档模糊兜底的**容忍度**提升（追问）──
+# 口径：**宁可不发，也不冒险发错人** —— 发错人等于没发出去。
 # ⇒ 复核确认：`matches_fuzzy` 原①号约束只有「固定距离阈值」与「包含关系」两条，
 #    短名（<3 字）**永不参与**、复合误读（错字+多字）够不着 ⇒ 真实漏网。
 #    改法：新增第三条路 `_uniq_nearest`——**不卡固定距离，卡"竞争者明确更远"**。
@@ -277,7 +277,7 @@ ck("F21 源码锚：`_uniq_nearest` 存在、`_MARGIN` 是**相对边际**、**�
 
 
 print("\n── G. 真机绿底白字端到端（`_band_name` 走生产入口；素材不在则**跳过**，绝不假绿）──")
-# 素材：用户 2026-09-29 专供的真机微信截图（150% DPI），`dev-workspace/` 是**非版本库路径** ⇒
+# 素材：用户 专供的真机微信截图（150% DPI），`dev-workspace/` 是**非版本库路径** ⇒
 # 换台机器/清过 workspace 就跑不到 ⇒ 跳过（打印「跳过」并计数，不冒充通过）。
 _WXDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                       "dev-workspace", "persona-morph", "ocr-samples", "wechat")
@@ -333,7 +333,7 @@ ck("E7 随包离线轮子里带齐 v6 那一套（rapidocr + omegaconf + antlr4�
    all(any(fn.startswith(_p) for fn in os.listdir(os.path.join(_root, "vendor", "ocr")))
        for _p in ("rapidocr-", "omegaconf-", "antlr4")), "")
 
-# ── K. `content_match` 的整体相似度兜底**必须带够长公共块下界**（2026-09-30 实测修）──
+# ── K. `content_match` 的整体相似度兜底**必须带够长公共块下界**（实测修）──
 # 起因：`content_match` 主路要"针的 8/10/12/16 字**非低熵确切片段**在 pane 里命中"，
 #   可它最后一行原来是裸的 `sm.ratio() > 0.5` ⇒ **没有任何 8 字命中**时整体相似就放行
 #   ＝把 8 字门槛整个绕过去。实测构造例（最长公共块只有 3 字、ratio=0.514）能判 True：
@@ -354,6 +354,34 @@ ck("K3 正例锚：真有一段够长的公共话 ⇒ **仍**判 True（收紧�
 ck("K4 反例锚：8 字确切片段命中这条主路**不受影响**（兜底只在主路全落空时才走）",
    ocr.content_match("随便什么前缀 甲群刚才说的那句话内容 后缀",
                      "甲群刚才说的那句话内容") is True, "")
+
+# ── L. 搜索入口落点：**间距当场量、记档**，不许写死（PLAN 192）──
+# 两台机器实测不同：一台放大镜与「＋」**重叠**（间距≈0）、另一台相距 **54px**
+# ⇒ 写死到另一台就会点偏 ⇒ 口径＝"实测 → 记住 → 只认到一个块时按记下的间距往左推"。
+print("\n── L. 搜索入口落点（间距实测并记住，不许写死）──")
+ck("L1 源码锚：存在 `_search_entry_x`，且 `find_search_entry` 的 icon 分支真的调它",
+   "def _search_entry_x" in _src and "_ex = _search_entry_x(cands, cx)" in _src)
+ck("L2 源码锚：间距走档案（`remember_anchor(\"search_gap\"` / `anchor(\"search_gap\"`），不是常量",
+   'remember_anchor("search_gap"' in _src and 'anchor("search_gap"' in _src)
+ck("L3 ★反向锚：不许出现写死的「间距常量」（如 `SEARCH_GAP = 54`）",
+   not __import__("re").search(r"^SEARCH_GAP\s*=\s*[\d.]", _src, __import__("re").M))
+try:
+    import agent.display_metrics as _dm
+    _old_anchor, _old_rem = _dm.anchor, _dm.remember_anchor
+    _rec = {}
+    _dm.remember_anchor = lambda name, v, src="": _rec.update({name: float(v)})
+    _dm.anchor = lambda name: 0.0
+    ck("L4 行为锚：同一排两个方块 ⇒ 实测间距并记档（54），落点仍取**最靠左**那个",
+       ocr._search_entry_x([(100, 71, 21, 21), (154, 71, 24, 24)], 100) == 100
+       and _rec.get("search_gap") == 54.0, repr(_rec))
+    ck("L5 行为锚：只认到一个块 + 档案里**没有**间距 ⇒ **原样返回**（不猜、不往左乱推）",
+       ocr._search_entry_x([(100, 71, 21, 21)], 100) == 100)
+    _dm.anchor = lambda name: 54.0
+    ck("L6 行为锚：只认到一个块 + 档案里**有**间距 54 ⇒ 往左推 54（那多半认到的是「＋」）",
+       ocr._search_entry_x([(100, 71, 21, 21)], 100) == 46)
+    _dm.anchor, _dm.remember_anchor = _old_anchor, _old_rem
+except Exception as _e:
+    ck("L4-L6 行为锚（打桩失败 ⇒ 视为未测，不许当通过）", False, str(_e)[:80])
 
 print("\n== 结论：%d 通过 / %d 失败%s ==" % (PASS, FAIL, ("（跳过 %d）" % SKIP) if SKIP else ""))
 sys.exit(1 if FAIL else 0)

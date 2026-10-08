@@ -7,7 +7,7 @@
   ⇒ 答案：**不查表。把"一行有多高"直接从图里量出来，用它当尺子。**
 ════════════════════════════════════════════════════════════════════════
 
-★ 两把"图内尺子"（都不需要 DPI 数据、不需要用户提供任何实测数据）
+★ 两把"图内尺子"（都不需要 DPI 数据、不需要任何实测数据）
 
   【尺子 1 · 绿带尺】`row_h_from_green(im)`
       微信把**当前打开的会话行整行填成绿色** ⇒ 这条绿带的高度**就等于一个行高**。
@@ -215,7 +215,7 @@ def green_band(im, min_h: int = MIN_GREEN_H, x0=None, x1=None) -> dict:
     直接复用 `chat_ocr.green_bands()`（纯像素通道，**不调用 OCR**）。
     取 `score` 最高的一条 —— 它是"整行填绿"，绿占比远高于头像绿等假绿。
 
-    ⚠️ **取样窗自愈（315px 极窄窗口实测，2026-10-01）**：
+    ⚠️ **取样窗自愈（315px 极窄窗口实测，）**：
     `green_bands()` 默认取样窗来自 `chat_ocr._green_x()`，即"面板左沿往左 144~14px"。
     当窗口极窄（实测 W=315）时 `pane_left_for()` 给出 `81`（≈ `PANE_LEFT_REL*W`），
     取样窗退化成 `(0, 67)` —— **整块落在窗口左缘的头像/图标区，那里没有绿**
@@ -313,6 +313,120 @@ def name_column(boxes, pane, width, bin_px: int = 8, min_count: int = 2):
 # ────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ────────────────────────────────────────────────────────────────────────────
+# ── ★ 投影补行────────────────────────────────────────────
+#   为什么：实测 OCR **只认得 69% 的会话行**（单字符名字整条漏、浅色帧漏整行）
+#   ⇒ 任何"数第几条 → 点它"的逻辑都会**错位**（方向可能是"点到相邻行"）。
+#   投影（每行有多少个"有内容的像素"）**不依赖识别** ⇒ **不会漏行**：
+#   一段连续的有内容区 = 一行；两段之间的空带 = 行间分隔。
+def project_row_edges(im, pane: int, x0: int | None = None, x1: int | None = None,
+                      min_ink: float = 6.0, min_h: int = 4, gap_max: int = 3):
+    """用**文字列的纵向投影**找出每行的上下边界 ⇒ `[(y_top, y_bot), ...]`（图内像素，自上而下）。
+
+    `pane` ＝ 会话列表右沿（用它反推名字列大致范围）；`x0/x1` 给了就用给的。
+    `min_ink`：一行的"边缘强度"低于此值不算行（滤噪点）；`min_h`：太矮的段不算一行；
+    `gap_max`：同一次识别里被字间空隙切开的段，间隔 ≤ 此值就并回一行。
+
+    ⛔ 本函数**只做几何**：不判断"这行是不是会话"（那是上层的事），也**不猜**——找不到就返回 `[]`。
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return []
+    if im is None:
+        return []
+    g = im.convert("L")
+    W, H = g.size
+    a = np.asarray(g, dtype=np.int16)
+    if not x0:
+        x0 = max(0, int(pane or W) - 320)     # 名字列：从右沿往回一段
+    if not x1:
+        x1 = max(x0 + 1, int(pane or W) - 40) # 让开时间戳那一条
+    x0, x1 = max(0, min(int(x0), W - 1)), max(1, min(int(x1), W))
+    col = a[:, x0:x1]
+    if col.shape[1] < 2 or col.shape[0] < 8:
+        return []
+    # 逐行的"边缘强度"：相邻像素差之和（文字笔画多 ⇒ 边缘多；纯背景 ⇒ 接近 0）
+    ink = np.abs(np.diff(col, axis=1)).sum(axis=1).astype(float)
+    thr = max(float(min_ink), float(ink.mean() + ink.std() * 0.5))
+    on = ink > thr
+    segs, s = [], None
+    for y in range(on.shape[0]):
+        if on[y] and s is None:
+            s = y
+        elif (not on[y]) and s is not None:
+            segs.append((s, y - 1))
+            s = None
+    if s is not None:
+        segs.append((s, H - 1))
+    merged = []
+    for y0, y1 in segs:
+        if merged and (y0 - merged[-1][1] - 1) <= gap_max:
+            merged[-1] = (merged[-1][0], y1)
+        else:
+            merged.append((y0, y1))
+    return [(y0, y1) for y0, y1 in merged if (y1 - y0 + 1) >= min_h]
+
+
+def merge_rows_with_projection(im, boxes, pane: int, row_h: int | None = None,
+                               x0: int | None = None, x1: int | None = None) -> dict:
+    """**把 OCR 认到的行与投影找到的行合并**（补上 OCR 漏掉的）。
+
+    返回 `{"rows": [{y, y0, y1, text, from_ocr}], "ocr_n", "proj_n", "merged_n", "补回": n}`。
+
+    ⛔ 口径：**投影负责"有几行、每行在哪"，OCR 只负责"这行叫什么"** ——
+    两者**不是二选一**：投影不会漏行但不知名字；OCR 知道名字但会漏行。合并后：
+    · 每一行都出现（不会因为 OCR 漏了就"数错条数"）；
+    · 认到名字的行带上 `text`，认不到的 `text=None`（**如实为空，不编**）。
+    """
+    rows = []
+    proj = project_row_edges(im, pane, x0=x0, x1=x1)
+    ocr_rows = []
+    for b in (boxes or []):
+        try:
+            _t, _x, _y, _w, _h = b[0], int(b[1]), int(b[2]), int(b[3]), int(b[4])
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            continue
+        cy = _y + _h / 2.0
+        ocr_rows.append({"text": str(_t or ""), "cy": cy, "y0": _y, "y1": _y + _h})
+    used = set()
+    for (py0, py1) in proj:
+        hit = None
+        for i, o in enumerate(ocr_rows):
+            if i in used:
+                continue
+            if py0 - 2 <= o["cy"] <= py1 + 2:
+                hit = (i, o)
+                break
+        if hit:
+            used.add(hit[0])
+            rows.append({"y": int((py0 + py1) / 2), "y0": py0, "y1": py1,
+                         "text": hit[1]["text"], "from_ocr": True})
+        else:
+            rows.append({"y": int((py0 + py1) / 2), "y0": py0, "y1": py1,
+                         "text": None, "from_ocr": False})
+    # OCR 认到、但投影没覆盖的（投影在极端帧可能失败）⇒ 也保留，别丢
+    for i, o in enumerate(ocr_rows):
+        if i not in used:
+            rows.append({"y": int(o["cy"]), "y0": o["y0"], "y1": o["y1"],
+                         "text": o["text"], "from_ocr": True})
+    rows.sort(key=lambda r: r["y"])
+    _补 = sum(1 for r in rows if not r["from_ocr"])
+    return {"rows": rows, "ocr_n": len(ocr_rows), "proj_n": len(proj),
+            "merged_n": len(rows), "补回": _补}
+
+
+def first_row_y_from_projection(im, pane: int, **kw):
+    """**首行 y**（图内像素）—— 取投影里**第一段的上沿**；取不到 ⇒ `None`（**不猜**）。
+
+    为什么要单独一个入口：上层算"第 N 行 y"（`session_order.row_y(order)`）时，
+    第一步就是要一个**可靠的首行 y**。以前靠"扫名字列找第一个文字块"——
+    **OCR 漏行时这一步就会算偏**（进而点到相邻行）。改用投影后**不依赖识别** ⇒ 首行稳。
+    """
+    edges = project_row_edges(im, pane, **kw)
+    return int(edges[0][0]) if edges else None
+
+
 def measure(im, boxes=None, pane=None, timeout: float = 40.0,
             allow_ocr_fallback: bool = False) -> RowGeometry:
     """量出**与 DPI 无关**的行几何。
@@ -330,7 +444,7 @@ def measure(im, boxes=None, pane=None, timeout: float = 40.0,
 
     返回 `RowGeometry`；**量不到行高时 `row_h=None, source="none"`，绝不猜**。
 
-    ★ 行高**缓存**（2026-10-02 加，`source="cached"`）：
+    ★ 行高**缓存**（加，`source="cached"`）：
       行高是**慢变量**（只跟微信的字号设置走，用户几乎不改）⇒
       **第一次量到就落盘**（`remember_row_h`），以后本帧没有绿带时**先读缓存**，
       不再每帧重测。缓存的优先级**高于现场 OCR 降级**（缓存来自真绿带实测，
@@ -420,7 +534,7 @@ def measure(im, boxes=None, pane=None, timeout: float = 40.0,
                            note="名字行不足两行 ⇒ 无法估行距")
     pitch = statistics.median(steps)
 
-    # ★ 降级通道的可信度问题（2026-10-01 全量回归暴露，**必须正视**）
+    # ★ 降级通道的可信度问题（全量回归暴露，**必须正视**）
     #   全量 130 帧里有 13 帧量不到绿带。逐帧转储一看，**这 13 帧全不是会话列表**：
     #     · "登录操作通知"页 / "文件下载"页 / 网页预览(apple.CloudDocs) / 文件传输助手面板；
     #     · 它们照样有一堆 OCR 文字（n_names 可达 20），

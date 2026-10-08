@@ -205,8 +205,8 @@ import tempfile as _tempfile
 
 _root = _tempfile.mkdtemp(prefix="pm_dbprobe_")
 # ⚠️ 本段必须**封闭**（不读真机状态）：给 `_probe_db_dirs` 加了「有界深扫」之后，
-#    这台机器上真的会被扫到 `M:\WX\talk\xwechat_files` ⇒ 第一档（"目录不在默认位置"）的结论
-#    会变成第三档（"目录与库都在 ⇒ 权限/占用"）⇒ 断言假红。判据要的是**语义**，所以这里把
+#    这台机器上真的会被扫到 `M:\WX\talk\xwechat_files` ⇒ 第一档的结论
+#    会变成第三档⇒ 断言假红。判据要的是**语义**，所以这里把
 #    深扫打成"什么都没扫到"，深扫本身的行为由 `db_discovery_selftest.py` 专门验。
 _saved_deep = getattr(W, "_deep_scan_xwechat", None)
 W._deep_scan_xwechat = lambda *a, **k: []
@@ -257,7 +257,7 @@ ok("「接入诊断」那段铺在**微信面板**里（不能只在悬停提示
    'id="wxAttachRow"' in _seg_w and 'id="wxAttachSteps"' in _seg_w)
 ok("前端真的会拿 wechat_attach.steps 去填它", "$('wxAttachRow')" in _ch2 and "s.wechat_attach" in _ch2)
 
-print("── J4. 「依赖没装齐」要自己说出来（2026-09-16 用户问「是不是有人微信连不上就是没装齐」后加）──")
+print("── J4. 「依赖没装齐」要自己说出来 ──")
 _rows_key, _ok_key = W.dep_check("key")
 _rows_all, _ok_all = W.dep_check("all")
 ok("默认口径仍是手写的那 14 项（机器级自检口径不变）", len(_rows_key) == 14, str(len(_rows_key)))

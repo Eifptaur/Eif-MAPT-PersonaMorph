@@ -17,11 +17,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 import urllib.error
 import urllib.request
+
+log = logging.getLogger(__name__)
 
 API_VIEW = "https://api.bilibili.com/x/web-interface/view?bvid=%s"
 API_PLAYER = "https://api.bilibili.com/x/player/v2?bvid=%s&cid=%s"
@@ -52,9 +55,77 @@ PLATFORM_HOSTS = {
     "kuaishou": ("kuaishou.com",),
     "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
     "youtube": ("youtube.com", "youtu.be"),
+    "weibo": ("weibo.com", "weibo.cn"),
 }
 #: 认视频链接用的粗正则（只要 http(s)://…，具体平台交给域名表判）
 RE_URL = re.compile(r"https?://[^\s<>\"'）)】\]]+", re.I)
+
+#: **各平台"打算怎么下"**（V-12 平台注册器：把"认链接"与"能不能下"收在同一张表）。
+#   `via` 取值：`bilibili_api`（走本模块公开接口，能拿字幕/音频轨，最省）｜`yt_dlp`（通用下载器）。
+#   ⛔ **这张表只说"打算怎么下"**；"**现在**到底能不能下"由 `can_download()` **现算**（看装了没装），
+#      —— 写死"能下"会变成骗人的开关，写死"不能下"又会在装了之后仍说不行。
+#   ⛔ **视频号不在表里**：它的识别不能按域名（`weixin.qq.com` 是通用域名，按域名判会把普通链接也认成视频号），
+#      要按 `/sph/` **路径**判 ＋ 走浏览器自动化（未落地）⇒ 留到 V-11 单独做，**先不摆一张下不了的配置**。
+_PLATFORM_DL = {
+    "bilibili": {"via": "bilibili_api", "note": "B 站公开接口（音频轨/字幕，最省）"},
+    "youtube": {"via": "yt_dlp", "note": "yt-dlp"},
+    # ⭐ 下面三条是**本机实测**（`python -m yt_dlp --list-extractors`）：Douyin / XiaoHongShu / Weibo
+    #   都有对应 extractor ⇒ **"能不能下"由 `can_download()` 现算**，这里只写"打算怎么下"。
+    "douyin": {"via": "yt_dlp", "note": "yt-dlp（实测有 Douyin extractor，一般出无水印版）"},
+    "xiaohongshu": {"via": "yt_dlp", "note": "yt-dlp（实测有 XiaoHongShu extractor）"},
+    "weibo": {"via": "yt_dlp", "note": "yt-dlp（实测有 Weibo / WeiboVideo extractor）"},
+    # ⛔ 快手：**实测 yt-dlp 没有 kuaishou extractor** ⇒ 这条路走不通。**如实写"没有"**，
+    #    不许写成"yt-dlp"让人以为能下（那会让用户白等一次失败）。
+    "kuaishou": {"via": "none", "note": "本机 yt-dlp **没有** kuaishou extractor ⇒ 这条路走不通"},
+}
+
+#: 视频号分享链接 `weixin.qq.com/sph/<id>` 与网页预览页 `channels.weixin.qq.com/finder-preview/pages/sph?id=<id>`。
+#   ⛔ **按路径判，不按域名判** —— `weixin.qq.com` 是通用域名，按域名会把普通链接也认成视频号。
+RE_SPH = re.compile(r"^https?://weixin\.qq\.com/sph/[0-9A-Za-z]+", re.I)
+RE_SPH_PREVIEW = re.compile(
+    r"^https?://channels\.weixin\.qq\.com/finder-preview/pages/sph\?(?:.*&)?id=[0-9A-Za-z]+", re.I)
+
+
+def is_wechat_channels(url: str) -> bool:
+    """是不是**视频号**链接（按**路径**判：`/sph/<id>` 或 `finder-preview/pages/sph?id=`）。
+
+    为什么不并进 `PLATFORM_HOSTS`：那是**按域名**认平台的表，而 `weixin.qq.com` 是通用域名 ——
+    把域名塞进去，任何 `weixin.qq.com` 的链接都会被认成"视频号"，于是**认错平台**比"认不出"更糟。
+    """
+    s = str(url or "").strip()
+    return bool(RE_SPH.match(s) or RE_SPH_PREVIEW.match(s))
+
+
+def channels_download_support():
+    """视频号**现在**能不能下 ⇒ `(ok, why)`；不能时**给用户一个能照做的替代**。
+
+    ⛔ 三态必须分清（否则就是"**假开关**"—— 面板能勾、后端不读、用户勾了没反应）：
+      ① **开关关着**（默认）⇒ 说"未启用 + 怎么启用"；
+      ② **开关开着但环境没齐**（没装 Playwright）⇒ 说"差哪一步、点哪看步骤"；
+      ③ **都齐了** ⇒ 目前仍回"**解析链尚未落地**"（**如实**，不假装能下）。
+    """
+    _on = False
+    try:
+        from .config import get_config
+        _on = bool(((get_config() or {}).get("wechat") or {}).get("channels_download"))
+    except Exception:
+        _on = False
+    if not _on:
+        return False, ("视频号下载**未启用**（「微信」面板那个开关默认关，本技能不开任何东西）⇒ "
+                       "想用就在面板里打开它、再点「怎么用」看三步；"
+                       "现在遇到视频号链接，可以先把它存成本地文件发我 —— 那条路是通的")
+    try:
+        import playwright  # noqa: F401
+        _pw = True
+    except Exception:
+        _pw = False
+    if not _pw:
+        return False, ("视频号下载已启用，但本机**还没装 Playwright** ⇒ 点「微信」面板的「怎么用」"
+                       "看三步：装 Playwright → 在专用窗口里扫码登录一次腾讯元宝 → 之后长期有效"
+                       "（不装系统证书、不改系统代理）")
+    return False, ("视频号下载已启用、Playwright 也在，但**解析链本体尚未落地**"
+                   "（要接元宝 get_parse_result → finder-preview feed 那一段）⇒ "
+                   "如实告诉你：现在这条还不能真下，可先把视频存成本地文件发我")
 
 
 def _host_of(url: str) -> str:
@@ -97,6 +168,100 @@ def identify_media_url(text: str):
     if not plat:
         return {"platform": "unknown", "url": url, "kind": "unknown"}
     return {"platform": plat, "url": url, "kind": "video"}
+
+
+def download_external(url: str, out_dir: str, timeout: int = 300):
+    """**任意平台外链的统一下载入口**（V-1／V-12）：按平台表挑下载器；**下不了就如实说为什么**。
+
+    返回 `(路径|None, 说明)`。⛔ **绝不假装下过**（本项目红线）。
+    分工：B 站走本模块的公开接口（能拿字幕/音频轨，最省）；其余平台走 **yt-dlp**。
+    """
+    info = identify_media_url(url) or {}
+    if is_wechat_channels(info.get("url") or url):
+        _ok2, _why2 = channels_download_support()
+        return None, _why2
+    plat = str(info.get("platform") or "")
+    if not plat or plat == "unknown":
+        return None, "认不出这是哪个平台的链接（本模块只认域名，不猜内容）"
+    ok, how = can_download(plat)
+    if not ok:
+        return None, "%s：%s" % (_PLATFORM_DL.get(plat, {}).get("note") or plat, how)
+    if how == "bilibili_api":
+        return download(info.get("url") or url, out_dir, timeout=timeout)
+    return _download_via_ytdlp(info.get("url") or url, out_dir, timeout=timeout)
+
+
+def ytdlp_available():
+    """yt-dlp 能不能用（**先查 python 模块，再查可执行**）。返回 `(ok, how|why)`。"""
+    try:
+        import yt_dlp  # noqa: F401
+        return True, "python -m yt_dlp"
+    except Exception:
+        pass
+    p = ytdlp_bin()
+    if p:
+        return True, p
+    return False, "本机没有 yt-dlp（既没有 python 模块、也没有可执行文件）"
+
+
+def can_download(platform: str):
+    """这个平台**现在**能不能下 ⇒ `(ok, how|why)`。**现算**（依赖装了没装），不写死。"""
+    p = str(platform or "").strip().lower()
+    if p == "bilibili":
+        return True, "bilibili_api"
+    if p in _PLATFORM_DL:
+        via = _PLATFORM_DL[p].get("via")
+        if via == "none":
+            return False, _PLATFORM_DL[p].get("note") or "这条路走不通"
+        if via == "playwright":
+            return False, "这条路需要 Playwright 浏览器自动化（本机未装），且首次要一次性登录"
+        return ytdlp_available()
+    return False, "暂不支持这个平台（认得出域名，但没有对应下载器）"
+
+
+def _download_via_ytdlp(url: str, out_dir: str, timeout: int = 300):
+    """yt-dlp 路线（通用兜底）：下到 `out_dir`，回**真实文件路径**；失败回 yt-dlp 的**最后一行**原因。"""
+    ok, how = ytdlp_available()
+    if not ok:
+        return None, how
+    os.makedirs(out_dir, exist_ok=True)
+    cmd = (["-m", "yt_dlp"] if how.startswith("python ") else [how])
+    exe = sys.executable if how.startswith("python ") else cmd[0]
+    args = ([exe] + cmd[1:] if how.startswith("python ") else cmd)
+    out_tpl = os.path.join(out_dir, "%(title).60s_%(id)s.%(ext)s")
+    try:
+        r = subprocess.run(args + ["-f", "mp4/best", "--no-playlist",
+                                   "--print", "after_move:filepath",
+                                   "-o", out_tpl, url],
+                           capture_output=True, text=True, timeout=timeout,
+                           creationflags=(0x08000000 if os.name == "nt" else 0))
+    except Exception as e: # noqa: BLE001
+        return None, "调用 yt-dlp 失败：%s" % (str(e)[:80] or type(e).__name__)
+    if r.returncode != 0:
+        tail = ((r.stderr or "") + (r.stdout or "")).strip().splitlines()
+        return None, "yt-dlp 没下成：%s" % (tail[-1][:120] if tail else "未知错误")
+    lines = [x for x in (r.stdout or "").strip().splitlines() if x.strip()]
+    path = lines[-1].strip() if lines else ""
+    if not path or not os.path.isfile(path):
+        return None, "yt-dlp 跑完了但没给出可用文件路径"
+    return path, ""
+
+
+def media_download_plan(url: str) -> dict:
+    """**给面板/工具用的"这链接能不能下"预览**：`{platform, url, ok, how|why, note}`。
+
+    为什么单独一个：模型要在**动手之前**知道"这条路通不通"，才能如实回答用户
+    （而不是先答应、再失败）。
+    """
+    info = identify_media_url(url) or {}
+    plat = str(info.get("platform") or "")
+    if not plat or plat == "unknown":
+        return {"platform": plat or "unknown", "url": str(url or ""),
+                "ok": False, "why": "认不出平台（只认域名，不猜）", "note": ""}
+    ok, how = can_download(plat)
+    return {"platform": plat, "url": info.get("url") or str(url or ""),
+            "ok": bool(ok), "how": how if ok else "", "why": "" if ok else how,
+            "note": (_PLATFORM_DL.get(plat) or {}).get("note", "")}
 
 
 def parse(text: str):
@@ -185,8 +350,8 @@ def view(bvid: str, aid: str | None = None, timeout: int = TIMEOUT):
     owner = d.get("owner") or {}
     stat = d.get("stat") or {}
     # AI 标识：**唯一可信来源是后台字段**（`argue_info.argue_msg`）。
-    # **客户端显示不一致**——肇岁初十 BV1nkYV6oEMZ 后台写着「含AI生成内容」，
-    # 用户实测**手机端看得见、电脑端看不见**；而破米库 BV1vTYC6AEPi 后台是空的（真没标）。
+    # **客户端显示不一致**——同一个视频后台写着「含AI生成内容」，
+    # 实测**手机端看得见、电脑端看不见**；另一个视频后台是空的（真没标）。
     # ⇒ 想判断有没有标识，只能读接口，别看界面（两个端会给出相反的印象）。
     _argue = d.get("argue_info")
     out = {
@@ -283,6 +448,20 @@ def audio_url(bvid: str, cid, timeout: int = TIMEOUT):
     return (u or None), ("" if u else "接口没给音频地址")
 
 
+#: 合法媒体容器头的标记（B 站音频轨是 ISO-BMFF：`ftyp`/`styp`；少数带 `free`/`skip` 填充盒；再兜 ID3）。
+_MEDIA_MAGICS = (b"ftyp", b"styp", b"free", b"skip", b"ID3")
+
+
+def media_magic_ok(head: bytes) -> bool:
+    """下载结果的文件头**像不像合法媒体容器**（纯函数，便于判据直接钉样本）。
+
+    为什么单独抽出来：`_download` 里那一枪要**真下载**才跑得到，而"magic 判定"本身
+    可以用三个样本直接钉住（真 m4a 头 / HTML 错误页头 / 空文件），
+    ⇒ 判据不必联网、也不必伪造 CDN。
+    """
+    return any(m in (head or b"") for m in _MEDIA_MAGICS)
+
+
 def _download(url: str, dest: str, timeout: int = 180, max_bytes: int = 384 * 1024 * 1024):
     """把音频流落到文件 ⇒ `(字节数, 原因)`。B 站 CDN 要带 Referer，否则 403。
 
@@ -320,6 +499,19 @@ def _download(url: str, dest: str, timeout: int = 180, max_bytes: int = 384 * 10
         return 0, "音频流 HTTP %s" % r.get("status")
     if r.get("truncated"):
         return 0, "音频流超过 %.0fMB 上限（已中止）" % (int(max_bytes) / 1048576.0)
+    # 第 4 重：**文件头 magic**（外部技能那套"四重校验"里我方独缺的一重）。
+    #   ⛔ 为什么必须有：状态码 200 + Content-Type 正常，**仍可能存下的是错误页/风控页**
+    #     （CDN 用 200 返回一段 HTML 是常见做法）⇒ 不校验就是"把 HTML 当 m4a"。
+    #   B 站音频轨是 ISO-BMFF（`ftyp`/`styp`），少数带 `free`/`skip` 填充盒；再兜一层 ID3。
+    magic = b""
+    try:
+        with open(dest, "rb") as fh:
+            magic = fh.read(16)
+    except Exception as e: # noqa: BLE001
+        return 0, "读不出下载结果的文件头：%s" % (str(e)[:60] or type(e).__name__)
+    if not media_magic_ok(magic):
+        return 0, ("下载内容不是合法媒体容器（文件头 %r）——多半是风控/错误页，已丢弃"
+                   % magic[:8])
     return int(r.get("bytes") or 0), ""
 
 
@@ -338,7 +530,8 @@ def download_audio(bvid: str, cid, out_dir: str, timeout: int = 180):
         try:
             if os.path.exists(dest):
                 os.remove(dest)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return None, (why2 or "下回来的音频太小（%d 字节），当失败处理" % n)
     return dest, ""
@@ -400,6 +593,15 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     except Exception as e:
         return None, "下载目录建不出来：%s" % str(e)[:60]
     tmpl = os.path.join(out_dir, "%(id)s.%(ext)s")
+    # ⛔ **开工前先给目录拍一张快照**：yt-dlp **不告诉你它写了哪些文件**，
+    #   而这个目录是**调用方给的**、可能本来就有旧文件（上次下的/别的用途的）
+    #   ⇒ 只按"最大最新"去挑，会把**上一次的产物**当成本次结果（而且不报错）。
+    #   ⇒ 判据＝**前后差集**：只有"这次新建的"才可能是本次产物。
+    try:
+        from . import tree_snapshot as _ts
+        _before = _ts.snapshot(out_dir)
+    except Exception: # noqa: BLE001
+        _ts, _before = None, {}
     # ⚠️ A2：yt-dlp 合并音视频轨要 ffmpeg ⇒ 把项目**唯一解析入口**的 ffmpeg 路径透传给它
     #   （`--ffmpeg-location`）。拿不到 ffmpeg 时**不传这一项**（让 yt-dlp 自己找 PATH），
     #   而不是传空串 —— 传空串会让 yt-dlp 直接报参数错，把"没有 ffmpeg"变成"参数非法"。
@@ -421,12 +623,38 @@ def download(url_or_bvid: str, out_dir: str, timeout: int = 300):
     if r.returncode != 0:
         return None, ("yt-dlp 下载失败（rc=%s；可能是需要登录/大会员、视频已删，"
                       "或这个平台 yt-dlp 抽不出来）" % r.returncode)
-    best = None
-    for fn in os.listdir(out_dir):
-        p = os.path.join(out_dir, fn)
-        if os.path.isfile(p) and os.path.getsize(p) > 10240:
-            if best is None or os.path.getmtime(p) > os.path.getmtime(best):
-                best = p
+    # ⛔ 产物只从**这次新建的**里面挑（见上面 `_before` 的注释）。
+    #   中间件（`.part`/`.ytdl`）与原子写临时名已经在快照里被跳过了。
+    _fresh = []
+    if _ts is not None:
+        try:
+            _after = _ts.snapshot(out_dir)
+            _new = _ts.new_since(_before, _after)
+            log.info("下载目录差分：%s", _ts.describe(_before, _after))
+            for _rel in _new:
+                _p = os.path.join(out_dir, _rel)
+                try:
+                    if os.path.isfile(_p) and os.path.getsize(_p) > 10240:
+                        _fresh.append(_p)
+                except Exception: # noqa: BLE001
+                    continue
+        except Exception as _e: # noqa: BLE001
+            log.info("目录快照差分不可用（回退旧口径）：%s", str(_e)[:80])
+    if not _fresh:
+        # 快照不可用（拿不到 `_ts`）时才回退旧口径；能用却"没有新文件"⇒ 如实报没产物。
+        if _ts is None:
+            _best = None
+            for fn in os.listdir(out_dir):
+                p = os.path.join(out_dir, fn)
+                if os.path.isfile(p) and os.path.getsize(p) > 10240:
+                    if _best is None or os.path.getmtime(p) > os.path.getmtime(_best):
+                        _best = p
+            _fresh = [_best] if _best else []
+        else:
+            return None, ("yt-dlp 说成功，但这次**没有在下载目录里新建任何文件**"
+                          "（目录里原有的旧文件不算 —— 拿旧文件当结果会把上一次的内容当成这次下的）")
+    # 一次下载可能同时落多个文件（合并前的音轨/视频轨）⇒ 取**最大的那个**（正片）
+    best = max(_fresh, key=lambda p: os.path.getsize(p))
     if not best:
         return None, "yt-dlp 说成功但没找到产物文件（不假装下过）"
     return best, ""
@@ -450,7 +678,7 @@ def read_external(text: str, max_frames: int = 4, max_seconds: int = 60,
     **调用方负责 `video_read.cleanup(res["dir"])`**（临时帧图与音频）。
 
     `platform == "bilibili"` 时**不在这里处理**：B 站走 `info()` 老路（有字幕就更省），
-    上层据此分流（「B 站优先走老路」）。这里只负责非 B 站外链。
+    上层据此分流。这里只负责非 B 站外链。
     """
     import tempfile
     ident = identify_media_url(text)

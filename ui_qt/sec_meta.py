@@ -26,11 +26,11 @@ HERE = Path(__file__).resolve().parent
 WEB_PATH = HERE.parents[0] / "assets" / "console" / "index.html"
 CFG_PATH = HERE.parents[0] / "config.example.json"
 
-# 本棒要建面板的 26 个 sec（27 减去机器人=主面板），顺序照 secs() 的 web 文档序。
+# 本棒要建面板的 27 个 sec（28 减去机器人=主面板），顺序照 secs() 的 web 文档序。
 # 第 2 棒 9 项（日常/智能），第 3 棒补齐 17 项（内容/运行/外观）。
 SECS_OF_THIS_BATCH = (
     "overview", "wechat", "persona", "check",
-    "model", "memory", "memory-set", "search", "community",
+    "model", "memory", "memory-set", "search", "community", "emoji",
     "media", "tts", "imggen", "videogen", "tools", "poke",
     "sessions", "feedback", "send", "log", "vermat", "server", "advanced",
     "ui", "json", "cursor", "wavefx",
@@ -47,6 +47,10 @@ class Row:
            buttons（按钮组）| status（状态行）| table（表格/矩阵）
     —— 此前无 input/select/textarea 的块一律降级成 info 纯文字，web 真实存在的
        按钮组/状态行/矩阵全蒸发。新增三类型把它们如实还原。
+     ★ 另新增 **group（组标题）**：web 的 `<div class="sub">` —— 它**不是一行配置**，
+       而是"下面这几行属于同一组"的分隔标题（web 端"功能项内索引"的落点）。
+       本模块原先只认 `.row` ⇒ Qt 侧完全看不出分组（整片平的行）。
+       ⚠️ 与 `Row.sub`（那个是"mid 子行"标记）**同名不同义**，勿混。
 
     `buttons`：`actions` 存 `[(文案, 动作id)]`；`status`：`status_id` 存 web 的 `<b id>`；
     `table`：`headers` 表头 + `rows` 数据行（list[list[str]]）。
@@ -68,6 +72,11 @@ class Row:
     sub: bool = False # True = 位于某个 <div class="mid"> 块内（mid 子行）
     group: str = "" # 所属 mid 块的标题（取最近前置 <div class="desc"> 或顶层 row 标签）
     indent: int = 0 # 渲染缩进档位（mid 子行 = 1，顶层 = 0）
+    # group 行的锚点 id：`<section id> + "-g" + 序号`（与 web 的 `sec.id-g1` 同口径）。
+    # 顶部锚点条据此定位要滚到哪一组；非 group 行恒为空串。
+    # ⚠️ 名字带 g 前缀别丢 —— web 的组锚点就是 `sec-wechat-g1` 这种形态，
+    #    两边同口径才能对着看（截图上出现的锚点名与深链片段能直接对上）。
+    anchor: str = ""
     # table 每行首列是否为勾选框（功能自检清单「结果」列等）——
     #   原 _clean 把 <input type=checkbox> 剥成空文本 ⇒ Qt 渲染纯文字清单、勾选列蒸发。
     cell_checks: list[bool] = field(default_factory=list)
@@ -257,7 +266,7 @@ def _div_close(body: str, open_gt: int) -> int:
     而不会在碰到 `<div class="mid">` / `<div class="btns">` 时提前停（这正是旧前瞻截断的根因）。
 
      修：正文里存在**未转义的裸 `<`**（persona「评分补足」的 hint 写着「否则一律<95」），
-    把它当标签起点会让 `.find('>')` 一口吞掉后面真正的 `</div>`，深度计数彻底错位、返回 -1。
+    把它当标签起点会让 `.find` 一口吞掉后面真正的 `</div>`，深度计数彻底错位、返回 -1。
     ⇒ 只认「`<` 后紧跟字母 / `/` / `!`」才是标签起点，裸 `<` 一律跳过。
     """
     depth = 1
@@ -458,7 +467,7 @@ def _extract_btns(chunk: str) -> list[tuple[str, str]]:
     """`<button>` → [(文案, 动作id)]；id 取 `id=`，退到 `data-act/action/id=`，再退到 `data-cloud-test`。
 
     ⚡ `data-cloud-test="persona|blocklist"` 那两颗「测试连通」**没有 id**（web 用
-    `querySelectorAll('[data-cloud-test]')` 批量挂事件）⇒ 不给它们造一个 id 的话，
+    `querySelectorAll` 批量挂事件）⇒ 不给它们造一个 id 的话，
     Qt 侧只能掉进 `_btn_stub`。这里按 web 自己的取值拼一个稳定 id 出来
     （`cloudTestPersona` / `cloudTestBlocklist`），由 `panels_qt._ACT_API` 接住。
     """
@@ -509,8 +518,25 @@ def secs() -> dict[str, Sec]:
                   desc=_first_sentence(dsc.group(1), 150) if dsc else "")
         mid_spans = [(a, b) for a, b, _g in _mid_ranges(body)]
         covered = _row_ranges(body)
-        for a, b in covered:
-            sec.rows.extend(_row_of(body, a, b, mid_spans))
+        # ★ 组标题（`<div class="sub">…</div>`）：web 端"功能项内索引"的落点。
+        #   本模块原先**只认 `.row`** ⇒ Qt 侧看到的是一整片平的行、看不出"哪几行是一组"
+        #   （web 那边早就有组标题与组锚点了）⇒ 这是 Qt 显得比 web 简陋的直接原因之一。
+        #   这里把它也解析成一种 Row，并**按文档顺序**与普通行交错排。
+        #   ⚠️ 只用 `kind="group"` 表示，**不动** `Row.sub` —— 那个字段是"mid 子行"标记，
+        #      与本处的"组标题"同名不同义，混用会让 mid 缩进逻辑错乱。
+        _items = [(a, 0, (a, b)) for a, b in covered]
+        for _m in re.finditer(r'<div class="sub">(.*?)</div>', body, re.S):
+            _items.append((_m.start(), 1, _clean(_m.group(1))))
+        _items.sort(key=lambda x: (x[0], x[1]))
+        _gseq = 0
+        for _pos, _kind, _payload in _items:
+            if _kind == 1:
+                _t = str(_payload).strip()
+                if _t:
+                    _gseq += 1
+                    sec.rows.append(Row("group", _t, anchor="%s-g%d" % (key, _gseq)))
+            else:
+                sec.rows.extend(_row_of(body, _payload[0], _payload[1], mid_spans))
         for acts in _sweep_orphan_btns(body, covered):
             sec.rows.append(Row("buttons", "操作", actions=acts))
         _CACHE[key] = sec

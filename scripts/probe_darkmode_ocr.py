@@ -3,7 +3,7 @@
 
 验证三件事：
   A. 深色样本里，绿底高亮行（选中行）能否被 green_bands 找到；
-  B. 该行的字到底是"白字"还是"黑字"（用户口径：深色下会话列表字恒为白）；
+  B. 该行的字到底是"白字"还是"黑字"（深色下会话列表字恒为白）；
   C. invert=True / invert=False 两种读法，哪种能读出名字。
 
 全程只读，不改生产代码。
@@ -15,7 +15,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\local'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\local'
 
 from agent import chat_ocr as co  # noqa: E402
 from agent import chat_header as ch  # noqa: E402
@@ -70,7 +70,7 @@ for name in CASES:
                     print('  B. 绿带行内：平均亮度=%.1f  亮点(>160)=%.2f  暗点(<80)=%.2f'
                           % (avg, bright, dark))
                     if bright < 0.20 and dark > 0.50:
-                        print('     → 底暗、亮点少 ⇒ 白字+深绿底（符合用户口径）')
+                        print('     → 底暗、亮点少 ⇒ 白字+深绿底（符合预期口径）')
                     elif dark < 0.20 and bright > 0.50:
                         print('     → 底亮、暗点少 ⇒ 黑字+浅底')
         except Exception as e:

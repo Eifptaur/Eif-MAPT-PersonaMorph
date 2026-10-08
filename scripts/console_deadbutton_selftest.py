@@ -54,7 +54,7 @@ def main():
 
     dead = []
     for bid in born:
-        # 候选变量名 = 该 id 本身 ＋ 任何"从该 id 取到的局部别名"（`const b = $('x')` / `ub = document.getElementById('x')`）
+        # 候选变量名 = 该 id 本身 ＋ 任何"从该 id 取到的局部别名"（`const b = $` / `ub = document.getElementById`）
         cands = {bid}
         for am in re.finditer(
                 r"([A-Za-z_$][\w$]*)\s*=\s*(?:document\.(?:getElementById|querySelector)|[$])\s*\(\s*['\"]"

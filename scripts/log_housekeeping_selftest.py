@@ -165,7 +165,8 @@ ck("V3 GLOB_DAILY 要么被引用、要么已删",
 print("⑧ 名单覆盖度（源码里出现的 logs/data 日志路径必须都在册）")
 _known = [r for r, _b, _k in lh.LOG_LIMITS]
 _NAMED = ["logs/persona_morph.log", "logs/onestart.log", "logs/wx_agent.log", "logs/sd_local.log",
-          "logs/installer.log", "data/runtime.log", "data/bot_crash.log", "data/input_audit.log",
+          "logs/installer.log", "logs/feedback_relay.log",
+          "data/runtime.log", "data/bot_crash.log", "data/input_audit.log",
           "data/listener_failed.jsonl"]
 for _n in _NAMED:
     ck("V4 名单里有 %s" % _n, _n in _known, str(_known))

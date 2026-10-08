@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import os
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _DAYS = 2
 _MAX_SCAN = 200
@@ -24,7 +27,8 @@ class SessionLog:
             path = os.path.join(self.dir, "%s.jsonl" % day)
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     def recent(self, limit: int = 30):
@@ -46,8 +50,10 @@ class SessionLog:
                         continue
                     try:
                         total.append(json.loads(line))
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         continue
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
         return sorted(total, key=lambda e: str(e.get("ts") or ""), reverse=True)[: max(1, min(limit, 100))]

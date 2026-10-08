@@ -22,6 +22,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+# ⚠️ 必须把**项目根**也放进 sys.path：本脚本在 `ui_qt/` 下，而它要 import `agent.*`
+#   （真配置、真字体、真面板渲染）。只加 `ui_qt/` 的话会 `ModuleNotFoundError: No module named 'agent'`
+#   —— 表现是"三主题 × 五镜头全部失败"，看着像渲染坏了，其实只是路径没加。
+sys.path.insert(0, str(HERE.parent))
 
 # 离屏渲染。
 # ⚠️ 实测坑：sandbox 里 `QT_QPA_PLATFORM=windows` 会让 Python
@@ -172,7 +176,7 @@ def shot_confirm(key: str) -> str:
 
 
 def shot_heal(key: str) -> str:
-    """镜头 4：把"服务死掉"现场设出来 —— 直击用户报的那个症状。"""
+    """镜头 4：把"服务死掉"现场设出来 —— 直击的那个症状。"""
     w, t = _mk(key)
     from heal import Health, Probe # noqa: PLC0415
     from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
@@ -213,7 +217,7 @@ SHOTS = [
     ("整窗（看气质）", shot_overview),
     ("导航搜索（看可用性）", shot_nav),
     ("二次确认（原生真模态）", shot_confirm),
-    ("后台死掉（用户报的场景）", shot_heal),
+    ("后台死掉（那个场景）", shot_heal),
     ("机器人主面板（真配置+保存回执）", shot_botpanel),
 ]
 

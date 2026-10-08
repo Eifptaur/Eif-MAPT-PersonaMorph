@@ -3,7 +3,7 @@
 
 ## 为什么要它
 
-用户的原话：*"自动探测用户的电脑环境，调整需要调整的东西从而做到兼容性——本身问题都只是适配。"*
+**本模块只做"适配"这一件事**：自动探测运行环境，据此调整需要调整的东西。
 现状是：环境读数**已经有了**（`compat.fingerprint()` 的 11 轴、启动体检、逐机的 `click_pref`），
 但它们只被"记录/展示"，**没有被用来"选一条更可能成的路"**。这一层就是把这条闭环补上。
 
@@ -20,7 +20,7 @@
 ## 边界（红线，写进代码 + 判据）
 
 1. **只调"路线"，不调"约束"**：能改的是"**先试哪条路**"（切会话路线/点击目标/OCR 档位），
-   **绝不动**安全闸门（不动光标、不抢前台、不群发、不越版本门）——那些是 `ui_adapt` / `guards` / `version_gate` 的事。
+   **绝不动**安全闸门（不动光标、不主动置前、不群发、不越版本门）——那些是 `ui_adapt` / `guards` / `version_gate` 的事。
 2. **默认不自动改**：`env_profile.auto_apply` 默认 **False** ⇒ 本模块只**探测、给建议、记事实**；
    打开后也只对**白名单里的路线族**生效（见 `ROUTE_FAMILIES`）。
 3. **授权永远来自现场自检**：记忆只影响"先试哪个"，不影响"这一枪算不算数"（与 `click_pref` 同款）。
@@ -39,7 +39,15 @@ from . import persist
 
 log = logging.getLogger("persona-morph")
 
-PATH = os.path.join(DATA_DIR, "env_profile.json")
+#: 机器档案（`data/env_profile.json`）的**唯一定义点** —— ⛔ 别在别处再 `join` 一遍
+#: （`agent/display_metrics.py` 原来各写了一份同样的路径 ⇒ 两处必然漂）。
+#:
+#: ⛔ **判据隔离口**（同 `save_config(path=…)` 的思路，环境变量名 `PM_ENV_PROFILE_PATH`）：
+#:   判据**并发**跑时若都写同一份档案，就会互相踩 —— 实测：套件 `-j` 并发下，同一批 OCR 判据里
+#:   **每条都可能红、且受害者每次不同**（证据：两个进程的 `.tmp` 同时出现在 `data/` 里）。
+#:   ⇒ 判据可以把它指到**进程私有的临时档**（由套件按脚本分配）。
+#:   ⚠️ 产品正常跑时**没有**这个变量 ⇒ 行为与以前**逐字一致**。
+PATH = os.environ.get("PM_ENV_PROFILE_PATH") or os.path.join(DATA_DIR, "env_profile.json")
 _LOCK = threading.RLock()
 PROBE_TTL_S = 600.0      # 探测缓存（10 分钟；探测是只读的，但没必要每次动作都跑）
 MAX_FAIL = 2             # 某个族的路线连败到这个数 ⇒ 丢弃记忆
@@ -241,12 +249,12 @@ def _save(d: dict) -> None:
     """原子写（**永不抛**：档案坏了不能挡住任何动作）。
 
     ⛔ 写法照 `click_pref._save`（唯一规范来源）：先写 `.tmp` + `fsync`，再 `persist.replace_into(tmp, PATH)`。
-       我第一版直接 `persist.replace_into(PATH, json字符串)` —— 那个签名是"把**临时档**换过去"，
-       于是写盘每次都抛、被兜底吞掉 ⇒ **记忆永远为空**（判据 C4 当场抓到）。
+       ⚠️ 别写成 `persist.replace_into(PATH, json字符串)` —— 那个签名是"把**临时档**换过去"，
+       写成 `PATH` 会导致写盘每次都抛、被兜底吞掉 ⇒ **记忆永远为空**。
     """
     try:
         os.makedirs(os.path.dirname(PATH) or ".", exist_ok=True)
-        tmp = PATH + ".tmp"
+        tmp = persist.tmp_for(PATH)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=1)
             f.flush()

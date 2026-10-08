@@ -19,8 +19,11 @@ import glob
 import os
 import sqlite3
 import time
+import logging
 
-_BASE = os.path.join(os.environ.get('TEMP', r'C:\Users\ptmou\AppData\Local\Temp'),
+log = logging.getLogger("persona-morph")
+
+_BASE = os.path.join(os.environ.get('TEMP', os.environ.get("TEMP", "")),
                      'wechatauto_db')
 _accts = [d for d in glob.glob(os.path.join(_BASE, '*'))
           if os.path.isfile(os.path.join(d, 'message__message_0.db'))]
@@ -59,7 +62,8 @@ for _tb in _tbs:
     try:
         _v = _cur.execute('SELECT MAX(create_time) FROM "%s"' % _tb).fetchone()[0]
         _last[_tb] = _v
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 _t1 = time.perf_counter()
 print('  %d 张表逐个 MAX(create_time)：**%.1f ms**' % (len(_tbs), (_t1 - _t0) * 1000))

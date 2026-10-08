@@ -19,6 +19,9 @@ import subprocess
 import sys
 
 from .config import ROOT
+import logging
+
+log = logging.getLogger("persona-morph")
 
 REQ_PATH = os.path.join(ROOT, "requirements.txt")
 WHEELS_DIR = os.path.join(ROOT, "offline", "wheels")
@@ -39,7 +42,8 @@ def parse_requirements(path: str = None) -> list:
                 m = SPEC_RE.match(line)
                 if m:
                     out.append((m.group(1), m.group(2), m.group(3)))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out
 
@@ -144,7 +148,8 @@ def site_packages(py_exe: str = None) -> str:
             p = os.path.join(base, sub, "site-packages")
             if os.path.isdir(p):
                 return p
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return ""
 
@@ -158,7 +163,8 @@ def installed_from_dir(name: str, sp: str) -> str:
                 nm, _, ver = d[:-len(".dist-info")].rpartition("-")
                 if _norm(nm) == want:
                     return ver
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return ""
 
@@ -177,12 +183,163 @@ def probe_source(py_exe: str = None) -> str:
     return ("site-packages: " + sp) if sp else ("当前解释器: " + sys.executable)
 
 
-def offline_available() -> bool:
+_OFFLINE_CACHE = {}
+
+
+def _wheel_files() -> list:
+    """`offline/wheels` 里的全部 wheel / sdist 文件名（读不出 ⇒ 空表）。"""
     try:
-        return any(f.startswith("wechatauto_replica-") and f.endswith(".whl")
-                   for f in os.listdir(WHEELS_DIR))
-    except Exception:
+        return [f for f in os.listdir(WHEELS_DIR)
+                if f.endswith(".whl") or f.endswith(".tar.gz")]
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return []
+
+
+def _wheel_name_ver(fn: str):
+    """`文件名 ⇒ (归一化包名, 版本, 标签串)`；认不出 ⇒ None。"""
+    base = fn[:-4] if fn.endswith(".whl") else (fn[:-7] if fn.endswith(".tar.gz") else fn)
+    parts = base.split("-")
+    if len(parts) < 2:
+        return None
+    name = parts[0].lower().replace("_", "-")
+    ver = parts[1]
+    tags = "-".join(parts[2:]) if len(parts) > 2 else ""
+    return name, ver, tags
+
+
+def _wheel_fits_python(tags: str, py_mm: tuple) -> bool:
+    """编译型轮子能不能装进 `py_mm`（如 `(3, 10)`）的解释器。
+
+    · `py3` / `none` 这类**纯 Python** 标签 ⇒ 任何 3.x 都行；
+    · `abi3`（稳定 ABI）⇒ 标称版本 ≤ 目标的 3.10/3.11/3.12 都行；
+    · 普通 `cp3XX` ⇒ **必须与目标完全一致**（实测：我们的 numpy/pillow/pywin32 等 12 个只有 cp310）。
+    """
+    t = (tags or "").lower()
+    if not t:
+        return True                      # 纯 Python 的 sdist（源码包）⇒ 不设限
+    m = re.search(r"cp3(\d+)", t)
+    if not m:
+        return True                      # `py3-none-any` 一类
+    want = int("%d%d" % (py_mm[0], py_mm[1]))
+    got = int("3" + m.group(1))
+    if "abi3" in t:
+        return got <= want
+    return got == want
+
+
+def _satisfies(have_ver: str, op: str, want_ver: str) -> bool:
+    """`have_ver` 满不满足 `op want_ver`（`==` / `>=` / `<=` / `~=`；空 op 视为任意）。"""
+    if not op:
+        return True
+    if op == "==":
+        return str(have_ver) == str(want_ver)
+    try:
+        a, b = vtuple(str(have_ver)), vtuple(str(want_ver))
+    except Exception:  # noqa: BLE001
         return False
+    if op == ">=":
+        return a >= b
+    if op == "<=":
+        return a <= b
+    if op == "~=":
+        return a >= b and a[:2] == b[:2]
+    return False
+
+
+def offline_available(py_exe: str = None) -> bool:
+    """`offline/wheels` 能不能**真的**满足 requirements（即 `pip install --no-index` 装得上）。
+
+    ⛔⛔ **现场（用户实测报回）**：旧实现是
+      `any(f.startswith("wechatauto_replica-") and f.endswith(".whl") …)` —— **只问"目录里有没有这个文件"**。
+      而那时目录里放的是 **1.2.2.2**，requirements 要 **1.2.4.4** ⇒ 它照样返回 `True`
+      ⇒ 计划走 `--no-index` ⇒ **装不上**，只能人工联网补齐（"含依赖包"的承诺当场失效）。
+      ⛔ 同一个弱检查当时在 `scripts/setup_deps.py` 里**还抄了一份** ⇒ 两处各自漂移。
+    ✅ 现在**逐项核**（这里是**唯一实现点**，`setup_deps.py` 也调它）：
+      ① 每个 requirement 都能在轮子目录里找到**名字对得上、版本满足**的 wheel / sdist；
+      ② 给了 `py_exe`（默认＝项目自带运行时）时再核 **ABI**：编译型轮子的标签必须能装进那个解释器
+         （我们的编译轮子只有 `cp310`；`py3-none-any` 与 `abi3` 通用）。
+    ⚠️ 它是"**够不够**"的判断，不是"装没装成"的判断 —— 真装成不成交给 `dep_check` 复查。
+    """
+    exe = str(py_exe or runtime_python())
+    key = exe
+    if key in _OFFLINE_CACHE:
+        return _OFFLINE_CACHE[key]
+    ok = False
+    try:
+        files = _wheel_files()
+        # 分母守卫：太少说明这不是一个完整的离线集（光有 wechatauto 一个包不算"能离线")
+        if len(files) >= 10:
+            py_mm = (3, 10)
+            try:
+                out = subprocess.run([exe, "-c",
+                                      "import sys;print('%d %d'%sys.version_info[:2])"],
+                                     capture_output=True, text=True, timeout=20,
+                                     creationflags=(0x08000000 if os.name == "nt" else 0))
+                if out.returncode == 0 and out.stdout.strip():
+                    a, b = out.stdout.split()[:2]
+                    py_mm = (int(a), int(b))
+            except Exception:  # noqa: BLE001
+                pass
+            parsed = [_wheel_name_ver(f) for f in files]
+            parsed = [p for p in parsed if p]
+            ok = True
+            for name, op, ver in parse_requirements():
+                nm = str(name).lower().replace("_", "-")   # ⛔ requirements 里写的是 Pillow / PyAutoGUI 这种大小写
+                cand = [p for p in parsed if p[0] == nm]
+                if not cand:
+                    ok = False
+                    break
+                if not any(_satisfies(p[1], op, ver) and _wheel_fits_python(p[2], py_mm)
+                           for p in cand):
+                    ok = False
+                    break
+    except Exception:  # noqa: BLE001
+        ok = False
+    _OFFLINE_CACHE[key] = bool(ok)
+    return bool(ok)
+
+
+def offline_why(py_exe: str = None) -> str:
+    """`offline_available()` 为假时**说清差在哪**（给安装日志/排障用，不许只报 False）。"""
+    try:
+        files = _wheel_files()
+        parsed = [p for p in (_wheel_name_ver(f) for f in files) if p]
+        py_mm = (3, 10)
+        try:
+            out = subprocess.run([str(py_exe or runtime_python()), "-c",
+                                  "import sys;print('%d %d'%sys.version_info[:2])"],
+                                 capture_output=True, text=True, timeout=20,
+                                 creationflags=(0x08000000 if os.name == "nt" else 0))
+            if out.returncode == 0 and out.stdout.strip():
+                a, b = out.stdout.split()[:2]
+                py_mm = (int(a), int(b))
+        except Exception:  # noqa: BLE001
+            pass
+        miss, badabi = [], []
+        for name, op, ver in parse_requirements():
+            nm = str(name).lower().replace("_", "-")
+            cand = [p for p in parsed if p[0] == nm]
+            if not cand:
+                miss.append("%s%s%s" % (name, op, ver))
+                continue
+            if not any(_satisfies(p[1], op, ver) for p in cand):
+                miss.append("%s%s%s（轮子里只有 %s）" % (name, op, ver,
+                                                       "、".join(sorted({p[1] for p in cand}))))
+                continue
+            if not any(_satisfies(p[1], op, ver) and _wheel_fits_python(p[2], py_mm)
+                       for p in cand):
+                badabi.append("%s（该解释器 %d.%d 用不了）" % (name, py_mm[0], py_mm[1]))
+        bits = []
+        if len(files) < 10:
+            bits.append("轮子太少（%d 个）" % len(files))
+        if miss:
+            bits.append("缺/版本不符：" + "、".join(miss[:4]))
+        if badabi:
+            bits.append("ABI 不符：" + "、".join(badabi[:4]))
+        return "；".join(bits) or "未知"
+    except Exception as e:  # noqa: BLE001
+        return "检查异常：%s" % type(e).__name__
 
 
 def runtime_python() -> str:

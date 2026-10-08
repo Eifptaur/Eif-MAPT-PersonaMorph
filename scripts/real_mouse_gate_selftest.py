@@ -11,6 +11,11 @@
 判据用**打桩**（不碰真微信、不动真光标）：假 gui + 桩 `ensure_point` + 桩 `SetCursorPos`，
 数清"到底走了哪条路"。反向锚：把开关打开 ⇒ 必须真的走真鼠标（否则这条判据只是恒真）。
 
+⛔ **负向断言必须先过分母守卫**：本文件多处断言"一次真鼠标都没走 / 一次都没移光标"，
+   而探针失效（桩没打到真源上、入口改名、场景没跑起来）时它们**照样是绿的**。
+   ⇒ 每个"0 次"前面都配一条 `assert_probe_hit(ok, ...)`（A0 / B0 / D0），
+     先把"这次真的走到了要拦的那一步"钉住。
+
 跑法：runtime\\python\\python.exe scripts\\real_mouse_gate_selftest.py
 """
 import io
@@ -27,6 +32,7 @@ except Exception: # noqa: BLE001
     pass
 
 import _srcmatch as _sm # noqa: E402
+from _probe import assert_probe_hit # noqa: E402
 from agent import ui_adapt as UA # noqa: E402
 from agent import input_backend as IB # noqa: E402
 from agent import config as cfg_mod # noqa: E402
@@ -125,6 +131,7 @@ def _run(cfg, posted_ok=True, env=None):
 
 print("== A. 默认档：走投递，绝不碰真鼠标、绝不移光标 ==")
 _r, _g, _p, _mv = _run(cfg=False)
+assert_probe_hit(ok, "A0 探针有效：默认档这次**真的走到了投递**", len(_p.calls))
 ok("A1 默认档下调用的是**投递**后端", len(_p.calls) == 1 and not _g.wx_click_calls,
    "投递=%d 真鼠标=%d" % (len(_p.calls), len(_g.wx_click_calls)))
 ok("A2 默认档下**一次 SetCursorPos 都没有**（不动用户鼠标）", not _mv, str(_mv[:3]))
@@ -132,6 +139,9 @@ ok("A3 投递成功 ⇒ click 返回 True", _r[0] is True, str(_r)[:60])
 
 print("== B. 投递没成 + 没开真鼠标兜底 ⇒ **这一枪不发**（宁可不做也不动鼠标）==")
 _r2, _g2, _p2, _mv2 = _run(cfg=False, posted_ok=False)
+# 分母守卫：这一段要断言的是"没退回真鼠标、没移光标"（都是"0 次"型）。
+# 探针失效时这两条会**静默变绿** —— 所以先钉住"投递这次真的尝试过了"。
+assert_probe_hit(ok, "B0 探针有效：投递这次**真的尝试过**", len(_p2.calls))
 ok("B1 拒绝执行（返回 False）且理由说清是「不动鼠标」这条硬口径",
    _r2[0] is False and ("没开" in _r2[1] or "不动" in _r2[1]), str(_r2)[:90])
 ok("B2 拒绝时**没有**退回真鼠标、也没有移光标",
@@ -149,6 +159,7 @@ ok("C3 反向锚的另一半：开了兜底但**投递能成**时，仍然走投
 
 print("== D. 环境变量强制关（自检/诊断路径的兜底）==")
 _r5, _g5, _p5, _mv5 = _run(cfg=True, posted_ok=False, env="0")
+assert_probe_hit(ok, "D0 探针有效：这次也**真的尝试过**投递", len(_p5.calls))
 ok("D1 `WXAGENT_REAL_FALLBACK=0` ⇒ 即使 config 开着也不许真鼠标",
    not _g5.wx_click_calls and _r5[0] is False, str(_r5)[:80])
 
@@ -176,7 +187,7 @@ def _code_only(seg: str) -> str:
 
     为什么 F1 需要它：`_scroll_to_bottom` 的 docstring **故意写明了**老实现用的
     `_set_cursor`/`_mouse_wheel`（讲清为什么改、防后人改回去）—— 直接对整段做
-    `has("_set_cursor")` 会被**注释自证**为红（判据太钝）。判"有没有真调用"必须看代码。
+    `has` 会被**注释自证**为红（判据太钝）。判"有没有真调用"必须看代码。
 
     ⛔ 这里踩过一个坑，记下来防后人再踩：`_srcslice.func_src()` 返回的段落**本身带缩进、
     且**第一行就是 `def` 行**（它是某个类里的方法，原文缩进 4 格）。若再"整体缩进 4 格 +

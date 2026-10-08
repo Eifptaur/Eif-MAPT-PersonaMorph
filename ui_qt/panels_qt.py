@@ -20,7 +20,10 @@ from __future__ import annotations
 import json
 import time
 
-from PySide6.QtCore import Qt
+# `QTimer` 是必须的：本模块下面用 `QTimer.singleShot(...)` 做"面板建好后延迟拉一次"。
+# 漏了它 ⇒ 走到那条分支就 `NameError: name 'QTimer' is not defined`，
+# 而**整块面板会一起挂**（不是只有那一行不显示）。
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFrame,
@@ -28,7 +31,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -37,10 +42,10 @@ import config_io
 import panels_custom
 import sec_meta
 from async_ui import run_async
-from stylekit_qt import Tokens, field_qss, qfont, rgba, surface_bg
+from stylekit_qt import Tokens, field_qss, qfont, qss, rgba, surface_bg
 from widgets import Badge, Btn, Card, Field, FieldCombo, Switch, desc, h2
 
-# 本批要建面板的 26 个 sec（27 减去机器人=主面板），顺序照 web 文档序
+#本批要建面板的 27 个 sec（28 减去机器人=主面板），顺序照 web 文档序
 BATCH_SECS = sec_meta.SECS_OF_THIS_BATCH
 
 
@@ -224,7 +229,7 @@ def _line(t: Tokens, text: str = "", password: bool = False, placeholder: str = 
     e.setFont(qfont(t, t.body_size))
     e.setFixedHeight(32)
     # 宽度自适应：见 Combo 注释 —— 120 是「还看得见值」的下限，不是版式常量；
-    # 窄于 Field._STACK_AT 时该行会改成上下排列，输入框拿满宽（：
+    # 窄于 Field._STACK_AT 时该行会改成上下排列，输入框拿满宽：
     # 「显示可以根据屏幕显示区域的宽度」自适应，这一条要覆盖所有输入控件）。
     e.setMinimumWidth(120)
     if password:
@@ -340,6 +345,30 @@ def _row(t: Tokens, r: "sec_meta.Row", card: Card, binds: list | None = None) ->
     """
     cur = config_io.read_path(r.cfg) if r.cfg else None
     default = r.default if cur is None else cur
+    # ★ 组标题（web 的 `<div class="sub">`）：**不是一行配置**，而是"下面这几行属于同一组"的分隔标题。
+    #   本模块原先没有任何"组"的渲染 ⇒ Qt 里是一整片平的行，用户翻不到头（web 早就有组标题了）。
+    #   样式对着 web 的 `.sub` 做：左侧一道竖条 + 小号加粗文字，取色走 Token（三主题各自成立）。
+    if r.kind == "group":
+        _w = QWidget()
+        _h = QHBoxLayout(_w)
+        _h.setContentsMargins(0, 12, 0, 2)
+        _h.setSpacing(8)
+        _bar = QFrame()
+        _bar.setFixedSize(3, 13)
+        _bar.setStyleSheet("background:%s;border:0;border-radius:1px;" % qss(t.q("blue")))
+        _h.addWidget(_bar)
+        _lb = QLabel(r.label)
+        _lb.setFont(qfont(t, t.body_size - 1, 600))
+        # ⛔ 过 `qss()`：whale 的 tx2 是八位 `#RRGGBBAA`，直插 QSS 会被当 `#AARRGGBB`
+        #    解析 ⇒ 组标题在 whale 下发灰、与卡片底几乎融在一起（light/dark 六位无事）。
+        _lb.setStyleSheet("color:%s;background:transparent;" % qss(t.q("tx2")))
+        _h.addWidget(_lb)
+        _h.addStretch(1)
+        # 锚点名挂在控件上：顶部锚点条据此 `ensureWidgetVisible` 定位该组。
+        # 用 Qt 动态属性而不是 Python 属性 —— 判据/探针可经 `findChildren` 反查，
+        # 不必持有 Python 引用（面板是动态重建的，引用会失效）。
+        _w.setProperty("web_anchor", r.anchor or "")
+        return _w
     c: QWidget | None = None
     if r.kind == "checkbox":
         c = Switch(t, bool(default))
@@ -431,6 +460,13 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
                 b.clicked.connect(lambda _=False, a=aid, _ln=line, _nt=note: _chips_group_action(a, _ln, _nt, t))
                 b.setToolTip("对齐 web：弹窗列出检测到的群，勾选后确定即保存"
                              if aid == "pickGroups" else "重新读一次群列表（新加群/改群名/换号后用，不用重启）")
+            elif aid == "pickPrivates" and (r.cfg or "").endswith("private_name_white_list"):
+                b.clicked.connect(lambda _=False, _ln=line, _nt=note:
+                                  _chips_group_action("pickPrivates", _ln, _nt, t, kind="privates"))
+                b.setToolTip("对齐 web：弹窗列出检测到的私聊联系人，勾选后确定即保存")
+            elif aid == "channelsHowto" and (r.cfg or "").endswith("channels_download"):
+                b.clicked.connect(lambda _=False, _b=b: _channels_howto(t, _b))
+                b.setToolTip("对齐 web：说明「要装什么 / 为什么 / 不装会怎样」（不装任何东西）")
             else:
                 b.setToolTip(("web 动作：" + aid) if aid else "web 侧按钮")
                 b.clicked.connect(lambda _=False, _b=b: _btn_stub(_b))
@@ -441,13 +477,58 @@ def _chips_editor(t: Tokens, r: "sec_meta.Row") -> QWidget:
     return box
 
 
-def _chips_group_action(aid: str, line, note, t: Tokens) -> None:
+#: 白名单「检测并勾选」的两档规格（群 / 私聊共用同一套弹窗与保存路径）。
+#  ⛔ 两档必须**同批**存在：web 侧有按钮而 Qt 侧没有 ⇒ 会被对等判据判「掉桩」。
+_CHIPS_SPEC = {
+    "groups": {
+        "api": "/api/wechat-groups", "key": "groups",
+        "cfg": "wechat.group_name_white_list", "label": "群白名单",
+        "title": "选择监听的群", "unit": "群聊",
+        "empty": "这台机器上读到 0 个群聊。请依次确认：①微信登录的是你要用的那个号 "
+                 "②那个号里确实有群 ③「运行状态」那行写的是「已连接」",
+        "all_hint": "全关=监听所有群", "item": "群",
+    },
+    "privates": {
+        "api": "/api/wechat-privates", "key": "privates",
+        "cfg": "wechat.private_name_white_list", "label": "私聊白名单",
+        "title": "选择监听的私聊", "unit": "私聊联系人",
+        "empty": "这台机器上读到 0 个私聊联系人。请确认微信登录的是你要用的那个号，"
+                 "且「运行状态」那行写的是「已连接」",
+        "all_hint": "全关=按「私聊」档位", "item": "人",
+    },
+}
+
+
+def _channels_howto(t: Tokens, parent_widget) -> None:
+    """视频号下载「怎么用」的 Qt 版 —— ⛔ 走**原生提示卡** `InfoDialog`。
+
+    硬规矩第 1 条：**0 系统 MessageBox**（系统弹窗不跟随主题、样式与本壳不一致）；
+    `InfoDialog` 与 `ConfirmDialog` 同一套外壳（自绘圆角卡 + 可拖 + 居中父窗），只有一颗「知道了」。
+    与 web 弹窗**同一份口径**（要装什么 / 为什么 / 不装会怎样），逐条对齐，避免两边说法不一致。
+    """
+    from confirm import InfoDialog # noqa: PLC0415
+
+    InfoDialog(t, parent_widget, "视频号下载 · 怎么用", (
+        "▍为什么它要单独装东西\n"
+        "视频号官方没有公开下载接口 ⇒ 能下的工具都是「用浏览器打开 + 复用登录态」去换真实视频地址。\n\n"
+        "▍三步\n"
+        "① 装上 Playwright（本机已有 Edge，不用再下浏览器内核）；\n"
+        "② 在弹出的窗口里扫码登录一次腾讯元宝 —— 登录态放在专用隔离目录，不碰你日常浏览器，\n"
+        "    也不装系统证书、不改系统代理；\n"
+        "③ 之后遇到视频号分享链接就能解析，不用每次登录（登录态长期有效）。\n\n"
+        "▍不装会怎样\n"
+        "遇到视频号链接会如实说「这条我拿不到」，并提示你把视频存成文件发我（那条路一直是通的）。\n"
+        "其它功能完全不受影响；开关关着 = 一切照旧，不装任何东西、也不弹任何窗。")).exec()
+
+
+def _chips_group_action(aid: str, line, note, t: Tokens, kind: str = "groups") -> None:
     """群白名单「检测群聊并勾选 / 刷新群列表」真实现（web 2806/2798 同款）。
 
     网络在后台线程（不冻 UI），弹窗与落地在主线程。失败/0 群如实说（web 同款三选一口径）。
     超时对齐 web getJSON 默认 30s：refresh 要重读微信联系人库（微信占用时会慢），
     原 8s 会在后端还没回话时先被掐断 → 看起来像「挂不上控制台」。
     """
+    spec = _CHIPS_SPEC.get(kind) or _CHIPS_SPEC["groups"]
     note.show()
     note.setText("正在刷新群列表（重读联系人库，微信占用时会慢，最长等 30 秒）…"
                  if aid == "refreshGroups" else "检测群聊中…")
@@ -455,7 +536,7 @@ def _chips_group_action(aid: str, line, note, t: Tokens) -> None:
     def _work(box: dict) -> None:
         try:
             box["val"] = config_io.get_json(
-                "/api/wechat-groups" + ("?refresh=1" if aid == "refreshGroups" else ""),
+                spec["api"] + ("?refresh=1" if aid == "refreshGroups" else ""),
                 timeout=30.0, err_box=box)
         except Exception as e: # noqa: BLE001
             box["err"] = str(e)
@@ -474,26 +555,26 @@ def _chips_group_action(aid: str, line, note, t: Tokens) -> None:
         if rsp.get("ok") is False:
             note.setText(str(rsp.get("error") or "读不到群列表（微信可能还没接上）"))
             return
-        groups = rsp.get("groups") or []
+        groups = rsp.get(spec["key"]) or []
         if aid == "refreshGroups":
             note.setText("已重读：这台机器上读到 %d 个群聊" % len(groups)
                          + ("" if groups else "（确认微信登录的是你要的那个号、且那个号里有群）"))
             return
         if not groups:
-            note.setText("这台机器上读到 0 个群聊。请依次确认：①微信登录的是你要用的那个号 "
-                         "②那个号里确实有群 ③「运行状态」那行写的是「已连接」")
+            note.setText(spec["empty"])
             return
-        _open_group_pick(t, line, note, groups)
+        _open_group_pick(t, line, note, groups, kind)
 
     run_async(_work, _apply, page=note.window(), interval=150, name="chips-groups")
 
 
-def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
+def _open_group_pick(t: Tokens, line, note, groups: list, kind: str = "groups") -> None:
     """web「选择监听的群」弹窗的 Qt 版 —— 主题化（confirm.ConfirmDialog 同款设计语言）。
 
     无边框卡片壳 + 半透明背景 + 项目 Btn/Switch 组件 + 父窗口居中；
     必须模态 exec()（web 勾选层挂到用户点确定/取消为止）。
     """
+    spec = _CHIPS_SPEC.get(kind) or _CHIPS_SPEC["groups"]
     from PySide6.QtWidgets import ( # noqa: PLC0415
         QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout,
     )
@@ -520,7 +601,7 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     from widgets import drag_dialog_cls # noqa: PLC0415
 
     dlg = drag_dialog_cls("PickGroupsDialog")(line.window())
-    dlg.setWindowTitle("选择监听的群")
+    dlg.setWindowTitle(spec["title"])
     dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
     dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     dlg.setModal(True)
@@ -540,13 +621,13 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
     v.setContentsMargins(24, 22, 24, 18)
     v.setSpacing(12)
 
-    head = QLabel("选择监听的群")
+    head = QLabel(spec["title"])
     head.setFont(qfont(t, 16, 600))
     head.setStyleSheet(f"color:{t.tx};background:transparent;")
     v.addWidget(head)
 
-    sub = QLabel("检测到 %d 个群聊，打开右侧开关选择机器人要监听的群"
-                 "（全关=监听所有群）。" % len(groups))
+    sub = QLabel("检测到 %d 个%s，打开右侧开关选择机器人要监听的"
+                 "（%s）。" % (len(groups), spec["unit"], spec["all_hint"]))
     sub.setFont(qfont(t, t.body_size))
     sub.setWordWrap(True)
     sub.setStyleSheet(f"color:{t.tx2};background:transparent;")
@@ -595,14 +676,20 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
         picked = [wid for wid, sw in rows if sw.isChecked()]
         line.setText(", ".join(picked))
         note.show()
-        note.setText("保存群白名单中…（%d 个群）" % len(picked))
+        note.setText("保存%s中…（%d 个）" % (spec["label"], len(picked)))
         dlg.accept()
 
         def _work(bx: dict) -> None:
             try:
                 cfg = config_io.get_json("/api/config", timeout=8.0) or {}
                 if isinstance(cfg, dict):
-                    cfg.setdefault("wechat", {})["group_name_white_list"] = list(picked)
+                    # ★ 撤销快照：整份白名单是一个字段，用 `key` 粒度
+                    #   （只回这一个，不误伤期间改过的别的设置）。
+                    _old = (cfg.get("wechat") or {}).get(spec["cfg"].split(".", 1)[1])
+                    config_io.push_undo({"kind": "key",
+                                         "path": spec["cfg"],
+                                         "before": _old, "label": spec["label"]})
+                    cfg.setdefault("wechat", {})[spec["cfg"].split(".", 1)[1]] = list(picked)
                     from agent_bridge import post_json # noqa: PLC0415
 
                     bx["rsp"] = post_json("/api/config", cfg, timeout=10.0)
@@ -610,8 +697,9 @@ def _open_group_pick(t: Tokens, line, note, groups: list) -> None:
                 bx["err"] = str(e)
 
         def _apply_save(bx: dict) -> None:
-            note.setText("已保存群白名单（%d 个群）" % len(picked)
-                         if bx.get("err") is None else "群白名单保存失败：" + str(bx["err"]))
+            note.setText(("已保存%s（%d 个）" % (spec["label"], len(picked)))
+                         if bx.get("err") is None
+                         else (spec["label"] + "保存失败：" + str(bx["err"])))
 
         run_async(_work, _apply_save, page=note.window(), interval=150, name="chips-save")
 
@@ -766,7 +854,7 @@ def _act_run(aid: str, note) -> None:
                             else (" ｜ " + str(res.get("err")) if res.get("err") else "")))
         elif aid == "selfCheck":
             # selfcheck 返回项是 {status: ok/warn/fail, name, detail, hint} 形状 ——
-            # 旧实现按 c.get("ok") is False 统计 ⇒ 恒「失败 0」误导；按 status 口径改。
+            # 旧实现按 c.get is False 统计 ⇒ 恒「失败 0」误导；按 status 口径改。
             checks = [c for c in (rsp.get("checks") or []) if isinstance(c, dict)]
             if not checks:
                 note.setText(str(rsp.get("summary") or "完成"))
@@ -898,7 +986,7 @@ def _btn_stub(b) -> None:
 
     ⛔ 两条纪律：
       · **不许用系统 `QMessageBox`**（硬规矩第 1 条：0 系统 MessageBox）⇒ 走自绘 `InfoDialog`；
-      · **不许再叫人"去网页控制台"**（用户口径：网页能做的都得在 Qt 做）⇒ 如实说这条还没实现、
+      · **不许再叫人"去网页控制台"**（网页能做的都得在 Qt 做）⇒ 如实说这条还没实现、
         并把它记进日志，用户不需要做任何事（`root-probes/_r55` 那类清单一跑就能看到它还缺着）。
     """
     _aid = str(b.property("web_action") or "")
@@ -1259,7 +1347,7 @@ def _status_text_for(status_id: str, st: dict) -> str:
         vm = st.get("version") or {}
         v = str(vm.get("wechat") or "").strip()
         a = str(vm.get("adapter") or "").strip()
-        # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」（用户 2026-09-30 当面指正的同一口径）
+        # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」（用户 当面指正的同一口径）
         return (("本机微信版本 %s · 适配层 %s" % (v, a or "-")) if v and v != "unknown"
                 else "本机微信版本读不到")
     if sid in ("vsWhy", "ttsWhy"):
@@ -1373,16 +1461,25 @@ def _status_text_for(status_id: str, st: dict) -> str:
         return " ｜ ".join("%s · %s" % (nm.get(d.get("choice"), d.get("choice")),
                                         str(d.get("when") or "")[5:16]) for d in ds)
     if sid == "actStat":
-        # 后台作业（web :3606-3615 同口径）
+        # 后台作业（与 web 控制台 `actStat` 同口径，**文案逐字一致**）
+        # ★ 终态三档：完成 / 失败 / **已取消**。取消**不是失败** ——
+        #   若并进「结束 rc=…」那一档，用户会以为是自己操作坏了（其实是他自己停的）。
         jb = st.get("jobs") or {}
         ks = [k for k in jb.keys() if not k.startswith("_")] if isinstance(jb, dict) else []
         if not ks:
             return "没有在跑的事"
-        return " ｜ ".join(
-            "%s：%s" % (k, ("正在跑" if (jb[k] or {}).get("running")
-                            else ("完成" if (jb[k] or {}).get("returncode") == 0
-                                  else "结束 rc=%s" % (jb[k] or {}).get("returncode"))))
-            for k in ks)
+        _nm = {"upgrade_adapter": "一键升级适配层", "dep_heal": "依赖自愈"}
+
+        def _stt(j: dict) -> str:
+            if j.get("running"):
+                return "正在停下…" if j.get("canceling") else "正在跑"
+            if j.get("canceled"):
+                return "已停下（不是失败）"
+            if j.get("returncode") == 0:
+                return "完成"
+            return "结束 rc=%s" % j.get("returncode")
+
+        return " ｜ ".join("%s：%s" % (_nm.get(k, k), _stt(jb[k] or {})) for k in ks)
     return "读不到"
 
 
@@ -1448,7 +1545,12 @@ def _cursor_extras(t: Tokens, on_save) -> Card:
 
 # 这些动作 id 在本页**追加区/自定义卡**里已有 Qt 原生实现——元数据行再渲染一个
 # stub 假按钮只会误导（用户点中的正是它们）。渲染时整行跳过。
-_AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe"}
+_AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe", "rgForget",
+                          # pickPrivates：`_btn_group` 里有原生实现（与群白名单共用同一弹窗）
+                          "pickPrivates",
+                          # channelsHowto：Qt 侧由 `_chips_group_action` 之外的**说明弹窗**覆盖
+                          #   （见 `_channels_howto`）：只给"怎么用"，不装任何东西。
+                          "channelsHowto"}
 # 这两个下拉是 web **纯 JS 专属控件**（providerSel 静态选项+change 联动、modelSel
 # 动态填充），Qt 由模型页追加区原生实现（objectName 同名）——元数据行只渲染出
 # 假/空下拉。fbKind 这类「无 cfg 但有静态
@@ -1491,6 +1593,158 @@ def _row_redundant(r: "sec_meta.Row") -> bool:
     return True
 
 
+class _SubNavChip(QPushButton):
+    """组锚点条上的一颗胶囊 —— web `.sub-nav a` 的 Qt 等价。
+
+    为什么不用现成的 `Btn`：`Btn` 带立体投影 / hover 浮起 / 按下凹陷那一整套
+    "实体感"规格，那是**主操作按钮**的语言；锚点条在 web 上是一排**扁平描边 chip**
+    （`background:var(--subnav-bg); border:1px solid var(--subnav-bd)`，无投影）。
+    用 `Btn` 会在页顶压出一排立体按钮，与 web 观感相反。
+
+    选中态（`set_on`）走 web 的 `.on`：强调色实底 + 白字。
+    """
+
+    def __init__(self, text: str, t: Tokens, parent=None):
+        super().__init__(text, parent)
+        self.t = t
+        self._on = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFont(qfont(t, 12, 600))
+        self.setFixedHeight(26)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(self.fontMetrics().horizontalAdvance(text) + 22)
+        self._restyle()
+
+    def set_on(self, on: bool) -> None:
+        if bool(on) != self._on:
+            self._on = bool(on)
+            self._restyle()
+
+    def _restyle(self) -> None:
+        t = self.t
+        # 圆角取 radius_btn 一档：本项目控制台**没有 pill 按钮**（web 注释明确写了
+        # `.sub-nav a` 用 8px 而不是 999px）。高度 26 ⇒ 半径别超过 13，否则被 Qt 丢。
+        r = min(8, self.height() // 2)
+        # ⛔ 颜色一律过 `qss()`：whale 的 `tx2`/`blue_soft` 是**八位带 alpha** 的
+        #    `#RRGGBBAA` 序，直接插 QSS 会被按 `#AARRGGBB` 解析 ⇒ 文字整体泛绿、
+        #    对比度崩掉（这正是 whale 下锚点条看着"糊"的原因，light/dark 的令牌
+        #    是六位所以没事 —— 是**主题特有的坑**，不是全主题都错）。
+        if self._on:
+            self.setStyleSheet(
+                f"QPushButton{{background:{qss(t.q('blue'))};color:#fff;"
+                f"border:1px solid {qss(t.q('blue'))};"
+                f"border-radius:{r}px;padding:3px 10px;}}"
+            )
+        else:
+            # 未选中态照 web `.sub-nav a`：`background:var(--subnav-bg,var(--blue-soft))`
+            # + `border:1px solid var(--subnav-bd,var(--blue-line))` + `color:var(--tx2)`。
+            # ⛔ 底色必须是 **blue_soft**（不是 blue_line）——
+            #    blue_line 是"描边色"，比 blue_soft 暗/深一档；拿它填底会让
+            #    文字与底的对比度少一截（实测 dark：底 #262A44 时 4.40，踩在 4.5 门槛下；
+            #    换回 blue_soft #181B2C 后 5.25 达标）。
+            self.setStyleSheet(
+                f"QPushButton{{background:{qss(t.q('blue_soft'))};color:{qss(t.q('tx2'))};"
+                f"border:1px solid {qss(t.q('blue_line'))};border-radius:{r}px;padding:3px 10px;}}"
+                f"QPushButton:hover{{color:{qss(t.q('blue'))};border-color:{qss(t.q('blue'))};}}"
+            )
+
+
+def groups_of(sec: str) -> list:
+    """该 section 的**组行**（`sec_meta` 从 web 的 `.sub` 解析出来的那几行）。
+
+    ⛔ 手写面板**不许自己抄组名** —— web 侧 `.sub` 是唯一真值，抄一遍必然漂
+    （改了 web 忘了改 Qt ⇒ 两边锚点条的文字对不上）。
+    """
+    return [r for r in sec_meta.get(sec).rows if r.kind == "group"]
+
+
+def mark_group(page: QWidget, sec: str, idx: int, widget: QWidget) -> bool:
+    """把手写面板里的一个块标成「**第 idx 组的起点**」（0 起）。
+
+    做两件事：
+      · 给该块打 `web_anchor` 属性 —— 顶部锚点条（`_sub_nav`）靠它找滚动目标；
+      · 记一次登记（`page._c8_group_marks`），供判据核对「手写页标的组数 == web 的组数」。
+
+    返回是否标成功。`idx` 超出 web 的组数 ⇒ 返回 False 并把 `page._c8_group_mismatch`
+    置真：那说明 **web 加了组而手写面板没跟上** ⇒ 要红出来，不许静默少一组
+    （这正是"有些内容不在索引列表里"的成因）。
+    """
+    gs = groups_of(sec)
+    if idx >= len(gs):
+        page._c8_group_mismatch = True
+        return False
+    g = gs[idx]
+    widget.setProperty("web_anchor", g.anchor or "")
+    marks = getattr(page, "_c8_group_marks", None)
+    if marks is None:
+        marks = []
+        page._c8_group_marks = marks
+    marks.append((idx, g.anchor or "", g.label))
+    return True
+
+
+def _sub_nav(t: Tokens, rows: list["sec_meta.Row"], scroll: "QScrollArea") -> QWidget | None:
+    """功能项顶部的**组锚点条** —— web `.sub-nav`（第三层索引的入口）的 Qt 等价。
+
+    口径逐条对齐 web（`assets/console/index.html` L619-632 样式 + L7601-7647 生成逻辑）：
+
+    · **只有 ≥2 组的 section 才生成**（web `if(subs.length < 2) return;`）——
+      一组时锚点条没有任何"选择"可言，纯粹是多余的一行。
+    · 条目文字 = 组标题原文（**逐字抄**，不加工）；点一下滚到那一组。
+    · **滚的是滚动区内容**：web 是 `scrollIntoView`，Qt 侧取 `QScrollArea` +
+      `ensureWidgetVisible(组标题控件)` —— 直接用控件定位，不依赖 y 坐标算偏移
+      （算偏移在行高随字体/主题变化时必然漂移）。
+
+    ⚠️ 鲸语：条目文字取自 Row.label（= web `.sub` 原文），由 shell 的鲸语桥按
+       当前语言换显示文本；这里不在构造时缓存译文，否则切换语言后条上还是旧文案。
+
+    返回 None 表示该 section 不该有条（不足 2 组）。
+    """
+    groups = [r for r in rows if r.kind == "group"]
+    if len(groups) < 2:
+        return None
+    bar = QWidget()
+    bar.setObjectName("SubNav")
+    h = QHBoxLayout(bar)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(6)
+    chips: list[tuple[str, _SubNavChip]] = []
+
+    def _go(anchor: str) -> None:
+        target = None
+        for w in scroll.findChildren(QWidget):
+            if w.property("web_anchor") == anchor:
+                target = w
+                break
+        if target is None:
+            return
+        # ⛔ 不能用 `ensureWidgetVisible`：它的语义是"**保证可见**"，目标只要在视口内
+        #   就一个字都不滚。实测点第 1 组时滚动条停在 141 —— 第 1 组标题已在视口里，
+        #   于是"跳回第一组"变成没反应。web 那边是 `scrollIntoView({block:'start'})`，
+        #   语义是**对齐到视口顶部**，不是"让它可见就算数"。
+        #   ⇒ 按目标在内容坐标系里的 y 直接定滚动条值。
+        vp = scroll.viewport()
+        inner = scroll.widget()
+        if inner is None:
+            return
+        y = target.mapTo(inner, target.rect().topLeft()).y()
+        # 12px 让组标题不贴着上沿（web 的 scroll-margin-top 是同效手段）
+        sb = scroll.verticalScrollBar()
+        sb.setValue(max(0, y - 12))
+        for a, c in chips:
+            c.set_on(a == anchor)
+
+    for r in groups:
+        c = _SubNavChip(r.label, t)
+        c.setProperty("subnav_anchor", r.anchor or "")
+        c.setProperty("subnav_key", r.label) # 鲸语桥按此取原文的译文
+        c.clicked.connect(lambda _=False, a=r.anchor or "": _go(a))
+        h.addWidget(c)
+        chips.append((r.anchor or "", c))
+    h.addStretch(1)
+    return bar
+
+
 def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     """配置型面板：头部 + 一张设置卡（行 × 分隔线）+ 保存行。
 
@@ -1508,6 +1762,9 @@ def _cfg_panel(t: Tokens, s: "sec_meta.Sec", on_save=None) -> QWidget:
     lay.addWidget(h2(t, s.title, badge))
     if s.desc:
         lay.addWidget(desc(t, s.desc))
+    # ★ 组锚点条：插在说明之后（web `desc.insertAdjacentElement('afterend', bar)` 同位置）。
+    #   滚动区此刻还没建 ⇒ 先挂到 page 上，由 build_panel 建好 QScrollArea 后回填。
+    page._c8_subnav_rows = s.rows
 
     card = Card(t)
     binds: list[tuple["sec_meta.Row", QWidget]] = []
@@ -1708,6 +1965,19 @@ def build_panel(t: Tokens, sec: str, on_save=None) -> QWidget:
     fn = panels_custom.MANUAL.get(sec)
     if fn is not None:
         inner = fn(t, on_save) if sec == "json" else fn(t)
+        # ★ **手写页也要吃三级索引**（用户点出的缺口）：
+        #   原先这里不登记 ⇒ 手写页（概览/体检/人设/记忆/明细/日志/配置格式/版本/表情）
+        #   **连锚点条都不生成**，那些块等于不在索引里，用户只能一路滚着找；
+        #   而 web 侧同一个 section 却有锚点条（`.sub` 扫出来的）⇒ 两边不一致。
+        #   组行一律从 `sec_meta` 取（web `.sub` 是唯一真值，不手抄）；
+        #   锚点控件由手写面板自己用 `mark_group(...)` 标（它才知道哪个块对应哪一组）。
+        if not getattr(inner, "_c8_subnav_rows", None):
+            inner._c8_subnav_rows = sec_meta.get(sec).rows
+        # ⛔ 但**没标锚点的手写页不生成条**：锚点条靠 `web_anchor` 找滚动目标，
+        #   一处都没标就是"点了不动"的假索引 —— 那比没有条更糟（用户会以为坏了）。
+        #   所以只有显式用 `mark_group(...)` 声明过的手写页才给条。
+        if not getattr(inner, "_c8_group_marks", None):
+            inner._c8_subnav_rows = None
     else:
         inner = _cfg_panel(t, sec_meta.get(sec), on_save)
     # 面板追加区（元数据页 + 动态列表卡共存）——如 wechat 的表情收藏夹。
@@ -1726,4 +1996,25 @@ def build_panel(t: Tokens, sec: str, on_save=None) -> QWidget:
     wrap.setStyleSheet("QScrollArea{background:transparent;border:none;}")
     wrap.setWidget(inner)
     wrap._c8_badge = getattr(inner, "_c8_badge", None) # Shell._apply_badges 取用
+
+    # ★ 组锚点条要能滚到组 ⇒ 必须先有滚动区，故在 wrap 建好后才造它、
+    #   并插到"说明之后、卡片之前"（`_cfg_panel` 里说明与卡片之间留的正是这个位置）。
+    #   ⚠️ 插到 layout 里而不是当 wrap 的兄弟 —— 锚点条要跟着内容一起滚，
+    #      钉在滚动区外面会变成"永远浮在顶上的第二条顶栏"，与 web 不一致。
+    _rows = getattr(inner, "_c8_subnav_rows", None)
+    if _rows and isinstance(inner.layout(), QVBoxLayout):
+        _bar = _sub_nav(t, _rows, wrap)
+        if _bar is not None:
+            # 插入位置 = 说明行之后（没有说明行就紧接标题）。
+            # 用布局里"说明控件"的实际下标算，不靠猜 —— 说明行有无由 sec.desc 决定，
+            # 写死下标会在无说明的 sec 上把锚点条插到标题前面去。
+            _lay = inner.layout()
+            _ins = 1
+            for _i in range(_lay.count()):
+                _it = _lay.itemAt(_i)
+                _w = _it.widget() if _it is not None else None
+                if _w is not None and _w.property("c8_desc") is True:
+                    _ins = _i + 1
+            _lay.insertWidget(_ins, _bar)
+            inner._c8_subnav = _bar
     return wrap

@@ -27,6 +27,8 @@ import tempfile
 import time
 import zipfile
 
+import logging
+log = logging.getLogger("persona-morph")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
@@ -563,7 +565,8 @@ finally:
         pass
 try:
     _sh.rmtree(os.path.dirname(_dl_tmp), ignore_errors=True)
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     pass
 
 print("── （P1）目标不存在 ⇒ 真故障回滚（不许「永久只装一半」）──")
@@ -675,7 +678,8 @@ def _run36(hold_b):
         if state["h"]:
             try:
                 _k32.CloseHandle(state["h"])
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
     got = {}
     for _n in ("a.py", "b.py"):
@@ -1030,6 +1034,8 @@ print("── （P0）更新链：两道闸必须在**真装那一刻**也生效
 # 现场（审计假源实测）：`state()` 对低版本判 `older`、对过期清单判 `error`，而**真正动盘的**
 #   `update_apply.run_once()` 完全绕过这两道闸 ⇒ 照样真装（version.py 变 OLD）。这一节**只走真路径**。
 import shutil as _sh10 # noqa: E402
+import logging
+
 _d10 = tempfile.mkdtemp(prefix="pm_vf_v10_")
 os.makedirs(os.path.join(_d10, "agent"), exist_ok=True)
 _z10, _t10 = mk_pkg(_d10, rel="agent/z10.py", body="Z10")

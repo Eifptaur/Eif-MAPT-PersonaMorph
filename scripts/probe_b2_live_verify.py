@@ -7,7 +7,7 @@
    而空壳也能让 I3/I5 那两条自测通过（因为自测用的是桩）。
 
    本支要回答的是：**在真的会返回非空的库上，它到底返回什么**。
-   活微信目录：`M:\\WX\\talk\\xwechat_files\\`（账号 `wxid_ukl2ti5eyhu029_e7c2`）。
+   活微信目录：`M:\\WX\\talk\\xwechat_files\\`（账号 `wxid_<本机号>_e7c2`）。
 
 本支的**判定口径**（无立场、可复核）：
   V1 `open_db` 能开、`_message_dbs` 非空、`_build_md5_index` 非空（前提成立）
@@ -28,8 +28,11 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 import agent.wechat as W  # noqa: E402
+import logging
 
-LIVE = r"M:\WX\talk\xwechat_files\wxid_ukl2ti5eyhu029_e7c2"
+log = logging.getLogger("persona-morph")
+
+LIVE = r"M:\WX\talk\xwechat_files\wxid_<本机号>_e7c2"
 
 _n = 0
 _bad = 0
@@ -103,7 +106,8 @@ def main():
                     continue
                 try:
                     _v = _conn.execute('SELECT MAX(create_time) FROM "%s"' % _tb).fetchone()[0]
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue
                 if not _v:
                     continue
@@ -232,7 +236,8 @@ def _v7_forward(_db, _dbs, _idx, _today):
         for _tb in _tabs:
             try:
                 _v = _c.execute('SELECT MAX(create_time) FROM "%s"' % _tb).fetchone()[0]
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
             if _v and int(_v) > _best_v:
                 _best, _best_v = _tb, int(_v)
@@ -277,8 +282,9 @@ def _v7_forward(_db, _dbs, _idx, _today):
     finally:
         try:
             os.remove(_tmp)
-        except Exception:
-            pass
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            pass  # 清理型：静默合法
 
 
 if __name__ == "__main__":

@@ -20,6 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcmatch as _sm # noqa: E402
 
 from agent import compat as CP # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 PASS, FAIL = [0], [0]
 
@@ -43,9 +46,11 @@ def _snap_dir(d):
             p = os.path.join(d, n)
             try:
                 out[n] = os.path.getmtime(p)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 out[n] = None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out
 
@@ -62,7 +67,8 @@ def _fg_cursor():
         pt = POINT()
         u.GetCursorPos(ctypes.byref(pt))
         return (int(u.GetForegroundWindow() or 0), int(pt.x), int(pt.y))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 

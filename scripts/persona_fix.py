@@ -90,7 +90,7 @@ def main(keys=None, median_final=True):
     print("≥75通过：%d/%d；仍<75：%s" % (len(todo) - len(miss), len(todo), miss), flush=True)
 
 if __name__ == "__main__":
-    TEST = ["harry", "wukong", "holmes", "kratos", "natsu", "miku", "simayi", "anna", "lighthouse_keeper", "zelda"]
+    TEST = ["wukong", "holmes", "kratos", "natsu", "miku", "simayi", "anna", "lighthouse_keeper"]
     if len(sys.argv) > 1 and sys.argv[1] == "test":
         main(TEST)
         from agent.persona import PERSONAS

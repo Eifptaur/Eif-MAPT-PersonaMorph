@@ -14,6 +14,9 @@
 from __future__ import annotations
 
 import os
+import logging
+
+log = logging.getLogger("persona-morph")
 
 #: 属于我们自己的三个脚本（命令行里出现它们才算候选）
 OWN_SCRIPT_NAMES = ("persona_morph.py", "watchdog.py", "onestart.py")
@@ -52,7 +55,8 @@ def is_our_install(cmd: str, root: str = "") -> bool:
     for tok in script_paths(cmd):
         try:
             p = os.path.normcase(os.path.abspath(tok))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         if not p.startswith(r + os.sep):
             continue # ← 不在本安装目录下：**别人的进程，一个都不许碰**

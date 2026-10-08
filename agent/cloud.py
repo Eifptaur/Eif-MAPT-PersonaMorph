@@ -24,6 +24,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+log = logging.getLogger("persona-morph")
+
 DEFAULTS = {
     "enabled": False, # ⛔ 总开关：默认关＝永不真上传（既有口径："先不做"）
     "persona_url": "", # 人设上云的接收端（留空＝未配置）
@@ -249,7 +251,8 @@ def upload(which: str, payload: dict, dry: bool = True) -> dict:
                 return dict(base, ok=False, why="接收端回包超限/读不动，不敢当成功：%s" % str(e)[:60])
             try:
                 j = json.loads(raw.decode("utf-8", "replace"))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 return dict(base, ok=False, why="该站要求回包 ok:true 才算收下，但回包不是配置格式（无法确认）")
             if isinstance(j, dict) and j.get("ok") is True:
                 return dict(base, ok=True, confirmed=True)

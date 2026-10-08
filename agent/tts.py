@@ -14,6 +14,9 @@ import os
 import shutil
 import subprocess
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -40,17 +43,43 @@ def ffmpeg_path() -> str:
         return shutil.which("ffmpeg") or ""
 
 
+# ⛔ 别把这段删了（它是一次真实性能修复，不是缓存洁癖）：
+# 控制台前端**每 30 秒**轮询一次 `/api/status`，那条链是
+#   /api/status → media_status.snapshot() → tts.status() → voices()
+# 而 `voices()` 每次都要 `pythoncom.CoInitialize()` + `Dispatch`
+# **新建一个 COM 对象**（本机实测很贵）。可"本机装了哪些声音"在一次运行里**根本不会变**
+# ⇒ 记住 60 秒（轮询周期 30 秒，留一倍余量）。
+# 口径：**空结果不缓存**——否则"这次 COM 恰好没起来"会被钉住 60 秒，声音明明有却报没有。
+_VOICE_CACHE = {"t": 0.0, "v": None}
+_VOICE_TTL = 60.0
+
+
 def voices() -> list:
-    """本机可用的合成声音（只读）。"""
+    """本机可用的合成声音（只读）。结果记忆 60 秒（见上方注释，别删缓存）。"""
+    now = time.time()
+    hit = _VOICE_CACHE.get("v")
+    if hit is not None and (now - float(_VOICE_CACHE.get("t") or 0.0)) < _VOICE_TTL:
+        return list(hit)
     try:
         import pythoncom
         import win32com.client
         pythoncom.CoInitialize() # ⚠️ 只初始化、**不配对去初始化**（否则后续 Dispatch 报"没有注册类"）
         v = win32com.client.Dispatch("SAPI.SpVoice")
         toks = v.GetVoices()
-        return [str(toks.Item(i).GetDescription()) for i in range(toks.Count)]
-    except Exception:
+        got = [str(toks.Item(i).GetDescription()) for i in range(toks.Count)]
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
+    if got:   # ⛔ 空结果不缓存
+        _VOICE_CACHE["t"] = now
+        _VOICE_CACHE["v"] = list(got)
+    return got
+
+
+def refresh_voices() -> None:
+    """把声音列表缓存作废（换语音引擎/装完新声音后调；判据也用它保证不串味）。"""
+    _VOICE_CACHE["t"] = 0.0
+    _VOICE_CACHE["v"] = None
 
 
 def pick_voice(name: str = ""):

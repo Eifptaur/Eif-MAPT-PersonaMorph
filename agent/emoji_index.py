@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """自定义表情的**语义索引**机制（`data/emoji_index.json`）。
 
-## 为什么必须有它（用户 2026-10-02 提的那个问题）
+## 为什么必须有它
 自定义表情（动图/静态图）是**像素**，模型**读不出含义** —— 它既不会"随机选"，
 也不可能"看着图选"。**模型唯一的依据就是一行文字语义（caption）。**
 ⇒ 所以本模块的职责是：**把图片翻译成文字**，并维护这份翻译表。
@@ -31,6 +31,8 @@ import time
 
 from . import persist  # 换档必须走唯一实现点（带退避重试）
 
+import logging
+log = logging.getLogger("persona-morph")
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX_PATH = os.path.join(_ROOT, "data", "emoji_index.json")
 EMO_DIR = os.path.join(_ROOT, "data", "emoticons")
@@ -42,7 +44,8 @@ def _load() -> dict:
             d = json.load(f)
         if isinstance(d, dict) and isinstance(d.get("emojis"), list):
             return d
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {"emojis": [], "total": 0}
 
@@ -51,10 +54,120 @@ def _save(d: dict) -> None:
     os.makedirs(os.path.dirname(INDEX_PATH), exist_ok=True)
     d["total"] = len(d.get("emojis") or [])
     d["built_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    tmp = INDEX_PATH + ".tmp"
+    tmp = persist.tmp_for(INDEX_PATH)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
     persist.replace_into(tmp, INDEX_PATH)
+
+
+# ── 使用频次──────────────────────────────────────────────
+#   为什么：群里"发哪个表情"该有据可依 —— **群友常用的优先**（而不是每次挑第一个）。
+#   与 `INDEX_PATH` 同目录、同写法（tmp + persist.replace_into，保证原子替换）。
+USAGE_PATH = os.path.join(_ROOT, "data", "emoji_usage.json")
+
+
+def _load_usage() -> dict:
+    try:
+        with open(USAGE_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return d
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        pass
+    return {}
+
+
+def bump_usage(key: str, n: int = 1) -> bool:
+    """记一次使用。`key` ＝ 表情的 md5 或索引里的编号（与 `INDEX_PATH` 条目对得上）。"""
+    k = str(key or "").strip()
+    if not k:
+        return False
+    try:
+        d = _load_usage()
+        d[k] = int(d.get(k) or 0) + max(1, int(n))
+        os.makedirs(os.path.dirname(USAGE_PATH), exist_ok=True)
+        tmp = persist.tmp_for(USAGE_PATH)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        persist.replace_into(tmp, USAGE_PATH)
+        return True
+    except Exception: # noqa: BLE001
+        return False
+
+
+def top_used(limit: int = 10) -> list:
+    """最常用的前 N 个 ⇒ `[(key, 次数), ...]`（降序）。**读不到就返回空，不编。**"""
+    try:
+        d = _load_usage()
+        items = [(str(k), int(v)) for k, v in d.items() if int(v or 0) > 0]
+        items.sort(key=lambda kv: -kv[1])
+        return items[: max(1, int(limit or 10))]
+    except Exception: # noqa: BLE001
+        return []
+
+
+def pick_by_usage(candidates) -> str:
+    """**按使用频次从候选里挑一个**（常用的优先）；都不在频次表里 ⇒ **返回第一个**。
+
+    为什么要它：以前的"挑一个"永远取**候选的第一个** ⇒ 表现出来就是「**只会发呲牙，不会发别的**」。
+    现在：**用过次数多的优先**；都没用过 ⇒ **保持原顺序**（行为可预期，不会乱跳）。
+    ⛔ 不编造候选：返回的一定是**传进来的某个**（传入为空 ⇒ 返回空串）。
+    """
+    try:
+        cands = [str(c) for c in (candidates or []) if str(c or "").strip()]
+    except Exception: # noqa: BLE001
+        return ""
+    if not cands:
+        return ""
+    try:
+        used = dict(top_used(50))
+    except Exception: # noqa: BLE001
+        used = {}
+    if not used:
+        return cands[0]                       # 还没记过 ⇒ 保持原顺序（可预期）
+    return sorted(cands, key=lambda c: -int(used.get(c) or 0))[0]
+
+
+# ── 微信「方括号表情码」──────────────────────────────────
+#   微信**自带**这套码：消息里写 `[呲牙]`，**微信发送时自己会渲染成表情** ⇒
+#   这是最省的"发表情"路径：**不用鼠标、不用找坐标、也不管版本里表情的排列顺序**。
+import re as _re  # noqa: E402
+import logging
+
+
+_CODE_RE = _re.compile(r"\[([\u4e00-\u9fa5A-Za-z0-9]{1,8})\]")
+
+
+def parse_codes(text: str) -> list:
+    """把文本里的表情码解出来 ⇒ `[(名称, 起, 止), ...]`（位置是**原串下标**）。
+
+    ⛔ 只认「中文/字母/数字、1–8 字」这种白名单形态；**认不出就返回空列表** ——
+      **绝不猜**（否则会把普通方括号文字当表情发出去，那是"改了但闹笑话"）。
+    ⛔ 本函数**只解析、不发送**（发送由调用方决定），也不改原文本。
+    """
+    try:
+        return [(m.group(1), m.start(), m.end()) for m in _CODE_RE.finditer(str(text or ""))]
+    except Exception: # noqa: BLE001
+        return []
+
+
+def split_codes(text: str) -> list:
+    """把文本切成「文字段 / 表情段」⇒ `[("text", 内容) | ("emoji", 名称), ...]`。
+
+    给发送链用：**文字段照常打字，表情段走表情码** ⇒ 一条消息里可以"文字 + 表情"混排。
+    纯文字 ⇒ 返回 `[("text", 原文)]`（**调用方按老路走，行为不变**）。
+    """
+    s = str(text or "")
+    parts, pos = [], 0
+    for name, a, b in parse_codes(s):
+        if a > pos:
+            parts.append(("text", s[pos:a]))
+        parts.append(("emoji", name))
+        pos = b
+    if pos < len(s):
+        parts.append(("text", s[pos:]))
+    return parts or [("text", s)]
 
 
 def _kind_of(path: str) -> str:
@@ -216,7 +329,7 @@ def resolve(id_or_md5) -> str:
 
 def search_queries(id_or_md5, *, platforms=("bilibili.com", "douyin.com",
                                             "xiaohongshu.com", "weibo.com")) -> list:
-    """★ **给模型的"定向检索词"**（用户 2026-10-02 提：让模型去定向搜）。
+    """★ **给模型的"定向检索词"**。
 
     ⛔ 为什么需要它（实测教训）：
       梗图的语义只靠看图读不出；而"搜不到"的真实原因往往是**检索词不对** ——

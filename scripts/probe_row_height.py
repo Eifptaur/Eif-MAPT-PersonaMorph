@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """probe_row_height.py —— 会话列表「行高」的稳健测法（当帧实测，不硬编码）
 
-⛔ 为什么要单独做（2026-09-30 用户纠出来的一个测量错）
+⛔ 为什么要单独做（用户纠出来的一个测量错）
   用户的实测结论：「行高不会变；窗口比列表矮时**不压缩、只裁掉**（服务号被截一半）」——
   这是微信的正常行为 ⇒ **行高是个可靠锚**。
   但我第一版测法用的是「相邻行 y 间距的**众数**」⇒ 被污染：
@@ -26,6 +26,9 @@ import json
 import os
 import sys
 from collections import Counter
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -58,13 +61,14 @@ def detect_row_height(img, rows=None):
             h2 = int(round((ys[-1] - ys[0]) / float(max(1, len(ys) - 1))))
             h = h2 if (H_LO <= h2 <= H_HI) else 0
         return int(h)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
 def main():
     from PIL import Image
-    from agent import chat_ocr as CO
+
     _base = os.path.join(_ROOT, "报告", "ocr瓶颈-20260930", "多尺寸样本")
     _dirs = sorted(d for d in glob.glob(os.path.join(_base, "sizes-*")) if os.path.isdir(d))
     _res = []
@@ -78,7 +82,8 @@ def main():
                 continue
             try:
                 img = Image.open(p).convert("RGB")
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
             h = detect_row_height(img)
             _res.append((img.size, r.get("theme"), h))

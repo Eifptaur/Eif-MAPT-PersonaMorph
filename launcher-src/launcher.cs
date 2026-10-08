@@ -31,6 +31,21 @@ namespace WxLauncher
         public bool ProbeMode = false; // 取证探针用：只渲染界面、不跑安装流程
         Form _askHolder;
 
+        // ── 安装向导（四页）────────────────────────────────────────────
+        // ⛔ 页序与"每页说一件事"的口径见 PLAN 第 267 项；这里只落结构。
+        //   页 0 欢迎 · 页 1 安装位置 · 页 2 正在安装（＝原来的那一页，控件一个都不改名）· 页 3 完成。
+        //   ⚠️ 静默档（一切都就绪）走 `GoPage(2)` 直接进"正在安装"，**不许停在欢迎页等按钮** ——
+        //     那种"窗不显示、但内部在等一个没人点的下一步"＝静默死锁（判据 `launcher_wizard_selftest` 钉住）。
+        internal const int PageWelcome = 0, PageLocation = 1, PageInstalling = 2, PageDone = 3;
+        internal static readonly string[] PageNames = { "欢迎", "安装位置", "正在安装", "完成" };
+        WizardTabs tabs;
+        CardPanel cardWelcome, cardLocation, cardDone;
+        // "正在安装"那三张卡（原页）也要能被 `GoPage` 显隐 ⇒ 必须存句柄（原来它们是局部变量）。
+        CardPanel cardStepsHolder, cardProgHolder, cardLogHolder;
+        Button btnNext, btnBack;
+        CardCheck chkLaunch; // 完成页的「立即启动」（默认勾选）
+        int _page = PageWelcome;
+
         /// 每个步骤「在干什么」的**详细说明**。
         /// 与 `Steps` 一一对应；`SetStepDetail` 会在步骤切换时更新 `lblStepHint`。
         /// ⚠️ 文案口径：说**人话**（用户在等什么、这一步大概多久、卡住了看哪里），不写内部文件名。
@@ -56,13 +71,45 @@ namespace WxLauncher
         {
             Root = Path.GetDirectoryName(Application.ExecutablePath);
             BuildUI();
+            // ⛔ **静默档**（就绪时不再弹这个窗）：
+            //   用户口径是"启动器的名字就是产品的名字，而且启动非常迅速"、"以后也都不用显示这个启动弹窗"
+            //   —— 参照微信/WorkBuddy：它们是**一个 exe 自带运行时与依赖**，双击直接出主窗，
+            //   全程没有"先弹一个装依赖的窗"这一步。我们的包以后也会带全依赖 ⇒
+            //   正常情况下这一窗的唯一价值（显示安装进度）就不存在了。
+            //   ⇒ 就绪时这里**不显示**（`Opacity=0` + 不进任务栏 + 最小化），流程照旧跑
+            //     （控制台仍由原路径打开）；**一旦失败**由 `Fail()` 把它显形（见那里）。
+            if (Silent)
+            {
+                ShowInTaskbar = false;
+                WindowState = FormWindowState.Minimized;
+                Opacity = 0;
+                // ⚠️ 这里**不再**调 `StyleKit.Apply` —— `BuildUI()` 已经调过（重复应用会二次改边框/尺寸）。
+            }
+        }
+
+        /// <summary>静默档：`Main` 判定"一切都就绪"时置 true ⇒ 本窗不显示、出错才显形。</summary>
+        public static bool Silent = false;
+
+        /// <summary>把窗口从静默档**显形**（出错时调；幂等）。</summary>
+        public void RevealOnFailure()
+        {
+            if (InvokeRequired) { BeginInvoke((Action)(RevealOnFailure)); return; }
+            try
+            {
+                Opacity = 1;
+                ShowInTaskbar = true;
+                WindowState = FormWindowState.Normal;
+                Show();
+                BringToFront();
+            }
+            catch { }
         }
 
         void BuildUI()
         {
             Icon = null;
             try { if (File.Exists(Path.Combine(Root, "assets", "app.ico"))) { Icon = ExtractIcon(Path.Combine(Root, "assets", "app.ico")); } } catch { }
-            Text = "群相 一键启动";
+            Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -77,7 +124,7 @@ namespace WxLauncher
             // ── 头部：统一图标（StyleKit.MakeIcon，56px 圆角）+ 标题 + 状态 ────────
             StyleKit.MakeIcon(this, Root, new Point(StyleKit.Space.x6, StyleKit.Space.x5));
             lblTitle = new Label();
-            lblTitle.Text = "群相 一键启动";
+            lblTitle.Text = "群相";
             lblTitle.Font = StyleKit.Ui(StyleKit.TextScale.Title, FontStyle.Bold);
             lblTitle.ForeColor = StyleKit.Ink;
             lblTitle.AutoSize = true;
@@ -99,12 +146,127 @@ namespace WxLauncher
                                           lblTitle.Bottom + StyleKit.Space.x2);
             Controls.Add(lblState);
 
-            // ── 卡片 1：四个步骤（横向 4 段编号 + 名称，纵向用 StepList 自绘）──────────
+            // ── 向导页签（四页）：欢迎 → 安装位置 → 正在安装 → 完成 ──────────────
+            //   ⛔ 不能用系统 `TabControl`（系统皮肤会撕开统一外观，见 `WizardTabs` 的说明）。
+            //   高度不写死：按"圆点 + 名字一行"的实测行高给（150% DPI 下自动长高）。
+            tabs = new WizardTabs();
+            tabs.SetNames(PageNames);
+            tabs.Size = new Size(620 - StyleKit.Space.x6 * 2,
+                StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Small, FontStyle.Bold))
+                + StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Micro, FontStyle.Bold)) + StyleKit.Space.x1);
+            tabs.Location = new Point(StyleKit.Space.x6, lblState.Bottom + StyleKit.Space.x4);
+            tabs.GoTo(PageWelcome);
+            Controls.Add(tabs);
+
+            // ⚠️ 内容区的顶边**跟着页签的实测底边走**（不再写死 104）—— 页签高度是算出来的。
+            int contentTop = tabs.Bottom + StyleKit.Space.x4;
             int cardW = 620 - StyleKit.Space.x6 * 2;
+
+            // ── 页 0：欢迎 ──────────────────────────────────────────────
+            cardWelcome = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, contentTop), cardW);
+            Label w1 = new Label();
+            w1.Text = "接下来会做什么";
+            w1.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            w1.ForeColor = StyleKit.Ink;
+            w1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            w1.AutoSize = true;
+            cardWelcome.Controls.Add(w1);
+
+            Label w2 = new Label();
+            w2.Text =
+                "接下来几步会自动准备好运行环境，**全程不需要你操作**：\n"
+              + "  · 找一个能用的 Python（本机已有的优先，没有就用包里自带的）；\n"
+              + "  · 核对运行需要的库，缺哪个补哪个；\n"
+              + "  · 自检本机环境，再把它拉起来。\n"
+              + "整个过程几分钟，看网速。装好以后**双击桌面的「群相」图标就能直接用**。";
+            w2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            w2.ForeColor = StyleKit.InkBody;
+            w2.Location = new Point(StyleKit.Space.x5, w1.Bottom + StyleKit.Space.x2);
+            w2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            cardWelcome.Controls.Add(w2);
+            StyleKit.FitLabel(w2);
+            StyleKit.SealCard(cardWelcome);
+
+            // ── 页 1：安装位置（只展示、不修改 —— 便携包解压即用，改目录会引出"卸载残留"一整类问题）──
+            cardLocation = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, contentTop), cardW);
+            Label l1 = new Label();
+            l1.Text = "安装位置";
+            l1.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            l1.ForeColor = StyleKit.Ink;
+            l1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            l1.AutoSize = true;
+            cardLocation.Controls.Add(l1);
+
+            Label l2 = new Label();
+            l2.Text = "程序就装在这里（也就是你现在放它的这个文件夹）：";
+            l2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            l2.ForeColor = StyleKit.InkBody;
+            l2.Location = new Point(StyleKit.Space.x5, l1.Bottom + StyleKit.Space.x2);
+            l2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            cardLocation.Controls.Add(l2);
+            StyleKit.FitLabel(l2);
+
+            Label l3 = new Label();
+            l3.Text = Root;
+            l3.Font = StyleKit.Mono(StyleKit.TextScale.Small);
+            l3.ForeColor = StyleKit.Ink3ok;
+            l3.Location = new Point(StyleKit.Space.x5, l2.Bottom + StyleKit.Space.x2);
+            l3.AutoSize = true;
+            cardLocation.Controls.Add(l3);
+
+            Label l4 = new Label();
+            l4.Text =
+                "这一版是**便携版**：解压到哪就装在哪，不写系统目录、不动注册表，"
+              + "整个文件夹拷走就能在别的电脑上用。\n"
+              + "程序要用的组件**都在这包里了**，安装过程不需要联网下载。";
+            l4.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            l4.ForeColor = StyleKit.InkBody;
+            l4.Location = new Point(StyleKit.Space.x5, l3.Bottom + StyleKit.Space.x3);
+            l4.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            cardLocation.Controls.Add(l4);
+            StyleKit.FitLabel(l4);
+            StyleKit.SealCard(cardLocation);
+
+            // ── 页 3：完成（含「立即启动」，默认勾选 —— 用户那句"一点就能直接打开"的落点）──
+            cardDone = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, contentTop), cardW);
+            Label d1 = new Label();
+            d1.Text = "全部好了";
+            d1.Font = StyleKit.Ui(StyleKit.TextScale.Head, FontStyle.Bold);
+            d1.ForeColor = StyleKit.OkInk;
+            d1.Location = new Point(StyleKit.Space.x5, StyleKit.Space.x4);
+            d1.AutoSize = true;
+            cardDone.Controls.Add(d1);
+
+            Label d2 = new Label();
+            d2.Text =
+                "以后**双击桌面上那个「群相」图标**就能打开，不用再走这一遍。\n"
+              + "也可以从开始菜单里找到它。";
+            d2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            d2.ForeColor = StyleKit.InkBody;
+            d2.Location = new Point(StyleKit.Space.x5, d1.Bottom + StyleKit.Space.x2);
+            d2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
+            cardDone.Controls.Add(d2);
+            StyleKit.FitLabel(d2);
+
+            chkLaunch = new CardCheck();
+            // ⭐ 「在桌面创建快捷方式」放在**完成页**（＝常见 setup 的标准件），
+            //   与 `AskForm` 那个**独立询问窗**二选一：
+            //   向导路径下由这里勾选决定（不再弹第二个窗），非向导路径仍走 `AskForm`。
+            //   ⛔ 默认勾选：用户那句"装完之后**一点就能直接打开**"落点就在这一条（桌面有图标才好点）。
+            chkLaunch.Text = "在桌面创建快捷方式（以后双击它就能打开）";
+            chkLaunch.Checked = true;
+            chkLaunch.Location = new Point(StyleKit.Space.x5, d2.Bottom + StyleKit.Space.x3);
+            chkLaunch.Size = new Size(cardW - StyleKit.Space.x5 * 2,
+                StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular)) + StyleKit.Space.x2);
+            cardDone.Controls.Add(chkLaunch);
+            StyleKit.SealCard(cardDone);
+
+            // ── 页 2：正在安装（＝原来的那一页：四步 + 进度 + 日志）──────────────
             // #12 F1：高度**不再手写**（原来这里抄的是 268）。
             //   `MakeCard` 只给宽度，`SealCard` 排完子控件后按"内容深度 + CardPadB"收口。
-            // #13 F3：卡顶原来是 108（另 8 张卡都是 104）⇒ 统一走 `StyleKit.CardTopY`（= 图标底边 76 + 间距 28）。
-            CardPanel cardSteps = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, StyleKit.CardTopY), cardW);
+            // ⚠️ 卡顶改为跟着 `contentTop`（页签底边）——原来是 `StyleKit.CardTopY`（图标底边 76 + 间距 28）；
+            //   现在页签排在头部下方，再按旧口径会把卡片压到页签上（这一轮加页签后必须跟着改）。
+            CardPanel cardSteps = StyleKit.MakeCard(this, new Point(StyleKit.Space.x6, contentTop), cardW);
 
             Label t1 = new Label();
             t1.Text = "启动分四步";
@@ -208,6 +370,8 @@ namespace WxLauncher
             logView.Size = new Size(cardW - StyleKit.Space.x5 * 2, Math.Max(44, StyleKit.LineHeight(logView.Font) * 2));
             cardLog.Controls.Add(logView);
             StyleKit.SealCard(cardLog);
+            // 三张卡（安装页）的句柄存起来：`GoPage` 要显隐它们（原来它们是纯局部变量）。
+            cardStepsHolder = cardSteps; cardProgHolder = cardProg; cardLogHolder = cardLog;
 
             // #13 F2：宽度不再手写 112 —— 由"文字实宽 + 36"决定（见 `StyleKit.MakeButton`）。
             btnClose = StyleKit.MakeButton("关闭");
@@ -219,12 +383,103 @@ namespace WxLauncher
             btnClose.Click += (s, e) => Close();
             Controls.Add(btnClose);
 
+            // ── 向导导航按钮（上一步 / 下一步）──────────────────────────────
+            //   只在"欢迎 / 安装位置 / 完成"三页出现；"正在安装"那页只有 `关闭`（＝中止）。
+            //   位置跟着各页卡片底边，由 `GoPage` 重排。
+            btnBack = StyleKit.MakeButton("上一步");
+            btnBack.FlatStyle = FlatStyle.Flat;
+            btnBack.Click += (s, e) => GoPage(_page - 1);
+            Controls.Add(btnBack);
+
+            btnNext = StyleKit.MakeButton("下一步");
+            btnNext.FlatStyle = FlatStyle.Flat;
+            btnNext.BackColor = Color.FromArgb(64, 140, 255);
+            btnNext.ForeColor = Color.White;
+            btnNext.Click += (s, e) =>
+            {
+                if (_page == PageDone) { FinishAndMaybeLaunch(); return; }
+                if (_page == PageWelcome) { GoPage(PageLocation); return; }
+                // 安装位置 → 开始安装：先把 P3 的按钮行排好，再切页（`StartFlow` 由 `Shown` 起）
+                GoPage(PageInstalling);
+            };
+            Controls.Add(btnNext);
+
             // #12 F1：窗高也不再是"先猜一个数再祈祷内容装得下" —— 由最后一块的底边反推。
             //   （`Apply` 会再 + BarH 给自绘标题栏，所以这里是"标题栏以下"的设计高度。）
-            ClientSize = new Size(620, btnClose.Bottom + StyleKit.Space.x6);
-            Shown += (s, e) => { if (ProbeMode) return; Thread t = new Thread(StartFlow); t.IsBackground = true; t.Start(); };
-            StyleKit.Apply(this, "群相 一键启动");
+            //   ⚠️ 现在"最后一块"是**四页里最高的那一块**（页切换只改显隐、不改窗高）⇒
+            //     取四页底边的最大值，保证切到任何一页都不裁字（这是分页后新引入的一处高度口径）。
+            int bottomMost = Math.Max(Math.Max(btnClose.Bottom, cardWelcome.Bottom), Math.Max(cardLocation.Bottom, cardDone.Bottom));
+            bottomMost = Math.Max(bottomMost, contentTop + StyleKit.Space.x4 + StyleKit.LineHeight(btnNext.Font) + StyleKit.Space.x1);
+            ClientSize = new Size(620, bottomMost + StyleKit.Space.x6);
 
+            GoPage(Silent ? PageInstalling : PageWelcome); // ⛔ 静默档直接进"正在安装"，不许停在欢迎页
+            Shown += (s, e) => { if (ProbeMode) return; Thread t = new Thread(StartFlow); t.IsBackground = true; t.Start(); };
+            StyleKit.Apply(this, "群相 安装向导");
+
+        }
+
+        /// <summary>切页：显隐四页卡片 + 更新页签 + 重排按钮行。幂等（重复调用同一页不出错）。</summary>
+        void GoPage(int p)
+        {
+            if (_page != p && IsHandleCreated && InvokeRequired) { BeginInvoke((Action)(() => GoPage(p))); return; }
+            if (p < PageWelcome) p = PageWelcome;
+            if (p > PageDone) p = PageDone;
+            _page = p;
+            CardPanel[] cards = { cardWelcome, cardLocation, null, cardDone };
+            for (int i = 0; i < cards.Length; i++)
+            {
+                if (cards[i] == null) continue;
+                cards[i].Visible = (i == p);
+            }
+            if (cardStepsHolder != null) { cardStepsHolder.Visible = (p == PageInstalling); }
+            if (cardProgHolder != null) { cardProgHolder.Visible = (p == PageInstalling); }
+            if (cardLogHolder != null) { cardLogHolder.Visible = (p == PageInstalling); }
+            if (tabs != null) { tabs.DoneUpTo = p - 1; tabs.GoTo(p); }
+
+            // 按钮行：安装页只有 `关闭`（中止）；其余页有 `上一步/下一步`（欢迎页无上一步、完成页主按钮改字）。
+            bool installing = (p == PageInstalling);
+            if (btnClose != null) btnClose.Visible = installing;
+            if (btnBack != null) btnBack.Visible = (!installing && p != PageWelcome);
+            if (btnNext != null)
+            {
+                btnNext.Visible = !installing;
+                btnNext.Text = (p == PageDone) ? "完成" : (p == PageWelcome ? "开始安装" : "下一步");
+            }
+
+            CardPanel anchor = installing ? cardLogHolder : (p == PageLocation ? cardLocation : (p == PageDone ? cardDone : cardWelcome));
+            if (anchor != null)
+            {
+                int y = Math.Max(contentTop, anchor.Bottom) + StyleKit.CardGapY;
+                if (btnNext != null && btnNext.Visible)
+                    btnNext.Location = new Point(620 - StyleKit.Space.x6 - btnNext.Width, y);
+                if (btnBack != null && btnBack.Visible)
+                    btnBack.Location = new Point(620 - StyleKit.Space.x6 - btnNext.Width - StyleKit.Space.x2 - btnBack.Width, y);
+                if (installing && btnClose != null)
+                    btnClose.Location = new Point(620 - StyleKit.Space.x6 - btnClose.Width, y);
+            }
+        }
+
+        /// <summary>完成页点「完成」：按勾选决定要不要在桌面建快捷方式（不勾就只关窗）。</summary>
+        /// ⚠️ 控制台**不在这里开** —— 它由 `onestart.py` 在就绪后自己开（`@@DONE` 之前的既有路径），
+        ///   这里再开一次会变成"两个入口抢一把锁"（正是 `notify_ui.open_console` 注释里说的那个坑）。
+        void FinishAndMaybeLaunch()
+        {
+            if (chkLaunch != null && chkLaunch.Checked && !Ui.ShortcutOnDesktop())
+            {
+                try
+                {
+                    Type tt = Type.GetTypeFromProgID("WScript.Shell");
+                    dynamic ws = Activator.CreateInstance(tt);
+                    string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "群相.lnk"));
+                    sc.TargetPath = Application.ExecutablePath;
+                    sc.WorkingDirectory = Root;
+                    sc.IconLocation = Path.Combine(Root, "assets", "app.ico");
+                    sc.Save();
+                }
+                catch { }
+            }
+            Close();
         }
 
         static Icon ExtractIcon(string p) { return Icon.ExtractAssociatedIcon(p); }
@@ -241,10 +496,14 @@ namespace WxLauncher
         /// 取证用：把界面推到"进行到第 stepIdx 步"的样子（只动显示，不碰安装流程）
         public void ProbeState(int stepIdx)
         {
+            GoPage(PageInstalling);
             SetState("环境自检…", 70, stepIdx, "Python 就绪 · 依赖已就绪 · 正在核对本机环境（第 31 项）");
             Log("[取证] 步骤列表渲染到第 " + (stepIdx + 1) + " 步（绿勾/蓝点/灰号三态同框）");
             Log("[取证] 当前动作：正在检测微信版本与窗口可操作性…");
         }
+
+        /// 取证用：把界面推到指定页（`--shot` / `--dlgprobe` 逐页出图与读控件树）。
+        public void ProbePage(int p) { GoPage(p); }
 
         void SetState(string txt, int pct, int stepIdx, string sub)
         {
@@ -288,24 +547,57 @@ namespace WxLauncher
                     double r = tt > 0 ? (double)dn / tt : 0;
                     if (ps[0] == "deps") SetState("检查 / 安装依赖…", 12 + (int)(33 * r), 1, "已检查 " + dn + " / " + tt + " 项");
                     else if (ps[0] == "install")
-                        SetState("正在下载依赖…", 45, 1,
-                                 "使用国内镜像下载安装 —— 已完成 " + dn + " / " + tt + " 个包"
+                        SetState("正在安装依赖…", 45, 1,
+                                 "从本包自带组件安装 —— 已完成 " + dn + " / " + tt + " 个包"
                                  + (tt > 0 ? ("（" + (int)(100 * r) + "%）") : "") + "，请稍候");
+                    // ⛔ 「界面组件」（PySide6）这一步**必须单独认**：
+                    //   它是依赖段之后的**又一段安装**（本包自带轮子时几乎瞬间；在线包才要下载）。
+                    //   Python 侧 (`scripts/onestart.py` 的 `_prog`) 把"界面组件"映射成事件键 **`ui`** 发出来，
+                    //   而这里原来只认 `deps`/`install`/`selftest` ⇒ **`ui` 被静默丢弃** ⇒
+                    //   那一整段期间进度条**钉在 45%**、状态行还是上一步的「已完成 27 / 27 个包（100%），请稍候」
+                    //   ⇒ 用户看到的就是"卡住了"（真实现场截图：45% + 27/27(100%) + 请稍候，等好几分钟）。
+                    //   ⇒ 认它，并把 45→65 这段留给它，文案说清"在装什么"。
+                    else if (ps[0] == "ui")
+                        SetState("正在安装界面组件…", 45 + (int)(20 * r), 1,
+                                 "桌面控制台的图形库 —— 已完成 " + dn + " / " + tt
+                                 + (tt > 0 ? ("（" + (int)(100 * r) + "%）") : "") + "，请稍候");
+                    // ⛔ **兜底键 `step` 也必须认**：Python 的 `_prog` 对**未映射的前缀**一律发 `step`
+                    //   （`.get(prefix, "step")`）⇒ 不认它，将来任何新进度都会**静默丢弃**（同一类 bug）。
+                    //   ⚠️ 进度值**用当前值 `bar.Value`**：兜底分支不知道自己在哪个阶段，
+                    //   把 pct 写 0 会把进度条倒回去（假象更坏）。
+                    else if (ps[0] == "step")
+                        SetState("正在处理…", bar.Value, 1, "其他进度：" + dn + " / " + tt);
                     else if (ps[0] == "selftest") SetState("环境自检…", 70 + (int)(20 * r), 2, "第 " + dn + " / " + tt + " 项");
                 }
             }
             else if (line.StartsWith("@@REQ_SHORTCUT"))
             {
-                AskShortcut();
+                // ⭐ 向导路径下**不再弹第二个窗**：快捷方式改成完成页上的一个勾选（见 `chkLaunch`）——
+                //   这也正是常见 setup 的形态（"创建桌面快捷方式"是完成页上的一个勾，不是独立弹窗）。
+                //   ⛔ 静默档：窗都看不见，更没有完成页可勾 ⇒ 仍走 `AskShortcut()` 那条既有路径。
+                if (Silent) AskShortcut();
+                else Log("快捷方式询问已并入完成页的勾选项（不再单独弹窗）");
             }
             else if (line.StartsWith("@@DONE"))
             {
-                SetState("启动完成 ✓", 100, 4, "控制台已就绪，正在打开控制台窗口…");
+                SetState("已就绪 ✓", 100, 4, "控制台已打开");
                 btnClose.Enabled = true;
-                try { Process.Start(Application.ExecutablePath, "--ask"); } catch { }
-                Thread.Sleep(300);
-                BeginInvoke((Action)Close);
                 done = true;
+                // ── 页序：安装成功 ⇒ 切到「完成」页 ─────────────────────────────
+                //   ⛔ 静默档下**没有窗给用户点**（`Silent` 时窗体不可见）⇒ 照旧自动收尾，
+                //     否则会留一个"看不见的窗在等一个没人点的『完成』"＝静默死锁
+                //     （判据 `launcher_wizard_selftest` 的反例锚钉住这一条）。
+                //   非静默档：**停在完成页**，由用户按勾选决定要不要立刻起（默认勾选 ⇒ 一次点击即用）。
+                if (Silent)
+                {
+                    try { Process.Start(Application.ExecutablePath, "--ask"); } catch { }
+                    Thread.Sleep(300);
+                    BeginInvoke((Action)Close);
+                }
+                else
+                {
+                    BeginInvoke((Action)(() => GoPage(PageDone)));
+                }
             }
             else if (line.StartsWith("@@FAIL"))
             {
@@ -505,6 +797,8 @@ namespace WxLauncher
         void Fail(string msg)
         {
             if (InvokeRequired) { BeginInvoke((Action)(() => Fail(msg))); return; }
+            // ⛔ 静默档下**必须显形** —— 否则"失败"会变成一个用户看不见的死进程。
+            if (Silent) RevealOnFailure();
             SetState("一键启动失败", 0, 0, "这是一次失败：详见 logs\\onestart.log（下面那行是原因）");
             Log(msg);
             btnClose.Enabled = true;
@@ -522,7 +816,7 @@ namespace WxLauncher
         public BusyForm()
         {
             string root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相 一键启动";
+            Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -608,10 +902,11 @@ namespace WxLauncher
 
     /// <summary>
     /// PySide6 首启自动装的**提前告知窗**（BusyForm 同族骨架）。
-    /// 有「旧版仍在跑」的窗口期，不能依赖它做安装）；本窗只是把「首启要多下载
-    /// 约 100MB 界面组件」提前公告给用户（对齐「任何包换入都必须经过用户可见的
+    /// 有「旧版仍在跑」的窗口期，不能依赖它做安装）；本窗只是把「首启要装
+    /// 界面组件」提前公告给用户（对齐「任何包换入都必须经过用户可见的
     /// 公告与选择」），自己不装任何东西、不拦启动流程——点「继续」照常走 LauncherForm。
-    /// 文案口径与 qt_bootstrap 一致：叫「界面组件」、讲清约 100MB、讲清网页控制台
+    /// 文案口径与 qt_bootstrap 一致：叫「界面组件」、讲清"装什么"、讲清网页控制台兜底
+    /// （正式包自带轮子 ⇒ **不下载**；只有在线包才走联网下载，文案由 Python 侧给）
     /// </summary>
     public class QtBootForm : Form
     {
@@ -626,7 +921,15 @@ namespace WxLauncher
                     return null; // 没有内置 Python ⇒ Python 侧自举自己处理
                 string sp = Path.Combine(root, "runtime", "python", "Lib", "site-packages");
                 if (!Directory.Exists(Path.Combine(sp, "PySide6")))
-                    return "首次启动需要下载界面组件（约 100MB）";
+                {
+                    // ⛔ 文案随发行形态走：正式包自带轮子（`offline/wheels/pyside6_essentials-*.whl`）
+                    //   ⇒ 是"装"不是"下载"；只有装不了才由 Python 侧退联网（那时才有下载量）。
+                    bool bundled = File.Exists(Path.Combine(root, "offline", "wheels",
+                        "pyside6_essentials-6.11.2-cp310-abi3-win_amd64.whl"));
+                    return bundled
+                        ? "首次启动需要安装界面组件（本包自带，不需要联网下载）"
+                        : "首次启动需要下载界面组件（约 100MB）";
+                }
                 return null;
             }
             catch { return null; } // 探测本身出错 ⇒ 不拦路（不是新故障面）
@@ -635,7 +938,7 @@ namespace WxLauncher
         public QtBootForm(string reason)
         {
             string root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相 一键启动";
+            Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -738,7 +1041,7 @@ namespace WxLauncher
         public AskForm()
         {
             Root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相 启动完成";
+            Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -787,7 +1090,7 @@ namespace WxLauncher
                 "有它的话：\n"
               + "  · 以后双击桌面上那个图标就能启动，不用再翻安装目录；\n"
               + "  · 图标就是这只鲸鱼，和开始菜单里那个是同一个。\n"
-              + "不想要也没关系 —— 随时可以从安装目录里再双击「一键启动.exe」。";
+              + "不想要也没关系 —— 随时可以从安装目录里再双击「群相.exe」。";
             qm2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             qm2.ForeColor = StyleKit.InkBody;
             // ⚠️ （#18）：y 改跟 qm 实测底边走（原写死 `Space.x4 + 30`）
@@ -815,8 +1118,11 @@ namespace WxLauncher
                     Type t = Type.GetTypeFromProgID("WScript.Shell");
                     dynamic ws = Activator.CreateInstance(t);
                     string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "一键启动 群相.lnk"));
-                    sc.TargetPath = Path.Combine(Root, "一键启动.exe");
+                    // ⛔ 目标写**本进程自己的 exe**（运行时即真值），不写字面量 ——
+                    //   启动器已从历史名 `一键启动.exe` 改名为 `群相.exe`，写死老名会建出一个**指向不存在文件**的
+                    //   死快捷方式（用户双击报"找不到文件"）。快捷方式名同理用产品名（口径：文件名＝产品名）。
+                    dynamic sc = ws.CreateShortcut(Path.Combine(desk, "群相.lnk"));
+                    sc.TargetPath = Application.ExecutablePath;
                     sc.WorkingDirectory = Root;
                     sc.IconLocation = Path.Combine(Root, "assets", "app.ico");
                     sc.Save();
@@ -1311,7 +1617,7 @@ static class Program
             Application.SetCompatibleTextRenderingDefault(false);
             // ── PySide6 首启自动装的「提前介入」告知 ──
             //   launcher.exe 有「旧版仍在跑」的窗口期，不能依赖它做安装）；这里只是
-            //   在启动器开跑之前，把「首启要多下载约 100MB 界面组件」公告给用户
+            //   在启动器开跑之前，把「首启要装界面组件」公告给用户
             //   （对齐「任何包换入都必须经过用户可见的公告与选择」）。
             //   检测不到（没有 runtime / 目录判断出错）就一言不发地跳过——拦路反而不是优化；
             //   走到这里说明控制台没在跑、互斥锁也拿到了 ⇒ 是一次真正的全新启动，才值得公告。
@@ -1320,7 +1626,60 @@ static class Program
             {
                 Application.Run(new QtBootForm(qtBootWhy));
             }
+            // ⛔ **就绪 ⇒ 不弹这个窗**（用户口径："以后也都不用显示这个启动弹窗"）。
+            //   判据见 `FastPathReady`：运行时在 ＋ 依赖标记在 ＋ 界面组件在 ⇒ 走静默档
+            //   （流程一步不少，只是不显示窗体；**出错时 `Fail()` 会把它显形**）。
+            LauncherForm.Silent = FastPathReady(Path.GetDirectoryName(Application.ExecutablePath));
             Application.Run(new LauncherForm());
+        }
+
+        /// <summary>「一切都就绪」⇒ 启动器窗口走静默档（不弹窗，照微信/WorkBuddy 那种"双击直接起"）。</summary>
+        /// ⛔ 判据要**便宜且保守**：任一条件拿不准 ⇒ 返回 `false`（照旧弹窗，宁可多弹不要静默失败）。
+        /// 两条：① 便携运行时在（`runtime\python\python.exe`）；
+        ///       ② 界面组件在（`QtBootForm.MissingReason(...) == null`）；
+        ///       ③ 依赖真的齐（见 `DepsProbeOk`）。
+        /// ⚠️ 依赖那一条**不许只看 `data\.deps_ok` 标记**：该标记每次启动先删、只在依赖检查**跑完并通过**
+        ///    才写回 ⇒ 用户中途关窗 / 安装失败 / 被中断，标记就**永久缺失**，下次照样弹窗——
+        ///    实测本机所有依赖都装好了（`dep_check` 27 项全过），却因为标记不在而每次都白弹一次启动器。
+        ///    ⇒ 改成**直接探测事实**（`dep_check` 实测 0.10 秒）：装好了就静默，这才是"装完不再显示"。
+        ///    标记仍在时当**零成本快通道**（省掉那次 0.1 秒的子进程），但不是唯一判据。
+        static bool FastPathReady(string root)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(root)) return false;
+                if (!File.Exists(Path.Combine(root, "runtime", "python", "python.exe"))) return false;
+                if (QtBootForm.MissingReason(root) != null) return false;
+                if (File.Exists(Path.Combine(root, "data", ".deps_ok"))) return true; // 快通道：标记在 = 已核对过
+                return DepsProbeOk(root);                                              // 慢通道：真探测依赖
+            }
+            catch { return false; }
+        }
+
+        /// <summary>真探测"依赖到底齐没齐"——跑一次 `agent.wechat.dep_check('all')`（**纯本地导入检查、不联网**）。</summary>
+        /// ⛔ 为什么不用标记文件代替：标记是"上一次跑成功过"的证据，而我们要判的是"**现在**行不行"。
+        ///    实测该探测 **0.10 秒 / 27 项**，比弹一次窗打断用户便宜得多。
+        /// ⛔ 任何异常（跑不起来 / 超时 / 输出读不出）一律当**不齐** ⇒ 照旧弹窗（宁可多弹不要静默失败）。
+        /// 输出约定：脚本打印 `DEPS_OK` 表示全齐，否则打印 `DEPS_MISSING:<包名列表>`。
+        static bool DepsProbeOk(string root)
+        {
+            try
+            {
+                string py = Path.Combine(root, "runtime", "python", "python.exe");
+                if (!File.Exists(py)) return false;
+                // 单行脚本：不落盘、不留痕；`-c` 里只用标准库 + 本项目自己的 `dep_check`。
+                // `root` 里可能有空格/中文 ⇒ 用 r'' 原始串，并把单引号转义成两个。
+                string rq = root.Replace("'", "''");
+                string code = "import sys;sys.path.insert(0,r'" + rq + "');"
+                            + "from agent.wechat import dep_check as _d;"
+                            + "rows,ok=_d('all');"
+                            + "print('DEPS_OK' if ok else 'DEPS_MISSING:'+','.join(r[0] for r in rows if not r[3]))";
+                string outp = RunPy(py, "-X utf8", "-c \"" + code.Replace("\"", "\\\"") + "\"");
+                if (string.IsNullOrEmpty(outp)) return false;
+                return outp.IndexOf("DEPS_OK", StringComparison.Ordinal) >= 0
+                    && outp.IndexOf("DEPS_MISSING", StringComparison.Ordinal) < 0;
+            }
+            catch { return false; }
         }
     }
 
@@ -1329,7 +1688,7 @@ static class Program
         public NoticeForm()
         {
             string root = Path.GetDirectoryName(Application.ExecutablePath);
-            Text = "群相 一键启动";
+            Text = "群相";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
@@ -1809,6 +2168,9 @@ static class Program
 
         void SaveGeo()
         {
+            // ⛔ 探针模式（`--shot` / `--dlgprobe`）**不写存档**：探针要的是"按工作区算出来的那个尺寸"，
+            //    把探针窗的位置落盘，等于**用探针尺寸覆盖用户调好的窗口位置**（跑一次判据就把用户状态改了）。
+            if (ProbeMode) return;
             try
             {
                 string p = GeoFile();
@@ -2356,12 +2718,25 @@ static class Program
     internal static class Ui
     {
         /// 指定目录里有没有指向本 exe 的快捷方式（判据可指向临时目录，不碰用户桌面）。
+        /// ⛔ 目标 exe **不许写死单个文件名字面量**：启动器已从历史名 `一键启动.exe` 改名为 `群相.exe`
+        ///   （用户口径"启动器的名字就是产品的名字"），而**老安装**里可能只有老名 ⇒
+        ///   写死新名会让老安装"每次都再问一遍/再建一个"。
+        ///   ⇒ 口径＝**候选集**：本进程自己的 exe（运行时即真值）＋ 新名 ＋ 老名（只认不建）。
+        ///   ⚠️ 名字的来源在 Python 侧是 `agent/autostart.py::LAUNCHER_EXE / LEGACY_LAUNCHER_EXES`
+        ///      （单一来源）；C# 无法 import 它 ⇒ 这里用"本进程 exe"当主判据，名字只作兜底。
         public static bool ShortcutInDir(string dir)
         {
             try
             {
                 if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return false;
-                string exe = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "一键启动.exe");
+                string here = Path.GetDirectoryName(Application.ExecutablePath);
+                var wants = new System.Collections.Generic.List<string>();
+                try { wants.Add(Path.Combine(here, Application.ExecutablePath)); } catch { }
+                try { wants.Add(Path.Combine(here, Path.GetFileName(Application.ExecutablePath))); } catch { }
+                foreach (string _n in new[] { "群相.exe", "一键启动.exe", "Agent启动器.exe" })
+                {
+                    try { wants.Add(Path.Combine(here, _n)); } catch { }
+                }
                 foreach (string f in Directory.GetFiles(dir, "*.lnk"))
                 {
                     try
@@ -2370,8 +2745,11 @@ static class Program
                         dynamic ws = Activator.CreateInstance(t);
                         dynamic sc = ws.CreateShortcut(f);
                         string tp = (string)sc.TargetPath;
-                        if (!string.IsNullOrEmpty(tp) && string.Equals(tp, exe, StringComparison.OrdinalIgnoreCase))
-                            return true;
+                        if (string.IsNullOrEmpty(tp)) continue;
+                        foreach (string w in wants)
+                        {
+                            if (string.Equals(tp, w, StringComparison.OrdinalIgnoreCase)) return true;
+                        }
                     }
                     catch { }
                 }
@@ -3486,7 +3864,11 @@ static class Program
             var sb = new StringBuilder();
             try { Directory.CreateDirectory(dir); } catch { }
             TryShot(dir, sb, "launcher", delegate { return new LauncherForm() { ProbeMode = true }; });
+            // 向导的四页**各出一张**（原来只有一页，取证覆盖不到"完成页有没有勾选、页签对不对"）
+            TryShot(dir, sb, "launcher-welcome", delegate { LauncherForm lf = new LauncherForm() { ProbeMode = true }; lf.ProbePage(LauncherForm.PageWelcome); return lf; });
+            TryShot(dir, sb, "launcher-location", delegate { LauncherForm lf = new LauncherForm() { ProbeMode = true }; lf.ProbePage(LauncherForm.PageLocation); return lf; });
             TryShot(dir, sb, "launcher-step3", delegate { LauncherForm lf = new LauncherForm() { ProbeMode = true }; lf.ProbeState(2); return lf; });
+            TryShot(dir, sb, "launcher-done", delegate { LauncherForm lf = new LauncherForm() { ProbeMode = true }; lf.ProbePage(LauncherForm.PageDone); return lf; });
             TryShot(dir, sb, "busy", delegate { return new BusyForm(); });
             TryShot(dir, sb, "ask", delegate { return new AskForm(); });
             TryShot(dir, sb, "notice", delegate { return new NoticeForm(); });

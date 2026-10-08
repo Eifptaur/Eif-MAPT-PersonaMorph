@@ -118,6 +118,17 @@ class Popover(QFrame):
         for an in (self._anim, self._op_anim):
             if an is not None:
                 an.stop()
+        # 系统要求减少动效 ⇒ **不走"下滑进入"**，直接落到终点、不透明（WCAG 2.3.3）。
+        # 这里位移（DROP_PX）比淡入更刺激前庭 ⇒ 必须整个跳过，不能只把时长调短。
+        try:
+            from .stylekit_qt import motion_ok # noqa: PLC0415
+            _motion = motion_ok()
+        except Exception: # noqa: BLE001
+            _motion = True
+        if not _motion:
+            self.move(x, y)
+            self.setWindowOpacity(1.0)
+            return
         self._anim = QPropertyAnimation(self, b"pos", self)
         self._anim.setDuration(DUR_MS)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)

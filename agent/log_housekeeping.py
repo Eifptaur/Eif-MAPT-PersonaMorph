@@ -21,6 +21,9 @@ import os
 import shutil
 import time
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 # (路径相对项目根, 单文件上限字节, 保留尾部字节)
 LOG_LIMITS = [
@@ -31,6 +34,9 @@ LOG_LIMITS = [
     ("logs/sd_local.log", 2 * 1024 * 1024, 512 * 1024),
     # ⭐ 补：安装器日志（`scripts/installer.ps1` 用 AppendAllText 一直追加）
     ("logs/installer.log", 2 * 1024 * 1024, 512 * 1024),
+    # ⭐ 补：反馈中转日志（`scripts/feedback_relay.py::LOGP` 追加写）——
+    #    它当初没登记进本名单 ⇒ 又一个"只增不减"的日志（本模块存在的理由就是防这个）。
+    ("logs/feedback_relay.log", 2 * 1024 * 1024, 512 * 1024),
     ("data/runtime.log", 1 * 1024 * 1024, 256 * 1024),
     # 旧名：把 `bot_crash.log` 改名成 `runtime.log`（它本来就是主运行日志，
     # 名字让人找错文件）。这一条只为清用户机器上可能残留的旧文件。
@@ -58,7 +64,7 @@ def trim_file(path: str, max_bytes: int, keep_bytes: int) -> int:
         with open(path, "rb") as fh:
             fh.seek(max(0, size - keep_bytes))
             tail = fh.read()
-        tmp = path + ".tmp"
+        tmp = persist.tmp_for(path)
         with open(tmp, "wb") as fh:
             fh.write(MARK.encode("utf-8"))
             fh.write(tail)

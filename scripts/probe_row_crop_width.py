@@ -32,7 +32,7 @@ SAMPLE = os.path.abspath(os.path.join(
 # 外部图（真机故障样本）——名字真实存在但读不出
 EXTERNAL = os.path.join(SAMPLE, "external-反馈来源-1151x1185.png")
 EXTERNAL_FULL = [
-    r"C:\Users\ptmou\.workbuddy\clipboard-images\clipboard-2026-09-29T21-59-54-426Z-8feb10ca.png",
+    r"%USERPROFILE%\.workbuddy\clipboard-images\clipboard-2026-09-29T21-59-54-426Z-8feb10ca.png",
 ]
 # 自家 tier-1（绿底名字读得出，回归用）
 MINE = [

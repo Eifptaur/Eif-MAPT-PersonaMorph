@@ -40,7 +40,10 @@ from agent import config as C # noqa: E402
 #    `assets/console/index.html` 之后，页面自己读的那些键（`ui.obscure_url`、`ui.wave_fx.*`、
 #    `send.uia_setvalue`…）只有在这个文件里才找得到 ⇒ 不扫它会把它们**误判成"谁都不读"的死键**。
 #    （`.html` 本来就在 `TEXT_EXT` 里，加目录即可。）
-SCAN_DIRS = ("agent", "scripts", "launcher-src", "assets/console")
+# ⚠️ `ui_qt` 也必须在扫描面里：**桌面端（Qt 壳）是产品**，它读的键（如 `ui.tap_min` →
+#    `ui_qt/widgets.py::_tap_min_from_config()`）同样只有在这个目录里才找得到 ——
+#    漏掉它会让 `ui.tap_min` 被**误判成死键**（实测踩过：判据报红，代码其实是好的）。
+SCAN_DIRS = ("agent", "scripts", "launcher-src", "assets/console", "ui_qt")
 SCAN_ROOT_FILES = ("persona_morph.py", "onestart.py")
 TEXT_EXT = (".py", ".js", ".html", ".cs", ".css", ".json", ".md")
 SERVER_READ_RE = re.compile(r"""\[\s*["']([a-z_][a-z0-9_]*)["']\s*\]|\.get\(\s*["']([a-z_][a-z0-9_]*)["']""")
@@ -102,6 +105,33 @@ BLOBS = _blobs()
 print("── A. 死键扫描（默认配置叶子键 %d 个）──" % len(flatten(C.DEFAULT_CONFIG)))
 dead = dead_keys(C.DEFAULT_CONFIG, BLOBS)
 ok("默认配置里没有「谁都不读」的键", not dead, "、".join(dead) if dead else "0 个")
+
+print("── A2. 控制台开关必须都**存在于配置**（界面有勾选、配置里根本没这个键＝承诺是空的）──")
+_CONS_HTML = open(os.path.join("assets", "console", "index.html"), encoding="utf-8").read()
+# 只取"真键"：排除 JS 里动态拼出来的名字（含 `'` 的模板串，如 `cloud.' + which + '_url`）。
+_CFG_KEYS = [k for k in sorted(set(re.findall(r'data-cfg="([^"]+)"', _CONS_HTML))) if "'" not in k]
+_ALL_PATHS = set()
+
+
+def _collect_paths(d, prefix=""):
+    for _k, _v in (d or {}).items():
+        _key = ("%s.%s" % (prefix, _k)) if prefix else _k
+        _ALL_PATHS.add(_key)
+        if isinstance(_v, dict):
+            _collect_paths(_v, _key)
+
+
+_collect_paths(C.DEFAULT_CONFIG)
+_miss_keys = [k for k in _CFG_KEYS if k not in _ALL_PATHS]
+ok("分母守卫：控制台真的扫到了 ≥250 个 data-cfg 键（否则下面两条测的是空气）",
+   len(_CFG_KEYS) >= 250, "%d 个" % len(_CFG_KEYS))
+ok("控制台每个开关都是配置里的真实路径（或其中间节点）",
+   not _miss_keys, "、".join(_miss_keys) if _miss_keys else "0 个")
+# ★ 反向锚：往同一个检测里塞一个配置里不存在的键 ⇒ 必须被抓到（否则上一条永远绿）
+_FAKE_KEYS = _CFG_KEYS + ["ui.this_key_does_not_exist"]
+_FAKE_HIT = [k for k in _FAKE_KEYS if k not in _ALL_PATHS]
+ok("★反向锚：塞一个不存在的键「ui.this_key_does_not_exist」⇒ 必须被抓出来",
+   _FAKE_HIT == ["ui.this_key_does_not_exist"], str(_FAKE_HIT))
 
 print("── B. 已删键不得回填 ──")
 REMOVED = ("memory.use_chat_model", "memory.provider", "memory.model",
@@ -167,7 +197,7 @@ found = dead_keys(fake, BLOBS)
 ok("塞进假死键能被抓到", any(k.endswith(_probe) for k in found), str(found[:3]))
 
 # ── ⛔ 开关写成字符串时**不许反向打开** ──
-#    `bool("false")` 是 **True** ⇒ 全项目几十处 `bool(cfg.get("开关"))` 会把本该关掉的红线开关
+#    `bool` 是 **True** ⇒ 全项目几十处 `bool(cfg.get)` 会把本该关掉的红线开关
 #    **反着打开**。修法＝`get_config()` 载入时**一处归一化** + 新代码用 `as_bool()`。
 print("\n── J. 开关真值：\"false\" 不许被理解成开──")
 import tempfile as _tmp2 # noqa: E402
@@ -204,7 +234,7 @@ ok("J7 反例锚：老写法 `bool(\"false\")` **确实是 True**（这就是「
    bool("false") is True and C.as_bool("false") is False)
 
 # ── ⛔ `_effective_response_tier` 在 tier=0 必须返回 0 ──
-#    为什么：峰谷映射的**静默档 tier=0** 是合法档位；老写法 `int(info.get("tier") or 4)` 里
+#    为什么：峰谷映射的**静默档 tier=0** 是合法档位；老写法 `int(info.get or 4)` 里
 #    `0 or 4` ⇒ 4（Python 数字 0 是 falsy）⇒ 「夜间静默」会被视频解析分档闸门**绕过**（按最高档放行）。
 #    这里钉住边界：0 原样返回、None 才 fail-open 到 4、异常也回 4。
 print("\n── K. 视频分档闸门：tier=0 不许被抬成 4──")

@@ -94,3 +94,6 @@ exports/
 
 # 出厂反馈接收端（含凭据）：只在出包时注入，**不进仓库**（轮换＝重新出一版，不改 git 历史）
 assets/feedback_endpoint.json
+
+# 判据跑出来的截图（运行产物，不进库）
+ui_qt/shots/

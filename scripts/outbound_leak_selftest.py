@@ -15,7 +15,7 @@
 """
 import logging
 import os
-import re
+
 import sys
 
 logging.disable(logging.INFO)
@@ -48,6 +48,15 @@ def main():
         ("<|im_start|>assistant", "特殊 token"),
         ("（发送没成功，这轮先不说了）", "内部故障话术"),
         ("会话投递失败", "内部故障话术"),
+        # 本轮补的词表用例（原来漏的形态）
+        ('<?xml version="1.0" encoding="utf-8"?>', "原始 XML"),
+        ("<msg><content>hi</content></msg>", "原始 XML"),
+        ('<message role="user">', "原始 XML"),
+        ("作为AI，我觉得这事应该这样看", "内心独白"),
+        ("作为一个AI助手，我无法回答这个", "内心独白"),
+        ("思考：他现在可能有点急", "内心独白"),
+        ("分析：这句话要回得短一点", "内心独白"),
+        ("<analysis>用户想要的是…</analysis>", "内心独白"),
     ]
     for t, kind in must_block:
         r = S.outbound_leak_reason(t)
@@ -63,6 +72,13 @@ def main():
         "内心强大的人不会在意这些",
         "我开始思考人生了",
         "工具挺好用的",
+        # 本轮补的防误杀用例（每一条都对应一个"差一点就被词表拦住"的正常话）
+        "想法不错，就这么办",          # 裸"想法"已从词表移除（它在句首是正常话）
+        "你的想法挺好的",
+        "这事的分析：我觉得可行",      # "分析："不在句首 ⇒ 不该拦
+        "作为朋友我支持你",            # "作为"≠"作为AI"
+        "我需要先走了，回头聊",        # 明确不该被"我需要先…"这类泛词误杀
+        "这事得从多个角度分析：利弊都有",
     ]
     for t in must_pass:
         r = S.outbound_leak_reason(t)

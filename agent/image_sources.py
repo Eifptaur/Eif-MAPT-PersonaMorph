@@ -26,6 +26,9 @@ import uuid
 
 from .safe_fetch import FetchError, validate_url
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 UA = "PersonaMorph/1.0 (+random image; safe-mode)"
 DEFAULT_TIMEOUT_MS = 9000
@@ -122,7 +125,7 @@ def _json(url: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, headers: dict = None) 
 
 # ── 关键词 → 图源标签────────────────────────────────────────────
 # 🔴 为什么必须加：，机器人调 `send_image_search(keyword="鲸鱼")`，
-#   可真发出去的是一张动漫角色图（用户当场发现「跟我要的完全不一样」）。根因＝**关键词根本没进查询**：
+#   可真发出去的是一张动漫角色图（的完全不一样」）。根因＝**关键词根本没进查询**：
 #   `_safebooru` 写死 `tags=rating:safe`、`_booru` 只用配置里的固定 tag ⇒ 所谓"要图"实际是
 #   "从图源随便抓一张全年龄图"。而且图源的标签体系是**英文**，中文关键词直接丢进去也多半无匹配。
 #   ⇒ 两件：①常见中文说法翻成英文标签（下表）；②图源返回的 tags 要**校验含该标签**（见 fetch_meta）。
@@ -319,7 +322,7 @@ def _clean_tags(tags) -> list:
 
 # ── 各图源：build_url() 只负责"带上安全参数"，parse() 负责抽出 url/标签/分级 ──────────
 def _pixiv(cfg: dict) -> tuple:
-    """lolicon setu v2 代理 pixiv；**=0 是硬编码**（配置里没有打开  的入口）。"""
+    """lolicon setu v2 代理 pixiv；**=0 是硬编码**（配置里没有打开入口）。"""
     tag = str((cfg.get("tag") or "")).strip()
     q = {"r18": "0", "num": "1", "size": "regular", "excludeAI": "false"}
     if tag:
@@ -546,7 +549,8 @@ def download(url: str, dest_dir: str, max_mb: float = 8.0, timeout_ms: int = DEF
             from PIL import Image
             im = Image.open(p)
             im.verify()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return None, "下载到的内容不是有效图片"
         return p, "" # 成功：第二项留空（调用方按"非空＝失败"判断）
     except Exception as e:

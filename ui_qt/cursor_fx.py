@@ -4,7 +4,7 @@
 语义逐条对齐 web 源码（唯一真值）：
   · 开关    `ui.whale_cursor`（默认开，只有显式 false 才关；web `!== false` 口径）
   · 自定义  `ui.cursor_image == 'custom'` 且 `assets/custom-cursor.png` 存在 ⇒ 用自定义；
-            否则回默认 `assets/cursor.png`（web setCustom('') 同款回退）
+            否则回默认 `assets/cursor.png`（web setCustom 同款回退）
   · 覆盖面  web 是 `html.whale-cursor *{cursor:url() 8 8, auto!important}` ⇒ **全部元素**；
             Qt 侧把光标刷到 `QApplication.allWidgets()` 上（覆盖输入框的 IBeam）
   · 点头    mousedown 换歪头帧、180ms 换回（`/assets/cursor-nod.png`；自定义时优先
@@ -33,7 +33,11 @@ SPIN_MS = 22 # web SPIN_MS（24 × 22 ≈ 530ms 一圈）
 NOD_MS_DEFAULT = 400
 NOD_MS_DEBUG = 1500 # PM_CURSOR_NOD_DEBUG=1 → 真机定因开关（肉眼必见，机制通不通一锤定音）
 NOD_MS = NOD_MS_DEFAULT # 兼容旧引用；实际取值走 _nod_ms()
-NOD_SCALE = 1.3
+#: 歪头（点头）帧相对本体的缩放。
+#: ⚠️ 曾是 1.3 —— 那时是为了"让点头看得见"（用户复验过 320ms 仍无感）。
+#:    用户后来明确反馈「点击确实有点头动作，但**怎么变大了一圈**」⇒ 回归 1.0：
+#:    **只歪头、不改尺寸**。放大会让光标在点击瞬间"跳"一下，比不动更扎眼。
+NOD_SCALE = 1.0
 HOTSPOT = (8, 8) # web cursor:url() 8 8
 _MAX_CUR = 128 # webui 服务端同款上限（图片已 resize ≤128）
 

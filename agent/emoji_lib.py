@@ -14,6 +14,9 @@ import json
 import os
 import re
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 INDEX_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "emoji_index.json")
@@ -25,13 +28,14 @@ def _load() -> dict:
     try:
         with open(INDEX_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {"emojis": [], "total": 0}
 
 
 def _save(d: dict) -> None:
     os.makedirs(os.path.dirname(INDEX_PATH), exist_ok=True)
-    tmp = INDEX_PATH + ".tmp"
+    tmp = persist.tmp_for(INDEX_PATH)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
     persist.replace_into(tmp, INDEX_PATH)
@@ -107,7 +111,8 @@ def pick(context: str = "", summaries: list[dict] | None = None) -> int:
             v = max(1, min(len(summaries), v))
             return int(summaries[v - 1]["index"])
         return int(summaries[0]["index"])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return int(summaries[0]["index"])
 
 

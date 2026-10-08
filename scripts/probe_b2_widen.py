@@ -21,10 +21,10 @@
 """
 import os
 import sys
-import time
+
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from agent import wechat as W  # noqa: E402
+
 
 print('== 源码锚：`_monitored_chat_ids` 是否**先过白名单** ==')
 _src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

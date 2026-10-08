@@ -59,6 +59,9 @@ from confirm import ConfirmDialog
 from stylekit_qt import SHAPE_CIRCLE, Tokens, field_qss, pill, qfont, rgba, status_colors, surface_bg
 from widgets import (Badge, Btn, Card, ElideLabel, Field, FieldCombo, FlowBox, Switch,
                      desc, h2, row_label)
+import logging
+
+log = logging.getLogger("persona-morph")
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]
@@ -72,7 +75,8 @@ def _hex(c) -> str:
 #  放在一处并排写清区别，避免各自按自己的理解再写一遍（见 async_ui.widget_alive 的说明）。
 
 
-def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中"):
+def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中",
+          extra: QWidget | None = None):
     """面板公共骨架：页 + 标题行 + Badge。返回 (page, lay, badge)。
 
     badge 引用必须交回 —— P0-A① 的病根就是「徽章建出来没人再碰」
@@ -84,7 +88,7 @@ def _page(t: Tokens, title: str, level: str = "idle", badge: str = "读取中"):
     lay.setSpacing(14)
     bd = Badge(t, level, badge)
     page._c8_badge = bd # build_panel 转挂到 wrap，Shell 分发取用
-    lay.addWidget(h2(t, title, bd))
+    lay.addWidget(h2(t, title, bd, extra))
     return page, lay, bd
 
 
@@ -124,6 +128,20 @@ def _open_dir(p: Path) -> None:
 # ---------------------------------------------------------------- 概览（GET /api/status 真数据 + 8s 刷新）
 
 
+def _tnum(f):
+    """把字体调成**等宽数字**（对齐 web 的 `font-variant-numeric: tabular-nums`）。
+
+    为什么值得做：用量/条数/花费这些数字**每几秒刷新一次**，比例数字宽度不一 ⇒
+    整个数字块会**左右抖动**（用户看起来像"页面在跳"）。等宽数字之后位宽固定、刷多少遍都不动。
+    `QFont.setFeature("tnum")` 是 Qt 6.7+ 的能力；取不到就不改（**不假装成功**）。
+    """
+    try:
+        f.setFeature("tnum", 1)
+    except Exception: # noqa: BLE001
+        pass
+    return f
+
+
 def _stat_cell(t: Tokens, val: str, label: str) -> tuple[QWidget, QLabel, QLabel]:
     """统计格（大数字 + 下方小字）。返回 (格子, 大数字标签, 小字标签)。
 
@@ -139,7 +157,7 @@ def _stat_cell(t: Tokens, val: str, label: str) -> tuple[QWidget, QLabel, QLabel
     v.setContentsMargins(4, 6, 4, 6)
     v.setSpacing(2)
     b = QLabel(val)
-    b.setFont(qfont(t, 17, 600))
+    b.setFont(_tnum(qfont(t, 17, 600)))   # 等宽数字 ⇒ 刷新时不左右抖（对齐 web 的 tabular-nums）
     b.setStyleSheet(f"color:{t.tx};background:transparent;")
     b.setWordWrap(True)
     s = QLabel(label)
@@ -165,7 +183,14 @@ def _raw_post(path: str, data: bytes | None, ctype: str, timeout: float) -> byte
 
 def overview_panel(t: Tokens) -> QWidget:
     s = sec_meta.get("overview")
-    page, lay, badge = _page(t, s.title)
+    # ov-tools：**概览卡右上角那排工具按钮**（web `.ov-tools{position:absolute;top:14px;right:16px}`）。
+    # ⚠️ 先建**空壳**交给 `_page`：里面按钮要绑的 hook 定义在这个函数的下半段，
+    #    那时才拿得到 —— 所以是"先给容器、hook 齐了再塞按钮"，而不是把面板拆成两半。
+    ov_tools = QWidget()
+    _otl = QHBoxLayout(ov_tools)
+    _otl.setContentsMargins(0, 0, 0, 0)
+    _otl.setSpacing(6)
+    page, lay, badge = _page(t, s.title, extra=ov_tools)
     lay.addWidget(desc(t, "机器人运作状态与账户信息（每 8 秒自动刷新，与网页控制台同一份 /api/status）。"))
     card = Card(t)
     grid = QGridLayout()
@@ -185,7 +210,52 @@ def overview_panel(t: Tokens) -> QWidget:
         grid.addWidget(cell, i // 4, i % 4)
     card.body.addLayout(grid)
     lay.addWidget(card)
-    lay.addWidget(desc(t, "其余统计（累计用量/成本等）在网页控制台的概览里看；这里只显示 /api/status 确认给到的字段，不编数。"))
+
+    # ── 用量与成本：web `<div class="stat">`（assets/console/index.html L1034-1046）的 11 个数据卡 ──
+    #   ⚠️ 这 11 项此前在 Qt 侧**一个都没有**（原处只有一行说明让，
+    #      而数据其实就在 `/api/status` 里 —— 见 `scripts/persona_morph.py::status_provider()`
+    #      的 `stats` 与 `usage`）⇒ 这是纯前端缺口，不需要额外接口。
+    #   口径与 web 逐项对齐（index.html L4288-4390）：
+    #     · 累计成本 = `stats.cost`；平均每条 = `stats.avg_cost`；最近 5 条 = `stats.recent5_cost`
+    #     · 今日/本周期 = `usage.day` / `usage.period`，值形如「¥0.0000 · N tok · M 会话」
+    #     · 其他工具 = `extra_now_*`（本进程启动以来）/ `extra_total_*`（累计）
+    #   「今日用量」「本周期」在 web 上跨两列（值长），这里同样跨列。
+    card_u = Card(t)
+    card_u.body.addWidget(h2(t, "用量与成本"))
+    grid_u = QGridLayout()
+    grid_u.setSpacing(8)
+    ukeys = [
+        ("sessions", "累计会话数", 0, 0, 1), ("tokens", "累计用量", 0, 1, 1),
+        ("sent", "已发消息", 0, 2, 1), ("cost", "累计成本", 0, 3, 1),
+        ("dcost", "今日用量", 1, 0, 2), ("pcost", "本周期", 1, 2, 2),
+        ("ntarget", "目标群", 2, 0, 1), ("r5c", "最近 5 条成本", 2, 1, 1),
+        ("ac", "平均每条成本", 2, 2, 1), ("extra", "今日其他工具成本", 2, 3, 1),
+        ("extra2", "累计其他工具成本", 3, 0, 2),
+        # 月账单（第 151 项）：跟「今日/本周期」并排 —— web 那边同一个位置也加了同一格，
+        # ⛔ 两个实现面**必须同批改**（只改一边＝两边数不一样，用户会以为其中一个坏了）
+        ("mcost", "本月花费", 3, 2, 2),
+    ]
+    ucells: dict[str, QLabel] = {}
+    ucaps: dict[str, QLabel] = {}
+    for _k, _lb, _r, _c, _span in ukeys:
+        _cell, _big, _cap = _stat_cell(t, "—", _lb)
+        ucells[_k] = _big
+        ucaps[_k] = _cap
+        grid_u.addWidget(_cell, _r, _c, 1, _span)
+    card_u.body.addLayout(grid_u)
+    # 运行环境提示（第 150 项）：与 web 的 `#envHint` 同一条口径 —— 非 ok 才显示。
+    # ⛔ 文案由后端给（`agent/env_hint.py`，含「不改也能用」那句），**两端都不自己编**。
+    _env_lbl = desc(t, "")
+    _env_lbl.setWordWrap(True)
+    _env_lbl.setVisible(False)
+    card_u.body.addWidget(_env_lbl)
+    lay.addWidget(card_u)
+    page._env_hint_lbl = _env_lbl
+    # ★ 三级索引：web 侧这一页两组（① 用量与成本 = `.stat` 六格／② 费用计算器 = `#feeCalc`）——
+    #   这里把「用量与成本卡」与「费用计算器卡」标成对应分组，顶部锚点条就会出现、并且点得动。
+    from panels_qt import mark_group as _mark_group # noqa: PLC0415
+
+    _mark_group(page, "overview", 0, card_u)
 
     # ── 监听群明细（web #group-table 同款：群名 | 监听/忽略，数据来自 /api/status.groups）──
     card_g = Card(t)
@@ -265,6 +335,7 @@ def overview_panel(t: Tokens) -> QWidget:
         f"border:1px solid {t.bd};border-radius:{t.radius_tile}px;padding:10px 12px;")
     card_f.body.addWidget(fc_result)
     lay.addWidget(card_f)
+    _mark_group(page, "overview", 1, card_f)   # ② 费用计算器
 
     def _fc_group(k: str) -> str:
         for pre, name in _FC_VENDORS.items():
@@ -392,13 +463,17 @@ def overview_panel(t: Tokens) -> QWidget:
         if not _qt_alive(cells["run"]):
             return
         st = config_io.get_json("/api/status") or {}
+        # 两组格子一起处理（运行状态组 + 用量成本组）。用量成本组同样要跟着
+        # 「读不到 / 读取中」走 —— 漏了它，读失败时那 11 格会停在上一轮的数字上，
+        # 看起来像"这些值一直没动"。
+        _all_cells = list(cells.values()) + list(ucells.values())
         if not st:
             if seen["ok"]:
-                for lb in cells.values():
+                for lb in _all_cells:
                     lb.setText("读不到")
                 badge.set("idle", "读不到")
             else:
-                for lb in cells.values():
+                for lb in _all_cells:
                     lb.setText("读取中")
                 badge.set("idle", "读取中")
             return
@@ -445,6 +520,66 @@ def overview_panel(t: Tokens) -> QWidget:
             on = bool(g.get("target"))
             it = QTableWidgetItem("监听" if on else "忽略")
             gtable.setItem(i, 1, it)
+
+        # ── 用量与成本 11 格（web assets/console/index.html L4288-4390 同款口径）──
+        stats = st.get("stats") if isinstance(st.get("stats"), dict) else {}
+        usage = st.get("usage") if isinstance(st.get("usage"), dict) else {}
+
+        def _u_int(v) -> int:
+            try:
+                return int(v or 0)
+            except Exception: # noqa: BLE001 — 后端给 null/字符串都不该让整页刷新挂掉
+                return 0
+
+        def _u_money(v) -> str:
+            try:
+                return "¥%.4f" % float(v or 0)
+            except Exception: # noqa: BLE001
+                return "¥0.0000"
+
+        def _u_span(o) -> str:
+            """web `fmt(o)`：`¥cost · N tok · M 会话`。缺项一律写 0，绝不漏成 undefined。"""
+            o = o if isinstance(o, dict) else {}
+            return "%s · %d tok · %d 会话" % (_u_money(o.get("cost")), _u_int(o.get("tokens")),
+                                              _u_int(o.get("sessions")))
+
+        ucells["sessions"].setText(str(_u_int(stats.get("sessions"))))
+        ucells["tokens"].setText(str(_u_int(stats.get("tokens"))))
+        ucells["sent"].setText(str(_u_int(stats.get("sent"))))
+        ucells["cost"].setText(_u_money(stats.get("cost")))
+        ucells["dcost"].setText(_u_span(usage.get("day")))
+        ucells["pcost"].setText(_u_span(usage.get("period")))
+        ucells["ntarget"].setText(str(len(tgt)))
+        ucells["r5c"].setText(_u_money(stats.get("recent5_cost")))
+        ucells["ac"].setText(_u_money(stats.get("avg_cost")))
+        _en, _et = _u_int(stats.get("extra_now_tokens")), _u_int(stats.get("extra_total_tokens"))
+        ucells["extra"].setText(_u_money(stats.get("extra_now_cost"))
+                                + ((" · %d tok" % _en) if _en else ""))
+        ucells["extra2"].setText(_u_money(stats.get("extra_total_cost"))
+                                 + ((" · %d tok" % _et) if _et else ""))
+        # 本月花费：取快照里 `months` 的**第一项**（`by_month` 是降序、含当月）
+        _ms = usage.get("months") or []
+        ucells["mcost"].setText(_u_span(_ms[0] if _ms else None))
+        # 运行环境提示（第 150 项）：与 web 同一条 —— 非 ok 才显示；后端没给 ⇒ 隐藏。
+        _lbl_env = getattr(page, "_env_hint_lbl", None)
+        if _lbl_env is not None:
+            _eh = st.get("env_hint") if isinstance(st.get("env_hint"), dict) else {}
+            _lv = str(_eh.get("level") or "")
+            _show = bool(_lv and _lv != "ok" and _eh.get("text"))
+            _lbl_env.setText(("运行环境：" + str(_eh.get("text") or "")) if _show else "")
+            _lbl_env.setVisible(_show)
+        # 「开独立窗失败，请你帮一把」（第 225 项收尾）：**同一条只弹一次**（按时间戳去重）。
+        _ph = st.get("popup_help") if isinstance(st.get("popup_help"), dict) else {}
+        if _ph.get("at") and _ph.get("text") and _ph.get("at") != getattr(page, "_popup_help_at", None):
+            page._popup_help_at = _ph.get("at")
+            try:
+                _popup_help_dlg(page, t, _ph)
+            except Exception as _ePH: # noqa: BLE001
+                log.debug("弹「开窗求助」失败（不影响状态刷新）：%s", str(_ePH)[:60])
+        # 「本周期」标签随周期类型变（web `lbl` 的 daily/weekly/monthly 映射）
+        _pt = str(usage.get("period_type") or "")
+        ucaps["pcost"].setText({"daily": "今日", "weekly": "本周",
+                                "monthly": "本月"}.get(_pt, "本周期") + "用量")
 
     _refresh()
     timer = QTimer(page)
@@ -862,10 +997,89 @@ def overview_panel(t: Tokens) -> QWidget:
         note2.setText("")
         _open_bill_dlg(bills)
 
-    hooks = [lambda: _refresh(), _test_api, _export, _import, _clear_cost_sel, _clear_cost]
-    lay.addWidget(_btn_row(t, [("立即刷新", "primary"), ("测试 API 连通", "ghost"),
-                               ("导出记录", "ghost"), ("迁移数据", "ghost"),
-                               ("勾选删", "ghost"), ("一键删", "danger")], hooks))
+    def _backup_export() -> None:
+        """一键备份 → 存 zip（web `#backupExport` → `POST /api/backup/export`）。
+
+        ⚠️ 这两个功能**后端早就有了**（`agent/backup.py` 的 `backup_export/backup_import`，
+        端点 `/api/backup/export|import`，web 控制台也在用）—— **只有原生壳没有入口**。
+        """
+        from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+        _ds = time.strftime("%Y-%m-%d")
+        p, _f = QFileDialog.getSaveFileName(page, "一键备份",
+                                            f"Persona Morph-一键备份-{_ds}.zip",
+                                            "备份包 (*.zip)")
+        if not p:
+            return
+        note2.setText("备份中…")
+
+        # ⚠️ **不要自己起线程**：跨线程落地这一族已收口到 `async_ui.run_async`
+        #    （它内部起线程 + 自带存活判与轮询上限）。自己再起一遍等于跑两回，
+        #    而且没有守卫 —— 面板被重建后回调还会落到已销毁的控件上。
+        def _work(box: dict) -> None:
+            try:
+                Path(p).write_bytes(_raw_post("/api/backup/export", None, "", 180.0))
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _land(box: dict) -> None:
+            note2.setText(f"备份失败：{box.get('err') or box.get('_err')}" if
+                          (box.get("err") or box.get("_err"))
+                          else f"已备份全部设置与数据 → {p}")
+
+        run_async(_work, _land, page=page, interval=300, max_seconds=240.0,
+                  name="c8-backup-export")
+
+    def _backup_import() -> None:
+        """一键恢复 ← 选 zip（web `#backupImport` → `POST /api/backup/import`）。"""
+        from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+        p, _f = QFileDialog.getOpenFileName(page, "一键恢复", "", "备份包 (*.zip)")
+        if not p:
+            return
+        note2.setText("恢复中…")
+
+        # ⚠️ 同上：跨线程落地走 `run_async`，别自己起线程（详见 _backup_export 的说明）。
+        def _work(box: dict) -> None:
+            import json as _j # noqa: PLC0415
+            resp = _raw_post("/api/backup/import", Path(p).read_bytes(),
+                             "application/zip", 180.0)
+            j = _j.loads(resp.decode("utf-8", errors="replace"))
+            box["ok"] = bool(j.get("ok"))
+            box["note"] = (j.get("note") or "ok") if box["ok"] else (j.get("error") or "未知")
+
+        def _land(box: dict) -> None:
+            _e = box.get("err") or box.get("_err")
+            if _e:
+                note2.setText(f"恢复失败：{_e}")
+            elif box.get("ok"):
+                # 设置实时生效；对话/用量等数据要**重启后**才完全生效（web 同款提示）
+                note2.setText("已恢复（设置实时生效；数据重启后完全生效）")
+            else:
+                note2.setText(f"恢复未成功：{box.get('note') or '未知'}")
+
+        run_async(_work, _land, page=page, interval=300, max_seconds=240.0,
+                  name="c8-backup-import")
+
+    # ov-tools 六颗（照 web 顺序：删 → 导出/迁移 → 备份/恢复），全部 tiny 档
+    for _txt, _role, _hk, _tip in (
+        ("一键删", "danger", _clear_cost, "一键删除全部计费历史记录"),
+        ("勾选删", "ghost", _clear_cost_sel, "打开计费日志弹窗，勾选删除"),
+        ("导出记录", "ghost", _export, "导出全部计费与对话记录为一个迁移包"),
+        ("迁移数据", "ghost", _import, "从迁移包导入（合并到当前数据，按内容去重）"),
+        ("一键备份", "ghost", _backup_export,
+         "一键备份全部设置与数据（记忆/人设/分区/用量/对话记录等）为一个 zip；换机或重装后导入即可恢复"),
+        ("一键恢复", "ghost", _backup_import,
+         "导入一键备份包：恢复全部设置（实时生效）与全部数据（重启后完全生效）"),
+    ):
+        _b = Btn(_txt, t, _role, tiny=True)
+        _b.setToolTip(_tip)
+        _b.clicked.connect(_hk)
+        _otl.addWidget(_b)
+
+    # 页脚只留**整页级**操作 —— web 里「立即刷新 / 测试 API 连通」也不在 `.ov-tools` 里
+    lay.addWidget(_btn_row(t, [("立即刷新", "primary"), ("测试 API 连通", "ghost")],
+                           [lambda: _refresh(), _test_api]))
     lay.addStretch(1)
     return page
 
@@ -1924,7 +2138,7 @@ def json_panel(t: Tokens, on_save=None) -> QWidget:
         """web rawJsonBtn（`window.open('/api/config'+token)`）的 Qt 等价：**原生窗口**看后台生效配置。
 
         ⛔ 不再 `QDesktopServices.openUrl` —— 那会弹一个浏览器窗口去看网页控制台
-        （用户口径：网页能做的都得在 Qt 做）。这里把 `/api/config` 正文取回来放进原生文本框，
+        （网页能做的都得在 Qt 做）。这里把 `/api/config` 正文取回来放进原生文本框，
         带「复制」；读不到就如实写读不到，不显示空框。
         """
         import json as _json # noqa: PLC0415
@@ -1979,6 +2193,11 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     upd.body.addWidget(desc(t, "「稍后」只关掉顶栏提示、不等于不再提示；要彻底不再提示这个版本，"
                                "用顶栏胶囊里的「不再提醒这个版本」。入口常驻在本卡，随时能回来点。"))
     lay.addWidget(upd)
+    # ★ 三级索引：web 侧这一页三组（① 版本与门／② 后台能力／③ 版本变更待办）——
+    #   分别对应「版本与更新卡」「能力矩阵卡」「接管与指纹卡」。
+    from panels_qt import mark_group as _mark_group_v # noqa: PLC0415
+
+    _mark_group_v(page, "vermat", 0, upd)
 
     def _fetch(cb) -> None:
         def _work(box: dict) -> None:
@@ -2048,6 +2267,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     mtx.body.addLayout(row_allow)
     mtx.body.addWidget(desc(t, "只对本次运行有效（重启后重新拦），我们不会把「放行」写进配置。"))
     lay.addWidget(mtx)
+    _mark_group_v(page, "vermat", 1, mtx)   # ② 后台能力
 
     # ── 接管与指纹（web vermat sec：图标指纹取/丢 + 版本不匹配拍板入口 + 一键修复）──
     tk_card = Card(t)
@@ -2065,17 +2285,23 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     btn_pd.setObjectName("tkPendingDecisions")
     btn_heal = Btn("依赖自愈", t, "ghost")
     btn_up = Btn("升级适配层", t, "ghost")
+    # ★ P0-5：「停下」—— 取消正在跑的一键作业（与 web 控制台同一颗钮、同一套文案）。
+    #   默认隐藏：没有作业在跑时显示它就是"假承诺"（按了也停不了）。
+    btn_stop = Btn("停下", t, "ghost")
+    btn_stop.setVisible(False)
     for b in (btn_take, btn_forget, btn_pd):
         tk_row.addWidget(b)
     tk_row.addStretch(1)
     tk_row2 = QHBoxLayout()
     tk_row2.addWidget(btn_heal)
     tk_row2.addWidget(btn_up)
+    tk_row2.addWidget(btn_stop)
     tk_row2.addStretch(1)
     tk_card.body.addLayout(tk_row)
     tk_card.body.addLayout(tk_row2)
     tk_card.body.addWidget(tk_note)
     lay.addWidget(tk_card)
+    _mark_group_v(page, "vermat", 2, tk_card)   # ③ 版本变更待办
 
     def _on_take() -> None:
         from agent_bridge import post_json # noqa: PLC0415
@@ -2152,12 +2378,56 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
         _post_action_raw(btn_up, tk_note, _run, "请求发送中…")
 
+    def _on_stop() -> None:
+        from agent_bridge import post_json # noqa: PLC0415
+
+        # 停哪个：取"在跑且还没发过停止请求"的第一个（与 web 控制台同口径）。
+        try:
+            import panels_qt as _pq  # noqa: PLC0415
+
+            _st = _pq._load_status()
+            _jb = (_st.get("jobs") or {}) if isinstance(_st, dict) else {}
+            _run = [k for k, j in _jb.items()
+                    if isinstance(j, dict) and j.get("running") and not j.get("canceling") and j.get("pid")]
+        except Exception: # noqa: BLE001
+            _run = []
+        if not _run:
+            tk_note.setText("现在没有正在跑的事。")
+            return
+
+        _name = _run[0]
+
+        def _do() -> str:
+            r = post_json("/api/version/job/cancel", {"name": _name}, timeout=30.0) or {}
+            # ⛔ **取消失败必须如实说** —— 静默当成功会让用户以为停了，实际进程还在跑。
+            if r.get("ok"):
+                return "已发出停止请求（停下不算失败，是第三档结果）。"
+            return "停不下来：%s" % (str(r.get("why") or "未知原因"))
+
+        _post_action_raw(btn_stop, tk_note, _do, "请求停止中…")
+
     btn_take.clicked.connect(_on_take)
     btn_forget.clicked.connect(_on_forget)
     btn_pd.clicked.connect(_on_pd)
     btn_pd.clicked.connect(_on_pd_decide) # 同一个按钮：读台账之外顺手打开**原生**四选一拍板
     btn_heal.clicked.connect(_on_heal)
     btn_up.clicked.connect(_on_up)
+    btn_stop.clicked.connect(_on_stop)
+
+    def _sync_stop_btn() -> None:
+        """按"现在真有没有在跑的作业"决定「停下」按钮显不显示（与 web 同判据）。"""
+        try:
+            import panels_qt as _pq2  # noqa: PLC0415
+
+            _st2 = _pq2._load_status()
+            _jb2 = (_st2.get("jobs") or {}) if isinstance(_st2, dict) else {}
+            _has = any(isinstance(j, dict) and j.get("running") and not j.get("canceling") and j.get("pid")
+                       for j in _jb2.values())
+        except Exception: # noqa: BLE001
+            _has = False
+        btn_stop.setVisible(bool(_has))
+
+    _sync_stop_btn()
 
     def _render_mtx() -> None:
         try:
@@ -2170,7 +2440,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
         vg = (st.get("version_gate") or {}) if isinstance(st, dict) else {}
         wv = str(vm.get("wechat") or "").strip()
         ad = str(vm.get("adapter") or "").strip()
-        # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」（用户 2026-09-30 当面指正的同一口径）
+        # ⛔ 「微信」只许指微信客户端 ⇒ 写「本机微信版本」（用户 当面指正的同一口径）
         ver_lb.setText(("当前版本对：本机微信版本 %s · 适配层 %s" % (wv, ad or "-"))
                        if wv and wv != "unknown" else "当前版本对：本机微信版本读不到")
         allow = vg.get("allow") if isinstance(vg.get("allow"), bool) else None
@@ -2234,7 +2504,7 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 def _bordered_list(t: Tokens, name: str, min_h: int = 200) -> QListWidget:
     """一个带边框、可滚的动态列表容器；objectName 固定，便于自检按名取证。
 
-    ⛔ 横向滚动条强制关闭 + resizeMode=Adjust（：item 用 sizeHint 全宽时
+    ⛔ 横向滚动条强制关闭 + resizeMode=Adjust：item 用 sizeHint 全宽时
     会把行撑出视口 ⇒ 右侧按钮被切掉、要手动拉宽窗口）。行宽一律=视口宽，
     行内自己用 sizePolicy 决定谁先被压缩。"""
     lw = QListWidget()
@@ -2552,6 +2822,13 @@ def persona_panel(t: Tokens) -> QWidget:
     pcard.body.addWidget(listw)
     pcard.body.addWidget(desc(t, "星标=收藏置顶；排序按模型评估分。点「使用」即切换当前人设（重启机器人后生效）。"))
     lay.addWidget(pcard)
+    # ★ 三级索引：这一页在 web 侧是 4 组（① 角色 / ② 评分补足 / ③ 行为与撤回 / ④ 主动开话题），
+    #   而 Qt 侧它们同属这一张角色卡 ⇒ 四个锚点都指向卡片顶部（滚动仍**可达**，只是都到同一处）。
+    #   宁可这样，也不要"有条但点不动"：锚点条是按 `web_anchor` 找目标的。
+    from panels_qt import mark_group # noqa: PLC0415
+
+    for _i in range(4):
+        mark_group(page, "persona", _i, pcard)
 
     def _refit_items() -> None:
         """条目宽 = 视口宽（右侧顶格）。
@@ -2661,7 +2938,7 @@ def persona_panel(t: Tokens) -> QWidget:
             active = (name == "全部" and not cur) or (name == cur and name != "全部")
             # ⛔ 这一句 setStyleSheet 会**整体替换** Btn 自带的 QSS（构造时写入的
             #    ghost 字色没了）⇒ 文字色落到"最近带样式表的祖先/系统回退"——
-            #    浅色模式下渲染成白字白底，分区名整个看不见（；emoji 能
+            #    浅色模式下渲染成白字白底，分区名整个看不见；emoji 能
             #    看见是因为 emoji 字形自带颜色，恰好掩盖了"字没了"）。
             #    修法：替换时**显式带上主题色**（与 web renderChips 的 var(--tx2/--tx) 同口径）。
             chip.setStyleSheet(f"color:{t.tx if active else t.tx2};background:transparent;"
@@ -2720,7 +2997,7 @@ def persona_panel(t: Tokens) -> QWidget:
         pnote.setText(f"分区「{name}」已删除")
         load_personas()
 
-    # 打星按钮已按移除（「打星这个没用的按钮去掉」）——原 _rate_persona
+    # 打星按钮已按移除——原 _rate_persona
     # 走 /api/personas/rate 的路径一并删除，handlers 不再含 rate。
 
     def _open_add_dialog() -> None:
@@ -3030,7 +3307,7 @@ def persona_panel(t: Tokens) -> QWidget:
     def load_personas() -> None:
         # err_box：/api/personas 是**唯一必需**的取数口 —— 它失败（控制台没起/超时）
         # 时列表必空，此时绝不是「没有数据」，而是「读不到」。把原因带下去，
-        # 让 set_personas 如实写出来，别让用户对着空表猜（「人设表一片空白」）。
+        # 让 set_personas 如实写出来，别让用户对着空表猜。
         ebox: dict = {}
         try:
             r = config_io.get_json("/api/personas", timeout=5.0, err_box=ebox)
@@ -3489,10 +3766,10 @@ def _persona_card(t: Tokens, p: dict, handlers: dict) -> QWidget:
     use = Btn("使用", t, "ghost")
     # ⛔ 不许再写 `setFixedWidth(数字)`：中文两字按钮按字号算需 ~62px（文字 28 +
     #    左右内边距 34），写死 54 会把字压到溢出、与邻居叠成一团（
-    #    「使用/删除/移到其他分区/评估 的字全混在一起，挤在小按钮里看不清」）。
+    #    「使用/删除/移到其他分区/评估字全混在一起，挤在小按钮里看不清」）。
     #    宽度交给 sizeHint（= 文字宽 + 内边距），由 Btn 自己保证下限。
     use.clicked.connect(lambda _=False, _p=p: handlers["use"](_p))
-    # 单字钮改**全文字钮**（：打星按钮没用、删掉；移动/删除要完整露出，
+    # 单字钮改**全文字钮**：打星按钮没用、删掉；移动/删除要完整露出，
     # 不再缩成单字正圆）——宽度交给 sizeHint，两字胶囊 ~62px 放得下。
     delete = Btn("删除", t, "ghost")
     delete.setToolTip("删除这条人设")
@@ -3633,8 +3910,33 @@ def memory_panel(t: Tokens) -> QWidget:
     b_sel.setEnabled(False)
     b_all = Btn("清除全部", t, "danger")
     b_all.setObjectName("memClearAll")
+    # 热词词云（第 136 项）：与 web 的「出热词词云」同一件事（同一路由，不另写一套算法）
+    b_wc = Btn("出热词词云", t, "ghost")
+    b_wc.setObjectName("memWordcloud")
+
+    def _wordcloud() -> None:
+        ck = chat_sel.currentData() or ""
+        if not ck:
+            mnote.setText("先在上面选一个群")
+            return
+        b_wc.setEnabled(False)
+
+        def _done(r, e): # noqa: ANN001
+            b_wc.setEnabled(True)
+            okk = bool(isinstance(r, dict) and r.get("ok"))
+            if e or not okk:
+                mnote.setText("出词云失败：" + str(e or (r or {}).get("note") or "未知原因"))
+                return
+            mnote.setText(str((r or {}).get("note") or "已出图"))
+            # 出完顺手打开（`/api/open-path` 是既有入口）
+            _async_post(None, "/api/open-path", {"path": (r or {}).get("path") or ""}, lambda _r, _e: None)
+
+        _async_post(None, "/api/wordcloud", {"chat_key": ck}, _done)
+
+    b_wc.clicked.connect(lambda _=False: _wordcloud())
     clr_row.add(b_sel)
     clr_row.add(b_all)
+    clr_row.add(b_wc)
     mcard.body.addWidget(clr_row)
     lay.addWidget(mcard)
 
@@ -3966,6 +4268,12 @@ def _member_card(t: Tokens, m: dict, chat_key: str, reload_fn, sync_fn,
     h.addWidget(upd)
     h.addStretch(1)
     h.addWidget(edit_btn)
+    # 起名 / 改名 / 去掉名字（第 148 项）：与 web `起名` 按钮同一件事（别处不许再写一份）
+    name_btn = Btn("起名", t, "ghost")
+    name_btn.setFixedWidth(54)
+    name_btn.clicked.connect(
+        lambda _=False: _mem_alias_dlg(t, name_btn, m, chat_key, refresh_fn, note))
+    h.addWidget(name_btn)
     h.addWidget(deep_btn)
     h.addWidget(del_btn)
     return w
@@ -3991,6 +4299,95 @@ def _mem_membrs(m: dict) -> list:
     if not isinstance(imps, list):
         return []
     return [(e.get("content") or "") if isinstance(e, dict) else "" for e in imps]
+
+
+def _popup_help_dlg(parent, t: Tokens, ph: dict) -> None:
+    """「开独立窗失败，请你帮一把」（第 225 项收尾）：与 web 同一条口径。
+
+    ⛔ 标题与正文**都取后端给的**（`whale_text.popup_help_text` 组装，会跟着鲸语开关走）——
+    前端**不许自己拼**这两句（两处写必然漂移）。
+    """
+    dlg, v = _card_dialog(t, parent, str(ph.get("title") or "需要你帮一下"), width=560)
+    body = QLabel(str(ph.get("text") or ""))
+    body.setWordWrap(True)
+    body.setFont(qfont(t, 12.5))
+    body.setStyleSheet(f"color:{t.tx};background:transparent;")
+    v.addWidget(body)
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_ok = Btn("知道了，我去开", t, "primary")
+    row.addWidget(b_ok)
+    v.addLayout(row)
+    b_ok.clicked.connect(dlg.accept)
+    dlg.exec()
+
+
+def _mem_alias_dlg(t: Tokens, btn, m: dict, chat_key: str, refresh_fn=None, note=None) -> None:
+    """给成员起名 / 改名 / 去掉别名（第 148 项，与 web 的「起名」按钮同一件事）。
+
+    ⛔ 别名**只写 `member_notes` 一处**、**按 wxid 存**（人是谁只看账号，昵称重名不影响）；
+    留空＝去掉这个名字、回到他本来的群昵称。
+    打开时**现拉一次**当前别名预填（不缓存 —— 别处改了这里就不会显示旧值）。
+    """
+    uid = str(m.get("userId") or "")
+    nm = str(m.get("name") or uid or "某人")
+    dlg, v = _card_dialog(t, btn, f"给「{nm}」起个称呼", width=520)
+    tip = QLabel("留空＝去掉这个名字，回到他本来的群昵称。按账号存，昵称重名不影响身份判断。")
+    tip.setWordWrap(True)
+    tip.setFont(qfont(t, 12))
+    tip.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(tip)
+    le = QLineEdit("")
+    le.setPlaceholderText("例如：老张 / 产品群那个")
+    v.addWidget(le)
+    st = QLabel("")
+    st.setFont(qfont(t, 11.5))
+    st.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    v.addWidget(st)
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_cancel = Btn("取消", t, "ghost")
+    b_ok = Btn("保存", t, "primary")
+    row.addWidget(b_cancel)
+    row.addWidget(b_ok)
+    v.addLayout(row)
+
+    def _prefill(r, e):  # noqa: ANN001
+        try:
+            for x in ((r or {}).get("members") or []):
+                if str(x.get("userId") or "") == uid:
+                    le.setText(str(x.get("alias") or ""))
+                    break
+        except Exception: # noqa: BLE001
+            pass
+
+    # ⛔ 会话 key 里有 `:`／`@`（如 `group:xxx@chatroom`）⇒ 必须转义再进 query，
+    #   不转义会被当成路径/参数分隔符，后端拿到的 key 就变了（查询"这个群"会查空）。
+    from urllib.parse import quote as _q # noqa: PLC0415
+    _async_get("/api/member_book?chat=" + _q(str(chat_key or ""), safe=""), _prefill, timeout=20.0)
+
+    def _do_save() -> None:
+        st.setText("保存中…")
+        b_ok.setEnabled(False)
+
+        def _done(r, e): # noqa: ANN001
+            okk = bool(isinstance(r, dict) and r.get("ok"))
+            if e or not okk:
+                st.setText("保存失败：" + str(e or (r or {}).get("note") or "未知原因"))
+                b_ok.setEnabled(True)
+                return
+            dlg.accept()
+            if refresh_fn is not None:
+                refresh_fn()
+            if note is not None:
+                note.setText(str((r or {}).get("note") or "已保存"))
+
+        _async_post(None, "/api/member_book",
+                    {"user_id": uid, "alias": le.text().strip()}, _done)
+
+    b_ok.clicked.connect(_do_save)
+    b_cancel.clicked.connect(dlg.reject)
+    dlg.exec()
 
 
 def _mem_edit_dlg(t: Tokens, btn, m: dict, chat_key: str, refresh_fn, note) -> None:
@@ -4129,6 +4526,396 @@ def _mem_deep_show(t: Tokens, btn, m: dict, chat_key: str, refresh_fn, note,
     dlg.exec()
 
 
+# ---------------------------------------------------------------- 表情语义索引（web sec-emoji）
+
+
+def emoji_panel(t: Tokens, on_save=None) -> QWidget:
+    """自定义表情的**语义索引**面板（与 web `sec-emoji` 同构）。
+
+    自定义表情是图片，模型读不出含义 ⇒ 这一页负责把每张图翻成一句文字
+    （说明 / 适用场面 / 情绪 / 把握），模型挑表情时才有依据。
+
+    数据：GET `/api/emoji_index`（清单 + 统计）；回填走 POST（`action=learn`）；
+    重扫目录走 POST（`action=refresh`）。缩略图按 `/assets/emoticon/<文件名>` 异步拉取，
+    拉不到只影响显示 —— 清单仍可读、语义仍可回填（可用性优先）。
+
+    ⛔ 「把握不足」＝ 疑似梗图：它的含义**不在画面里**（要靠外部资料才能定死），
+    所以必须当场标出来，别让人把它当确定语义用。
+    """
+    from PySide6.QtGui import QPixmap # noqa: PLC0415  （只在拉缩略图时用，不进模块级导入表）
+    from panels_qt import _line, mark_group # noqa: PLC0415
+
+    s = sec_meta.get("emoji")
+    page, lay, badge = _page(t, s.title)
+    lay.addWidget(desc(t, s.desc or "把每张自定义表情翻成一句文字，模型挑表情时才有依据。"))
+
+    state: dict = {"all": [], "sel": None}
+
+    # ── 统计（六格）──
+    stat = Card(t)
+    srow = QHBoxLayout()
+    srow.setSpacing(8)
+    cell: dict = {}
+    for key, label in (("total", "索引总数"), ("with_caption", "已标注"), ("pending", "待打标"),
+                       ("low", "把握不足"), ("animated", "动图"), ("static", "静态图"),
+                       ("top_used", "群友最常用")):
+        w, big, _small = _stat_cell(t, "–", label)
+        cell[key] = big
+        srow.addWidget(w)
+    srow.addStretch(1)
+    stat.body.addLayout(srow)
+    todo_lb = desc(t, "")
+    stat.body.addWidget(todo_lb)
+    lay.addWidget(stat)
+
+    # ── 工具行 ──
+    tb = Card(t)
+    trow = QHBoxLayout()
+    trow.setSpacing(8)
+    e_find = _line(t, "", placeholder="按说明、场面或编号搜…")
+    cb_only = QCheckBox("只看待打标")
+    cb_only.setFont(qfont(t, t.body_size - 0.5))
+    b_refresh = Btn("刷新", t, "ghost")
+    b_rescan = Btn("重扫目录", t, "ghost")
+    trow.addWidget(e_find, 1)
+    trow.addWidget(cb_only)
+    trow.addWidget(b_refresh)
+    trow.addWidget(b_rescan)
+    tb.body.addLayout(trow)
+    tb_note = desc(t, "")
+    tb.body.addWidget(tb_note)
+    lay.addWidget(tb)
+
+    # ── 清单 ──
+    lc = Card(t)
+    lc.body.addWidget(h2(t, "清单"))
+    listw = QListWidget()
+    listw.setFont(qfont(t, t.body_size - 1))
+    listw.setFixedHeight(280)
+    listw.setStyleSheet(
+        f"QListWidget{{background:transparent;border:1px solid {t.bd};"
+        f"border-radius:10px;color:{t.tx};}}"
+        f"QListWidget::item{{padding:4px 6px;}}"
+        f"QListWidget::item:selected{{background:{rgba(t.blue, 0.18)};color:{t.tx};}}")
+    lc.body.addWidget(listw)
+    lc.body.addWidget(desc(t, "编号就是机器人回话时用来说明「发哪一张」的方式；"
+                              "标了「把握不足」的，用之前先想场合。"))
+    lay.addWidget(lc)
+
+    # ── 回填 ──
+    ec = Card(t)
+    ec.body.addWidget(h2(t, "回填语义（选中上面一条开始改）"))
+    top = QHBoxLayout()
+    top.setSpacing(12)
+    img_lb = QLabel("未选")
+    img_lb.setFixedSize(112, 112)
+    img_lb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    img_lb.setWordWrap(True)
+    img_lb.setFont(qfont(t, t.body_size - 2))
+    img_lb.setStyleSheet(f"border:1px solid {t.bd};border-radius:10px;"
+                         f"color:{t.tx3};background:transparent;")
+    top.addWidget(img_lb, 0, Qt.AlignmentFlag.AlignTop)
+    form = QVBoxLayout()
+    form.setSpacing(8)
+    e_cap = _line(t, "", placeholder="这张图画了什么、是什么梗")
+    e_sit = _line(t, "", placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）")
+    e_moods = _line(t, "", placeholder="逗号分隔，如：嘲弄,无奈")
+    e_meme = _line(t, "", placeholder="梗的出处（可留空）")
+    cb_conf = FieldCombo(t)
+    cb_conf.addItem("高（看图就能确定）", "high")
+    cb_conf.addItem("低（疑似梗，需外部资料）", "low")
+    form.addWidget(Field(t, "说明", "模型只读这句文字，梗图必须把来源写进去", e_cap))
+    form.addWidget(Field(t, "适用场面", "什么时候该用它", e_sit))
+    form.addWidget(Field(t, "情绪", "逗号分隔", e_moods))
+    form.addWidget(Field(t, "把握", "低 = 疑似梗，用它之前先想场合", cb_conf))
+    form.addWidget(Field(t, "出处", "梗的出处，可留空", e_meme))
+    top.addLayout(form, 1)
+    ec.body.addLayout(top)
+    brow = QHBoxLayout()
+    b_save = Btn("保存语义", t, "primary")
+    brow.addWidget(b_save)
+    save_note = desc(t, "")
+    brow.addWidget(save_note, 1)
+    ec.body.addLayout(brow)
+    lay.addWidget(ec)
+
+    # ── 向群友请教（web 的 ④ 组）：低把握的表情可以问群里，群友答对了就记下来 ──
+    qc = Card(t)
+    qc.body.addWidget(h2(t, "向群友请教"))
+    qc.body.addWidget(desc(t, "低把握的表情（疑似梗图）机器人可以问群友一句；群友答对了就记下来。"
+                              "默认关 —— 问多了像刷屏。"))
+    sw_on = Switch(t, False)
+    v_prob = _line(t, "", placeholder="0~1，例如 0.15")
+    v_cool = _line(t, "", placeholder="秒，默认 21600（6 小时）")
+    v_win = _line(t, "", placeholder="秒，默认 120")
+    qc.body.addWidget(Field(t, "启用", "打开后才会主动问", sw_on))
+    qc.body.addWidget(Field(t, "提问概率", "每次遇到合适机会，问的概率（0~1）", v_prob))
+    qc.body.addWidget(Field(t, "冷却(秒)", "同一张表情多久内不再问", v_cool))
+    qc.body.addWidget(Field(t, "应答窗口(秒)", "超过这么久才回的不算回答", v_win))
+    q_cur = desc(t, "读取中…")
+    qc.body.addWidget(q_cur)
+    qbrow = QHBoxLayout()
+    b_qsave = Btn("保存请教设置", t, "primary")
+    qbrow.addWidget(b_qsave)
+    q_save = desc(t, "")
+    qbrow.addWidget(q_save, 1)
+    qc.body.addLayout(qbrow)
+    lay.addWidget(qc)
+
+    # ── Emoji 库（web 的 ⑤ 组）：只读清单 —— 哪些 `[名]` 能用、20 个情绪组各给什么 ──
+    #   为什么要给用户看：写人设或群指令时要写 `[微笑]` 这种码，以前只能靠猜（猜错微信不认）。
+    ec2 = Card(t)
+    ec2.body.addWidget(h2(t, "Emoji 库"))
+    ec2_stat = desc(t, "读取中…")
+    ec2.body.addWidget(ec2_stat)
+    from PySide6.QtWidgets import QPlainTextEdit as _PTE # noqa: PLC0415
+
+    ec2_wx = _PTE()
+    ec2_wx.setReadOnly(True)
+    ec2_wx.setFixedHeight(84)
+    ec2_wx.setFont(qfont(t, t.body_size - 1))
+    ec2_wx.setStyleSheet(field_qss(t, shape="area"))
+    ec2_wx.setPlaceholderText("读取中…")
+    ec2.body.addWidget(desc(t, "微信表情码（机器人回话时直接写这些，微信会把它变成表情）："))
+    ec2.body.addWidget(ec2_wx)
+    ec2_mood = _PTE()
+    ec2_mood.setReadOnly(True)
+    ec2_mood.setFixedHeight(126)
+    ec2_mood.setFont(qfont(t, t.body_size - 1))
+    ec2_mood.setStyleSheet(field_qss(t, shape="area"))
+    ec2_mood.setPlaceholderText("读取中…")
+    ec2.body.addWidget(desc(t, "情绪组（想表达某种情绪时从对应组里挑）："))
+    ec2.body.addWidget(ec2_mood)
+    ec2.body.addWidget(desc(t, "这份清单与提示词里摆给模型看的那份**同源** —— "
+                               "不会出现「面板说能用、模型不知道」的两套口径。"))
+    lay.addWidget(ec2)
+
+    def _ec_load() -> None:
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/emoji_codes", timeout=8.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _done(box: dict) -> None:
+            if not _qt_alive(ec2_stat):
+                return
+            r = box.get("r") or {}
+            if box.get("err") or not r.get("ok"):
+                ec2_stat.setText("读取失败：" + str(box.get("err") or r.get("error") or "后台没给结果"))
+                return
+            _st = r.get("stats") or {}
+            ec2_stat.setText("微信表情码 %s 个 · Unicode %s 个 · 情绪组 %s 组"
+                             % (_st.get("wx_codes"), _st.get("unicode"), _st.get("moods")))
+            ec2_wx.setPlainText(" ".join("[%s]" % x for x in (r.get("wx_codes") or [])))
+            _rows = []
+            for _k, _m in (r.get("moods") or {}).items():
+                _wx = "／".join(_m.get("wx_candidates") or [])
+                _un = " ".join(_m.get("unicode_candidates") or [])
+                _rows.append("%s → %s%s" % (_k, _wx, ("　或　" + _un) if _un else ""))
+            ec2_mood.setPlainText("\n".join(_rows))
+
+        run_async(_work, _done, page=page, interval=200, name="emoji-codes")
+
+    _ec_load()
+
+    # ★ 三级索引（第三层）：这五块就是 web 里
+    #   `① 索引概况 / ② 清单 / ③ 回填语义 / ④ 向群友请教 / ⑤ Emoji 库` 五组
+    #   ⇒ 标成组起点，顶部锚点条才会生成、点了才真能滚。
+    #   ⛔ 组名不在这里抄：`mark_group` 按 `sec_meta` 从 web 的 `.sub` 原文取（一处真值）。
+    #   任一组对不上（web 加了组而这里没跟上）⇒ 置 mismatch，让判据红出来。
+    if not all((mark_group(page, "emoji", 0, stat),
+                mark_group(page, "emoji", 1, lc),
+                mark_group(page, "emoji", 2, ec),
+                mark_group(page, "emoji", 3, qc),
+                mark_group(page, "emoji", 4, ec2))):
+        page._c8_group_mismatch = True
+
+    def _render() -> None:
+        q = (e_find.text() or "").strip().lower()
+        only = cb_only.isChecked()
+        rows = []
+        for e in state["all"]:
+            if only and (e.get("caption") or ""):
+                continue
+            if q and q not in ("#%s %s %s" % (e.get("id"), e.get("caption") or "",
+                                              e.get("situation") or "")).lower():
+                continue
+            rows.append(e)
+        listw.clear()
+        for e in rows:
+            mark = "把握高" if e.get("confidence") == "high" else "把握不足"
+            cap = e.get("caption") or "（还没有语义）"
+            it = QListWidgetItem("#%s ［%s · %s］ %s"
+                                 % (e.get("id"), e.get("kind") or "", mark, cap))
+            it.setData(Qt.ItemDataRole.UserRole, e.get("id"))
+            listw.addItem(it)
+        if not rows:
+            listw.addItem(QListWidgetItem("没有匹配的表情" if state["all"] else "索引里还没有表情"))
+        tb_note.setText("列出 %d / %d 条" % (len(rows), len(state["all"])))
+
+    def _apply(r) -> None:
+        r = r if isinstance(r, dict) else {}
+        if not r.get("ok"):
+            badge.set("err", "读取失败")
+            tb_note.setText(_read_fail_hint(r.get("error")) if r.get("error") else "后台没连上。")
+            return
+        state["all"] = list(r.get("items") or [])
+        pend = list(r.get("pending") or [])
+        cell["total"].setText(str(r.get("total") or 0))
+        cell["with_caption"].setText(str(r.get("with_caption") or 0))
+        cell["pending"].setText(str(len(pend)))
+        cell["low"].setText(str(len(r.get("low") or [])))
+        cell["animated"].setText(str(r.get("animated") or 0))
+        cell["static"].setText(str(r.get("static") or 0))
+        # ⭐ 群友最常用（后端 `top_used` 的 key 就是编号）—— 这是"发哪个表情"的可见依据
+        try:
+            _tu = r.get("top_used") or []
+            cell["top_used"].setText(("#%s ×%s" % (_tu[0][0], _tu[0][1])) if _tu else "—")
+            cell["top_used"].setToolTip("\n".join("#%s 用了 %s 次" % (x[0], x[1]) for x in _tu[:8])
+                                        or "还没有使用记录")
+        except Exception: # noqa: BLE001
+            cell["top_used"].setText("—")
+        todo_lb.setText(("待打标 %d 条：这些还没有语义，机器人不会选中它们。" % len(pend)) if pend
+                        else "全部条目都有语义了。")
+        badge.set("warn" if pend else "ok", "共 %d 条" % len(state["all"]))
+        # 「向群友请教」：生效配置回填 + 状态/昨学到的展示（同一份取数里带回来，不另开接口）
+        cur = r.get("curiosity") or {}
+        if cur:
+            sw_on.setChecked(bool(cur.get("enabled")))
+            v_prob.setText(str(cur.get("probability", "")))
+            v_cool.setText(str(int(cur.get("cooldown_s") or 0)))
+            v_win.setText(str(int(cur.get("answer_window_s") or 0)))
+            _pd = cur.get("pending_detail") or {}
+            q_cur.setText("已问 %d 张 · 待打标 %d 张%s"
+                          % (cur.get("asked_count") or 0, cur.get("low_total") or 0,
+                             (" · 正在等回答：#%s" % _pd.get("emoji_id")) if _pd else ""))
+            _ls = cur.get("learned") or []
+            q_save.setText(("最近学到：" + "；".join(
+                "#%s %s" % (x.get("id"), str(x.get("caption") or "")[:20]) for x in _ls[-3:]))
+                if _ls else "还没有从群友那儿学到新语义")
+        _render()
+
+    def _load() -> None:
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/emoji_index", timeout=8.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _done(box: dict) -> None:
+            if not _qt_alive(page):
+                return
+            _apply({"ok": False, "error": box["err"]} if box.get("err") else box.get("r"))
+
+        run_async(_work, _done, page=page, interval=200, name="emoji-index")
+
+    def _pick() -> None:
+        it = listw.currentItem()
+        if it is None:
+            return
+        eid = it.data(Qt.ItemDataRole.UserRole)
+        e = next((x for x in state["all"] if x.get("id") == eid), None)
+        if e is None:
+            return
+        state["sel"] = eid
+        e_cap.setText(str(e.get("caption") or ""))
+        e_sit.setText(str(e.get("situation") or ""))
+        e_moods.setText("，".join(e.get("moods") or []))
+        e_meme.setText(str(e.get("meme") or ""))
+        i = cb_conf.findData("high" if e.get("confidence") == "high" else "low")
+        if i >= 0:
+            cb_conf.setCurrentIndex(i)
+        save_note.setText("正在改 #%s" % eid)
+        img_lb.setPixmap(QPixmap())
+        img_lb.setText("#%s（缩略图读取中…）" % eid)
+        url = str(e.get("img") or "")
+
+        def _work(box: dict) -> None:
+            try:
+                import urllib.request as _uq # noqa: PLC0415
+
+                from agent_bridge import current_url # noqa: PLC0415
+
+                base = current_url().split("?")[0].rstrip("/")
+                req = _uq.Request(base + url, headers={"User-Agent": "persona-morph-qt"})
+                with _uq.urlopen(req, timeout=4.0) as rr:
+                    box["raw"] = rr.read()
+            except Exception as e2: # noqa: BLE001
+                box["err"] = str(e2)
+
+        def _done(box: dict) -> None:
+            # 拉图期间用户可能已切到另一条 ⇒ 只认当前选中那条（错图比无图更坏）
+            if not _qt_alive(img_lb) or state["sel"] != eid:
+                return
+            pm = QPixmap()
+            raw = box.get("raw")
+            if raw and pm.loadFromData(raw) and not pm.isNull():
+                img_lb.setText("")
+                img_lb.setPixmap(pm.scaled(108, 108, Qt.AspectRatioMode.KeepAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation))
+            else:
+                img_lb.setText("#%s（缩略图读不到）" % eid)
+
+        run_async(_work, _done, page=page, interval=150, name="emoji-thumb")
+
+    def _save() -> None:
+        if state["sel"] is None:
+            save_note.setText("先在清单里点一条。")
+            return
+        body = {"action": "learn", "id": state["sel"],
+                "caption": e_cap.text(), "situation": e_sit.text(),
+                "moods": e_moods.text(), "meme": e_meme.text(),
+                "confidence": cb_conf.currentData() or "low"}
+
+        def _done(r, err) -> None:
+            r = r if isinstance(r, dict) else {}
+            if err:
+                save_note.setText(_read_fail_hint(err))
+                return
+            if r.get("ok"):
+                save_note.setText("已保存 #%s。" % state["sel"])
+                _load()
+            else:
+                save_note.setText("没保存：" + str(r.get("error") or "后台没给结果"))
+
+        _async_post(page, "/api/emoji_index", body, _done, timeout=15.0)
+
+    def _rescan() -> None:
+        def _done(r, err) -> None:
+            r = r if isinstance(r, dict) else {}
+            if err:
+                tb_note.setText(_read_fail_hint(err))
+                return
+            tb_note.setText("已重扫目录：新增 %d 条，待打标 %d 条。"
+                            % (r.get("added") or 0, len(r.get("missing_caption") or [])))
+            _load()
+
+        _async_post(page, "/api/emoji_index", {"action": "refresh"}, _done, timeout=30.0)
+
+    def _qsave() -> None:
+        patch = {"emoji.curiosity.enabled": bool(sw_on.isChecked())}
+        try:
+            patch["emoji.curiosity.probability"] = float(v_prob.text() or 0)
+            patch["emoji.curiosity.cooldown_s"] = int(float(v_cool.text() or 0))
+            patch["emoji.curiosity.answer_window_s"] = int(float(v_win.text() or 0))
+        except Exception: # noqa: BLE001
+            q_save.setText("概率与秒数都要填数字 ⇒ 没保存")
+            return
+        ok, msg = config_io.write_patch(patch)
+        q_save.setText("已保存（下一轮生效）" if ok else ("没保存成：" + str(msg)))
+
+    b_refresh.clicked.connect(_load)
+    b_rescan.clicked.connect(_rescan)
+    b_save.clicked.connect(_save)
+    b_qsave.clicked.connect(_qsave)
+    e_find.textChanged.connect(lambda _t: _render())
+    cb_only.stateChanged.connect(lambda _s: _render())
+    listw.currentItemChanged.connect(lambda *_a: _pick())
+    _load()
+    return page
+
+
 # ---------------------------------------------------------------- 分发表（panels_qt.build_panel 查这里）
 
 MANUAL = {
@@ -4140,6 +4927,7 @@ MANUAL = {
     "log": log_panel,
     "json": json_panel,
     "vermat": vermat_panel,
+    "emoji": emoji_panel,
 }
 
 # 面板追加区（build_panel 在元数据页构建后调用）——动态列表卡挂进元数据面板
@@ -5072,7 +5860,7 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
 # 分工：纯 POST、无上下文依赖的动作进 panels_qt._ACT_API（导出/打开目录/补发）；
 # 要读同页表单、带确认框、多态回显的（提交反馈、上传确认、种子导入）注册进
 # ACT_CUSTOM —— (handler, tooltip)，handler 签名 (btn, note)，note 是按钮组
-# 行内回显 QLabel（btn.property("c8_note") 同一引用），随语义色如实回显。
+# 行内回显 QLabel（btn.property 同一引用），随语义色如实回显。
 
 
 def _c8_page_of(w) -> QWidget | None:
@@ -5162,7 +5950,7 @@ def _fb_submit(btn, note) -> None:
         else:
             _c8_say(note, t, str(d.get("why") or "提交失败"), "err")
         # ⛔ 只有**真的发出去了**才清空输入框：没发出去（queued / blocked / 报错）时内容还给用户，
-        #    否则他写的那一大段就没了（2026-09-28 反馈的现场形态）。
+        #    否则他写的那一大段就没了（反馈的现场形态）。
         if d.get("state") == "sent" and text_w is not None:
             text_w.setPlainText("")
         rl = getattr(page, "_fb_reload", None)
@@ -5790,7 +6578,7 @@ def _act_guide(key: str):
 
 def _act_key_save(btn, note) -> None:
     """web keySave 对齐：只保存 Key 并与当前厂商关联（GET config → 改 → POST 全量），
-    成功后立即 POST /api/test-api 让用户当场看到能不能跑。空值/打码值不保存。"""
+    成功后立即 POST /api/test-api 让。空值/打码值不保存。"""
     from agent_bridge import post_json # noqa: PLC0415
 
     t = getattr(btn, "t", None)
@@ -5818,6 +6606,10 @@ def _act_key_save(btn, note) -> None:
         api = cfg.setdefault("api", {})
         if not isinstance(api, dict):
             raise Exception("配置里 api 段不是对象")
+        # ★ 撤销快照：在**改动前**存整份（`api_key` 是打码值时由写入侧跳过，见
+        #   `config_io.is_masked_val`）—— 密钥写错是很常见的手误，必须能一步退回。
+        config_io.push_undo({"kind": "all", "snapshot": config_io.get_config_copy(),
+                             "label": "保存 API 密钥"})
         api["api_key"] = k
         if prov and prov != "custom":
             pk = api.setdefault("provider_keys", {})
@@ -6243,7 +7035,7 @@ def _pd_decide_native(t: Tokens, parent, note, btn) -> None:
 
     口径与 web 完全一致：读 `/api/status` 的 `pending_decisions.item` → 弹选项
     → POST `/api/decide` `{id, choice}`；没有待决项就如实说没有（不弹空框）。
-    ⛔ 以前这里是把人送去网页控制台 —— 用户口径：**网页能做的都得在 Qt 做**。
+    ⛔ 以前这里是把人送去网页控制台 —— **网页能做的都得在 Qt 做**。
     抽成模块级（不塞在面板构建函数里）是为了不让面板函数越过结构闸门的长度阈值。
     """
     from agent_bridge import post_json # noqa: PLC0415
@@ -6306,7 +7098,7 @@ def _pd_decide_native(t: Tokens, parent, note, btn) -> None:
 def _show_text_window(t: Tokens, parent, title: str, text: str) -> None:
     """原生「看一段长文本」窗口：自绘外壳 + 只读文本框 + 复制/关闭。
 
-    替掉"开浏览器看"那种做法（用户口径：网页能做的都得在 Qt 做）。
+    替掉"开浏览器看"那种做法（网页能做的都得在 Qt 做）。
     文本框用 panels_qt 那个 `_plain_area`（同一套主题与字体），不另造一份样式。
     """
     from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QFrame # noqa: PLC0415
@@ -6568,7 +7360,7 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     def _pick_files() -> None:
         """原生选附件（web fbPick/fbFileInput 的等价物）：多选 → 按 web 同款上限校验 → base64。
 
-        ⛔ 不再"去网页加附件"（用户口径：网页能做的都得在 Qt 做）。校验口径与 web 逐条一致：
+        ⛔ 不再"去网页加附件"（网页能做的都得在 Qt 做）。校验口径与 web 逐条一致：
         最多 4 个、图片 ≤2MB、其他文件 ≤20MB；读不出来的**如实说**，不静默丢。
         """
         import base64 as _b64 # noqa: PLC0415
@@ -7414,7 +8206,7 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
         state["manual"] = manual
         st_lb.setText("\n".join(lines) if lines else "组件状态读不到")
         # ⛔ 按钮不许在「有缺件」时禁用成死点击：缺的哪怕不是 pip 包（备用解码器/
-        #    ffmpeg），点下去也要给指引 —— 用户实测「点了没反应」的根因就是
+        #    ffmpeg），点下去也要给指引 —— 「点了没反应」的根因就是
         #    pkgs 为空 ⇒ setEnabled(False)，按钮看着能点、点了无声。
         if pkgs:
             btn.setText("一键安装缺件（%s）" % "、".join(pkgs))
@@ -7499,8 +8291,125 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
     QTimer.singleShot(600, _refresh)
 
 
+def _rowgeom_appendix(t: Tokens, page: QWidget) -> None:
+    """会话列表「行高缓存」卡（web `sec-wechat` 的「行高缓存」行同款）。
+
+    为什么必须给用户一个按钮：行高是**从屏幕量出来再记住**的（绿带尺）。系统缩放或微信字号一改，
+    旧值就错了 —— 而且它错得**很安静**（不报错，只是「该点第几行」算偏，表现为"点了半天没反应"）。
+    ⇒ 让用户能一键清掉重测。
+
+    ⛔ 只提供「清」，**不提供手填**：手填的数字没人验过，比不填更危险（会算错还看不出来）。
+    """
+    card = Card(t)
+    card.body.addWidget(h2(t, "行高缓存"))
+    state = desc(t, "读取中…")
+    card.body.addWidget(state)
+    brow = QHBoxLayout()
+    b = Btn("重新测量", t, "ghost")
+    brow.addWidget(b)
+    note = desc(t, "")
+    brow.addWidget(note, 1)
+    card.body.addLayout(brow)
+    card.body.addWidget(desc(t, "会话列表的行高从屏幕量出来：量到就记住，下次没量到先用它。"
+                               "改了系统缩放或微信字号之后点「重新测量」清掉旧值。"))
+    page.layout().addWidget(card)
+
+    def _load() -> None:
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/row_geometry", timeout=6.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _done(box: dict) -> None:
+            if not _qt_alive(state):
+                return
+            r = box.get("r") or {}
+            if box.get("err") or not r.get("ok"):
+                state.setText("读取失败：" + str(box.get("err") or r.get("error") or "后台没给结果"))
+                return
+            if r.get("has_cache"):
+                state.setText("已记住 %s 像素（本机合法区间 %s）"
+                              % (r.get("row_h"),
+                                 "~".join(str(x) for x in (r.get("green_expect") or []))))
+            else:
+                state.setText("还没量到（下次动会话列表时会自己量）")
+
+        run_async(_work, _done, page=page, interval=200, name="rowgeom")
+
+    def _forget() -> None:
+        def _work(box: dict) -> None:
+            try:
+                from agent_bridge import post_json # noqa: PLC0415
+                box["r"] = post_json("/api/row_geometry", {"action": "forget"}, timeout=10.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _done(box: dict) -> None:
+            if not _qt_alive(note):
+                return
+            r = box.get("r") or {}
+            if box.get("err") or not r.get("ok"):
+                note.setText("清不掉：" + str(box.get("err") or r.get("error") or ""))
+                return
+            note.setText("已清掉，下次重新量。")
+            _load()
+
+        run_async(_work, _done, page=page, interval=300, name="rowgeom-forget")
+
+    b.clicked.connect(_forget)
+    _load()
+
+
+def _rhythm_appendix(t: Tokens, page: QWidget) -> None:
+    """「拟人节奏」的**生效值**卡（web `sec-send`「② 节奏」组同款）。
+
+    为什么显示"生效值"而不只是配置项：档位（gentle/calm/off）与两个单项覆盖
+    （`gap_min_seconds`/`gap_max_seconds`）是**合起来算**的 —— 只看上面那几行配置，
+    用户会以为「我填了 3 秒怎么还慢」，其实是被档位的上限盖住了。
+    """
+    card = Card(t)
+    card.body.addWidget(h2(t, "拟人节奏（生效值）"))
+    state = desc(t, "读取中…")
+    card.body.addWidget(state)
+    card.body.addWidget(desc(t, "同会话两段话之间的随机间隔：抹掉「几秒内连刷」这个脚本签名。"
+                               "档位只是取一套参数 —— 上面填了单项值就会盖过档位。"))
+    page.layout().addWidget(card)
+
+    def _load() -> None:
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/rhythm", timeout=6.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _done(box: dict) -> None:
+            if not _qt_alive(state):
+                return
+            r = box.get("r") or {}
+            if box.get("err") or not r.get("ok"):
+                state.setText("读取失败：" + str(box.get("err") or r.get("error") or "后台没给结果"))
+                return
+            e = r.get("effective") or {}
+            _gap = e.get("gap") or [0, 0]
+            try:
+                g = "%.1f~%.1f" % (float(_gap[0]), float(_gap[1]))
+            except Exception: # noqa: BLE001
+                g = str(_gap)
+            _b = e.get("burst") or 0
+            state.setText("现在：%s · %s 档 · 同会话间隔 %s 秒 · %s 秒内最多 %s 次"
+                          % ("开" if r.get("enabled") else "关", e.get("name") or "?",
+                             g, e.get("window") or 0, _b if _b > 0 else "不限"))
+
+        run_async(_work, _done, page=page, interval=200, name="rhythm")
+
+    _load()
+
+
 APPENDIX = {
-    "wechat": (_wechat_emoji_appendix, _briefs_appendix, _wechat_recheck_appendix),
+    "wechat": (_wechat_emoji_appendix, _briefs_appendix, _wechat_recheck_appendix,
+               _rowgeom_appendix),
+    "send": _rhythm_appendix,
     "tools": _tools_utlist_appendix,
     "model": (_model_local_appendix, _model_provider_linkup),
     "search": _web_search_appendix,

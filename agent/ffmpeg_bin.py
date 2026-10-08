@@ -15,6 +15,9 @@
 """
 import os
 import shutil
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _CACHE = {}
 
@@ -38,7 +41,8 @@ def bundled() -> str:
         import imageio_ffmpeg
         p = str(imageio_ffmpeg.get_ffmpeg_exe() or "")
         return p if p and os.path.exists(p) else ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -63,6 +67,7 @@ def source() -> str:
     try:
         if p == shutil.which("ffmpeg"):
             return "PATH"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return "imageio-ffmpeg"

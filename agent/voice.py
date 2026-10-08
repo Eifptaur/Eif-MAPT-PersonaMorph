@@ -25,6 +25,11 @@ import sys
 import tempfile
 import threading
 import time
+import logging
+
+from .util import BoundedDict
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LOCK = threading.RLock() # SAPI 进程内识别器一次只服务一个请求
@@ -45,6 +50,46 @@ def voice_dir() -> str:
     return p
 
 
+# ── 探测记忆化（性能修复，别删） ─────────────────────────────────────────────
+# 控制台前端**每 30 秒**轮询一次 `/api/status` ⇒ `voice.status()` 每次都把下面六处探测
+# **整个重算一遍**。本机实测（未缓存时）：`which` 51.6ms CPU（PATH 目录多，每个都要 stat）、
+# `_ffmpeg_silk_ok()` 还会**真的 spawn 一个 ffmpeg 子进程**去列解码器（51ms）、`_silk_exe_ok()` 56ms、
+# `voice.status()` 合计 **142ms**、`media_status.snapshot()` **185ms**。
+# 而"ffmpeg / silk / 识别器装没装"在一次运行里**根本不会变** ⇒ 每次轮询重算纯属白烧 CPU。
+# ⇒ 记忆 60 秒（轮询 30 秒，留一倍余量）。
+# ⛔ 口径：**空结果不缓存**（免得把"暂时取不到"钉住 60 秒）。
+_PROBE_TTL = 60.0
+#: 探测结果缓存（TTL 60s）—— **加容量上限**：键是探测名，正常就十来个，
+#: 但加了上限这件事要**在类型上表达出来**，免得以后有人往键里塞可变的东西（PLAN 第 161 项）。
+_probe_cache: BoundedDict = BoundedDict(32)
+_probe_lock = threading.RLock()
+
+
+def _memo(key: str, fn, ttl: float = _PROBE_TTL):
+    """把一次探测的结果记住 `ttl` 秒。⚠️ `fn` 返回 `(ok, detail)` 且 **`ok` 为假时不缓存**。"""
+    now = time.time()
+    with _probe_lock:
+        hit = _probe_cache.get(key)
+        if hit is not None and (now - float(hit[1])) < ttl:
+            return hit[0]
+    got = fn()
+    try:
+        falsy = not (got[0] if isinstance(got, tuple) else got)
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        falsy = False
+    if not falsy:
+        with _probe_lock:
+            _probe_cache[key] = (got, now)
+    return got
+
+
+def refresh_probes() -> None:
+    """作废全部探测缓存（装完引擎/换机器后调；判据也用它保证不串味）。"""
+    with _probe_lock:
+        _probe_cache.clear()
+
+
 def _which(name: str) -> str:
     p = shutil.which(name)
     return p or ""
@@ -53,6 +98,10 @@ def _which(name: str) -> str:
 # ── ① 解码链 ────────────────────────────────────────────────────────────────
 
 def _pilK_ok() -> tuple:
+    return _memo("pilk", _pilK_ok_raw)
+
+
+def _pilK_ok_raw() -> tuple:
     try:
         import pilk # noqa: F401
         return True, "已装（pip pilk）"
@@ -61,6 +110,10 @@ def _pilK_ok() -> tuple:
 
 
 def _silk_exe_ok() -> tuple:
+    return _memo("silk_exe", _silk_exe_ok_raw)
+
+
+def _silk_exe_ok_raw() -> tuple:
     p = _which("silk_v3_decoder") or _which("silk_v3_decoder.exe")
     if not p:
         for c in (os.path.join(ROOT, "tools", "silk_v3_decoder.exe"),):
@@ -71,6 +124,10 @@ def _silk_exe_ok() -> tuple:
 
 
 def _ffmpeg_silk_ok() -> tuple:
+    return _memo("ffmpeg_silk", _ffmpeg_silk_ok_raw)
+
+
+def _ffmpeg_silk_ok_raw() -> tuple:
     p = _which("ffmpeg")
     if not p:
         return False, "没找到 ffmpeg"
@@ -165,6 +222,10 @@ def decode_silk(silk_path: str, wav_path: str = "") -> tuple:
 # ── ② 识别链（Windows 内置 SAPI）────────────────────────────────────────────
 
 def _registry_recognizers() -> list:
+    return _memo("registry_recognizers", _registry_recognizers_raw)
+
+
+def _registry_recognizers_raw() -> list:
     """从注册表读 SAPI/OneCore 已装识别器（**只读**）。"""
     out = []
     try:
@@ -185,18 +246,24 @@ def _registry_recognizers() -> list:
                             try:
                                 with winreg.OpenKey(k, name) as sk:
                                     desc = str(winreg.QueryValueEx(sk, "")[0])
-                            except Exception:
+                            except Exception as _e:
+                                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                                 desc = name
                             out.append({"tag": tag, "id": name, "desc": desc,
                                         "zh": ("Chinese" in desc or "zh-CN" in desc or "中文" in desc)})
                 except OSError:
                     pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out
 
 
 def sapi_file_ok() -> tuple:
+    return _memo("sapi_file", sapi_file_ok_raw)
+
+
+def sapi_file_ok_raw() -> tuple:
     """能不能用 SAPI 对**文件**做听写（真起一个进程内识别器试一下）。"""
     try:
         import pythoncom
@@ -256,7 +323,8 @@ def recognize_wav(wav_path: str, max_seconds: int = 60) -> tuple:
             def OnRecognition(self, StreamNumber, StreamPosition, RecognitionType, Result):
                 try:
                     self.hits.append(win32com.client.Dispatch(Result).PhraseInfo.GetText())
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
 
             def OnEndStream(self, *a):
@@ -354,6 +422,21 @@ def transcribe_message(adapter, chat_id: str, local_id) -> tuple:
     返回 (文本, 错误说明, 过程信息 dict)。**任何一步不成立都如实返回原因，不返回编造的文本。**
     """
     info = {"silk": "", "decoder": "", "engine": ""}
+    # ⭐ **先看微信自己转好没有**：微信对开了「语音转文字」的语音，
+    #    会把转写结果**存在库里** ⇒ 直接读库拿文字：**毫秒级、不下载音频、不跑识别引擎**。
+    #    读不到（那条没转、或版本没这列）⇒ **如实往下走旧链**（下载 + 识别），**不影响原行为**。
+    try:
+        from . import replica_adapter as _ra
+        _rd = getattr(_ra, "read_voice_transcript", None)
+        if callable(_rd):
+            _txt0, _why0 = _rd(adapter, chat_id, local_id)
+            if _txt0:
+                info["engine"] = "wx_db_transcript"
+                return str(_txt0), "", info
+            if _why0:
+                info["engine"] = "wx_db_transcript:%s" % str(_why0)[:40]
+    except Exception as e: # noqa: BLE001
+        info["engine"] = "wx_db_transcript_unavailable:%s" % type(e).__name__
     dl = getattr(adapter, "download_media", None)
     if dl is None:
         return "", "适配器没有 download_media（版本不对）", info
@@ -370,7 +453,24 @@ def selftest_loop(text: str = "今天天气不错，我们出去走走吧") -> d
     """**闭环自证**（不需要微信）：TTS 合成 → WAV → SILK（微信那套帧）→ 解码 → 识别 → 比对。
 
     控制台「测试引擎」按钮与 `scripts/voice_selftest.py` 共用这一条。
+
+    ⛔ 临时目录**必须无论走哪条 `return` 都删**：原实现有 **5 条 `return`、一条都没删**，
+       实测在系统临时目录里积了 **29.58 MB**（`pm_voice_*`）。
+       而且**兜底清扫也扫不到它** —— 清扫名单 `TEMP_PREFIXES` 用的是**连字符** `pm-`，
+       而这个前缀是**下划线** `pm_voice_` ⇒ 两边都漏（这正是"永远回收不了"的原因）。
+       ⇒ 这里改成**包一层 `try/finally`**，**不去逐个改那 5 条 `return`**（改 5 处就有 5 次漏的机会）。
     """
+    tmp = tempfile.mkdtemp(prefix="pm_voice_")
+    try:
+        return _selftest_loop_in(tmp, text)
+    finally:
+        # ⛔ `ignore_errors=True`：删不掉（被占用等）也**不许**影响返回值 ——
+        #    这条链是给用户按"测试引擎"用的，报错会让人以为语音功能坏了。
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _selftest_loop_in(tmp: str, text: str) -> dict:
+    """`selftest_loop` 的实现体：临时目录由调用方建、由调用方删（见那里的说明）。"""
     out = {"steps": [], "ok": False, "text": "", "expect": text, "err": ""}
     try:
         import pythoncom
@@ -380,7 +480,6 @@ def selftest_loop(text: str = "今天天气不错，我们出去走走吧") -> d
         out["err"] = "缺依赖：%s" % type(e).__name__
         out["steps"].append({"name": "依赖", "ok": False, "detail": out["err"]})
         return out
-    tmp = tempfile.mkdtemp(prefix="pm_voice_")
     wav1 = os.path.join(tmp, "tts.wav")
     silk = os.path.join(tmp, "round.silk")
     wav2 = os.path.join(tmp, "round.wav")

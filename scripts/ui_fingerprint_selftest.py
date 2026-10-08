@@ -55,7 +55,7 @@ def _icon(kind="a", dx=0, dy=0):
 
 h_a = UFP.dhash(_icon("a"))
 ck("A1 同图距离 = 0", UFP.dist(h_a, h_a) == 0, h_a)
-# ⚠️ 2026-09-29：阈值由 10 收紧到 4（依据：加"±3px 取最优"后**同类最大距离实测 0**；而 10 太松
+# ⚠️ ：阈值由 10 收紧到 4（依据：加"±3px 取最优"后**同类最大距离实测 0**；而 10 太松
 #    会误受"换主题"）。所以这里不再断言"原始距离 ≤ 阈值"——**1px 微移的原始距离本来就可能超阈值**，
 #    真正让"位移仍算同一图标"成立的是 **`verify` 里的位置容差搜索**（那条锚在
 #    `scripts/ui_fp_selftest.py` 的 A1/A2/A4，那里走的是真实路径）。这里只守"微移不至于面目全非"。
@@ -97,7 +97,7 @@ ck("B8 表不存在也不炸", UFP.load(os.path.join(tempfile.mkdtemp(), "nope.j
 
 # ── C 自校验三态 ─────────────────────────────────────────────────────────
 print("[C] 自校验三态（放行 / 拦住 / 不判定）")
-# ⚠️ 2026-09-29：capture 现在走**带 200ms 缓存的抓帧**（同一流程里只抓一次整窗）⇒
+# ⚠️ ：capture 现在走**带 200ms 缓存的抓帧**（同一流程里只抓一次整窗）⇒
 #   判据必须能清掉它，否则上一段缓存下来的画面会串味到下一段（曾把 C6/C8 弄红）。
 try:
     UFP.reset_frame_cache()
@@ -109,19 +109,19 @@ UFP.key = lambda *a, **k: FAKE_KEY
 try:
     good = UFP.dhash(_icon("a"))
     UFP.load = lambda path=None: {FAKE_KEY: {"sidebar.moments": {"hash": good, "pt": [10, 10]}}}
-    # ⚠️ 桩要跟着 capture 的签名走：2026-09-29 给 capture 加了 img=（批量校验时复用同一帧）
+    # ⚠️ 桩要跟着 capture 的签名走：给 capture 加了 img=（批量校验时复用同一帧）
     UFP.capture = lambda gui, name, pts=None, img=None: {"ok": True, "hash": UFP.dhash(_icon("a"))}
     v1, i1 = UFP.verify(_G(), "sidebar.moments")
     ck("C1 指纹一致 ⇒ 放行", v1 is True and i1["dist"] <= UFP.MAX_DIST, i1["reason"])
 
-    # ⚠️ 桩要跟着 capture 的签名走：2026-09-29 给 capture 加了 img=（批量校验时复用同一帧）
+    # ⚠️ 桩要跟着 capture 的签名走：给 capture 加了 img=（批量校验时复用同一帧）
     UFP.capture = lambda gui, name, pts=None, img=None: {"ok": True, "hash": UFP.dhash(_icon("b"))}
     v2, i2 = UFP.verify(_G(), "sidebar.moments")
     ck("C2 指纹对不上 ⇒ 拦住（False，而不是 None）", v2 is False, "dist=%s" % i2["dist"])
     ck("C3 拦住的话术说清「不点」+「重新取指纹」",
        "不点" in i2["reason"] and "重新取指纹" in i2["reason"], i2["reason"][:70])
 
-    # ⚠️ 桩要跟着 capture 的签名走：2026-09-29 给 capture 加了 img=（批量校验时复用同一帧）
+    # ⚠️ 桩要跟着 capture 的签名走：给 capture 加了 img=（批量校验时复用同一帧）
     UFP.capture = lambda gui, name, pts=None, img=None: {"ok": False, "why": "取不到渲染区画面（窗口最小化）"}
     v3, i3 = UFP.verify(_G(), "sidebar.moments")
     ck("C4 判据不可用 ⇒ 不冒充「对不上」（None 且说明原因）",

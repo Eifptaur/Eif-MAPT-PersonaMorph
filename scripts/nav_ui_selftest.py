@@ -42,7 +42,9 @@ m = re.search(r'<nav class="nav" id="nav">(.*?)</nav>', HTML, re.S)
 nav = m.group(1) if m else ""
 items = re.findall(r'<a href="(#sec-[a-z0-9-]+)"[^>]*>(.*?)</a>', nav, re.S)
 print("① 导航项与自绘图标（共 %d 项）" % len(items))
-ok("导航项 ≥ 20（原来 23 项）", len(items) >= 20, str(len(items)))
+# 下限防"误删导航项"。原为 27 项；新增「表情」后 **28 项**。二级归并（IA-4）落地后应为 17 项，届时下限跟着下调。
+# —— 且 IA-4 必须 **web 与 Qt 同批改**（Qt 侧有硬编码的项名/section id，只改 web 会让 Qt 面板报错）。
+ok("导航项 ≥ 20（归并前 28 项）", len(items) >= 20, str(len(items)))
 ok("每一项都有 inline SVG", all("<svg" in body and "</svg>" in body for _h, body in items),
    str(sum(1 for _h, b in items if "<svg" in b)))
 ok("每一项都有 viewBox（可缩放、不靠位图）", all('viewBox="0 0 16 16"' in body for _h, body in items))
@@ -79,6 +81,13 @@ ok("收起态：栅格列跟着收（否则中间白留一截）+ 图标与行�
    and ".side.tight{width:100%}" in HTML
    and ".side.tight .nav a svg{width:22px" in HTML
    and ".side.tight .nav a{justify-content:center;gap:0;padding:14px 0}" in HTML)
+# 收起态那颗按钮：整栏只剩图标时，它若仍按 width:100% 铺满，就会成为这一列里最大的一块
+# （Qt 侧同一处病灶＝「最小宽压过 44 上限」）。须显式收窄到内容宽并居中。
+# 反向控制：基础规则必须仍是 width:100%（否则"覆盖"无从谈起）。
+ok("收起按钮基础态是整宽（覆盖的前提）", re.search(r"\.side \.nav-tg\{[^}]*width:100%", HTML) is not None)
+ok("收起态：那颗按钮也被显式收窄并居中（不许压满整栏）",
+   re.search(r"\.side\.tight \.nav-tg\{[^}]*width:auto", HTML) is not None
+   and re.search(r"\.side\.tight \.nav-tg\{[^}]*margin:2px auto", HTML) is not None)
 
 print("⑤ 前端 JS 语法（node --check）")
 node = shutil.which("node")

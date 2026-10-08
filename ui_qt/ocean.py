@@ -147,7 +147,7 @@ class OceanWaves(QObject):
                 pen_w = max(2.0, min(6.0, 5.0 * sy))
                 g.strokePath(path, _pen_rgba(255, 255, 255, round(255 * 0.9), pen_w))
             g.end()
-            tiles.append((pm, float(w), rev, (0.5 * w) / dur)) # web：半个周期/时长 的线速度
+            tiles.append((pm, float(w), rev, (0.5 * w) / dur)) # web：半个周期/时长线速度
         self._tiles = tuple(tiles)
         self._tiles_for = (w, h, dpr)
 

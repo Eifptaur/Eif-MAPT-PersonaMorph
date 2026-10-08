@@ -49,25 +49,27 @@ def _replace_retry(tmp: str, path: str, budget_s: float | None = None) -> bool:
     就是消息积压；宁可这一条晚一拍入档，也不要让监听停在这里。
     """
     limit = _REPLACE_TOTAL_S if budget_s is None else float(budget_s)
-    delay = 0.002
     t0 = time.monotonic()
     last = None
     try:
+        # ★ P1-7：退避节奏走**显式退避表**（`retry_policy.BACKOFF_MS`），不再是"每次乘 1.6"。
+        #   为什么换：乘法节奏随实现而变（改一次基数全盘变），判据钉不住；显式表可读、可钉。
+        #   重试资格同样走显式白名单（`retry_policy.is_retryable`），不再就地写 `(5, 32, 33)`。
+        from . import retry_policy as _rp
         for i in range(_REPLACE_TRIES):
             try:
                 os.replace(tmp, path)
                 return True
-            except Exception as e: # noqa: BLE001 - 逐类判：只有共享冲突才重试
+            except Exception as e: # noqa: BLE001 - 逐类判：只有可重试的才重试
                 last = e
-                transient = isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32, 33)
+                transient = _rp.is_retryable(e)
                 if transient:
                     REPLACE_STATS["hits"] = int(REPLACE_STATS.get("hits") or 0) + 1 # 撞冲突本身就是信号（含重试成功）
                 if not transient:
                     break
                 if (time.monotonic() - t0) >= limit:
                     break
-                time.sleep(delay)
-                delay = min(delay * 1.6, 0.06)
+                time.sleep(_rp.backoff_ms(i) / 1000.0)
         REPLACE_FAILURES["count"] = int(REPLACE_FAILURES.get("count") or 0) + 1
         REPLACE_FAILURES["last"] = str(last)[:200]
         return False
@@ -84,7 +86,7 @@ def replace_into(tmp: str, path: str, budget_s: float | None = None) -> None:
       Windows 上目标档只要被**任何人**打开着（杀毒/索引器/另一个写者/读者句柄），
       `os.replace` 就撞 WinError 5/32 —— 实测 20 线程 × 10 写里 **66% 直接失败**，
       而共享冲突是**瞬时**的（退避一下基本都能过）。裸调用点各自 `except` 掉或忽略返回值
-      ⇒ 「写没写进去」没人知道（审计原话：竞争下 71% 的写静默丢掉）。
+      ⇒ 「写没写进去」没人知道（实测：共享冲突下 71% 的写会静默丢掉）。
 
     **语义与裸 `os.replace` 一致**（失败抛 `OSError`，不再多一种"返回 False 被忽略"的坑），
     只多了"先重试再抛"。要"不抛、自己看返回值"的场合用 `_replace_retry`。
@@ -180,7 +182,8 @@ def _sweep_own_orphans(path: str, older_than_s: float = 3600.0) -> int:
     n = 0
     try:
         names = os.listdir(d or ".")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
     mine = "%s.%d." % (base, os.getpid())
     now = time.time()
@@ -195,9 +198,25 @@ def _sweep_own_orphans(path: str, older_than_s: float = 3600.0) -> int:
                 continue # 新鲜 ⇒ 可能有人正在写，不许删
             os.remove(full)
             n += 1
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     return n
+
+
+def tmp_for(path) -> str:
+    """给某个落盘点**取一个唯一的同目录临时名**（`<path>.<pid>.<随机>.tmp`）。
+
+    为什么要有它：仓里还有一批"自己拼 `<path>.tmp` 再 `os.replace`"的老写法（棘轮在数，只许降）。
+    那些点**不能**共用同一个固定临时名 —— 两个写者（多进程 / 多线程）会打开同一个临时档，
+    内容互相穿插，`os.replace` 换上去的就是半截/混合内容。
+    ⇒ 这些点先换成调本函数拿名字（**写/换盘那套逻辑一个字不动**，改动面最小）；
+    要连 `fsync` 与失败重试一起拿到，就继续迁到 `atomic_write_json/text`（那是收口位）。
+
+    ⚠️ 每次调用**都会给出不同的名字** ⇒ 同一个函数里"写临时档"与"换上去"必须**共用一个变量**
+    （写成 `_t = persist.tmp_for(p)` 再两处都用 `_t`），不许各调一次。
+    """
+    return "%s.%d.%s.tmp" % (path, os.getpid(), secrets.token_hex(4))
 
 
 def atomic_write_json(path, data, indent: int = 1, sort_keys: bool = False,
@@ -267,7 +286,8 @@ def atomic_write_text(path, text, newline: str = "") -> bool:
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         log.warning("原子写文本失败（原档未动）：%s ⇒ %s", path, e)
         return False

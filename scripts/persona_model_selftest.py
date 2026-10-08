@@ -163,6 +163,53 @@ try:
 except Exception as e: # noqa: BLE001
     skip("E. 接线（活体）", "%s: %s" % (type(e).__name__, str(e)[:60]))
 
+# ── F. 第 112 项 ② 那半：**"当前人设"只能有一个解析口径** ─────────────────────
+#   ⛔ 为什么补这一段：E 段只守住了 Qt 侧"点「使用」要把控件回写"（＝112 的 ①）；
+#      而 112 的 ② 是"**各模块取的是默认人设而不是当前人设**" —— 那要守的是**解析口径的唯一性**：
+#      · "取当前角色卡正文"只有 `prompt.role_text_of` 一处（含"空 ⇒ 回落内置小鲸鱼卡"）；
+#      · 回复链**真的**调它，而不是自己再读一遍键；
+#      · web 控制台的「使用」写的是**同一对键**（两个实现面同批）。
+print("")
+print("== F. 当前人设的解析口径唯一（第 112 项 ②）==")
+# ⛔ 这一段是**纯静态**检查（只读源码/AST）⇒ ⛔ **不许用 `skip` 兜底**：
+#   我第一次写成 `sect(...)`（这个文件根本没有这个 helper）⇒ 整段被 `except` 吞成
+#   "SKIP"，而汇总行显示"23 通过 / 0 失败 / 2 跳过"**看起来是绿的** ——
+#   跳过比空过更安静（空过至少还数在"通过"里，跳过连数都不算）。
+#   ⇒ 静态段出错必须**红**：这里的 `except` 走 `ok(..., False)`，不是 `skip`。
+try:
+    import _srcslice as _ss2, _srcmatch as _sm2 # noqa: E402
+    _pr = io.open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read()
+    _rto = _ss2.func_src(_pr, "role_text_of")
+    _bsp = _ss2.func_src(_pr, "build_system_prompt")
+    ok("F1 系统提示词里取角色卡正文走**唯一实现** `role_text_of`（不是又读一遍键）",
+       _sm2.has(_bsp, "role_text_of("), "`build_system_prompt` 应调 `role_text_of(cfg)`")
+    ok("F2 `role_text_of` 读的就是**「使用」写入的那个键** `role_text`",
+       _sm2.has(_rto, 'get("role_text")'), '`c.get("role_text")`')
+    ok("F3 **回落内置卡**只有这一处（全仓 `xiaojingyu` 只出现在 `role_text_of` 里）",
+       _pr.count("xiaojingyu") == 1
+       and sum(io.open(os.path.join(ROOT, "agent", f), encoding="utf-8").read().count("xiaojingyu")
+               for f in os.listdir(os.path.join(ROOT, "agent")) if f.endswith(".py")) == 1,
+       "agent/ 下 `xiaojingyu` 出现次数")
+    # ⚠️ 这两条**故意分开**（不是重复）：`_is_whale` 问的是「**用户有没有动过角色设置**」
+    #   （它把"只改了名字"也算动过 ⇒ 不再注入风格参考），而 `role_text_of` 问的是
+    #   「**取哪段正文**」（文本为空就用内置卡，与名字无关）⇒ 两者在"改了名字但没填自定义文本"
+    #   这个组合上**本来就该给不同答案**。⇒ 下面把两者的口径各自钉住，防后人「看着像重复」就合并。
+    ok("F4 `_is_whale`（要不要注入风格参考）把「只改了名字」也算作动过设置 —— 这是**设计**，别合并掉",
+       _sm2.has(_pr, '_pc.get("bot_name")') and "小鲸鱼" in _pr,
+       "口径：role_text 空 **且** bot_name 是空/小鲸鱼 ⇒ 才算内置")
+    ok("F5 `_is_whale` 的注释写明了它的口径（含「改了名字也算动过」）—— 后人看注释就知道不是笔误",
+       _sm2.has(_pr, "改了名字") or _sm2.has(_pr, "动过角色设置"),
+       "注释应含「改了名字 / 填了自定义角色文本 / 选了别的卡」三者")
+    _idx = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
+    ok("F6 web 控制台的「使用」写的是**同一对键**（`persona.bot_name` + `persona.role_text`）",
+       _sm2.has(_idx, "cfg.persona.bot_name = p.name") and _sm2.has(_idx, "persona.role_text"),
+       "两个实现面同批：web 直接写 config 对象，Qt 走 /api/config + 控件回写")
+except Exception as e: # noqa: BLE001
+    # ⛔ **报红而不是跳过**（理由见上面那段说明）：这一段是静态检查，跑不起来就是**判据坏了**，
+    #    不是"环境不满足" ⇒ 必须让人看见。
+    ok("F0 段本身跑得起来（静态检查不许被吞成 SKIP）", False,
+       "%s: %s" % (type(e).__name__, str(e)[:70]))
+
 print("")
 print("模型评分/补足判据：%d 通过 / %d 失败 / %d 跳过%s" % (PASS, FAIL, SKIP, "（含真机）" if LIVE else ""))
 sys.exit(1 if FAIL else 0)

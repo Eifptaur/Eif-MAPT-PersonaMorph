@@ -26,8 +26,11 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from PIL import Image  # noqa: E402
 from agent import chat_ocr as co  # noqa: E402
+import logging
 
-B = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\wechat'
+log = logging.getLogger("persona-morph")
+
+B = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\wechat'
 _TS = re.compile(r'(?:昨天|今天|前天)?\s*(\d{1,2})\s*[:：]\s*(\d{2})')
 
 print('== P1/P2：逐图统计 ==')
@@ -37,7 +40,8 @@ for fn in sorted(os.listdir(B)):
         continue
     try:
         rows = co.session_rows(Image.open(os.path.join(B, fn)).convert('RGB'))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         continue
     if not rows:
         continue
@@ -72,7 +76,7 @@ _tsr = 100.0 * _ts / _tot
 if _split:
     print('  ⛔ P3 失败：OCR 把**时间单独切成一行**（%d 处）⇒ 归属错乱' % _split)
     print('     实测机制（本图 y 距实测，ROW_PITCH=%d，归并阈值 %.1f）：' % (co.ROW_PITCH, co.ROW_PITCH * 0.6))
-    print('       y=152 `aaa偷啃亻吏` —(d=26 < 38.4)→ y=178 `[草稿][图片]`  ⇒ 两条**并成同一行** ✓')
+    print('       y=152 `某会话残字甲乙` —(d=26 < 38.4)→ y=178 `[草稿][图片]`  ⇒ 两条**并成同一行** ✓')
     print('       y=243 `00：03`     —(d=65 > 38.4)→ 自成一行 ⇒ **名字被读成 `00`** ✗')
     print('     ⇒ 即"纯时间行"会**制造一个伪会话行**（name=时间戳），而它对应的真名字')
     print('       其实在上/下一行 ⇒ 屏幕侧行名与行时**对不上号**。')

@@ -574,7 +574,8 @@ def fetch_pinned_stream(url, dest, method="GET", data=None, headers=None, timeou
             try:
                 if os.path.exists(dest):
                     os.remove(dest)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
 
 

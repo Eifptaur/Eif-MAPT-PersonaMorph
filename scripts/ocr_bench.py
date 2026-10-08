@@ -15,11 +15,11 @@
     runtime\\python\\python.exe scripts\\ocr_bench.py --verbose  # 逐条打印读数
     runtime\\python\\python.exe scripts\\ocr_bench.py --repeat 2 # **连跑两遍**（数字必须一致才算数）
 
-⛔ **教训（2026-09-29）**：本人曾拿一份"86.1% / 94.4%"的读数去汇报，**后来复现不出来**
+⛔ **教训**：本人曾拿一份"86.1% / 94.4%"的读数去汇报，**后来复现不出来**
 （当时第二引擎还没正式装上，读数里混了它的贡献）。⇒ 从此**基准数字必须连跑两遍一致**才敢写进回执。
 """
 import argparse
-import io
+
 import os
 import re
 import sys
@@ -150,7 +150,7 @@ def main():
             k = ln.strip().split()[0]
             want = {"①": stat["raw"], "②": stat["legacy"], "③": stat["auto"], "④": stat["snap"]}.get(k)
             # ⛔ 不用 try/except 解析（本仓静默点棘轮只许降）：解析不出来就给 -1，显式比较。
-            # ⚠️ 标签里可能含空格（"老管线（固定档序 2/3/4/5）"）⇒ 从 `n/ N =` 那一段取数，别按空格切
+            # ⚠️ 标签里可能含空格⇒ 从 `n/ N =` 那一段取数，别按空格切
             _m2 = re.search(r"(\d+)/\s*\d+\s*=", ln)
             got_hit = int(_m2.group(1)) if _m2 else -1
             if want and got_hit != want[0]:

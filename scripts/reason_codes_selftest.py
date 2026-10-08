@@ -74,7 +74,7 @@ def main():
         ("按最高目标**不退回真鼠标**（这条发送路径会动你的光标）；要允许请打开 input.allow_real_fallback",
          "foreground_not_target"),
         # ⛔ 反向锚（这一条原来**假绿**）：文案里带"落点也是猜的"这种补充说明，
-        #   加规则之前它被 `target_moved` 抢走（"落点变了"）—— 其实什么都没变，是闸门没放开真鼠标。
+        #   加规则之前它被 `target_moved` 抢走—— 其实什么都没变，是闸门没放开真鼠标。
         #   ⇒ 规则顺序必须让 `foreground_not_target` 排在 `target_moved` 前面。
         ("引用已插入，但投递发送没成（投递没成）⇒ 按最高目标不退回真鼠标（库那条会动光标，落点也是猜的）",
          "foreground_not_target"),
@@ -105,7 +105,7 @@ def main():
     #    实测踩到：`foreground_not_target` 就这么空了很久（真鼠标闸拒发的原文一律落 unknown，
     #    还有一条因为带"落点"被误记成 `target_moved`）。
     #    两个例外都是**故意**的：`unknown` 是兜底；`manifest_bad` 由调用方按**字面量**声明
-    #    （`_rc.label("manifest_bad")`），不靠散文分类。
+    #    （`_rc.label`），不靠散文分类。
     _LITERAL_ONLY = {"manifest_bad", "unknown"}
     _rule_codes = {c for c, _ in RC._RULES}
     _dead_codes = sorted(set(RC.CODES) - _rule_codes - _LITERAL_ONLY)

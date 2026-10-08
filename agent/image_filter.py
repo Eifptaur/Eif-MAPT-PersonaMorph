@@ -21,6 +21,9 @@ import json
 import os
 import time
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 REJECT_LOG_REL = os.path.join("data", "image_rejected.jsonl")
 
@@ -284,14 +287,16 @@ def _log_reject(path, meta, cfg, name, why, ctx, root=None) -> None:
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as fh:
                     keep = fh.readlines()[-200:]
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             keep = []
         keep.append(json.dumps(rec, ensure_ascii=False) + "\n")
-        tmp = p + ".tmp"
+        tmp = persist.tmp_for(p)
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.writelines(keep[-200:])
         persist.replace_into(tmp, p)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -302,7 +307,8 @@ def summary(cfg: dict = None, root: str = None) -> dict:
     try:
         with open(os.path.join(root or _root(), REJECT_LOG_REL), encoding="utf-8") as fh:
             rej = sum(1 for _ in fh)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {"enabled": enabled_names(cfg or {}),
             "safe_only": bool(conf.get("safe_only", True)),

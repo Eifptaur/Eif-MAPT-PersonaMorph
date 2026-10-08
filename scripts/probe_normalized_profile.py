@@ -20,6 +20,9 @@ import glob
 import json
 import os
 import sys
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -129,7 +132,8 @@ def main():
         try:
             img, _a, _r = _boxes(_it)
             _profs[_it["i"]] = (_norm(_profile(img, _a)), _norm(_profile(img, _r)))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
 
     # ── 同会话跨尺寸（正样本）──

@@ -665,8 +665,10 @@ def ensure_pyside6(log=None) -> tuple[bool, str]:
             _log("warning", "包内离线轮子没装成（%s）⇒ 改用联网通路" % (_tail_l or "")[-120:])
 
     # 已装但版本不符 ⇒ 讲清楚「更新」而不是「下载」（老用户升级路径的对白）
+    # ⛔ 只有走到这一行才说明**包内离线轮子那条快路径没走通**（见上方 `ensure_pyside6`：
+    #   包里有轮子就直接本地装）⇒ 这里是**联网兜底**，说下载量才是对的。
     had_old = importlib.util.find_spec("PySide6") is not None
-    _log("info", ("版本不符，正在更新" if had_old else "首次启动，正在下载")
+    _log("info", ("版本不符，正在联网更新" if had_old else "首次启动，正在联网下载")
          + f"（约 100MB，{PYSIDE_PKG}=={PYSIDE_PIN}）")
 
     # ── 并行探测竞速（借鉴 update_check::fetch_any：并行 ⇒ 最坏 ≈ 一个超时）──

@@ -13,7 +13,10 @@ import os
 import sys
 import types
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+# ⛔ 判据**不许构造真 GUI**（同 `session_pick`：真构造 `WeChatGUI` ⇒ 读真窗口 + 第三方库动 stdout
+#   ⇒ 判据输出被吞）。`line_buffering=True` 是第二道保险。见 PLAN 第 261 项。
+os.environ["PM_JUDGE_NO_GUI"] = "1"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts")) # `_srcmatch` 在 scripts 里（判据卫生网要求用它的 has()）
@@ -37,6 +40,12 @@ def ok(name, cond, detail=""):
 # ── （P0）：逐字雷同**不构成排他证据** ───────────────────────────────────────
 print("\n== A. 逐字雷同 ⇒ 不排他（P0，退回 v2.1.48 后当时 0 条判据能抓） ==")
 ad = W.WeChatAdapter.__new__(W.WeChatAdapter)
+# ⛔ 还要桩"全量会话"那一问：`_pane_excludes_others` 会问 `_all_chat_last_hhmm()` 来确认
+#    "名单外有没有别人在说话"。`bool({})` 是假 ⇒ **空表会被判成"查不到"** ⇒ 一律"不许判排他"
+#    ⇒ 下面两条（一条要"不排他"、一条要"排他"）**都不可能成立**（看着像产品坏了，其实是夹具缺件）。
+#    给一个**非空**的表（名单外一个会话，内容与目标不同）⇒ 参照集完整、且不雷同。
+_all_keep = W.WeChatAdapter._all_chat_last_hhmm
+W.WeChatAdapter._all_chat_last_hhmm = lambda self: {"野群@chatroom": "00:00"}
 _TARGET, _OTHER = "group:目标群", "group:别的群"
 _SAME = "早上好呀，今天几点开会？"
 
@@ -125,32 +134,36 @@ ok("反例锚：正常聊天内容不许被误拦",
    SD._is_internal_failure("今天天气不错，晚上一起吃饭？") == "", repr(SD._is_internal_failure("今天天气不错")))
 
 print("\n== E. · 量不到绿底带 ⇒ **不许补枪**（真跑产品源码，不是 grep） ==")
-# `_band_on_row()` 是嵌在 `wechat._click_visible_session()` 里的闭包 —— 外层调不动它，
-# 但"能不能测量"这个 fail-closed 语义正是 的核心。这里把**产品源码里那段闭包**原样
-# 取出来 exec 到一个受控命名空间里跑（不复制、不改写代码 ⇒ 源码一旦回退成 fail-open，本条必红）。
-import ast # noqa: E402
-import textwrap # noqa: E402
+# ⛔ 这条原来是把 `_band_on_row` **闭包的源码抠出来 exec** 到一个受控命名空间里跑（当年它是自包含闭包）。
+#    但产品后来按「B5 根治」把它改成调 **提升后的方法** `self._band_on_target_row(...)` ⇒
+#    抠出来的那段代码里 `self` 无定义 ⇒ **判据直接崩**（套件里表现为"rc=1、无汇总行"，
+#    读日志的人只会看到"判据崩了"。⇒ 现在**直接调那个方法**：同样跑的是产品源码，且不再脆弱。
+ok("产品里有 `_band_on_target_row`（B5 根治后从闭包提升为可复用方法）",
+   hasattr(W.WeChatAdapter, "_band_on_target_row"))
+_GUI = object() # 哨兵：只用来短路 `gui or self._get_gui()`，不让判据去构造真 GUI
+
 
 _w_src = open(os.path.join("agent", "wechat.py"), encoding="utf-8").read()
-_bn_node = None
-for _n in ast.walk(ast.parse(_w_src)):
-    if isinstance(_n, ast.FunctionDef) and _n.name == "_band_on_row":
-        _bn_node = _n
-        break
-ok("能在产品源码里找到 `_band_on_row`", _bn_node is not None)
 
 
 def _run_band(capture_fn, row_y=200, pane_left=384):
-    """把产品源码里的 `_band_on_row` 原样跑一遍；`_chh.capture_image` 换成受控截图。"""
-    _ns = {"_chh": types.SimpleNamespace(capture_image=capture_fn),
-           "_co": CO, "gui": None, "row": {"y_abs": row_y}, "_tol": 40,
-           "_row_pl": pane_left, "time": types.SimpleNamespace(sleep=lambda _s: None)}
-    _body = ast.get_source_segment(_w_src, _bn_node)
-    exec(compile(textwrap.dedent(_body), "<wechat._band_on_row>", "exec"), _ns)
-    return _ns["_band_on_row"]()
+    """直接调产品方法；`chat_header.capture_image` 换成受控截图。返回 `(band, measured)`。
+
+    ⛔ `gui` 必须给一个**哨兵对象**：产品里写的是 `capture_image(gui=gui or self._get_gui())`
+      ⇒ 传 `None` 会让它去**构造真 GUI**（判据不该碰真窗口）；给个非 None 的哨兵即可短路。
+    """
+    _ad = W.WeChatAdapter.__new__(W.WeChatAdapter)
+    _keep_cap = CH.capture_image
+    CH.capture_image = capture_fn
+    try:
+        _r = _ad._band_on_target_row("x", "文件传输助手", gui=_GUI,
+                                     row_y_abs=row_y, pane_left=pane_left, tol=40, frames=2, gap=0.0)
+    finally:
+        CH.capture_image = _keep_cap
+    return _r[0], _r[1]
 
 
-if _bn_node is not None:
+if hasattr(W.WeChatAdapter, "_band_on_target_row"):
     _none_shot = lambda **k: None # 截图永远拿不到
     _band_none, _meas_none = _run_band(_none_shot)
     ok("截图拿不到（连试两帧都 None）⇒ **measurable=False**（老写法 fail-open 会返回 None 被当成「可补枪」）",
@@ -171,7 +184,8 @@ if _bn_node is not None:
     ok("绿底带在**别的行** ⇒ band=None 且 measurable=True（补枪是允许的，没在被保护的行上）",
        _band_far is None and _meas_far is True, "%r/%r" % (_band_far, _meas_far))
     # 接线与顺序：调用方必须在**补一枪之前**拦下来，而且文案要如实说"不再补枪"
-    _seg = _srcslice.from_func(_w_src, "_click_visible_session").split("\n    def ", 1)[0]
+    # （用 AST 锚点取函数正文；不再按"下一个 def 行"做文本截断）
+    _seg = _srcslice.func_src(_w_src, "_click_visible_session")
     _i_guard, _i_sleep = _seg.find("if not _meas:"), _seg.find("time.sleep(1.35)")
     ok("调用方在 sleep(1.35)（＝补枪前等待）**之前**就 fail-closed 返回",
        _i_guard != -1 and _i_sleep != -1 and _i_guard < _i_sleep, "guard@%d sleep@%d" % (_i_guard, _i_sleep))

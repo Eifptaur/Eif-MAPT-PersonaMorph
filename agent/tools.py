@@ -19,6 +19,33 @@ from .web_search import web_search, web_fetch
 # 与 wechat.py 同一个 logger 名 ⇒ 发送失败的每一行都进主日志，排障时能在同一处看到
 log = logging.getLogger("persona-morph")
 
+# ── 异常分类────────────────────────────────────────────
+#   为什么：**静默吞掉异常**会把"缺 import 的 NameError"伪装成"没命中/没数据"，那种 bug 能藏一整个版本。
+#   ⇒ 把异常分两类：**代码缺陷类直接上屏**（不再静默）；其余（网络抖动/超时/外部怪值）仍按 debug 记。
+#   ⛔ 只用在**生产路径**（发消息、读数据库），别一次性全仓改（回归面太大）。
+CODE_DEFECT_ERRORS = (NameError, UnboundLocalError, AttributeError, TypeError, ImportError)
+
+
+def is_code_defect(exc) -> bool:
+    """这个异常是不是「代码写错了」那一类（⇒ 该上屏，不许静默）。"""
+    return isinstance(exc, CODE_DEFECT_ERRORS)
+
+
+def log_swallowed(exc, *, where: str = "", log=None) -> None:
+    """记录一个被吞掉的异常：**代码缺陷类**用 error 上屏，其余用 debug。
+
+    `where` 写清位置（`模块.函数`），便于一眼定位；`log` 不传就用本模块 logger。
+    """
+    _lg = log if log is not None else globals().get("log")
+    try:
+        if _lg is not None:
+            if is_code_defect(exc):
+                _lg.error("%s 处吞掉异常：%s: %s", where or "?", type(exc).__name__, str(exc)[:120])
+            else:
+                _lg.debug("%s 处吞掉异常：%s: %s", where or "?", type(exc).__name__, str(exc)[:120])
+    except Exception: # noqa: BLE001
+        pass
+
 
 def _ok(payload):
     return {"content": payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, indent=1)}
@@ -54,8 +81,31 @@ def build_tool_defs() -> list:
         for d in extra:
             if d["name"] not in {x["name"] for x in defs}:
                 defs.append(d)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
+    # Skill（"什么情况该怎么做"的说明书）：总开关关着 ⇒ **工具不注册**
+    #   （与"清单不注入"合起来＝一处关掉全失效；⛔ 不要只关一头）
+    try:
+        from . import skills as _sk
+        if _sk.enabled() and _sk.load()[0]:
+            defs.append({
+                "name": "skill",
+                "description": "读一个 Skill 的正文。Skill 是「什么情况该按什么套路做」的说明书，"
+                               "清单在上面消息的 <system-reminder> 里列过（只有名字和一句用途）。"
+                               "判断用得上再去读，读到的正文按它说的做；用不上就别调。"
+                               "name 填清单里的名字（原样照抄）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Skill 名字（清单里的原名，小写带 -）"},
+                    },
+                    "required": ["name"],
+                },
+                "execute": _exec_skill,
+            })
+    except Exception as _e:
+        log_swallowed(_e, where="tools.build_tool_defs.skill")
     return defs
 
 
@@ -63,14 +113,14 @@ def _builtin_tool_defs() -> list:
     return [
         {
             "name": "send_message",
-            "description": "发送消息到当前会话。messages=字符串发一条；数组=分多条（更像真人，空格不是分句）。想引用对方最近一句就传 reply_to_message_id；点名某人传 at_user_id（wxid）。",
+            "description": "发送消息到当前会话。messages=字符串发一条；数组=分多条（更像真人，空格不是分句）。想引用对方最近一句就传 reply_to_message_id；点名某人传 at_user_id（填**群昵称**，不用 wxid）。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "messages": {"description": "要发送的内容：字符串=一条；数组=分多条",
                                  "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
                     "reply_to_message_id": {"description": "要引用/回复的消息 id（#数字，可选；实际引用的是最近一条消息）"},
-                    "at_user_id": {"description": "要 @ 的群成员 wxid（可选，与引用二选一，不要滥用）"},
+                    "at_user_id": {"description": "要 @ 的群成员**群昵称**（可选，与引用二选一，不要滥用；不用 wxid）"},
                 },
                 "required": ["messages"],
             },
@@ -96,6 +146,15 @@ def _builtin_tool_defs() -> list:
                 "properties": {"limit": {"type": "integer", "description": "默认 10，最大 20"}},
             },
             "execute": _exec_get_members,
+        },
+        {
+            "name": "get_group_members",
+            "description": "查看**当前群的全部成员名录**（wxid / 名字 / 备注 / 是否群主）。静态读库、不点界面、不打扰用户。与 get_active_members 的分工：那个只统计「最近发过言的人」，本工具给**全群**——包括还没说过话的、以及**不在你通讯录里**的人。要 @ 一个没发过言的人、或想弄清「这人是谁」时用它。",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "description": "默认 200，最多 500"}},
+            },
+            "execute": _exec_get_group_members,
         },
         {
             "name": "get_message_detail",
@@ -316,10 +375,15 @@ def _builtin_tool_defs() -> list:
         },
         {
             "name": "moments_surf",
-            "description": "刷朋友圈：打开朋友圈→（可选滚动）→把当前视口截图给你看（图片在本工具返回里）。你看完再决定：赞（moments_like）/评论（moments_comment）/继续刷（再调一次）/结束。刷完程序自动关窗。",
+            "description": "看朋友圈。**默认走读库**（不开窗、不动鼠标）：直接给你最新 N 条的文字（作者/正文/时间/点赞人/评论含谁回复谁），省时省 token、也不会打断用户。看完再决定：赞（moments_like）/评论（moments_comment）/再看（再调一次）。只有想看画面本身（如正文配图、布局异常）时才传 visual=1，那条路会开朋友圈窗+滚动+截图，会抢前台。",
             "parameters": {
                 "type": "object",
-                "properties": {"scroll": {"type": "integer", "description": "先滚几屏（0=不滚，默认 0）"}},
+                "properties": {
+                    "limit": {"type": "integer", "description": "读几条（默认 10，仅读库路线用）"},
+                    "mine": {"type": "boolean", "description": "只看自己发的（默认 false）"},
+                    "visual": {"type": "boolean", "description": "true=要画面（开窗+截图，会抢前台）；默认 false=读库拿文字"},
+                    "scroll": {"type": "integer", "description": "视觉路线先滚几屏（默认 0，仅 visual=1 时有意义）"},
+                },
                 "required": [],
             },
             "execute": _exec_moments_surf,
@@ -614,7 +678,8 @@ def _exec_read_video(ctx, args):
                 with open(p, "rb") as f:
                     import base64
                     data_urls.append("data:image/png;base64," + base64.b64encode(f.read()).decode("ascii"))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
         head = "视频内容（%s）：下面是按时间均匀抽出的 %d 帧画面，请直接看图描述你看到了什么）" % (
             res.get("note") or "", len(data_urls))
@@ -698,7 +763,8 @@ def _exec_read_video_url(ctx, args):
                 with open(p, "rb") as f:
                     import base64
                     data_urls.append("data:image/png;base64," + base64.b64encode(f.read()).decode("ascii"))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
         head = "视频内容（%s 外链，%s）：下面是按时间均匀抽出的 %d 帧画面，请直接看图描述你看到了什么）" % (
             res.get("platform") or "外链", res.get("note") or "", len(data_urls))
@@ -722,7 +788,7 @@ def _validate_send_args(messages: list, args: dict) -> str:
       · 参数错 → 发送层必然失败 → 失败回执回到模型 → 模型**整轮重发**（每轮 9-15k token，
         且 fresh 部分按全价计费）⇒ 报告口径：这类重试每次 ≈9-15k，统计期 45 次失败 × 重试
         推算是 40-67 万 token；
-      · 前置挡住后，模型拿到的是**确定性的原因**（"第 2 条是空的"），能直接改参数或放弃，
+      · 前置挡住后，模型拿到的是**确定性的原因**，能直接改参数或放弃，
         不需要重试整个回合。
     ⛔ 只挡**确定错**（空内容/超长/@ 参数形状）；**不**替业务判"该不该发"（那是闸门的事）。
     """
@@ -744,7 +810,7 @@ def _validate_send_args(messages: list, args: dict) -> str:
                         "微信本身也不适合单条超长消息" % (i, len(t)))
         au = args.get("at_user_id")
         if au is not None and not str(au).strip():
-            return "at_user_id 传了但是空的：要 @ 人就填 wxid 或群昵称；不 @ 人就不要传这个字段"
+            return "at_user_id 传了但是空的：要 @ 人就填**群昵称**；不 @ 人就不要传这个字段"
         rm = args.get("reply_to_message_id")
         if rm is not None and not str(rm).strip():
             return "reply_to_message_id 传了但是空的：要引用就填那条消息的 messageId；不引用就不要传"
@@ -764,6 +830,28 @@ def _exec_send_message(ctx, args):
         if _bad:
             log.info("发送参数不合格，已在碰界面前挡下（不触发重试）：%s", _bad[:120])
             return _err("参数不合格：%s（这一类失败**不用重发**，改好参数再调用）" % _bad)
+        # ★ 「本轮回累计条数上限」—— `_validate_send_args` 只管**单次调用内**的形状（≤20 条），
+        #   **不含"本轮回累计"这一维**；而模型完全可能在一轮里**分多次**调 `send_message`
+        #   （朋友原注：*"本轮回复总条数上限：模型可能分多次调 send_message，单次限 3 拦不住累计五六条"*）。
+        #   ⇒ 这里按 `session["sent"]` 算已发数，超了就**截断**（不是报错）——
+        #     截断比报错好：模型已经把话说完了，报错只会让它**整轮重发**（9-15k token）。
+        _cap = int(((get_config().get("send") or {}).get("max_total_per_reply") or 0) or 0)
+        if _cap > 0:
+            _already = len(ctx["session"].get("sent") or [])
+            if _already >= _cap:
+                log.warning("本轮回已发 %d 条（上限 %d）⇒ 本次 send_message 直接拒（不再碰界面）",
+                            _already, _cap)
+                return _err("本轮回回复条数已达上限 %d 条（已发 %d 条）。"
+                            "**不要再调 send_message 了**，把想说的并进已有内容或就此收尾。"
+                            % (_cap, _already))
+            _remain = _cap - _already
+            if len(messages) > _remain:
+                log.warning("本轮回已发 %d 条、上限 %d ⇒ 本次 %d 条截断为剩余 %d 条（末尾合并）",
+                            _already, _cap, len(messages), _remain)
+                if _remain == 1:
+                    messages = ["\n".join(str(m) for m in messages)]
+                else:
+                    messages = list(messages[:_remain - 1]) + ["\n".join(str(m) for m in messages[_remain - 1:])]
         # 引用时把被引用消息的原文 + 发送者名字带给发送层（用于定位头像/气泡，即便已滚出可视区）
         reply_text = ""
         reply_sender_name = ""
@@ -784,7 +872,7 @@ def _exec_send_message(ctx, args):
         note = "已发送。不要输出\"已发送\"类汇报，继续思考下一步或直接结束。"
         if result["failed"]:
             # ⛔ （用户转述报障）：
-            #   以前这里**只给条数**（"另有 N 条发送失败，请稍后再试"），把每条的真实原因**原样丢掉**
+            #   以前这里**只给条数**，把每条的真实原因**原样丢掉**
             #   ⇒ 模型不知道为什么失败（只能瞎重试）、用户看运行明细也只看到一句"发送失败"，
             #   报障连原因都带不出来。原因必须**一路透传**：进工具返回值（模型看得见）+ 进日志。
             _why = [{"index": int(f.get("index") or 0) + 1,
@@ -800,7 +888,7 @@ def _exec_send_message(ctx, args):
                 try:
                     from . import send_retry as _sr
                     # ⛔ 原来这里写的是
-                    #   `str(m.get("text") or "")` —— 而 `messages` 的元素是**字符串**
+                    #   `str(m.get or "")` —— 而 `messages` 的元素是**字符串**
                     #   （`util.normalize_message_list` 返回 str 列表）⇒ `AttributeError` 被下面的
                     #   `except` 吞成 DEBUG ⇒ **send_retry 在生产里一条都没进过**（整套"判不了就晚点补发"
                     #   从未生效）；而且原来是"拿失败回执的前 20 字去 messages 里盲找"，同前缀的两条会
@@ -847,6 +935,29 @@ def _exec_send_message(ctx, args):
         return _err(_emsg)
 
 
+def _exec_skill(ctx, args):
+    """读一个 Skill 的正文（清单里只给了名字与一句说明，正文要靠这次调用来取）。
+
+    ⛔ 取不到就**如实说没有**，并**把现有清单回给模型**（它可能记错了名字）——
+    不静默返回空、也不编一段正文出来。名字比较大小写不敏感、允许略去首尾空白。
+    """
+    name = str(args.get("name") or "").strip()
+    try:
+        from . import skills as _sk
+    except Exception as _e:  # noqa: BLE001
+        log_swallowed(_e, where="tools._exec_skill")
+        return _err("读 Skill 失败（模块没加载起来）：%s" % type(_e).__name__)
+    if not _sk.enabled():
+        return _err("Skill 功能当前是关着的（管理员关闭了总开关），现在读不到任何 Skill。"
+                    "先按你已有的规则说话就行。")
+    item = _sk.get(name)
+    if item is None:
+        have = [s["id"] for s in _sk.load()[0]]
+        return _err("没有叫「%s」的 Skill。当前可用的有：%s"
+                    % (name, ("、".join(have)) if have else "（一个都没有）"))
+    return _ok({"name": item["id"], "content": item["body"]})
+
+
 def _exec_get_recent(ctx, args):
     limit = min(100, max(1, int(args.get("limit") or 30)))
     offset = max(0, int(args.get("offset") or 0))
@@ -874,6 +985,29 @@ def _exec_get_members(ctx, args):
             "lastSeen": _t.strftime("%m-%d %H:%M", _t.localtime((m["last_ts"] or 0) / 1000.0)),
             "recentCount": m["count"],
         } for m in members],
+    })
+
+
+def _exec_get_group_members(ctx, args):
+    """群成员名录（静态读库）。**非群聊要明说**，不许返回空列表糊弄过去。"""
+    limit = min(500, max(1, int(args.get("limit") or 200)))
+    ok, payload = ctx["wechat"].group_members(ctx["chat_key"])
+    if not ok:
+        return _err("读群成员名录失败：%s" % payload)
+    if not payload:
+        return _err("当前会话不是群聊（或该群没有任何成员记录）。"
+                    "若这确实是群，请确认微信正在运行；想找「最近发过言的人」"
+                    "可以用 get_active_members。")
+    owner = next((m["name"] for m in payload if m.get("is_owner")), "")
+    return _ok({
+        "count": len(payload),
+        "owner": owner,
+        "members": [{
+            "userId": m["username"],
+            "name": m["name"],
+            "remark": m["remark"],
+            "isOwner": m["is_owner"],
+        } for m in payload[:limit]],
     })
 
 
@@ -1036,6 +1170,41 @@ def _exec_forward_media(ctx, args):
 _VOICE_LAST = {} # chat_key -> (ts, text)：同会话同内容的最小间隔（防刷屏）
 
 
+def _voice_win_minimized(ctx) -> tuple:
+    """微信主窗是不是**最小化** ⇒ (是否最小化, 说明)。
+
+    ⛔ **本判定已不再用于决定"发语音条还是发文件"**（实测推翻）：
+
+    老逻辑是"最小化 ⇒ 抓不到帧 ⇒ 判据瞎了 ⇒ 改发语音文件"。**前提已被证伪**：
+      · 真语音条**不需要画面判据** —— 判据改用 **DB 回读**（`wait_new_message` 的
+        `MAX(local_id)` 增量，`filewatch` 盯 `message_*.db-wal`）⇒ 抓不到帧照样成立；
+      · **最小化档端到端已实测跑通**（19:02）：真语音条 `ok=True`，DB 回读进新行
+        （`filehelper` local_id 729 > 基线 728）；**窗口零像素上屏**（可见采样 0 / 累计 0.000 ms）、
+        **前台变化采样 0**；跑后窗口仍是 `iconic=True`、rect 未变。
+      ⇒ 见 `报告/调研/真语音条-最小化档查证.md`。
+
+    ⇒ 现在**只作只读观测/诊断用**（排障时想看一眼"主窗当时是不是最小化"）。
+      **发送档位不再由它决定**（档位由 `send()` 内部按"独立窗能不能投递"自己判）。
+
+    只做只读判定：拿主窗句柄问 `IsIconic`。任何一步拿不到 ⇒ **返回 False（按"没最小化"处理）**
+    —— 宁可让它去真语音条那条链上**自己如实失败**，也不许因为"判不了"就把用户挡在门外
+    （与 `wechat._moments_judge_blind` 同口径：判不了不当作"是"）。
+    """
+    try:
+        wechat = ctx.get("wechat")
+        if wechat is None:
+            return False, ""
+        gui = wechat._get_gui()
+        hwnd = int(getattr(gui, "main_hwnd", 0) or 0)
+        if not hwnd:
+            return False, ""
+        import ctypes
+        return bool(ctypes.windll.user32.IsIconic(int(hwnd))), ""
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return False, ""
+
+
 def _exec_send_voice_reply(ctx, args):
     """文字 → 本机合成 → 发到当前会话。**形态由用户在控制台选**（
     「最好就是给个选项，让用户选是发音频文件还是真发一个语音条，**默认就是发语音条**」）：
@@ -1056,7 +1225,15 @@ def _exec_send_voice_reply(ctx, args):
             return _ok("这条太长（%d 字，上限 %d）：语音回复请压到 %d 字以内。" % (len(text), mx, mx))
         # ── 形态：真语音条（默认）走 voice_strip；不齐就按 fallback_file 如实回退 ──
         _form = str(vcfg.get("form") or "strip").strip().lower()
-        _strip_note = ""
+        # ★ 分档；当天 19:02 按实测**再次更正**）
+        #   ⛔ 中间那版口径写的是"最小化 ⇒ 抓不到帧 ⇒ 改发语音文件兜底"——**前提已被证伪**：
+        #   真语音条判据早就换成 **DB 回读**（`wait_new_message` / `MAX(local_id)` 增量），
+        #   **不依赖画面** ⇒ 最小化档照样成立，且已端到端实测：
+        #     ok=True；`filehelper` local_id 729 > 基线 728；窗口零像素上屏（采样 0）；
+        #     前台变化采样 0；跑后 `iconic=True`、rect 未变。
+        #   ⇒ **三档（前台/后台/最小化）都走同一条真语音条链**，不再"最小化就偷偷换成文件"
+        #     （那会让用户以为发出去的是语音条、实际收到一个文件）。真发不出去时
+        #     由 `send()` **如实**回失败原因，再走下面的 `fallback_file` 明示回退。
         if _form == "strip":
             try:
                 from . import voice_strip as _vs
@@ -1068,7 +1245,8 @@ def _exec_send_voice_reply(ctx, args):
                 if _okv:
                     try:
                         ctx["session"]["sent"].append({"type": "voice_strip", "text": text})
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass
                     return _ok({"sent": True, "form": "strip",
                                 "note": "已发出**真语音条**（微信语音气泡）。不要输出\"已发送\"类汇报。",
@@ -1095,7 +1273,8 @@ def _exec_send_voice_reply(ctx, args):
         _VOICE_LAST[key] = (time.time(), text)
         try:
             ctx["session"]["sent"].append({"type": "voice_file", "text": text})
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         out = {"sent": True, "voice": info.get("voice") or "", "fmt": info.get("fmt") or "",
                "note": "已发（形态：音频文件，不是语音条）。不要输出\"已发送\"类汇报。"}
@@ -1186,7 +1365,8 @@ def _exec_gen_image(ctx, args):
                         "（不要假装发过；可稍后重试）" % "；".join(sent_bad[:3]))
         try:
             ctx["session"]["sent"].append({"type": "image", "text": "[生成图]"})
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return _ok({"sent": True, "files": sent_ok + sent_bad, "backend": res.get("backend"),
                     "note": "已生成并通过过滤链后发出（%d 张%s）。不要输出『已发送』类汇报。"
@@ -1218,10 +1398,11 @@ def _exec_send_image_search(ctx, args):
         _IMG_SEARCH_LAST[key] = time.time()
         try:
             ctx["session"]["sent"].append({"type": "image", "text": "[图片]"})
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         # 🔴 回执**不许再撒谎**。老实现不管取到的是什么，都回「已找到并发出一张「鲸鱼」的图」
-        #   —— 而当时其实走了"旧图缓存兜底"，发出去的是一张毫不相干的图，用户当场发现「跟我要的
+        #   —— 而当时其实走了"旧图缓存兜底"，发出去的是一张毫不相干的图，的
         #   完全不一样」。⇒ 兜底来的图必须明说"与关键词无关"，让模型别把它当命中关键词的图去说嘴。
         if "与关键词无关" in str(why):
             return _ok({"sent": True, "keyword": kw, "file": _os.path.basename(path),
@@ -1280,7 +1461,8 @@ def _exec_send_local_file(ctx, args):
         _fs.note_sent(path, ctx.get("chat_id") or "")
         try:
             ctx["session"]["sent"].append({"type": "file", "text": _os.path.basename(path)})
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return _ok({"sent": True, "file": _os.path.basename(path), "mb": round(mb, 2),
                     "note": "已发出（这一步短暂用过前台）。不要输出\"已发送\"类汇报。"})
@@ -1392,7 +1574,8 @@ def _exec_send_emoji(ctx, args):
             _gname0 = ""
             try:
                 _gname0 = ctx["wechat"].group_name(_cid0) or ""
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _gname0 = ""
             _okp, _msp = ctx["wechat"].emoji_panel_open(group_name=_gname0, chat_id=_cid0)
             if _okp:
@@ -1437,7 +1620,7 @@ def _exec_send_emoji(ctx, args):
         #   剪贴板放图（CF_DIB）→ 输入框右键「粘贴」→ 回车，**不需要表情面板**，所以能和"摁住微信"共存。
         #   实测（演示群，离线解密出的表情图）：7.2s、**微信占前台 0.05s**、DB 回读 local_id=18 type=图片。
         #   ⛔ 代价是**结构性的**：CF_DIB 是一张位图 ⇒ 动图也只能发首帧。收藏夹里若存的是会动的
-        #   （`emoticon.to_animated` 的产物），就必须如实告诉用户"对方看到的是静的"，并指出要发
+        #   （`emoticon.to_animated` 的产物），就必须如实告诉，并指出要发
         #   会动的该走哪条路 —— 不能让他以为动图发出去了（回执里说清，别靠他自己发现）。
         _anim = False
         try:
@@ -1470,7 +1653,8 @@ def _exec_send_emoji(ctx, args):
         _gname = ""
         try:
             _gname = ctx["wechat"].group_name(_cid) if _cid else ""
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             _gname = ""
         ok, msg = ctx["wechat"].emoji_panel_open(group_name=_gname, chat_id=_cid)
         if not ok:
@@ -1577,11 +1761,24 @@ def _exec_moments_comment(ctx, args):
 
 
 def _exec_moments_surf(ctx, args):
-    """刷朋友圈：滚动 + 截图给模型看（一次视口）。"""
+    """刷朋友圈：**先纯读库**（不开窗、结构化文字），读不到才退回"开窗 + 截图"。
+
+    分工：读库那条路**不动鼠标、不开窗**（＝只读观察），而且给的是**结构化字段**
+    （作者/正文/时间/点赞人/评论含回复关系）—— 比让模型从小字截图上认字准、也省 token；
+    截图那条路只在"读库失败"或调用方明确要"看画面"（`visual=1`）时走。
+    """
     try:
+        limit = int(args.get("limit") or 10)
+        want_visual = bool(args.get("visual"))
+        if not want_visual:
+            ok, payload = ctx["wechat"].moments_read(limit=limit, mine=bool(args.get("mine")))
+            if ok and payload:
+                return {"content": _moments_as_text(payload)}
+            # 读库失败/为空 ⇒ 显式说明为什么退到截图（不静默换路）
         from agent.behavior import decider
         if not decider.should("moments_surf"):
-            return _err("刷朋友圈被决策引擎拦截（频率/上限未达，或未启用；可在控制台调试区开启）")
+            return _err("刷朋友圈（视觉路线）被决策引擎拦截（频率/上限未达，或未启用）；"
+                        "若只想要文字内容可直接读库，那条路不受此闸限制")
         scroll = int(args.get("scroll") or 0)
         ok, msg = ctx["wechat"].moments_open()
         if not ok:
@@ -1598,8 +1795,32 @@ def _exec_moments_surf(ctx, args):
         return _err(str(e))
 
 
-def _ok_text(parts):
-    return "（截图见下方图片）"
+def _moments_as_text(rows) -> str:
+    """把 `moments_read()` 的结构化结果渲染成给模型看的一段文字（**保留回复关系**）。"""
+    def _t(ts):
+        try:
+            return time.strftime("%m-%d %H:%M", time.localtime(int(ts)))
+        except Exception:
+            return "?"
+    lines = ["朋友圈最近 %d 条（读库，未开窗）：" % len(rows)]
+    for i, r in enumerate(rows, 1):
+        who = r.get("nickname") or r.get("username") or "?"
+        body = (r.get("text") or "").replace("\n", " ").strip() or "（无文字）"
+        lines.append("%d. %s（%s）：%s" % (i, who, _t(r.get("create_time")), body[:200]))
+        med = []
+        if r.get("image_count"):
+            med.append("%d 图" % r["image_count"])
+        if r.get("video_count"):
+            med.append("%d 视频" % r["video_count"])
+        if med:
+            lines.append("   媒体：%s" % "、".join(med))
+        if r.get("likes"):
+            lines.append("   赞：%s" % "、".join(str(x) for x in r["likes"][:20]))
+        for c in (r.get("comments") or [])[:10]:
+            a = c.get("author") or "?"
+            to = c.get("reply_to") or ""
+            lines.append("   评论：%s%s：%s" % (a, (" 回复 %s" % to) if to else "", c.get("content") or ""))
+    return "\n".join(lines)
 
 
 def _exec_moments_publish(ctx, args):
@@ -1919,7 +2140,8 @@ def execute_tool(defs: list, ctx, name: str, args_json: str):
         return {"content": "错误：未知工具 %s" % name, "is_error": True}
     try:
         args = json.loads(args_json or "{}")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {"content": "错误：工具 %s 的参数不是合法 JSON：%s" % (name, str(args_json)[:200]), "is_error": True}
     if not isinstance(args, dict):
         args = {}

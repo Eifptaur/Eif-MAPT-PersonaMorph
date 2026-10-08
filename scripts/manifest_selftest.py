@@ -15,6 +15,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import logging
+
+log = logging.getLogger("persona-morph")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -138,7 +141,8 @@ try:
             continue
         try:
             _t = open(os.path.join(_adir, _fn), encoding="utf-8", errors="replace").read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         if "requiresBase" in _t:
             agent_hits.append(_fn)

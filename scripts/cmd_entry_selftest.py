@@ -32,6 +32,11 @@ import tempfile
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 同目录的 `_srcmatch`
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
+import logging
+
+log = logging.getLogger("persona-morph")
 os.chdir(ROOT)
 
 CHECK = "一键检验（生成报告）.cmd"
@@ -75,8 +80,8 @@ for nm in (CHECK, ONLY):
         ok("%s：UTF-8 可解码" % nm, True)
     except Exception as e:
         ok("%s：UTF-8 可解码" % nm, False, str(e)[:80])
-    ok("%s：含 chcp 65001（中文才显示得出来）" % nm, "chcp 65001" in text(nm))
-    ok("%s：含 cd /d \"%%~dp0\"（切到包目录）" % nm, 'cd /d "%~dp0"' in text(nm))
+    ok("%s：含 chcp 65001（中文才显示得出来）" % nm, _sm.has(text(nm), "chcp 65001"))
+    ok("%s：含 cd /d \"%%~dp0\"（切到包目录）" % nm, _sm.has(text(nm), 'cd /d "%~dp0"'))
 
 # ── B 两个入口该有的步骤 ────────────────────────────────────────────────
 print("\n[二] 入口步骤")
@@ -92,7 +97,7 @@ for nm in (CHECK, ONLY):
     i = t.find("setup_python.ps1")
     after = t[i:] if i >= 0 else ""
     ok("%s：setup 之后**先直接试** runtime\\python\\python.exe（P8，不依赖那个文本文件）" % nm,
-       'if exist "runtime\\python\\python.exe" (' in after)
+       _sm.has(after, 'if exist "runtime\\python\\python.exe" ('))
     ok("%s：没有 `if ... set X & ...` 串联坑（`&` 后面的命令会无条件执行）" % nm,
        re.search(r'^if .*set ".*" &', t, re.M) is None)
 
@@ -130,7 +135,7 @@ def neuter(t, setup_fake=False):
             out.append("echo MARKER-DEPS")
         elif "collect_report.py" in s:
             out.append("echo MARKER-REPORT")
-        elif 'set "PYCMD=py"' in s:
+        elif _sm.has(s, 'set "PYCMD=py"'):
             out.append("echo MARKER-PYFALLBACK")
         else:
             out.append(ln)
@@ -224,7 +229,8 @@ try:
                         encoding="utf-8", errors="replace", timeout=20,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     ps1 = [x.strip() for x in (_r.stdout or "").splitlines() if x.strip()]
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     ps1 = []
 if not ps1:
     import glob
@@ -243,7 +249,7 @@ ok("随包 .ps1 都是 UTF-8 **带 BOM**（无 BOM ⇒ PS 5.1 按 ANSI 解、中
 # 之后它指向旧位置 ⇒ exe 报「Python 环境异常 · …不存在」，而文件明明在。
 _ps1 = text(os.path.join("scripts", "setup_python.ps1"))
 ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一侧也读了 936）",
-   "Set-Content -Path $pathTxt -Value $cmd -Encoding Default" in _ps1)
+   _sm.has(_ps1, "Set-Content -Path $pathTxt -Value $cmd -Encoding Default"))
 
 # ③ `一键启动.exe` 这一侧与 `installer.ps1` **同源**（同一个文件、同一个坑，两边别各写一套）：
 #    先按约定找 runtime\python\python.exe；读 txt 时 936/UTF-8 都试；找不到就说人话（不教用户解压）。
@@ -252,36 +258,36 @@ ok("setup_python.ps1 仍按 ANSI 写 python_path.txt（一键启动.exe 那一�
 #    含 `runtime/`，绿色 Python 不进包 ⇒ "没有 runtime\python 但有系统 Python"是常态）。
 _lc = text(os.path.join("launcher-src", "launcher.cs"))
 ok("一键启动.exe 先按约定找 runtime\\python\\python.exe（不靠那个 txt）",
-   'Path.Combine(Root, "runtime", "python", "python.exe")' in _lc)
+   _sm.has(_lc, 'Path.Combine(Root, "runtime", "python", "python.exe")'))
 # ⭐ （P0）：**整串先当路径试**（安装路径含空格时唯一能救回来的分支；
 #    默认包顶层就叫 `persona morph`）。两侧同源：launcher.cs 的 TryPy 与 installer.ps1 的 Resolve-PyCmd。
 _ps_inst = text(os.path.join("scripts", "installer.ps1")) # 本段要用的 installer 源码
 ok("exe：切分之前先判「整串是不是一个存在的文件」（含空格路径）",
-   "if (File.Exists(cmd))" in _lc and "先判" in _lc)
+   _sm.has(_lc, "if (File.Exists(cmd))") and "先判" in _lc)
 ok("installer.ps1：同样「整串先当路径试」",
-   "if (Test-Path -LiteralPath $t) {" in _ps_inst)
+   _sm.has(_ps_inst, "if (Test-Path -LiteralPath $t) {"))
 ok("installer.ps1：取版本**有硬超时**（拿非 Python 的 exe 不会挂死）",
-   "function Invoke-PyVer" in _ps_inst and "WaitForExit(20000)" in _ps_inst and "$p.Kill()" in _ps_inst)
+   _sm.has(_ps_inst, "function Invoke-PyVer") and "WaitForExit(20000)" in _ps_inst and "$p.Kill()" in _ps_inst)
 ok("installer.ps1：只给含空格的参数加引号（`py -3` 那种短参数不许加）",
-   "-match '\\s'" in _ps_inst)
+   _sm.has(_ps_inst, "-match '\\s'"))
 ok("读 logs\\python_path.txt 时 936 与 UTF-8 都试、去 BOM",
-   "static string ReadPyRaw" in _lc and "Encoding.GetEncoding(936), new UTF8Encoding(false)" in _lc
+   _sm.has(_lc, "static string ReadPyRaw") and _sm.has(_lc, "Encoding.GetEncoding(936), new UTF8Encoding(false)")
    and "TrimStart('\\uFEFF')" in _lc)
 ok("exe 认「命令 + 参数」（`py -3` 不当文件路径判）",
-   "static bool TryPy" in _lc and "looksPath" in _lc and "RunPy(" in _lc
+   _sm.has(_lc, "static bool TryPy") and "looksPath" in _lc and "RunPy(" in _lc
    and "File.Exists(t)" not in _lc)
 ok("exe 用解析出来的 exe + 前置参数起 onestart（不再直接把那行当文件名）",
-   'new ProcessStartInfo(exe,' in _lc and "pre.Length > 0" in _lc)
+   _sm.has(_lc, 'new ProcessStartInfo(exe,') and _sm.has(_lc, "pre.Length > 0"))
 ok("exe 会看 setup_python 的退出码（不再无脑打「准备 Python 完成」）",
-   "int rc = RunSetupPy(ps1, false)" in _lc and "退出码 " in _lc and "VerOk(" in _lc)
+   _sm.has(_lc, "int rc = RunSetupPy(ps1, false)") and _sm.has(_lc, "退出码 ") and "VerOk(" in _lc)
 ok("找不到 Python 时给的是**不用解压**的下一步（与 installer.ps1 文案同源）",
    "不用自己解压" in _lc and "检查更新" in _lc)
 _ps = text(os.path.join("scripts", "installer.ps1"))
 ok("installer.ps1 同样「命令与路径都认」+ 真跑一次验版本",
-   "function Resolve-PyCmd" in _ps and "function Find-Py" in _ps
+   _sm.has(_ps, "function Resolve-PyCmd") and _sm.has(_ps, "function Find-Py")
    and "3\\.(10|11|12)" in _ps and "sys.version_info" in _ps)
 ok("installer.ps1 把解析出的 exe 与参数分开传给子进程",
-   "Run-HiddenLogWatch $pyCmd ((($pyPre)" in _ps)
+   _sm.has(_ps, "Run-HiddenLogWatch $pyCmd ((($pyPre)"))
 
 # ③ `.cmd` 代码里不许再读那个 txt（读就有跨编码风险，见 P8），且要有 nopy 守卫
 for nm in (CHECK, ONLY):
@@ -290,7 +296,7 @@ for nm in (CHECK, ONLY):
     ok("%s：代码里**不读** python_path.txt（P8 的正解：谁都不依赖那个文件）" % nm,
        "python_path.txt" not in _code)
     ok("%s：有 nopy 守卫（PYCMD 不存在时给人话，而不是天书报错）" % nm,
-       ":nopy" in _t and 'if not defined PYARG if not exist "%PYCMD%"' in _t)
+       ":nopy" in _t and _sm.has(_t, 'if not defined PYARG if not exist "%PYCMD%"'))
     _bad_end = [i + 1 for i, l in enumerate(_t.split("\r\n")) if l and ord(l[-1]) > 127]
     ok("%s：每行都以 ASCII 字节结尾" % nm,
        not _bad_end, "行：%s" % _bad_end)

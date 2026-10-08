@@ -33,7 +33,7 @@ FP_FILE = os.path.join(DATA_DIR, "ui_fingerprints.json")
 CROP = 48 # 目标点周围取多大一块（像素，渲染区坐标系）
 HASH_W, HASH_H = 9, 8
 #: 64 位 dHash 的汉明距离阈值（超过即判"不是同一个图标"）。
-#: ⭐ 2026-09-29 由 **10 收紧到 4**，依据是实测而不是手感：
+#: ⭐ 由 **10 收紧到 4**，依据是实测而不是手感：
 #:   · 加了"±3px 内取最优"之后，**同类最大距离实测 0**（`scripts/ui_fp_measure.py`，355 个非空白位置）
 #:     ⇒ 判定真正靠的是位置容差，不靠阈值松；
 #:   · 而 10 太松会**误受**：实测"同一图标换主题（浅↔深）"时距离能到 5（甚至在 (-3,0) 偏移上），
@@ -60,7 +60,7 @@ VAR_DUP_DIST = 2
 #: 类间保护：新指纹与**同一环境键下其他目标**的距离 ≤ 它 ⇒ **拒绝入库**（防"什么都像"）
 INTER_MIN_DIST = 8
 #: **归属余量**：本目标的最优距离必须比"别的目标的最优距离"至少近这么多才放行。
-#: 为什么必须有它（2026-09-29 实测踩坑）：光看"距离 ≤ 10"是不够的 —— 容差搜索会在 9 个偏移里
+#: 为什么必须有它（实测踩坑）：光看"距离 ≤ 10"是不够的 —— 容差搜索会在 9 个偏移里
 #: **挑一个最像的**，实测"亮色图标的指纹"与"暗色主题同一位置"在 (-3,0) 偏移下距离只有 **5**
 #: ⇒ 单模板会**误受**（把换主题/换图标都当成"就是它"）。加上归属余量后，判定从"像不像"变成
 #: "**这个位置到底更像谁**"，这才是"认图标"该问的问题。
@@ -72,7 +72,8 @@ NEAR_MARGIN = 3
 def _dpi_of(hwnd) -> int:
     try:
         return int(ctypes.windll.user32.GetDpiForWindow(int(hwnd)) or 96)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 96
 
 
@@ -113,7 +114,8 @@ def _render_of(gui) -> tuple:
             r = gui.render_rect or gui._update_render_rect()
             if r and int(r[2] - r[0]) > 0:
                 return tuple(int(v) for v in r)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     try:
         from . import input_backend as _ib
@@ -126,7 +128,8 @@ def _render_of(gui) -> tuple:
         r = wintypes.RECT()
         ctypes.windll.user32.GetWindowRect(int(hwnd), ctypes.byref(r))
         return (r.left, r.top, r.right, r.bottom)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return (0, 0, 0, 0)
 
 
@@ -170,7 +173,8 @@ def dhash(img_or_pixels, size=(HASH_W, HASH_H)) -> str:
                     bits |= (1 << i)
                 i += 1
         return "%016x" % bits
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -199,7 +203,8 @@ def _grab(gui):
         from PIL import ImageGrab
         r = gui.render_rect
         return ImageGrab.grab((int(r[0]), int(r[1]), int(r[2]), int(r[3])), all_screens=True)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
@@ -246,7 +251,8 @@ def _crop(img, pt_render, size=CROP):
         r = max(1, min(w, l + size))
         b = max(1, min(h, t + size))
         return img.crop((l, t, r, b)), (cx, cy)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None, None
 
 
@@ -285,6 +291,7 @@ def capture(gui, name: str, pts: dict = None, img=None) -> dict:
         return {"ok": True, "name": name, "hash": dhash(crop), "mean": round(mean, 1),
                 "std": round(std, 1), "pt": [int(center[0]), int(center[1])], "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
     except Exception as e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", e, exc_info=True)
         return {"ok": False, "why": str(e)[:120]}
 
 
@@ -345,7 +352,8 @@ def load(path: str = None) -> dict:
         with io.open(p, encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -353,12 +361,13 @@ def save(db: dict, path: str = None) -> bool:
     p = path or FP_FILE
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
+        tmp = persist.tmp_for(p)
         with io.open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(db, f, ensure_ascii=False, indent=1)
         persist.replace_into(tmp, p)
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -465,7 +474,8 @@ def learn_offset(rec: dict, off) -> dict:
     """
     try:
         dx, dy = int(off[0]), int(off[1])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return rec.get("learn") or {}
     if abs(dx) > TOL_PX or abs(dy) > TOL_PX:
         return rec.get("learn") or {}      # 超出容差范围的样本本身可疑，不参与学习
@@ -646,9 +656,9 @@ def verify(gui, name: str, max_dist: int = MAX_DIST, tol_px: int = None, img=Non
             _now = time.time()
             if _now - float(rec.get("_learn_saved") or 0) > 5.0:
                 rec["_learn_saved"] = _now
-                # ⛔ 写盘要**重新 load 再改再存**：`verify` 里原来只有 `bucket` 这个局部名，
-                #    我第一版写了 `db[k] = bucket` ⇒ `NameError: db` —— 还被下面的 `log.debug`
-                #    静默吞掉，表现为"校验全过、学习一个样本都没落盘"（判据 L10 当场抓到）。
+                # ⛔ 写盘要**重新 load 再改再存**：原来只用了 `bucket` 这个局部名，
+                #    写成 `db[k] = bucket` 会 `NameError: db` —— 还会被下面的 `log.debug`
+                #    静默吞掉，表现为"校验全过、学习一个样本都没落盘"。
                 #    ⇒ 这里用重载写法，并把失败日志提到 **warning**（这类错不许静默）。
                 _db = load()
                 if not isinstance(_db, dict):

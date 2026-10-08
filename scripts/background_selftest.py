@@ -41,12 +41,43 @@ import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 import _srcslice
 
 SRC_WECHAT = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+
+
+def _code_only(text):
+    """剥掉注释与文档字符串，只留可执行代码 —— 用于"某函数是否已删"这类静态判据
+    （否则函数名出现在**说明它已删除的注释里**会把判据弄成假红，纪律 6 的反面用法）。"""
+    import ast
+    out = []
+    try:
+        tree = ast.parse(text)
+    except Exception:                                     # noqa: BLE001
+        return text
+    doc_lines = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            d = getattr(node, "body", None)
+            if d and isinstance(d[0], ast.Expr) and isinstance(d[0].value, ast.Constant) \
+                    and isinstance(d[0].value.value, str):
+                for ln in range(d[0].lineno, (d[0].end_lineno or d[0].lineno) + 1):
+                    doc_lines.add(ln)
+    for i, ln in enumerate(text.splitlines(), 1):
+        if i in doc_lines:
+            continue
+        code = ln.split("#", 1)[0]
+        if code.strip():
+            out.append(code)
+    return "\n".join(out)
+
+
+_CODE_WECHAT = _code_only(SRC_WECHAT)
 SRC_IB = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                    "agent", "input_backend.py"), encoding="utf-8").read()
 SRC_CONSOLE = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 SRC_WEBUI = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
 SRC_UIADAPT = io.open(os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read()
+# 能力面板的单一事实源（B19c 等判据要读它）
+SRC_BG_STATUS = io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
 
 # ── A 矩阵自洽 ───────────────────────────────────────────────────────────
 print("[A] 后台能力矩阵（单一事实源）")
@@ -61,7 +92,7 @@ _named = ["send_text", "moments_open", "moments_scroll", "poke", "quote", "calib
 _gone = [k for k in _named if k not in {p["key"] for p in PATHS}]
 ck("A4 的 5 条路径都在表里（含朋友圈打开/刷两段）", not _gone, str(_gone))
 # ── A4b：**声明与实测一致** ──────────────────────────────
-#   用户当场指出「**前台，他切了前台**」——实测确认：搜索浮层路线会把微信顶到前台（约 1~10s）后自动还回，
+#   台，他切了前台**」——实测确认：搜索浮层路线会把微信顶到前台（约 1~10s）后自动还回，
 #   而表里原先写的是「**不负责改前台**」＝一句与事实不符的话。这类"对用户承诺过的话"必须有判据钉住。
 _sw_row = [p for p in PATHS if p.get("key") == "switch_chat"][0]
 ck("A4b 切换会话如实写明「会短暂置前 + 自动还回」（不许再写「不负责改前台」）",
@@ -268,9 +299,10 @@ ck("B17b′ ⚡2026-09-24 源码（去 docstring/注释）里不再有任何 Sho
 # ── B18：切会话"能点列表就不开搜索窗"（
 #    搜索框」）：顺序必须是 ①已在目标会话 ⇒ 什么都不做 ②列表里看得见 ⇒ 投递点那一行（不开窗）
 #    ③看不见才走搜索路线。且"点列表"这条路**不许滚列表**（滚动在他眼前动屏幕）。
-ck("B18 切会话：点列表（免搜索）**排在**搜索路线之前，且列表点击不滚列表",
-   "_click_visible_session(" in SRC_WECHAT
-   and SRC_WECHAT.index("self._click_visible_session(") < SRC_WECHAT.index("self.open_chat_by_search("))
+ck("B18 切会话：**主路＝搜索**（搜人名→盲粘贴→点结果）⇒ 在 `_switch_chat_posted_impl` 里**先调搜索、后点列表**",
+   "_try_search_first(" in SRC_WECHAT
+   and _srcslice.from_func(SRC_WECHAT, "_switch_chat_posted_impl").index("_try_search_first(")
+       < _srcslice.from_func(SRC_WECHAT, "_switch_chat_posted_impl").index("_click_visible_session("))
 _HELP_CVS = _srcslice.from_func(SRC_WECHAT, "_click_visible_session").split("\n    def ")[0]
 ck("B18a 「点列表」那条路**不开搜索窗、不滚列表**（只有抓图 + 投递点行 + 复核）",
    "open_chat_by_search" not in _HELP_CVS
@@ -283,87 +315,57 @@ ck("B18c 「已经在目标会话 ⇒ 什么都不做」那条仍在最前面（
    SRC_WECHAT.index("目标会话已经是当前打开的会话")
    < SRC_WECHAT.index("self._click_visible_session("))
 
-# ── B19：**按键走格**切会话（
-#    `MessageBackend(activate=True).keys(main,[VK_DOWN])` 真的换了会话，零坐标、不开窗、不动光标）
-ck("B19 切会话顺序＝按键走格 → 点列表 → 搜索（零坐标那条排最前）",
-   "_switch_by_keys(" in SRC_WECHAT
-   and SRC_WECHAT.index("self._switch_by_keys(") < SRC_WECHAT.index("self._click_visible_session(")
-   and SRC_WECHAT.index("self._click_visible_session(") < SRC_WECHAT.index("self.open_chat_by_search("))
-_KEYS_SEG = _srcslice.from_func(SRC_WECHAT, "_switch_by_keys")
-_KEYS_SEG = _KEYS_SEG[:_KEYS_SEG.find("\n    def ", 10)]
-ck("B19a 按键必须**带伪激活**（实测：不带时微信不理投递的方向键）",
-   "ib.MessageBackend(activate=True)" in _KEYS_SEG and "_VK_DOWN" in _KEYS_SEG and "_VK_UP" in _KEYS_SEG)
-ck("B19b **每按一格都读会话头确认**（走过头能立刻发现；不是「按完再猜」）",
-   "_header_now(gui)" in _KEYS_SEG and _sm.has(_KEYS_SEG, "_header_match(name, hdr)"))
-ck("B19c 这条路上**不许有坐标点击、不许滚动、不许开搜索窗**",
-   "_click_posted(" not in _KEYS_SEG and ".wheel(" not in _KEYS_SEG
-   and "open_chat_by_search" not in _KEYS_SEG and "SetCursorPos" not in _KEYS_SEG)
-ck("B19d 读不到会话头时**先试按一格**再判（原来直接 fail-closed ⇒「目标就在下面一格」也一枪不按、退回搜索）",
-   "读不到会话头" in _KEYS_SEG and "试按一格" in _KEYS_SEG)
-ck("B19e 走法有界（单向 budget=12）+ 反向自纠偏（两相）—— 上限放宽是因为现在**每 3 格才还一次**，"
-   "不再一口气占住前台",
-   "_KEYS_WALK_BUDGET" in SRC_WECHAT and _sm.has(_KEYS_SEG, "for _phase in (0, 1)")
-   and _sm.has(_KEYS_SEG, "budget = int"))
-ck("B19h 还前台**不是每格都还**（每格一还、连走多格 ⇒ 用户看到「窗口疯狂闪」且发不出消息）；"
-   "改每 3 格还一次 + 链尾兜一次",
-   "_restore_fg_until(\"按键走格（每 3 格还一次）\"" in _KEYS_SEG and "_fg_stash_ok()" in _KEYS_SEG)
-ck("B19i 名字匹配**严格优先、宽容兜底**（实测 OCR 会吃掉 emoji：`海绵宝宝の吸🈲课堂` 读成 `海绵宝宝吸课堂`）",
-   _sm.has(SRC_WECHAT, "def _header_match(") and _sm.has(SRC_WECHAT, "loose_matches(hdr, name)"))
-ck("B19j 还前台时：**前台落在微信主窗上**不受「最近有输入就不抢」那条拦（那是我们的伪激活招来的）",
-   "_we_caused" in SRC_WECHAT and _sm.has(SRC_WECHAT, "not _we_caused"))
-ck("B19f 方向由**数据**定（各会话最后消息时间倒序），不是靠猜",
-   _sm.has(SRC_WECHAT, "int(rows[0].get(\"create_time\") or 0)") and _sm.has(SRC_WECHAT, "def _walk_dir(")
-   and "目标更旧" in SRC_WECHAT)
+# ── B19：**「按键走格」整条已删除**（「不允许，不能存在」，）
+#    真机证据：走格**必然让微信窜到前台**（走 4 格 6 秒里微信占前台 293/311 采样点），
+#    且我方只发 1 次伪激活时它照样窜前 ⇒ 根因是**微信收到方向键后自己置前**，我方压不住；
+#    `_busy_reason` 又只拦独占全屏游戏、普通窗口游戏拦不住 ⇒ 会打断用户 ⇒ 弃用。
+#    ⇒ 本段是**反向判据**：证明它**没有被复活**，并证明切会话链已改为两条路。
+ck("B19 切会话顺序＝**搜索 → 点列表**（走格已删，不再排最前）",
+   _srcslice.from_func(SRC_WECHAT, "_switch_chat_posted_impl").index("_try_search_first(")
+       < _srcslice.from_func(SRC_WECHAT, "_switch_chat_posted_impl").index("_click_visible_session("))
+ck("B19a ★「按键走格」的**符号一个都不许留**（函数 / 常量 / 方向键）",
+   "_switch_by_keys" not in SRC_WECHAT
+   and "_walk_dir" not in SRC_WECHAT
+   and "_KEYS_WALK_BUDGET" not in SRC_WECHAT
+   and "_KEYS_WALK_ACTIVATE_FIRST_ONLY" not in SRC_WECHAT
+   and "_VK_UP" not in SRC_WECHAT
+   and "_VK_DOWN" not in SRC_WECHAT)
+ck("B19b 走格专用的两个读表辅助也一并清了（_last_msg_ts / _chat_id_by_header）",
+   "_last_msg_ts" not in SRC_WECHAT and "_chat_id_by_header" not in SRC_WECHAT)
+ck("B19c 弃用理由**必须写进用户可见的能力面板**（不是只写在代码注释里）",
+   "按键走格" in SRC_BG_STATUS)
+ck("B19d 独立弹窗直通**必须排在点列表之前**（正路：一窗一会话，不用选行）",
+   "send_to_popup" in SRC_WECHAT
+   and SRC_WECHAT.index("send_to_popup") < SRC_WECHAT.index("self._click_visible_session("))
 
-print("── B19g 方向函数是纯逻辑：目标更旧 ⇒ 往下；更新 ⇒ 往上；数据不全 ⇒ 0（默认往下）──")
-
-
-class _DirStub(object):
-    """只借 `_walk_dir`（纯逻辑），把两个数据源打桩。"""
-    _walk_dir = WC.WeChatAdapter._walk_dir
-    _last_msg_ts = WC.WeChatAdapter._last_msg_ts
-    _chat_id_by_header = WC.WeChatAdapter._chat_id_by_header
-
-    def __init__(self, want_ts, cur_ts, cur_id="c1"):
-        self._w, self._c, self._cid = want_ts, cur_ts, cur_id
-        self._db = None
-
-    def _last_msg_ts(self, cid):
-        return self._w if cid == "want" else (self._c if cid == self._cid else 0)
-
-    def _chat_id_by_header(self, hdr):
-        return self._cid if hdr else ""
-
-
-_d1 = _DirStub(1000, 2000)
-ck("B19g 目标更旧（1000 < 2000）⇒ 往下（+1）", _d1._walk_dir("want", "演示（3）") == 1)
-_d2 = _DirStub(3000, 2000)
-ck("B19g 目标更新（3000 > 2000）⇒ 往上（-1）", _d2._walk_dir("want", "演示（3）") == -1)
-_d3 = _DirStub(0, 2000)
-ck("B19g 数据给不出 ⇒ 0（调用方默认往下）", _d3._walk_dir("want", "演示（3）") == 0)
-_d4 = _DirStub(1000, 0, cur_id="")
-ck("B19g 当前会话认不出来 ⇒ 0（不硬猜方向）", _d4._walk_dir("want", "演示（3）") == 0)
-
-# ── B20：**用户在忙（全屏游戏/演示/静默）⇒ 一律不动窗**──
-ck("B20 忙闲判据用 Windows 通知系统那套（SHQueryUserNotificationState）+ 全屏矩形兜底",
-   "SHQueryUserNotificationState" in SRC_WECHAT and "QUNS_BUSY" in SRC_WECHAT
-   and "前台窗口铺满整块屏幕" in SRC_WECHAT)
-ck("B20a 全屏/演示/静默这些状态都算忙（状态表覆盖）",
-   # ⛔ `("1:" in SRC_WECHAT or True)` 是**死合取项**（恒真）⇒ 去掉它，只留真判据
-   SRC_WECHAT.count("QUNS_BUSY") >= 2
-   and _sm.has(SRC_WECHAT, "D3D 独占全屏游戏") and "演示模式" in SRC_WECHAT and "系统静默时段" in SRC_WECHAT)
-_ck20 = ["self._busy_reason(\"切会话\")", "self._busy_reason(\"搜索切会话\"", "self._busy_reason(\"按键走格\"",
+# ── B20：**会不会踩到用户 ⇒ 看用户此刻手在不在动**（判据重做）──
+#   口径：**全屏本身不是拦截理由** —— 关键看**人在不在动**（鼠标动、键盘有输入）
+#   ⇒ 判据从「是不是全屏」换成「人在不在动」。
+ck("B20 忙闲主判据＝**真实输入**（`GetLastInputInfo` ⇒ `_user_active_seconds`），不是「是不是全屏」",
+   "_user_active_seconds" in SRC_WECHAT and "_user_idle_seconds" in SRC_WECHAT
+   and "_USER_ACTIVE_S" in SRC_WECHAT)
+ck("B20a 唯一保留的「全屏即拦」档＝**D3D 独占全屏游戏**（伪激活会把它踢出全屏＝不可逆破坏）",
+   "_d3d_fullscreen" in SRC_WECHAT and "SHQueryUserNotificationState" in SRC_WECHAT
+   and "QUNS_BUSY" in SRC_WECHAT and _sm.has(SRC_WECHAT, "D3D 独占全屏游戏"))
+ck("B20a2 ⛔ 旧「全屏分级/铺满屏幕/等全屏消失」那套**已清除**（只查代码，注释里提它是允许的）",
+   not _sm.has(_CODE_WECHAT, "def _fullscreen_busy(")
+   and not _sm.has(_CODE_WECHAT, "def _wait_fullscreen_clear(")
+   and "前台窗口铺满整块屏幕" not in _CODE_WECHAT)
+# ⚠️ 更正：`按键走格` 已被**整条删除**（见 B19，"不允许，不能存在"）⇒
+#   这里**不能再要它的符号**（要了就是自相矛盾：B19 判"符号一个都不许留"、B20b 判"必须有它"）。
+#   会动窗的路现在只剩：切会话 / 搜索切会话 / 表情面板 / 投递发送。
+_ck20 = ["self._busy_reason(\"切会话\")", "self._busy_reason(\"搜索切会话\"",
          "self._busy_reason(\"表情面板\")", "self._busy_reason(\"投递发送\""]
 _missing20 = [x for x in _ck20 if x not in SRC_WECHAT]
 ck("B20b 会动窗的每一条路都先问过「用户忙不忙」（缺：%s）" % (_missing20 or "无"),
    not _missing20)
-ck("B20c 忙就先等再决定（有上限），仍忙则**如实停下**（文案里点名原因，不静默硬动）",
-   "_wait_fullscreen_clear" in SRC_WECHAT and "本次不动窗（如实停下）" in SRC_WECHAT
-   and _sm.has(SRC_WECHAT, "你在忙（%s）⇒ 这条先不发"))
+ck("B20c 用户在动 ⇒ **先等输入空档**（`_wait_user_pause`），等不到则**如实停下**（文案点名「在操作」）",
+   "_wait_user_pause" in SRC_WECHAT and "本次不动窗（如实停下）" in SRC_WECHAT
+   and _sm.has(SRC_WECHAT, "你一直在操作"))
 _CONSOLE20 = SRC_CONSOLE
 _BG20 = io.open(os.path.join(ROOT, "agent", "bg_status.py"), encoding="utf-8").read()
 ck("B20d 对外文案如实写明「全屏玩游戏/演示时不动窗」（用户看得见）",
-   "全屏" in _BG20 and "不动窗" in _BG20)
+   "不动窗" in _BG20)
 
 # ── B21：**摁住微信**──
 #   实测（`_scratch/hold_down_switch.py`、`_scratch/_live_hold_product.py`）：同一条"按键走格 ↑11 格"
@@ -374,9 +376,11 @@ ck("B21 有「摁住微信」的三个件：`_hold_begin` / `_hold_end` / `_Hold
 ck("B21a 摁的动作＝**微信一到前台就还用户窗口**（按进程判）+ **压 Z 序底层**（NOACTIVATE，不动几何/可见性）",
    _sm.has(SRC_WECHAT, "GetWindowThreadProcessId(cur)[1]) == int(wxpid)")
    and "HWND_BOTTOM" in SRC_WECHAT and _sm.has(SRC_WECHAT, "0x0002 | 0x0001 | 0x0010"))
-_ck21 = ["_hold_begin(\"快路径发送\")", "_hold_begin(\"按键走格\")"]
+# ⚠️ 更正：`按键走格` 已删（见 B19）⇒ 只剩"快路径发送"这条要摁住。
+#   仍在跑的压力告警的是 `_hold_begin` 的**心跳 TTL**（B21c 守），所以这里只查剩下的那条。
+_ck21 = ["_hold_begin(\"快路径发送\")"]
 _miss21 = [x for x in _ck21 if x not in SRC_WECHAT]
-ck("B21b 真正动窗的两条路（快路径发送 / 按键走格）都摁住（缺：%s）" % (_miss21 or "无"), not _miss21)
+ck("B21b 真正动窗的路（快路径发送）摁住（缺：%s）" % (_miss21 or "无"), not _miss21)
 ck("B21c 链尾与每条路由结束都**停摁**（`_minimize_back_if_needed` 里也有），且**有 45s 心跳 TTL 兜底**"
    "（防早退留常驻线程）",
    "_hold_end()" in _srcslice.from_func(SRC_WECHAT, "_minimize_back_if_needed")[:1600]
@@ -387,8 +391,10 @@ ck("B21d 对外文案写明「它会把你原来的窗口摁在最前 / 把微�
 
 # ── B22：**等一个"他没在打字"的空档**（
 #   就闪那么一下」）＋ 发表情方式做成可选项（他自己选真表情还是发图片，代价写进控制台）──
-ck("B22 发送前等一个输入空档（切会话 8s；发送那枪收紧到 2s —— 它只占 0.15s，用 6 秒去省这点打扰不值得）",
-   _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=8.0, idle=0.9)")
+# ⚠️ 更正：切会话的等待已改成**按调用方的 `wait_s` 走**（不再写死 8.0/0.9），
+#   发送那枪仍是收紧的 2.0/0.5 ⇒ 断言改锚**这两个当前事实**（别锚旧字面值）。
+ck("B22 发送前等一个输入空档（切会话按调用方 wait_s；发送那枪收紧到 2s）",
+   "_wait_user_pause(max_s=float(wait_s), idle=1.2)" in SRC_WECHAT
    and _sm.has(SRC_WECHAT, "_wait_user_pause(max_s=2.0, idle=0.5)"))
 _SRC_TOOLS = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
 _SRC_CFG = io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read()
@@ -615,7 +621,7 @@ ck("B24d 失败时如实说清「文字可能还留在输入框里」（别只�
 ck("B24e 三枪都没打出去 ⇒ 如实报「三枪都没打出去」，不冒充「已投递」",
    "三枪都没打出去" in _ST and _sm.has(_ST, "if not _fired:"))
 # B20~B21 档位强弱（r25 对面实测：会话头指纹档**会假阳性**——当前明明开着「E」时
-#   `chat_is_open("filehelper")` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
+#   `chat_is_open` 也返回 True；而 r24 我刚把这个函数接进身份闸的兜底 ⇒ 等于给"发错
 #   会话"开了一道缝。⇒ 指纹档降级为弱档、默认不采信；标题带档提为首选（对面实测它有区分力：
 #   'OE' vs 'O文亻牛传输助手'，且 那一次 A1 命中的正是这一档）。
 # ⛔ 按**函数跨度**取整段，不做字符数截断：函数里多十几行注释/逻辑就会把后面的断言挤出窗口 ⇒ 假红。
@@ -894,19 +900,62 @@ ck("F3 bg_status（单一事实源）写明伪激活代价", "不抢前台" not 
 # ⚠️ F 段原来只守三个文件 ⇒ 自检绿了、别处的旧说法还在。
 #    ⇒ 扩到**所有对用户/工程可见的声明点**（历史更新日志与 _scratch 不算）。
 _BAN = "不抢" + "前台" # 自己拼出来，免得自检文件本身命中
-# ⚠️ 2026-09-29：「使用说明.md」已合并进 README（不再单独维护）⇒ 声明点改指 README
+# ⚠️ ：「使用说明.md」已合并进 README（不再单独维护）⇒ 声明点改指 README
 _EXTRA = ["README.md", "检验说明（另一台电脑用）.md", "AGENTS.md",
           os.path.join("agent", "tools.py"), os.path.join("agent", "notify_ui.py"),
-          os.path.join("agent", "tray.py"), os.path.join("agent", "wechat.py")]
+          os.path.join("agent", "tray.py"), os.path.join("agent", "wechat.py"),
+          # ⚠️ 补：`wechat_windows.py` 的 `send_to_popup` docstring 第⑤条曾写
+          #   「全程不抢前台」—— 与 F1~F3 定的口径冲突，而它**不在原列表里** ⇒ 自检漏了它。
+          #   （起因：本轮为修 ctypes bug 打开这个文件时偶然发现 ⇒ **规则六：改一处要回溯全库**。）
+          os.path.join("agent", "wechat_windows.py"),
+          os.path.join("agent", "input_backend.py")]
+# ⭐⭐ 判据口径更正（**过宽会误杀真话**）：
+#   原来整文件子串匹配 ⇒ 会把**"纠正那句话"的新注释**也判成违规 —— 例如
+#   `wechat_windows.py` 里为记实测结论写的「旧写法"不抢前台"是**过头话**」，
+#   那是**说这句话错的**，反被判红 ⇒ 逼着人删证据。
+#   ⇒ 改成**逐行 + 上下文判定**：只有当它出现在**陈述句**里才算违规；
+#     被引号/反引号包住（引用旧说法去否定它）的行**不判**。
+#   判据锚的是**意图**（不许再对用户承诺"不抢前台"），不是文案字面 —— 见项目规则"判据纪律"。
+import re as _re
+import logging
+
+log = logging.getLogger("persona-morph")
+_QUOTED_BAN_RE = _re.compile(r'[“"\'`「『][^”"\'`」』]*' + _re.escape(_BAN) + r'[^”"\'`」』]*[”"\'`」』]')
+
+
+def _ban_hits(path: str) -> list:
+    """返回该文件里**真正在陈述**那句过头话的行号（引用式/否定式不算）。"""
+    hits = []
+    for _i, _ln in enumerate(open(path, encoding="utf-8", errors="ignore").read().splitlines(), 1):
+        if _BAN not in _ln:
+            continue
+        # ① 被引号包住 ⇒ 是在**引用**旧说法（多半为否定它）⇒ 不算
+        _stripped = _QUOTED_BAN_RE.sub("", _ln)
+        if _BAN not in _stripped:
+            continue
+        # ② 同句里有否定/更正标记 ⇒ 也不算
+        _s = _stripped
+        if ("过头话" in _s or "更正" in _s or "旧写法" in _s or "不再" in _s
+                or "不许" in _s or "不是" in _s or "≠" in _s):
+            continue
+        hits.append(_i)
+    return hits
+
+
 _bad = []
 for _p in _EXTRA:
     _fp = os.path.join(ROOT, _p)
     if not os.path.isfile(_fp):
         continue
-    if _BAN in open(_fp, encoding="utf-8", errors="ignore").read():
-        _bad.append(_p)
+    _h = _ban_hits(_fp)
+    if _h:
+        _bad.append("%s:%s" % (_p, _h))
 ck("F6 其余声明点也不许再出现那句过头话（使用说明/检验说明/AGENTS/工具描述/托盘/wechat 注释）",
    not _bad, "还有：%s" % _bad)
+# ⭐ 反向对照（判据纪律：只锚"该拦的拦住了"不够，还得证"真话不许被误杀"）：
+#   把本轮为记实测而写的**否定句式**喂进去 ⇒ **必须判它不算违规**（否则这条判据会逼人删证据）。
+ck("F6r 反向对照：**引用旧说法去否定它**的注释不许被判违规（否则判据逼人删证据）",
+   not _ban_hits(os.path.join(ROOT, "agent", "wechat_windows.py")))
 _seg_sp = _srcslice.from_func(_WX_SRC, "send_text_posted")
 _seg_sp = _seg_sp[:_seg_sp.find("\n    def ", 10)]
 ck("F4 投递发送链进链就 stash 前台", "_stash_fg()" in _seg_sp)
@@ -1029,6 +1078,155 @@ try:
        any(min(_img2.getpixel((_x, 780))[:3]) < 241 for _x in range(262, 380, 3)))
 except Exception as _e:
     ck("B26e/f 行为级检查跑不起来", False, str(_e)[:120])
+
+# ── B27：发送键「变绿」的采样框 ⇒ 要有"两档余量 + 反向锚"才算守住 ──────────────
+#   真机帧实测（两张，逐像素量）：
+#     · `_scratch/_realrun/D_scale100.png`（1274×1137，输入框**空**）⇒ 框内绿占比 **0.0000**
+#     · `_scratch/_realrun/E_text_typed.png`（1280×1140，输入框**有字**）⇒ 框内绿占比 **0.4591**
+#   ⇒ 阈值 0.30 的两侧余量 = 下 **0.30** / 上 **0.159**（判据要求 ≥0.05）。
+#   ⛔ **反向锚（这条最值钱）**：同一张空框帧里，**聊天区右下那颗绿语音气泡有 3620 个绿像素**
+#     （比发送键本身还大），它落在 y≈0.85h 那一带。「为了兜住按钮去加宽采样框」正好会把它吞进来
+#     ⇒ 输入框明明是空的却判「有字」⇒ 后面按"字已进去"去点发送。**加宽采样框是危险方向。**
+print("[B27] 发送键「变绿」判据：两档余量 + 反向锚（绿气泡不许被当按钮）")
+try:
+    from PIL import Image as _I2
+    from agent import wechat_windows as _WW
+
+    _GRN = (175, 239, 165) # 微信绿（与 `wechat_windows` docstring 里的绿色参照同源）
+
+    def _mk27(w, h, rect=None):
+        im = _I2.new("RGB", (w, h), (236, 236, 236)) # 未激活的键是灰的（实测 236,236,236）
+        if rect:
+            _x0, _y0 = int(w * rect[0]), int(h * rect[1])
+            _x1, _y1 = int(w * rect[2]), int(h * rect[3])
+            for _y in range(_y0, _y1):
+                for _x in range(_x0, _x1):
+                    im.putpixel((_x, _y), _GRN)
+        return im
+
+    def _cnt27(im):
+        """抽样数绿像素（分母守卫用；不逐像素扫全图，太慢）。"""
+        _w, _h = im.size
+        n = 0
+        for _y in range(0, _h, 3):
+            for _x in range(0, _w, 3):
+                if _WW.is_green_px(im.getpixel((_x, _y))[:3]):
+                    n += 1
+        return n
+
+    _f27e = _mk27(1274, 1137)                                     # 空框
+    _f27f = _mk27(1280, 1140, (0.9125, 0.9342, 0.9680, 0.9675))    # 键在采样框内（真机实测位置）
+    _f27b = _mk27(1274, 1137, (0.8571, 0.8215, 0.9403, 0.8522))    # 我自己的绿气泡（真机实测位置）
+    _r27e = _WW.send_button_green_ratio(_f27e)
+    _r27f = _WW.send_button_green_ratio(_f27f)
+    _r27b = _WW.send_button_green_ratio(_f27b)
+    ck("B27a 空框 ⇒ 绿占比 <0.05、判 False（阈值下侧余量 ≥0.25）",
+       _r27e < 0.05 and not _WW.send_button_green(_f27e), "ratio=%.4f" % _r27e)
+    ck("B27b 有字（键在采样框内变绿）⇒ 绿占比 ≥0.40、判 True（阈值上侧余量 ≥0.10）",
+       _r27f >= 0.40 and bool(_WW.send_button_green(_f27f)), "ratio=%.4f" % _r27f)
+    ck("B27c 分母守卫：绿块**确实画上去了**（抽样口径下两个阳性帧各 >150 绿点，"
+       "≈ 全量 1350+；否则上面两条测的是空气）",
+       _cnt27(_f27f) > 150 and _cnt27(_f27b) > 150,
+       "full=%d bubble=%d" % (_cnt27(_f27f), _cnt27(_f27b)))
+    ck("B27d ★反向锚：绿块落在**聊天区绿气泡**那一带（0.85h）⇒ 必须仍判 False"
+       "（⛔ 别为兜住按钮去加宽采样框——那会把绿气泡吞进来，变成「空框也算有字」）",
+       _r27b < 0.05 and not bool(_WW.send_button_green(_f27b)), "ratio=%.4f" % _r27b)
+except Exception as _e27:
+    ck("B27 行为级检查跑不起来", False, str(_e27)[:120])
+
+# ── B28：**写剪贴板的函数必须带保护**（否则吃掉用户正在复制的内容）──────────────
+#   判据口径（三种保护形态，任一成立即可）：
+#     ① 所在函数带 `clipboard_safe`/`_clipboard_safe` 装饰器；
+#     ② 函数体里有 `clipboard_guard()`；
+#     ③ **调用它的上层函数**带保护 —— 用于"剪贴板生命期跨函数"的链条
+#        （`popup_prepare_send` 写、`popup_fire_paste_send` 才粘 ⇒ 保护要挂在拥有整段的编排入口上）。
+print("\n[B28] 写剪贴板的函数必须带保护（不吃用户剪贴板）")
+try:
+    import ast as _A28
+
+    _WRITE28 = {"set_image", "set_files", "set_text", "_set_raw"}
+    _ALIAS28 = {"_cb", "cb", "_clipboard", "clipboard", "_CB", "CB"}
+
+    def _scan_cb(_src28):
+        _t = _A28.parse(_src28)
+        _fns = [n for n in _A28.walk(_t) if isinstance(n, (_A28.FunctionDef, _A28.AsyncFunctionDef))]
+
+        def _own(_ln):
+            _b = None
+            for _f in _fns:
+                if _f.lineno <= _ln <= (_f.end_lineno or _f.lineno):
+                    if _b is None or _f.lineno > _b.lineno:
+                        _b = _f
+            return _b
+
+        def _prot(_f):
+            if _f is None:
+                return False, False
+            _d = " ".join(_A28.unparse(x) for x in _f.decorator_list)
+            return ("clipboard_safe" in _d), ("clipboard_guard" in (_A28.get_source_segment(_src28, _f) or ""))
+
+        _callers = {}
+        for _f in _fns:
+            for _c in _A28.walk(_f):
+                if isinstance(_c, _A28.Call):
+                    _nm = _c.func.id if isinstance(_c.func, _A28.Name) else (
+                        _c.func.attr if isinstance(_c.func, _A28.Attribute) else None)
+                    if _nm:
+                        _callers.setdefault(_nm, []).append(_f)
+        _bad = []
+        for _n in _A28.walk(_t):
+            if not isinstance(_n, _A28.Call):
+                continue
+            _nm, _rcv = None, ""
+            if isinstance(_n.func, _A28.Attribute):
+                _nm, _rcv = _n.func.attr, _A28.unparse(_n.func.value)
+            elif isinstance(_n.func, _A28.Name):
+                _nm, _rcv = _n.func.id, ""
+            if _nm in _WRITE28 and (_rcv in _ALIAS28 or "clip" in _rcv.lower()):
+                _f = _own(_n.lineno)
+                _d, _b = _prot(_f)
+                _up = [_c.name for _c in _callers.get(_f.name if _f else "", []) if _prot(_c)[0] or _prot(_c)[1]]
+                if not (_d or _b or _up):
+                    _bad.append("%s:%d(%s)" % (_f.name if _f else "?", _n.lineno, _nm))
+        return _bad
+
+    _all28 = []
+    for _dp, _dn, _fn in os.walk(os.path.join(ROOT, "agent")):
+        _dn[:] = [d for d in _dn if d != "__pycache__"]
+        for _f in _fn:
+            if _f.endswith(".py") and not _f.startswith("clipboard"):
+                try:
+                    _all28 += _scan_cb(io.open(os.path.join(_dp, _f), encoding="utf-8").read())
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                    pass
+    # 需要"写点总数"来当分母守卫 ⇒ 再扫一遍数（同一函数里多处写入各算一次，这里只关心 >0）
+    _n_sites = 0
+    for _dp, _dn, _fn in os.walk(os.path.join(ROOT, "agent")):
+        for _f in _fn:
+            if _f.endswith(".py") and not _f.startswith("clipboard"):
+                try:
+                    _s = io.open(os.path.join(_dp, _f), encoding="utf-8").read()
+                    for _ln in _s.splitlines():
+                        if any(("." + _w + "(") in _ln for _w in _WRITE28):
+                            _n_sites += 1
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                    pass
+    ck("B28a 分母守卫：真的扫到了剪贴板写入点（≥4 行，否则下面两条测的是空气）",
+       _n_sites >= 4, "%d 行" % _n_sites)
+    ck("B28b **每个写剪贴板的函数都有保护**（装饰器 / 体内 guard / 上层拥有者）",
+       not _all28, "、".join(_all28) if _all28 else "0 处漏")
+    # ★ 反向锚：给同一个检测器喂一段**没保护**的样张 ⇒ 必须报出来
+    _SAMPLE28 = (
+        "def _demo(a):\n"
+        "    from agent import clipboard as _cb\n"
+        "    _cb.set_image(a)\n"
+    )
+    ck("B28c ★反向锚：没保护的样张喂进同一个检测器 ⇒ 必须被抓出来",
+       bool(_scan_cb(_SAMPLE28)), str(_scan_cb(_SAMPLE28)))
+except Exception as _e28:
+    ck("B28 检查跑不起来", False, str(_e28)[:120])
 
 print("\n[结论] %d 通过 / %d 失败" % (len(OK), len(BAD)))
 if BAD:

@@ -26,11 +26,57 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 log = logging.getLogger("persona-morph")
 
 #: `WM_CLOSE`（关窗消息）。放成常量，免得各处再写 `0x0010` 这种魔数。
 WM_CLOSE = 0x0010
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 幂等关闭（P1-5）：同一个句柄被**多处**收尾时只关一次
+#
+# 病：`close()` 的调用点很多（切会话收尾、失败分支、超时兜底…），同一个浮层句柄
+#   可能被两条路径各关一次。第二次 `WM_CLOSE` 本身通常无害，但有一个更坏的情形：
+#   **窗口已经销毁、句柄值被系统回收给一个新窗** —— 这时"再关一次同一个数字"
+#   会朝一个**完全无关的新窗口**发 `WM_CLOSE`（轻则误关，重则关掉不该关的东西）。
+#
+# 口径：关成功过的句柄**记一段时间**（`_IDEMPOTENT_TTL_S`），期间再关一律跳过并留日志。
+#   · 只记"我们真的发过 WM_CLOSE 且当时窗口还在"的句柄；
+#   · TTL 有界 ⇒ 句柄被回收成新窗时，过了 TTL 仍可正常关（不会永久挡死）；
+#   · 只影响 `close()` 这一条入口 ⇒ 其它判据/行为不变。
+# ══════════════════════════════════════════════════════════════════════════════
+_IDEMPOTENT_TTL_S = 30.0
+_closed_at: dict = {}
+_closed_lock = threading.Lock()
+
+
+def _seen_recently(h: int) -> bool:
+    """这个句柄近期是不是已经被我们关过了（且还在 TTL 内）。"""
+    now = time.time()
+    with _closed_lock:
+        t = _closed_at.get(int(h))
+        if t is None:
+            return False
+        if now - float(t) > _IDEMPOTENT_TTL_S:
+            _closed_at.pop(int(h), None) # 过期 ⇒ 允许再关（防句柄回收后永久挡死）
+            return False
+        return True
+
+
+def _mark_closed(h: int) -> None:
+    with _closed_lock:
+        _closed_at[int(h)] = time.time()
+        if len(_closed_at) > 512: # 有界：只留最近的一批，防长跑内存涨
+            for k in sorted(_closed_at, key=lambda k: _closed_at[k])[:len(_closed_at) - 256]:
+                _closed_at.pop(k, None)
+
+
+def reset_idempotent() -> None:
+    """清掉"已关过"的记忆（判据/收尾用）。"""
+    with _closed_lock:
+        _closed_at.clear()
 
 
 def ok_to_close(hwnd: int, why: str = "") -> bool:
@@ -79,13 +125,24 @@ def close(hwnd: int, why: str = "") -> bool:
     ⚠️ 返回 True **只代表消息发出去了**，不代表窗已经没了 —— `WM_CLOSE` 是**异步**的
     （踩过：关完睡 0.25s 就还前台，结果前台还挂在那个正在消失的窗上）。
     要等它真消失，调用方自己轮询 `IsWindow()`（`wechat._wait_dialog_gone` 就是这个用法）。
+
+    ★ P1-5 **幂等**：同一个句柄在 TTL 内被多处收尾 ⇒ 只关一次。第二次直接返回 True
+      （"它已经被关过了" —— 对调用方而言结果一致），并留一行 debug 日志。
+      为什么必须这样：句柄值会被系统**回收**给新窗，重复关同一串数字可能误伤无关的新窗。
     """
     try:
-        if not ok_to_close(hwnd, why):
+        h = int(hwnd or 0)
+        if not h:
+            return False
+        if _seen_recently(h):
+            log.debug("幂等关闭：hwnd=%d 近期已关过（%s）⇒ 跳过", h, why or "未注明")
+            return True
+        if not ok_to_close(h, why):
             return False
         import ctypes
 
-        ctypes.windll.user32.PostMessageW(ctypes.c_void_p(int(hwnd)), WM_CLOSE, 0, 0)
+        ctypes.windll.user32.PostMessageW(ctypes.c_void_p(h), WM_CLOSE, 0, 0)
+        _mark_closed(h)
         return True
     except Exception: # noqa: BLE001
         return False

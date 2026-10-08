@@ -104,7 +104,8 @@ def _read_key_of(path: str) -> str:
         return ""
     try:
         return str(json.loads('"%s"' % m.group(1)))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -188,7 +189,8 @@ def migrate_legacy_files() -> dict:
             res["moved"].append("%s → %s" % (fn, os.path.basename(dst)))
         except OSError as e:
             res["kept"].append("%s（%s）" % (fn, str(e)[:40]))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     if res["moved"]:
         log.info("会话档案迁移到新命名：%s 个（%s）", len(res["moved"]), "、".join(res["moved"][:5]))

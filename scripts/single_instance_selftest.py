@@ -26,6 +26,9 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
 from agent import single_instance as SI # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 PASS = 0
 FAIL = 0
@@ -81,7 +84,8 @@ def wait_file(path, timeout=20.0):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     return json.loads(f.read())
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         time.sleep(0.1)
     return None

@@ -33,6 +33,9 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FEEDBACK_FILE = os.path.join(ROOT, "data", "feedback.jsonl")
@@ -42,7 +45,7 @@ FEEDBACK_FILE = os.path.join(ROOT, "data", "feedback.jsonl")
 #: 为什么需要它：反馈要"点一下就发到作者那儿"，就得有一个**产品自带**的接收端；
 #: 而 `config.json` 不许进包（出厂断言禁止：更新会覆盖用户自己的配置），所以单开这一个文件：
 #:   · 用户自己的 `config.json` 里配了通道 ⇒ **以用户的为准**（本文件只是兜底默认）；
-#:   · 没配 ⇒ 用本文件里的接收端 ⇒ 用户零配置也能提交（这就是 2026-09-28 那批
+#:   · 没配 ⇒ 用本文件里的接收端 ⇒ 用户零配置也能提交（这就是那批
 #:     "在控制台反馈了但作者没收到"的根因：当时产品不自带接收端，反馈只落用户本机）。
 #:   · **本文件不进仓库**（.gitignore）：真实地址只在出包时注入，轮换＝重新出一版（不用改 git 历史）。
 BUILTIN_ENDPOINT_FILE = os.path.join(ROOT, "assets", "feedback_endpoint.json")
@@ -170,7 +173,7 @@ def save_attachments(fid: str, files) -> tuple:
 
 
 def prune_media() -> dict:
-    """附件目录的上限（"凡会写盘的功能都要有上限与清理"）：超 200 个文件或 200MB ⇒ 从最旧的删起。
+    """附件目录的上限：超 200 个文件或 200MB ⇒ 从最旧的删起。
 
     **只动 `data/feedback_media/` 这一棵树**（自己造的才收拾），删了几个、回收多少照实返回。
     """
@@ -182,7 +185,8 @@ def prune_media() -> dict:
                 p = os.path.join(dirpath, n)
                 try:
                     items.append((os.path.getmtime(p), os.path.getsize(p), p))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue  # 清理型：静默合法
         items.sort(key=lambda x: x[0])
         total = sum(x[1] for x in items)
@@ -194,9 +198,11 @@ def prune_media() -> dict:
                 os.remove(p)
                 removed += 1
                 freed += sz
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {"removed": removed, "freed": freed}
 
@@ -223,7 +229,7 @@ def _version() -> str:
 
     ⛔ 原来这里返回的是 `assets/console/index.html` 的**文件修改时间**（`%m%d-%H%M`），
       于是反馈里写着 `v0928-2133` —— **长得像版本号、其实毫无版本意义**，
-      连作者都会看错（2026-09-28：我据此把一个正常版本的报障当成了"内部构建"）。
+      很容易把一个正常版本的报障误判成"内部构建"。
       ⇒ 现在：`<VERSION>+<build 前 6 位>`；控制台页面的时间另存一个字段，不再冒充版本。
     """
     _b = str(_pm_read_build() or "").strip() if _pm_read_build else ""
@@ -251,11 +257,13 @@ def _read_all() -> list:
                     continue
                 try:
                     out.append(json.loads(line))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue
     except FileNotFoundError:
         pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out
 
@@ -264,13 +272,14 @@ def _write_all(items: list) -> bool:
     """原子重写（temp + os.replace）——反馈是用户唯一的手写内容，别写坏。"""
     try:
         os.makedirs(os.path.dirname(FEEDBACK_FILE), exist_ok=True)
-        tmp = FEEDBACK_FILE + ".tmp"
+        tmp = persist.tmp_for(FEEDBACK_FILE)
         with open(tmp, "w", encoding="utf-8") as f:
             for it in items:
                 f.write(json.dumps(it, ensure_ascii=False) + "\n")
         persist.replace_into(tmp, FEEDBACK_FILE)
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -280,7 +289,8 @@ def _append(item: dict) -> bool:
         with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -292,7 +302,8 @@ def _limit() -> dict:
         for k in list(lim):
             if cfg.get(k) is not None:
                 lim[k] = int(cfg.get(k))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return lim
 
@@ -322,7 +333,8 @@ def _reject(why: str, item: dict) -> None:
                                 "why": why, "kind": item.get("kind"),
                                 "len": len(str(item.get("text") or "")),
                                 "head": str(item.get("text") or "")[:120]}, ensure_ascii=False) + "\n")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -450,7 +462,8 @@ def _mail(item: dict, to_list: list, smtp_cfg: dict) -> dict:
             try:
                 with open(f.get("path") or "", "rb") as fh:
                     raw = fh.read()
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _miss.append(str(f.get("name")))
                 continue
             part = MIMEBase("application", "octet-stream")
@@ -505,7 +518,8 @@ def _qy_key(url: str) -> str:
     try:
         from urllib.parse import parse_qs, urlparse
         return (parse_qs(urlparse(str(url)).query).get("key") or [""])[0]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -534,7 +548,8 @@ def _wecom_upload(url: str, key: str, name: str, raw: bytes, timeout: int = 30) 
         return {"ok": False, "why": "%s: %s" % (type(e).__name__, str(e)[:100])}
     try:
         d = json.loads(txt)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {"ok": False, "why": txt[:100]}
     mid = str(d.get("media_id") or "")
     if int(d.get("errcode") or 0) != 0 or not mid:
@@ -557,7 +572,8 @@ def _wecom_media(url: str, files) -> dict:
         try:
             with open(f.get("path") or "", "rb") as fh:
                 raw = fh.read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             bad.append("%s：本机读不到" % f.get("name"))
             continue
         if f.get("image") and len(raw) <= int(ATTACH["image_max"]):
@@ -731,7 +747,7 @@ def submit(kind: str, text: str, contact: str = "", env: dict | None = None, fil
                 "files": len(_saved), "why": str(rep.get("why") or "") + _extra}
     st = stats()
     # ⛔ 「没配通道」与「配了但发失败」必须分开说：前者是**作者根本收不到**（用户以为提交成功了，
-    #    实际只落在他自己机器上——2026-09-28 的真反馈：网友在控制台提交了，作者一条没收到）。
+    #    实际只落在他自己机器上——的真反馈：网友在控制台提交了，作者一条没收到）。
     #    ⇒ 这一态返回 `no_channel` + `copy_text`（整条反馈的可复制全文），让界面能一句话说清
     #    "作者收不到" 并给一个**一键带走**的动作；别再让用户对着"已存在本机"猜。
     _no_ch = not st.get("can_send")
@@ -765,7 +781,7 @@ def pending_text(limit: int = 5) -> str:
 
     为什么要有它：本机没配通道时，反馈只落在用户自己的 `data/feedback.jsonl` 里 ——
     用户看不到、也不会去翻文件。给一段**现成的文本**让他一键复制粘给作者，是零配置下唯一
-    真能把内容送到作者手上的路（2026-09-28 反馈：网友以为提交了作者就能收到）。
+    真能把内容送到作者手上的路（反馈：网友以为提交了作者就能收到）。
     `limit` 只取最近几条（粘贴一大段反而没人愿意发）。
     """
     items = sorted(pending(), key=lambda x: x.get("at") or 0)

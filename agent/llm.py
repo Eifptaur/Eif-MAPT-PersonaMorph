@@ -3,6 +3,8 @@ from __future__ import annotations
 """OpenAI 兼容 Chat Completions 客户端（非流式）。
 
 支持工具调用、usage 统计、可重试错误分类、成本估算。"""
+import logging
+log = logging.getLogger("persona-morph")
 _USAGE_HOOK = [None]
 
 
@@ -103,16 +105,18 @@ def _note_fallback(info: dict, error) -> None:
                 d = json.load(f)
             if isinstance(d, dict):
                 cur = d
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         cur["count"] = int(cur.get("count") or 0) + 1
         cur["last"] = rec
         cur["updatedAt"] = rec["ts"]
-        tmp = path + ".tmp"
+        tmp = persist.tmp_for(path)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cur, f, ensure_ascii=False, indent=1)
         persist.replace_into(tmp, path)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -126,7 +130,8 @@ def fallback_status() -> dict:
         if isinstance(d, dict):
             out["count"] = int(d.get("count") or 0)
             out["last"] = d.get("last") or None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out
 
@@ -205,7 +210,8 @@ def chat_completion(messages, tools=None, tool_choice="auto", temperature=None, 
                 if _routed or _kind != "text":
                     _mr2.note(_kind, _routed or models[0], reason="分流命中" if _routed else "未配分流，用主模型")
                     ret["route"] = {"kind": _kind, "routed": bool(_routed), "model": ret.get("model") or model}
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             if idx > 0:
                 info = {"used": ret.get("model") or model, "from": models[0], "tried": models[:idx]}
@@ -255,7 +261,31 @@ def _post_once(api: dict, model: str, messages, tools, tool_choice, temperature)
     except requests.exceptions.RequestException as e:
         raise LLMError("模型请求失败：%s" % e)
     if resp.status_code != 200:
-        raise LLMError("模型 API HTTP %d：%s" % (resp.status_code, resp.text[:500]))
+        # ⛔ **404/405 时补一次 `/v1` 再试**（用户口径："接了一个 chatgpt 的 api，无论翻墙与否都用不了"）。
+        #   根因：`join_url` 只做 `base.rstrip('/') + '/chat/completions'` ⇒
+        #   用户把 base_url 填成 `https://api.openai.com`（**没带 `/v1`**，这是最常见的填法）
+        #   ⇒ 请求打到 `https://api.openai.com/chat/completions` ⇒ **404** —— 和网络/翻墙无关。
+        #   ⛔ 为什么不是"一律自动补 `/v1`"：国内厂商的 base 形如 `https://api.deepseek.com`
+        #   （其端点**就是** `/chat/completions`，补了 `/v1` 反而坏）⇒ 那样一刀切会踩另一头。
+        #   ⇒ 只在**明确是"路径不对"**（404/405）时**再试一次**，并把这件事写进报错里（可归因）。
+        _b = str(api.get("base_url") or "")
+        if resp.status_code in (404, 405) and "/v1" not in _b.rstrip("/").split("//")[-1]:
+            try:
+                _b2 = _b.rstrip("/") + "/v1"
+                _r2 = _session.post(join_url(_b2, "/chat/completions"),
+                                    headers=headers, json=body, timeout=timeout_ms / 1000.0)
+                if _r2.status_code == 200:
+                    log.warning("模型 base_url 少了 /v1 ⇒ 已自动补成 %s 并成功（建议把配置改成它）", _b2)
+                    resp = _r2
+            except requests.exceptions.RequestException:
+                pass
+    if resp.status_code != 200:
+        _hint = ""
+        if resp.status_code in (404, 405):
+            _hint = ("（提示：这通常是 **base_url 写得不完整** —— 官方 OpenAI 要形如 "
+                     "`https://api.openai.com/v1`；国内厂商多为 `https://api.<厂商>.com`。"
+                     "与有没有翻墙无关。）")
+        raise LLMError("模型 API HTTP %d：%s%s" % (resp.status_code, resp.text[:400], _hint))
     try:
         data = resp.json()
     except Exception:
@@ -273,7 +303,8 @@ def _post_once(api: dict, model: str, messages, tools, tool_choice, temperature)
     if _USAGE_HOOK[0] is not None:
         try:
             _USAGE_HOOK[0](data.get("usage"))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     return _ret
 
@@ -632,6 +663,8 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
 import time as _time
 from urllib.parse import urlsplit
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
 
 _balance_cache = {"ts": 0.0, "data": None}
 

@@ -51,6 +51,15 @@
   /* 导航分组标签与分组块（深蓝实体上的分层）*/
   --navgrp-tx:rgba(169,209,236,.62); --navgrp-line:rgba(120,190,255,.16);
   --radius-card:16px;
+  /* 第三层索引（组锚点条）：whale —— 半透玻璃 + 更圆的角（呼应 16px 卡圆角）*/
+  --subnav-bg:rgba(111,207,255,.12); --subnav-bd:rgba(120,190,255,.34); --subnav-r:14px; --subbar-w:3px;
+
+  /* ══ 无障碍尺寸与焦点（三主题共用，故只在这里定义一次）══
+     · `--tap-min`：可点目标的**最小边长**。44px 是触摸可用的通行下限
+       （手指落点的物理尺寸所限，比鼠标需要的精度低得多）；
+       正文行内的按钮用 `--tap-min-sm`（36px）——行内强撑到 44px 会把段落撑散，
+       取"行高足够、不至于点不准"的折中。 */
+  --tap-min:44px; --tap-min-sm:36px;
 }
 /* ══ 浅色主题：参考 Meta（Facebook / Instagram 的现代界面语言）══
    设计思路（与 whale 的差异在设计层，不是换色）：
@@ -79,6 +88,8 @@
   --st-info-bg:#EBF2FF; --st-info-bd:#CCDEFF; --st-info-tx:#0455D6;
   --navgrp-tx:#8A8D91; --navgrp-line:#E4E6EB;
   --radius-card:12px;
+  /* 第三层索引（组锚点条）：light —— 扁平实底 + 细描边 */
+  --subnav-bg:#F2F4F7; --subnav-bd:#E0E3E8; --subnav-r:12px; --subbar-w:3px;
 }
 /* ══ 深色主题：参考 LINEAR（Linear.app 的产品界面语言）══
    设计思路：
@@ -107,6 +118,8 @@
   --st-info-bg:#141828; --st-info-bd:#262A44; --st-info-tx:#9BA3FF;
   --navgrp-tx:#62666D; --navgrp-line:#1D1F23;
   --radius-card:10px;
+  /* 第三层索引（组锚点条）：dark —— 低饱和实底 + 更紧的圆角 */
+  --subnav-bg:#17191C; --subnav-bd:#2A2D32; --subnav-r:10px; --subbar-w:2px;
 }
 /* 系统跟随（仅未手动设置主题（无 data-theme=跟随系统）时生效；whale/light/dark 都不跟随） */
 @media (prefers-color-scheme: dark){
@@ -126,6 +139,8 @@
     --st-info-bg:#141828; --st-info-bd:#262A44; --st-info-tx:#9BA3FF;
     --navgrp-tx:#62666D; --navgrp-line:#1D1F23;
     --radius-card:10px;
+  /* 第三层索引（组锚点条）：跟随系统·深色 —— 与 dark 同款 */
+  --subnav-bg:#17191C; --subnav-bd:#2A2D32; --subnav-r:10px; --subbar-w:2px;
   }
 }
 *{scrollbar-width:thin;scrollbar-color:rgba(148,196,255,.28) transparent}
@@ -233,7 +248,10 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side .nav-tg{position:static;width:100%;height:auto;margin:2px 0 8px;padding:9px 12px;
   display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;line-height:1;
   border-radius:8px;z-index:auto;opacity:.9}
-.side.tight .nav-tg{padding:9px 0}
+.side.tight .nav-tg{padding:9px 12px;
+  /* 收起态（整个导航只剩图标）⇒ 这颗也**不许再压满整栏**：
+     否则它是这一列里最大的一块（Qt 侧同一处病灶＝"最小宽压过 44 上限"，两边都收窄并居中）。 */
+  width:auto;margin:2px auto 8px}
 
 .side .nav-find{margin:0 0 8px;position:relative}
 .side .nav-find input{width:100%;box-sizing:border-box;padding:8px 10px;font-size:12.5px;line-height:1;
@@ -411,6 +429,13 @@ input,select,textarea{backdrop-filter:blur(8px)}
 :where(input[type=checkbox]:indeterminate)::after{
   content:"";position:absolute;left:22%;top:45%;width:56%;height:2px;background:#fff;border-radius:2px}
 :where(input[type=checkbox]:focus-visible){outline:2px solid var(--blue);outline-offset:2px}
+/* 触摸热区：勾选框的**视觉尺寸只有 17px**（太大的勾看着蠢），但可点区域必须到 `--tap-min`。
+   做法＝用 ::before 铺一层透明热区（不影响布局：`position:absolute` + 不占位），
+   hit-test 落在热区里也算点中这个控件。⛔ 绝不能直接把 width/height 撑到 44px ——
+   那会把真正的勾也画成 44px 的方块。 */
+:where(input[type=checkbox])::before{
+  content:"";position:absolute;left:50%;top:50%;
+  width:var(--tap-min);height:var(--tap-min);transform:translate(-50%,-50%)}
 :where(input[type=checkbox]:disabled){opacity:.45;cursor:not-allowed;box-shadow:none}
 :where(select option){background:var(--menu-bg);color:var(--tx)}
 :where(input[type=file]){color:var(--tx2);font:inherit}
@@ -600,6 +625,36 @@ body.locked{overflow:hidden}
 .row input[type=range]{flex:1}
 .row .val{width:44px;text-align:right;color:var(--blue);font-weight:600}
 .row input[type=checkbox]{width:16px;height:16px;accent-color:var(--blue)}
+/* ── .sub：功能项内部的**分组小标题**（第三层索引的落点）─────────────────────
+   长功能项（如"媒体"59 行）原来是一整片平的 .row，用户翻不到头。
+   .sub 把同一件事的若干 .row 收成一组，同时充当"组锚点"，供顶部锚点条跳转。
+   ⚠️ 它**不是**可配置项，只是分组与导航标记 ⇒ 不参与 data-cfg / .row 的统计。 */
+.sub{display:flex;align-items:center;gap:8px;margin:18px 0 10px;font-size:12.5px;font-weight:700;
+  color:var(--tx2);letter-spacing:.02em;scroll-margin-top:84px}
+.sub::before{content:"";width:var(--subbar-w,3px);height:13px;border-radius:2px;background:var(--blue);flex:none}
+.sub:first-child{margin-top:0}
+/* ── .sub-nav：功能项顶部的**组锚点条**（第三层索引的入口）────────────────────
+   由 JS 扫本 section 的 .sub 自动生成；**没有 .sub 的 section 不生成**（零副作用）。
+   ⚠️ 圆角用 8px 而不是 999px —— 控制台**没有 pill 按钮**，那是本项目的既有外观约定。
+   ⚠️ 条上的文字由 JS 从 .sub 取 ⇒ 要进鲸语字典，否则鲸语下这里露出正常文案。 */
+.sub-nav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.sub-nav a{display:inline-flex;align-items:center;gap:6px;height:26px;box-sizing:border-box;
+  padding:3px 10px;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;
+  border-radius:var(--subnav-r,14px);background:var(--subnav-bg,var(--blue-soft));
+  border:1px solid var(--subnav-bd,var(--blue-line));color:var(--tx2);
+  transition:background .15s,color .15s,border-color .15s}
+.sub-nav a:hover{color:var(--blue);border-color:var(--blue);background:var(--blue-soft)}
+.sub-nav a.on{color:#fff;background:var(--blue);border-color:var(--blue)}
+/* 跳过去后短暂点亮该组标题，让用户看清"落到哪一组了" */
+@keyframes subflash{0%{background:var(--blue-soft)}100%{background:transparent}}
+.sub.flash{animation:subflash 1.1s ease-out}
+@media (prefers-reduced-motion:reduce){ .sub.flash{animation:none} }
+/* 搜索结果里的「组 / 行」标记：必须是独立元素 —— 鲸语按整段文本节点查表，
+   把它并进名称文字会让那一段整体查不到、名称就换不成鲸语。 */
+.nav-find-res .ia-badge{display:inline-block;font-size:10.5px;font-weight:700;line-height:15px;
+  color:var(--blue);background:var(--blue-soft);border-radius:4px;padding:0 4px;margin-right:6px;vertical-align:1px}
+.nav-find-res .ia-alias{display:inline-block;font-size:10.5px;font-weight:700;line-height:15px;
+  color:var(--tx3);border:1px solid var(--input-bd);border-radius:4px;padding:0 4px;margin-right:6px;vertical-align:1px}
 /* 省用量开关：醒目的卡片式勾选 */
 .think-card{display:flex;gap:12px;align-items:flex-start;background:linear-gradient(135deg,var(--blue-soft),var(--hover-bg));
   border:1.5px solid var(--blue-line);border-radius:12px;padding:12px 14px;margin-bottom:12px;cursor:pointer}
@@ -612,7 +667,10 @@ body.locked{overflow:hidden}
 .mid{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .mid > *{flex:1;min-width:240px}
 .btns{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
-button{border:0;border-radius:8px;padding:8px 18px;cursor:pointer;font:inherit;font-weight:600;transition:.15s}
+/* 触摸目标：整块按钮至少 `--tap-min` 高。用 min-height（不是 height）——
+   文字换行/放大字号时按钮要能长高，不能被固定高裁掉。`box-sizing` 已全局继承为 border-box，
+   故 padding 算在内。 */
+button{border:0;border-radius:8px;padding:8px 18px;min-height:var(--tap-min);cursor:pointer;font:inherit;font-weight:600;transition:.15s}
 /* 系统开了「减少动态效果」⇒ 把位移/缩放全关掉，只留颜色变化做反馈。
    这不是可选项：前庭功能敏感的人会因为元素位移而眩晕（WCAG 2.3.3）。
    注意 `!important` 在这里是**必要**的 —— 下面的按钮交互规则选择器权重更高。 */
@@ -620,6 +678,24 @@ button{border:0;border-radius:8px;padding:8px 18px;cursor:pointer;font:inherit;f
   button:not(:disabled),button.pri::after,.nav a:active{transition:none!important}
   button:hover:not(:disabled),button:active:not(:disabled),.nav a:active{transform:none!important}
 }
+/* ── 无障碍补齐（第 146 项）────────────────────────────────────────────
+   原来只有 button / checkbox 有关键盘焦点环、只有 button 与 .sub.flash 服从"减少动效"。
+   这里补三件 + 一条兜底；⛔ `-webkit-app-region: no-drag` **本项目不适用**：
+   控制台跑在**自带标题栏的 WebView2 窗口**里（拖动由宿主负责），页面里**没有**设过 `app-region`
+   的拖动区 ⇒ 没有可交互区被拖动区吃掉的问题（硬加只会让人误以为页面自己管拖动）。 */
+/* ① 键盘可达：所有可交互控件都要有**看得见的**焦点环（`:focus-visible` = 只用键盘时才亮，鼠标点不亮） */
+:where(input,select,textarea,a[href],[tabindex]):focus-visible{
+  outline:2px solid var(--btn-ring);outline-offset:2px;border-radius:6px}
+/* ② 数字防跳动：不居中的数字用 `tabular-nums` ⇒ 刷新时宽度不抖（用量/条数/花费这些最明显） */
+.stat .s b,.out.tnum,.tnum{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+/* ③ 减少动效：一条**全局兜底**（个别规则漏掉的动画/过渡也一并关掉；`!important` 是必要的，
+     因为组件规则的选择器权重更高） */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+/* ④ 滚动不穿透：面板/长列表滚到底时不要把整页一起带着滚（触控板/滚轮最容易踩） */
+.card,.side,.box,.out,[class*="list"]{overscroll-behavior:contain}
 button.pri{background:var(--blue);color:#fff;box-shadow:0 4px 12px rgba(77,107,254,.3)}
 button.pri:hover{background:var(--blue2)}
 button.ghost{background:var(--card);border:1px solid var(--bd);color:var(--tx)}
@@ -697,8 +773,8 @@ th{color:var(--tx2);font-weight:500}
   style="position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;pointer-events:none;display:none"></video>
 <div id="wallTint" style="position:fixed;inset:0;z-index:-1;pointer-events:none;display:none;background:linear-gradient(160deg,rgba(150,200,235,.30),rgba(210,232,248,.22) 60%,rgba(225,215,245,.28))"></div>
 <!-- 隐藏彩蛋（左下角，正常大小但低调；连点三下再点一下出"档案"，属于留待用户自己发现的彩蛋，不进任何说明） -->
-<button id="easterEgg" class="ghost" type="button"
-  style="position:fixed;left:12px;bottom:12px;z-index:9997;padding:5px 12px;font-size:12px;color:#ff5252;opacity:.5"
+<button id="easterEgg" class="ghost tiny" type="button"
+  style="position:fixed;left:12px;bottom:12px;z-index:9997;color:var(--err);opacity:.5"
   title="……？">不要点！</button>
 
 <!-- 水光透镜：跟随鼠标的扭曲圆环（backdrop-filter 只影响圈内；初始藏于屏外） -->
@@ -710,7 +786,7 @@ th{color:var(--tx2);font-weight:500}
   <span class="chip">监听 <b id="listen-badge" title="正在监听的会话数（群 + 私聊）。白名单与私聊档位在「微信」面板。">?</b></span>
   <span class="chip">主人登记 <b id="owner-badge" title="控制台「微信」面板登记的「我的其他账号」条数；0 项＝认不出你自己的号。">?</b></span>
   <span class="chip">模型 <b id="model-badge">?</b></span>
-  <span class="chip">余额 <b id="balance-badge" title="点击刷新余额">查询中…</b><button id="balMask" class="ghost" title="余额显示（只改显示，不动真实余额）" style="margin-left:6px;padding:1px 7px;font-size:11px">显示</button></span>
+  <span class="chip">余额 <b id="balance-badge" title="点击刷新余额">查询中…</b><button id="balMask" class="ghost tiny" title="余额显示（只改显示，不动真实余额）" style="margin-left:6px">显示</button></span>
   <label class="chip" id="autoChip" title="勾选＝改完立即写入 config.json（不用再点各分区的「保存设置」）；取消勾选＝回到手动保存模式。状态记在本机浏览器里。"><input type="checkbox" id="autoApplyChk" checked>改完即生效</label>
   <button id="undoBtn" class="ghost" title="撤销上一步修改（自动生效与手动「保存设置」各记一步，最多 10 步）">撤销</button>
   <button id="pauseBtn" class="ghost">暂停</button>
@@ -904,7 +980,10 @@ th{color:var(--tx2);font-weight:500}
 
 <div class="shell">
   <aside class="side">
-    <div class="status"><b>运行状态</b><p id="sideStatus">未连接</p></div>
+    <!-- 侧栏运行状态＝**普通状态**（会自己刷新）⇒ `aria-live="polite"`：
+         屏幕阅读器**等用户停下来**再播报，不打断他正在听的内容。
+         `bgStatus` 是"重新拉取后"的忙碌提示，同理走 polite。 -->
+    <div class="status" aria-live="polite" aria-atomic="true"><b>运行状态</b><p id="sideStatus">未连接</p></div>
     <button id="navToggle" class="ghost nav-tg" title="收起 / 展开导航名字">‹ 收起</button>
     <div class="nav-find" id="navFindBox">
       <input type="text" id="navFind" placeholder="找功能…（如：发消息 / 换模型）" autocomplete="off" aria-label="在导航里快速找功能">
@@ -928,7 +1007,7 @@ th{color:var(--tx2);font-weight:500}
       <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
       <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
       <a href="#sec-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
-      <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
+      <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a><a href="#sec-emoji"><svg viewBox="0 0 16 16"><rect x="2" y="2.6" width="12" height="10.8" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.9" cy="7" r=".95" fill="currentColor"/><circle cx="10.1" cy="7" r=".95" fill="currentColor"/><path d="M5.6 10.1c1.3 1 3.5 1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="lb">表情</span></a>
         </div>
       </div>
       <div class="nav-grp" data-grp="media">
@@ -986,24 +1065,31 @@ th{color:var(--tx2);font-weight:500}
         <button class="ghost tiny" id="dataExport" type="button" title="导出全部计费与对话记录为一个迁移包"><img src="/assets/icon-whale.png" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px">导出记录</button>
         <button class="ghost tiny" id="dataImport" type="button" title="从迁移包导入（合并到当前数据，按内容去重）"><img src="/assets/icon-whale.png" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px">迁移数据</button>
         <input type="file" id="dataImportFile" accept=".zip" style="display:none">
+        <button class="ghost tiny" id="backupExport" type="button" title="一键备份全部设置与数据（记忆/人设/分区/用量/对话记录等）为一个 zip；换机或重装后导入即可恢复">⤓ 一键备份</button>
+        <button class="ghost tiny" id="backupImport" type="button" title="导入一键备份包：恢复全部设置（实时生效）与全部数据（重启后完全生效）">⤒ 一键恢复</button>
+        <input type="file" id="backupImportFile" accept=".zip" style="display:none">
       </span>
       <div class="sec-hd"><h2>概览</h2><span class="st" id="stOverview">读取中</span></div>
       <div class="desc">机器人运作状态与账户信息（数据每 8 秒自动刷新）。</div>
       <div class="ov-checkbar" id="codeCheckTip" style="font-weight:700;font-size:12.5px;padding:8px 12px;border-radius:10px;border:1px solid var(--blue-line);background:rgba(63,168,240,.07);color:var(--blue);margin-bottom:12px">代码检测：尚未运行（点「检测中心」页的代码检测/代码检测＋依赖核对）</div>
-      <div class="stat">
+      <!-- 运行环境提示（第 150 项）：只在"建议调整 / 没测全"时出现；正常时整条隐藏。
+           ⛔ 文案里的「不改也能用」由后端给（`agent/env_hint.py`）—— 这里是**提示**不是强制。 -->
+      <div class="ov-checkbar" id="envHint" style="display:none;white-space:pre-wrap;font-size:12.5px;padding:8px 12px;border-radius:10px;border:1px solid var(--st-warn-bd);background:var(--st-warn-bg);color:var(--st-warn-tx);margin-bottom:12px"></div>
+      <div class="sub">① 用量与成本</div><div class="stat">
         <div class="s"><b id="st-sessions">0</b><span>累计会话数</span></div>
         <div class="s"><b id="st-tokens">0</b><span>累计用量</span></div>
         <div class="s"><b id="st-sent">0</b><span>已发消息</span></div>
         <div class="s"><b id="st-cost">¥0</b><span>累计成本</span></div>
         <div class="s" style="grid-column:span 2"><b id="st-dcost">—</b><span id="st-dlabel">今日用量</span></div>
         <div class="s"><b id="st-pcost">—</b><span id="st-plabel">本周期</span></div>
+        <div class="s"><b id="st-mcost">—</b><span>本月花费</span></div>
         <div class="s"><b id="st-groups">0</b><span>目标群</span></div>
         <div class="s"><b id="st-r5c">—</b><span>最近5条成本</span></div>
         <div class="s"><b id="st-ac">—</b><span>平均每条成本</span></div>
         <div class="s"><b id="st-extra">—</b><span>今日其他工具成本</span></div>
         <div class="s"><b id="st-extra2">—</b><span>累计其他工具成本</span></div>
       </div>
-      <div class="card" id="feeCalc" style="margin-bottom:14px">
+      <div class="sub">② 费用计算器</div><div class="card" id="feeCalc" style="margin-bottom:14px">
         <h2>费用计算器（官方价目 · 全厂商分区）</h2>
         <div class="desc">选厂商与模型自动带出官方单价；高峰=工作日 9:00-12:00 / 14:00-18:00（×2），周末/夜间空闲价；缓存命中按 cached 价</div>
         <div class="row" style="margin:4px 0"><label>厂商</label><select id="fcVendor"><option value="">加载中…</option></select></div>
@@ -1039,7 +1125,8 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint" id="testResult" style="align-self:center"></span>
       </div>
     </section>
-<section id="sec-wechat" class="card" data-sec>      <div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
+<section id="sec-wechat" class="card" data-sec>      <div class="sub">① 连接与身份</div>
+<div class="row"><label>微信版本</label><div class="grow"><b id="wxver">检测中…</b></div></div>
       <div class="row" id="wxAttachRow" style="display:none"><label>接入诊断</label><div class="grow">
         <div id="wxAttachSteps" class="hint" style="line-height:1.8"></div>
         <div class="hint">上面是「接微信」的逐步检查（进程 / 版本 / 打开消息库 / 密钥 / 认出你的账号）。
@@ -1069,6 +1156,7 @@ th{color:var(--tx2);font-weight:500}
         <option value="off">不理私聊</option>
         <option value="all">谁都理（慎用）</option></select>
         <span class="hint">机器人跑在小号上、你用自己另一个号<b>私聊</b>它时，选这一档它才会应你——相当于借一个智能体进来跟自己聊天。<b>「谁都理」会给陌生人回消息</b>，不清楚后果就别选。</span></div></div>
+      <div class="sub">② 运行与轮询</div>
       <div class="row"><label>启动后暂停</label><input type="checkbox" data-cfg="wechat.start_paused"><span class="hint">勾选：机器人启动后不自动监听，需点「恢复」才工作（防开机刷群/回应积压旧消息）</span></div>
       <div class="row"><label>轮询间隔(秒)</label><div class="grow"><input type="number" step="0.5" min="0.5" data-cfg="wechat.poll_interval"></div></div>
       <div class="row"><label>每分钟限发</label><div class="grow"><input type="number" min="1" data-cfg="wechat.rate_limit_per_minute"><span class="hint">与「发送」页的「每分钟上限」<b>取更严的那个</b>（谁填得小谁生效）。留空＝这一处不限。</span></div></div>
@@ -1076,6 +1164,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
       <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不激活、不动鼠标；只是窗口会重新出现）。**干完活不会再帮你收回去**——窗口留在桌面上（只压到后台），嫌乱请自己收。取消勾选＝最小化时如实停下</span></div>
       <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
+      <div class="sub">③ 监听与目录</div>
       <div class="row"><label>群白名单</label>
         <div class="grow">
           <div class="chips" id="wlChips" data-cfg="wechat.group_name_white_list"></div>
@@ -1086,6 +1175,31 @@ th{color:var(--tx2);font-weight:500}
           </div>
           <div class="hint">留空=所有群都监听；勾选的群才响应（也可配合「暂停」）。勾选存的是**群 wxid**（唯一身份）——
             群里出现**同名群**时只有 wxid 分得清，按名字认会「勾一个监听两个」。老配置里的群名仍然认，但同名群必须改用 wxid。</div>
+        </div>
+      </div>
+      <div class="row"><label>私聊白名单</label>
+        <div class="grow">
+          <div class="chips" id="pvChips" data-cfg="wechat.private_name_white_list"></div>
+          <div class="btns" style="margin-top:0">
+            <button id="pickPrivates" class="ghost">检测私聊并勾选</button>
+            <input id="customPrivate" type="text" placeholder="自定义私聊 wxid（或名字），回车添加" style="flex:1;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:7px 10px;color:var(--tx)">
+          </div>
+          <div class="hint">留空 = 按「私聊」那一档走；勾选后<b>只</b>监听勾中的人。勾选存的是**私聊 wxid**——
+            同名人靠 wxid 分得清，按名字认会「勾一个监听两个」。档位管范围、白名单管具体勾哪几个，两者叠加生效。</div>
+        </div>
+      </div>
+      <div class="row"><label>视频号下载</label>
+        <div class="grow">
+          <div class="btns" style="margin-top:0">
+            <label style="display:flex;align-items:center;gap:6px">
+              <input type="checkbox" data-cfg="wechat.channels_download" id="chChannels">
+              <span>启用</span>
+            </label>
+            <button id="channelsHowto" class="ghost" type="button">怎么用</button>
+          </div>
+          <div class="hint"><b>可选功能、默认关</b>。视频号官方<b>没有公开下载接口</b> ⇒ 这条路要
+            「浏览器自动化 ＋ **一次性登录腾讯元宝**」（<b>不装系统证书、不改系统代理</b>，用隔离的浏览器配置目录）。
+            关着的时候<b>一切照旧、不装任何东西</b>；想用时点「怎么用」看步骤。</div>
         </div>
       </div>
       <div class="row"><label>监听水位</label>
@@ -1107,7 +1221,8 @@ th{color:var(--tx2);font-weight:500}
       <div class="btns"><button class="pri" data-save>保存设置（微信）</button></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="desc">表情包（模型-程序协作）：群里收到有趣的表情，机器人用 <code>collect_emoji</code> 收藏（生成极简概述入库，模型-程序协作），需要时 <code>send_emoji</code> 按概述/语境选一个再发出；也可在下面手动管理。</div>
-      <div class="row"><label>收藏夹表情</label><div class="grow">
+      <div class="sub">④ 表情与互动</div>
+      <div class="row"><label>行高缓存</label><div class="grow"><b id="rgState">读取中</b><button id="rgForget" class="ghost" style="margin-left:8px">重新测量</button><span class="hint">会话列表的行高是从屏幕量出来的（绿带尺）：量到就记住，下次没量到先用它。改了系统缩放或微信字号之后用「重新测量」清掉旧值 —— 行高错了会算错「该点第几行」。</span></div></div><div class="row"><label>收藏夹表情</label><div class="grow">
         <input type="text" id="emojiSearch" placeholder="搜索表情（按文件名）" style="margin-bottom:8px">
         <div id="emojiBox" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;min-height:60px;max-height:240px;overflow-y:auto;border:1px dashed var(--bd);border-radius:10px;padding:10px">
           <span class="hint">加载中…</span>
@@ -1134,6 +1249,7 @@ th{color:var(--tx2);font-weight:500}
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="desc">预设信息：给<b>某一个会话</b>提前设定它用得到的背景事实（例：这个群周六下午社庆、地点在 3 号工作室）。只在<b>该会话</b>的内容相关时才注入给模型；可设截止日期，到期<b>自动舍弃</b>；<b>只属于该会话，不会带到别的会话</b>。</div>
       <div class="mid">
+        <div class="sub">⑤ 账号与暂停</div>
         <div class="row"><label>会话</label><div class="grow">
           <select id="bfChat" style="max-width:300px"></select>
           <button id="bfRefresh" class="ghost" style="margin-left:8px">刷新会话</button>
@@ -1232,9 +1348,11 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-bot" class="card" data-sec>
       <div class="sec-hd"><h2>机器人与响应档位</h2><span class="st" id="stBot">读取中</span></div>
       <div class="desc">机器人怎么称呼自己、响应到什么程度、给模型多少上下文。改完保存即生效。（档位/档位模式改完即生效；涉及轮询与身份项的改完建议重启一次）</div>
+      <div class="sub">① 身份</div>
       <div class="row"><label>机器人昵称</label><div class="grow"><input type="text" data-cfg="wechat.bot_nickname"></div></div>
       <div class="row"><label>自我称呼</label><div class="grow"><input type="text" data-cfg="persona.self_nickname" placeholder="留空=机器人昵称，用于识别「我」"></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="sub">② 响应档位</div>
       <div class="row"><label>响应档位</label><div class="grow"><select data-cfg="store.context_tier" id="ctxTier">
         <option value="1">1 档：仅艾特</option><option value="2">2 档：+关键词</option>
         <option value="3">3 档：+随机</option><option value="4">4 档：全响应</option></select>
@@ -1258,6 +1376,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">在群里 <b>@机器人 +「禁言」/「禁言 15」/「解除禁言」</b> ⇒ 本群档位临时固定到 <b>1 档（只回艾特）</b>，到期自动恢复（默认 30 分钟，最长 24 小时）。<b>留空＝谁都不能下这个指令</b>（否则群里任何人喊一句就能把机器人按住）。指令不会在群里回话，只在日志与控制台可见。</div>
       </div></div>
       <div class="row"><label>响应等级现状</label><div class="grow"><span id="tierStat" class="hint">读取中…</span></div></div>
+      <div class="sub">③ 触发与概率</div>
       <div class="row" data-tier="2,3"><label>关键词(逗号)</label><div class="grow"><input type="text" data-cfg="store.keywords" placeholder="2/3档命中即响应"></div></div>
       <div class="row" data-tier="3"><label>随机概率%</label><div class="grow"><input type="number" min="0" max="100" data-cfg="store.random_percent"></div></div>
       <div class="mid">
@@ -1266,10 +1385,12 @@ th{color:var(--tx2);font-weight:500}
         <div class="row" data-tier="3"><label>随机上下文</label><input type="number" min="1" data-cfg="store.random_count"></div>
       </div>
       <div class="row"><label>单档上下文上限</label><div class="grow"><input type="number" min="1" data-cfg="store.all_count"></div></div>
+      <div class="sub">④ 上下文窗口</div>
       <div class="row"><label>历史窗口(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.past_window_min" title="0=不限"> <span class="hint">只把最近 N 分钟内的消息给模型当历史，防它回应很久之前的艾特/旧话题</span></div></div>
       <div class="row"><label>历史兜底条数</label><div class="grow"><input type="number" min="0" data-cfg="store.past_floor_count" title="时间窗外至少保留最近 N 条；0=关闭"> <span class="hint">长时间静默后仍能看到上文</span></div></div>
       <div class="row"><label>新消息时间窗(分钟)</label><div class="grow"><input type="number" min="0" data-cfg="store.feed_window_min" title="0=不限"> <span class="hint">停机/卡顿后补进来的整批未读里，只把最近 N 分钟的当作「要我回」（更早的旧闲聊标已读、不回）；<b>@ 你 / 引用你的消息不受这个窗限制</b></span></div></div>
       <div class="row"><label>单轮最多读几条</label><div class="grow"><input type="number" min="1" data-cfg="store.feed_max_count" title="超出的退回未读、下一轮再处理"> <span class="hint">防积压一次性灌给模型（也防它一口气回一大串）</span></div></div>
+      <div class="sub">⑤ 群级与行为</div>
       <div class="row"><label>每群消息上限</label><div class="grow"><input type="number" min="0" data-cfg="store.max_messages_per_chat" title="0=不限制"></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="row"><label>每群独立档位</label><input type="checkbox" data-cfg="store.unified_tier" id="unifiedTierChk" checked><span class="hint">取消勾选后，可在下方按群单独设置响应档位（未设置的群跟随全局）</span></div>
@@ -1292,13 +1413,13 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-persona" class="card" data-sec>
       <div class="sec-hd"><h2>人设与响应</h2><span class="st" id="stPersona">读取中</span></div>
       <div class="desc">机器人以谁的身份在群里说话、怎么参与：人设名、参与度、自我介绍与群名片。改完立刻生效。</div>
-      <div class="row"><label>人设名</label><div class="grow"><input type="text" data-cfg="persona.bot_name"></div></div>
+      <div class="sub">① 角色</div><div class="row"><label>人设名</label><div class="grow"><input type="text" data-cfg="persona.bot_name"></div></div>
       <div class="row"><label>人设选单</label><div class="grow">
         <div id="personaCats" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
-          <button id="pCatAdd" class="ghost" style="padding:2px 10px" title="新建分区或添加角色">＋ 新建/添加</button>
+          <button id="pCatAdd" class="ghost tiny" title="新建分区或添加角色">＋ 新建/添加</button>
         </div>
         <div class="btns" style="justify-content:flex-start;gap:8px">
-          <button id="pSort" class="ghost" title="点击：分数高→低；再点：低→高；再点回到高→低（WPS 式切换）" style="font-weight:700">↓ 按评估分数排序</button>
+          <button id="pSort" class="ghost" title="点击：分数高→低；再点：低→高；再点回到高→低（WPS 式切换）">↓ 按评估分数排序</button>
           <span class="hint" id="pSortHint">（点一下正序，再点一下倒序）</span>
           <button id="pSortOff" class="ghost">恢复默认顺序</button>
           <button id="pRestorePrev" class="ghost" title="撤销最近一次应用的人设（真实有效：恢复上一个人设名+文本）" style="color:var(--warn);border-color:var(--warn)">恢复上个人设</button>
@@ -1312,7 +1433,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>参与度</label><div class="grow"><select data-cfg="persona.participation">
         <option value="low">安静型</option><option value="medium">普通群友</option><option value="high">活跃型</option></select></div></div>
       <div class="row"><label>自定义角色文本</label><div class="grow"><textarea data-cfg="persona.role_text" placeholder="留空=内置小鲸鱼角色卡；填了=完全替换。可参考 agent/persona.py"></textarea></div></div>
-      <div class="row"><label>评分补足</label><div class="grow">
+      <div class="sub">② 评分补足</div><div class="row"><label>评分补足</label><div class="grow">
         <div class="btns" style="justify-content:flex-start;gap:8px">
           <button id="pScoreLLM" class="ghost">模型评分</button>
           <button id="pEnrich" class="ghost">模型补足</button>
@@ -1352,7 +1473,7 @@ th{color:var(--tx2);font-weight:500}
         </div>
         <pre id="promptPreview" class="out" style="display:none;max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
       </div></div>
-      <div class="row"><label>模块开关</label><div class="grow">
+      <div class="sub">③ 行为与撤回</div><div class="row"><label>模块开关</label><div class="grow">
         <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_scene_rules"> 微信场景规则</label>
         <label class="hint" style="display:inline-block;margin-right:14px"><input type="checkbox" data-cfg="system_prompt.enable_memory_rules"> 记忆使用规则</label>
         <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="system_prompt.enable_holiday_hint"> 节日提示</label>
@@ -1369,7 +1490,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>已剔除</label><div class="grow"><span id="recallStat" class="hint">读取中…</span></div></div>
       </div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>主动开话题</label><input type="checkbox" data-cfg="proactive.enabled">
+      <div class="sub">④ 主动开话题</div><div class="row"><label>主动开话题</label><input type="checkbox" data-cfg="proactive.enabled">
         <span class="hint">群冷场超过阈值后，按概率主动抛一个话题（默认关；费少量用量）</span></div>
       <div class="mid" id="proactiveRows">
         <div class="row"><label>冷场阈值(毫秒)</label><input type="number" min="1" data-cfg="proactive.idle_threshold_ms" title="毫秒；默认 1800000（30 分钟）"></div>
@@ -1444,7 +1565,7 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-model" class="card" data-sec>
       <div class="sec-hd"><h2>模型 API</h2><span class="st" id="stModel">读取中</span></div>
       <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
-      <div class="row"><label>接口地址</label><div class="grow"><input type="text" data-cfg="api.base_url"><span class="hint" style="margin-top:4px;display:block">可填官方地址，也可填「API 中转站」地址（如 https://api.中轉站.com/v1——常更便宜、能降低 花费；填中转站地址+对应口令即可，无需改其它设置）。</span></div></div>
+      <div class="sub">① 连接</div><div class="row"><label>接口地址</label><div class="grow"><input type="text" data-cfg="api.base_url"><span class="hint" style="margin-top:4px;display:block">可填官方地址，也可填「API 中转站」地址（如 https://api.中轉站.com/v1——常更便宜、能降低 花费；填中转站地址+对应口令即可，无需改其它设置）。</span></div></div>
       <div class="row"><label>密钥</label>
         <div class="grow">
           <input type="password" id="apiKeyInput" data-cfg="api.api_key" placeholder="sk-...">
@@ -1478,7 +1599,7 @@ th{color:var(--tx2);font-weight:500}
           <input type="text" id="modelCustom" class="dn" placeholder="自定义模型名（如 glm-4-plus）">
           <div class="hint">所选厂商的常用模型都在下拉里；不够用就选「自定义」手填，或直接改配置文件。</div>
         </div></div>
-      <div class="row"><label>本机模型</label>
+      <div class="sub">② 模型分流</div><div class="row"><label>本机模型</label>
         <div class="grow">
           <div class="btns" style="margin-bottom:6px">
             <button id="localProbe" class="ghost">探测本机模型</button>
@@ -1559,15 +1680,18 @@ th{color:var(--tx2);font-weight:500}
         <input type="checkbox" data-cfg="api.thinking" id="thinkOffChk" checked>
         <div>
           <div class="tc-title">省用量：关闭模型思考<span class="tc-badge" id="thinkBadge">已开启省用量</span></div>
-          <div class="tc-sub">勾选 = 关闭推理文本（api.thinking=off），单会话可省 50~90% 用量；群里闲聊/问答建议保持勾选。
-          取消勾选 = 跟随模型默认（auto）或强制思考（on），回答更「深思熟虑」但费用量、更慢。</div>
+          <div class="tc-sub"><b>勾选（默认）</b>＝关闭推理文本（<code>api.thinking=off</code>）⇒
+            <b>省 50%~90% 输出用量、回得更快</b>；<b>代价</b>：需要动脑的场景会变浅（辟谣／长分析／算账／多步推理）。<br>
+            <b>取消勾选</b>＝跟随模型默认（<code>auto</code>）或强制思考（<code>on</code>）⇒
+            分析类回答更稳；<b>代价</b>：更慢、更贵（思考那部分按输出价计费）。<br>
+            <b>怎么选</b>：群里闲聊／问答 ⇒ 保持勾选；明确要它做分析 ⇒ 临时取消，做完再勾回来。</div>
         </div>
       </label>
-      <div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05" data-cfg="api.temperature"><span class="val" id="api.temperature-v">0.8</span></div>
+      <div class="sub">③ 生成参数</div><div class="row"><label>温度</label><input type="range" id="api.temperature" min="0" max="1" step="0.05" data-cfg="api.temperature"><span class="val" id="api.temperature-v">0.8</span></div>
       <div class="row"><label>单次工具轮数</label><div class="grow"><input type="number" data-cfg="api.max_rounds" min="1" max="50"></div></div>
       <div class="row"><label>请求超时(ms)</label><div class="grow"><input type="number" data-cfg="api.timeout_ms" min="5000" step="1000"></div></div>
       <div class="mid">
-        <div class="row"><label>输入单价/百万</label><input type="number" step="0.01" data-cfg="api.price_input_per_m"><span class="val">元</span></div>
+        <div class="sub">④ 计费</div><div class="row"><label>输入单价/百万</label><input type="number" step="0.01" data-cfg="api.price_input_per_m"><span class="val">元</span></div>
         <div class="row"><label>输出单价/百万</label><input type="number" step="0.01" data-cfg="api.price_output_per_m"><span class="val">元</span></div>
         <div class="row"><label>缓存单价/百万</label><input type="number" step="0.01" data-cfg="api.price_cached_per_m"><span class="val">元</span></div>
       </div>
@@ -1586,6 +1710,7 @@ th{color:var(--tx2);font-weight:500}
           <input type="text" id="memSearch" class="group-search" placeholder="搜索群名，回车选中第一个匹配…">
           <select id="memChats"><option value="">（加载中…）</option></select>
           <button id="memRefresh" class="ghost" style="margin-top:6px">刷新</button>
+          <button id="memWordcloud" class="ghost" style="margin-top:6px" title="把这个群最近聊得最多的词画成一张图（按出现次数定字号）；没聊过会说没数据，不会出空白图">出热词词云</button>
         </div>
       </div>
       <div class="row"><label>关机总结印象</label><div class="grow">
@@ -1613,25 +1738,25 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-memory-set" class="card" data-sec>
       <h2>记忆（共享设置）</h2>
       <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
-      <div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
+      <div class="sub">① 开关与共享</div><div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
       <div class="row"><label>共享记忆池</label><input type="checkbox" data-cfg="memory.share_across_groups" checked id="memShareChk">
         <span class="hint">勾选=所有群共享一个记忆池（群间互通）；不勾=每群独立（默认，群间互不串味）</span></div>
       <div class="row" id="memGroupsRow"><label>共享群（可选）</label><div class="grow">
         <div id="memGroupsBox" style="display:flex;flex-wrap:wrap;gap:6px"><span class="hint">加载中…</span></div>
         <div class="hint">勾选几个群 → 只有这些群间共享记忆（比全共享更精准；不勾=用上方总开关）</div>
       </div></div>
-      <div class="row"><label>整理间隔(小时)</label><div class="grow"><input type="number" min="1" data-cfg="memory.consolidate_min_interval_ms"></div></div>
+      <div class="sub">② 整理参数</div><div class="row"><label>整理间隔(小时)</label><div class="grow"><input type="number" min="1" data-cfg="memory.consolidate_min_interval_ms"></div></div>
       <div class="mid">
         <div class="row"><label>最少印象数</label><input type="number" min="1" data-cfg="memory.consolidate_min_impressions"></div>
         <div class="row"><label>每成员印象上限</label><input type="number" min="1" data-cfg="memory.max_impressions_per_member"></div>
-        <div class="row"><label>发现最少消息</label><input type="number" min="1" data-cfg="memory.discover_min_messages"></div>
+        <div class="sub">③ 发现阈值</div><div class="row"><label>发现最少消息</label><input type="number" min="1" data-cfg="memory.discover_min_messages"></div>
         <div class="row"><label>发现最多成员</label><input type="number" min="1" data-cfg="memory.discover_max_members"></div>
       </div>
       <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
     </section>
 <section id="sec-search" class="card" data-sec>
       <div class="sec-hd"><h2>联网搜索</h2><span class="st" id="stSearch">读取中</span></div>
-      <div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
+      <div class="sub">① 引擎</div><div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
       <div class="row"><label>引擎</label><div class="grow"><select data-cfg="web_search.provider" id="wsProvider">
         <option value="bing">Bing（免key）</option><option value="deepseek">DeepSeek</option>
         <option value="zhipu">智谱</option><option value="bocha">博查</option>
@@ -1640,26 +1765,32 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>结果数</label><div class="grow"><input type="number" min="1" max="20" data-cfg="web_search.max_results"></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
       <div class="desc">当前引擎参数（切换引擎自动带出对应小节，保存真实落盘 web_search.&lt;provider&gt;）：</div>
-      <div class="row"><label>引擎 Key</label><div class="grow"><input type="password" id="wsKey" placeholder="贴该引擎的 密钥" autocomplete="off"></div></div>
+      <div class="sub">② 引擎参数</div><div class="row"><label>引擎 Key</label><div class="grow"><input type="password" id="wsKey" placeholder="贴该引擎的 密钥" autocomplete="off"></div></div>
       <div class="row"><label>接口地址</label><div class="grow"><input type="text" id="wsUrl" placeholder="留空=官方默认"></div></div>
       <div class="row" data-ws="deepseek"><label>模型</label><div class="grow"><input type="text" id="wsModel" placeholder="deepseek-chat"></div></div>
       <div class="row" data-ws="zhipu"><label>engine</label><div class="grow"><input type="text" id="wsEngine" placeholder="search_std"></div></div>
       <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
-    </section>
-<section id="sec-community" class="card" data-sec>
+    </section><section id="sec-community" class="card" data-sec>
       <h2>社区与学习</h2>
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
-      <div class="row"><label>评分引擎</label><input type="checkbox" data-cfg="scoring.enabled" checked><span class="hint">本地正反馈评分（零用量）；群友回应热烈→高效反应进入提示词参考</span></div>
+      <div class="sub">① 资源市场</div>
+      <div class="row"><label>资源市场</label><div class="grow">
+        <div class="btns" style="justify-content:flex-start;gap:8px">
+          <button id="marketOpenBtn" class="pri">打开资源市场</button>
+          <span class="hint">从站上下载人设 / Skill / 工具，或把你自己的传上去。站点还在建设中，现在打开能看到本机已装的东西。</span>
+        </div>
+      </div></div>
+      <div class="sub">① 评分引擎</div><div class="row"><label>评分引擎</label><input type="checkbox" data-cfg="scoring.enabled" checked><span class="hint">本地正反馈评分（零用量）；群友回应热烈→高效反应进入提示词参考</span></div>
       <div class="row"><label>种子库</label><input type="checkbox" data-cfg="scoring.seed_library" checked><span class="hint">内置有趣开场/接梗 small-sample 参考（默认开）。关掉 ⇒ 提示词里不再放这段种子；「本地高分反应」不归它管。</span></div>
       <div class="row"><label>在线评分</label><input type="checkbox" data-cfg="scoring.online_scoring"><span class="hint"><b>当前未接线</b>：本机没有「让模型打分」这条实现，勾上也不会真去打分（评分目前全在本地算）。留着是为了不弄丢你的选择。</span></div>
       <div class="row"><label>热度衰减</label><input type="checkbox" data-cfg="scoring.heat_decay" checked><span class="hint">老梗降权、防饱和（默认开）。取消勾选 ⇒ 分数不再随时间衰减，老梗不降权。</span></div>
-      <div class="row"><label>梗搜索</label><input type="checkbox" data-cfg="meme.enabled" checked><span class="hint">不懂群里的新梗时，机器人可联网查它的来龙去脉（只在真不懂时才查，默认开）</span></div>
+      <div class="sub">② 梗与联网搜索</div><div class="row"><label>梗搜索</label><input type="checkbox" data-cfg="meme.enabled" checked><span class="hint">不懂群里的新梗时，机器人可联网查它的来龙去脉（只在真不懂时才查，默认开）</span></div>
       <div class="mid">
         <div class="row"><label>每次最多几条</label><input type="number" min="1" max="10" data-cfg="meme.max_results"><span class="hint">1~10 条，默认 5</span></div>
         <div class="row"><label>查询缓存(秒)</label><input type="number" min="0" data-cfg="meme.cache_ttl_s"><span class="hint">同一话题在这段时间内只真查一次，省流量；默认 21600（6 小时）</span></div>
       </div>
-      <div class="row"><label>导入金句种子</label><div class="grow"><textarea id="seedImport" rows="2" placeholder="粘贴金句墙导出的文本，每行一条…"></textarea>
+      <div class="sub">③ 金句与导出</div><div class="row"><label>导入金句种子</label><div class="grow"><textarea id="seedImport" rows="2" placeholder="粘贴金句墙导出的文本，每行一条…"></textarea>
         <div class="row"><label>自定义金句(选单)</label><div class="grow"><input type="text" id="seedCustomTxt" placeholder="输入一句你的自定义金句，点「添加」进库（学习/接梗参考）" style="flex:1"><button id="seedCustomAdd" class="ghost">添加</button><span id="seedCustomRst" class="hint"></span></div></div>
         <div class="btns"><button id="seedImportBtn" class="ghost">导入种子库</button><button id="seedImportFile" class="ghost">选择文件导入</button><input type="file" id="seedFile" accept=".txt,.json,text/plain,application/json" style="display:none"><span class="hint" id="seedImportRst"></span></div>
         <div class="hint">粘贴导入（每行一条）；或「选择文件导入」读 txt/json 文件——导入自动查重（精确+72% 相似度）后写入并立即生效。</div>
@@ -1675,7 +1806,7 @@ th{color:var(--tx2);font-weight:500}
         </div>
         <div class="hint" id="exportRst">导出为本地文件（community.export_dir）；「打开导出文件夹」直接用资源管理器定位。</div>
       </div></div>
-      <div class="row"><label>社区上传</label><input type="checkbox" data-cfg="community.upload_enabled"><span class="hint">开启后金句/意见可 POST 到下方 URL（需自配服务器）</span></div>
+      <div class="sub">④ 上传与上云</div><div class="row"><label>社区上传</label><input type="checkbox" data-cfg="community.upload_enabled"><span class="hint">开启后金句/意见可 POST 到下方 URL（需自配服务器）</span></div>
       <div class="row"><label>金句上传 URL</label><div class="grow"><input type="text" data-cfg="community.holyshits_upload_url" placeholder="留空=仅本地导出"></div></div>
       <div class="row"><label>意见反馈上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
       <div class="row"><label>上传动作</label><div class="grow">
@@ -1688,7 +1819,7 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="row"><label>意见上传 URL</label><div class="grow"><input type="text" data-cfg="community.feedback_upload_url" placeholder="留空=仅本地导出"></div></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>上云（预留）</label><input type="checkbox" data-cfg="cloud.enabled">
+      <div class="sub">⑤ 自配接收端</div><div class="row"><label>上云（预留）</label><input type="checkbox" data-cfg="cloud.enabled">
         <span class="hint">默认关：<b>关着时一个字节都不会上传</b>。这里只把接口留好——接收端网址填进去、点「测试连通」看通不通；要真发再打开这个开关</span></div>
       <div class="mid" id="cloudRows">
         <div class="row"><label>人设接收端</label><div class="grow"><div class="btns" style="justify-content:flex-start;gap:8px">
@@ -1709,6 +1840,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
       </div>
     </section>
+<section id="sec-emoji" class="card" data-sec><div class="sec-hd"><h2>表情</h2><span class="st" id="stEmojiIndex">读取中</span></div><div class="desc">自定义表情是图片，模型读不出含义 —— 这里把每张图翻成一句文字（说明 / 适用场面 / 情绪 / 把握），机器人挑表情时才有依据。</div><div class="sub">① 索引概况</div><div class="stat" id="emojiStats"><div class="s"><b id="eiTotal">0</b><span>索引总数</span></div><div class="s"><b id="eiDone">0</b><span>已标注</span></div><div class="s"><b id="eiTodo">0</b><span>待打标</span></div><div class="s"><b id="eiLow">0</b><span>把握不足</span></div><div class="s"><b id="eiAnim">0</b><span>动图</span></div><div class="s"><b id="eiStill">0</b><span>静态图</span></div><div class="s"><b id="eiTop">—</b><span>群友最常用</span></div></div><div class="row"><label>筛选</label><div class="grow"><input type="text" id="eiSearch" placeholder="按说明、场面或编号搜…"><label style="margin-left:12px"><input type="checkbox" id="eiPendingOnly">只看待打标</label><button id="eiRefresh" class="ghost">刷新</button><button id="eiRescan" class="ghost">重扫目录</button><span class="hint" id="eiNote"></span></div></div><div class="sub">② 清单</div><div id="emojiList" style="max-height:420px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px"></div><div class="sub">③ 回填语义（点上面任意一条开始改）</div><div class="mid"><div class="row"><label>说明</label><div class="grow"><input type="text" id="eiCap" placeholder="这张图画了什么、是什么梗"><span class="hint">模型只读这句文字，所以梗图必须把来源写进去</span></div></div><div class="row"><label>适用场面</label><div class="grow"><input type="text" id="eiSit" placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）"></div></div><div class="row"><label>情绪</label><div class="grow"><input type="text" id="eiMoods" placeholder="逗号分隔，如：嘲弄,无奈"></div></div><div class="row"><label>把握</label><div class="grow"><select id="eiConf"><option value="high">高（看图就能确定）</option><option value="low">低（疑似梗，需外部资料）</option></select><input type="text" id="eiMeme" placeholder="梗的出处（可留空）" style="margin-left:8px"></div></div><div class="btns"><button class="pri" id="eiSave">保存语义</button><span class="hint" id="eiWho"></span></div></div><div class="sub">④ 向群友请教</div><div class="row"><label>启用</label><div class="grow"><input type="checkbox" data-cfg="emoji.curiosity.enabled"><span class="hint">低把握的表情，机器人可以在群里问一句「这是什么梗」；群友答对了就记下来（默认关 —— 问多了像刷屏）</span></div></div><div class="row"><label>提问概率</label><div class="grow"><input type="number" min="0" max="1" step="0.05" data-cfg="emoji.curiosity.probability"><span class="hint">每次遇到合适机会，问的概率（0~1）</span></div></div><div class="row"><label>冷却(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.cooldown_s"><span class="hint">同一张表情多久内不再问（默认 21600 ＝ 6 小时）</span></div></div><div class="row"><label>应答窗口(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.answer_window_s"><span class="hint">超过这么久才回的不算回答（默认 120）</span></div></div><div class="row"><label>当前状态</label><div class="grow"><span class="hint" id="eiCurState">读取中…</span></div></div><div class="row"><label>最近学到</label><div class="grow"><span class="hint" id="eiCurLearned">—</span></div></div><div class="sub">⑤ Emoji 库</div><div class="row"><label>可用清单</label><div class="grow"><b id="ecStats">读取中</b><span class="hint">机器人回话时可以直接写这些方括号码，微信会把它变成表情 —— 这份清单与提示词里摆给模型看的那份同源</span></div></div><div class="row"><label>微信表情码</label><div class="grow"><span class="hint" id="ecWx">读取中…</span></div></div><div class="row"><label>情绪组</label><div class="grow"><span class="hint" id="ecMood">读取中…</span></div></div><div class="row"><label>提示词里摆给模型看</label><div class="grow"><input type="checkbox" data-cfg="emoji.prompt_codes"><span class="hint">关掉可省约 1 K 字符/轮；关掉之后模型可能改用「（微笑）」这种文字对付</span></div></div><div class="row"><label>允许 Unicode 表情</label><div class="grow"><input type="checkbox" data-cfg="emoji.allow_unicode"><span class="hint">开启时情绪组里会一并给出表情字符（笑脸那类）；关掉只给微信 [码]</span></div></div></section>
 <section id="sec-media" class="card" data-sec>
       <div class="sec-hd"><h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2><span class="st" id="stMedia">读取中</span></div>
       <div class="desc">三项能力的状态都在这一屏：能用的显示**实测**结果，不能用的写清缺哪一环、怎么补。下面这些开关**默认都是关的**——开着才会真的动。</div>
@@ -1751,6 +1883,33 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">关掉后只能用本地图库，不能按"找张猫的图"去在线图源找。</span></div>
       <div class="row"><label>只发安全的</label><input type="checkbox" data-cfg="image_reply.safe_only">
         <span class="hint">关掉它不建议：宁可这次发不出，也不要发出不该发的图。</span></div>
+      <div class="row"><label>接口地址</label><div class="grow"><input data-cfg="image_reply.api_url" placeholder="https://…（留空＝不联网）">
+        <span class="hint">只有「取图方式＝单个自定义接口」用它；留空就一次都不出网。</span></div></div>
+      <div class="row"><label>接口超时(毫秒)</label><input type="number" min="500" step="500" data-cfg="image_reply.api_timeout_ms">
+        <span class="hint">问这个接口最多等多久，超时按失败处理。</span></div>
+      <div class="row"><label>偏好标签</label><input data-cfg="image_reply.tag" placeholder="例如 风景（可留空）">
+        <span class="hint">只对 pixiv 那个图源生效；填了就更偏向这一类作品。</span></div>
+      <div class="row"><label>没找到就用旧图</label><input type="checkbox" data-cfg="image_reply.cache_fallback">
+        <span class="hint">默认关＝找不到就如实说"没找到"。开着会拿以前下过的旧图顶上，可能和群友要的完全不相关。</span></div>
+      <div class="row"><label>放宽到暧昧级</label><input type="checkbox" data-cfg="image_reply.allow_questionable">
+        <span class="hint">不建议开：开了会把"暧昧"分级也放过。稳妥做法是让它拒。</span></div>
+      <div class="row"><label>发前让模型再看一眼</label><input type="checkbox" data-cfg="image_reply.vision_filter">
+        <span class="hint">发之前让视觉模型复核一次（SAFE/UNSAFE）；关掉就只剩前两道过滤。</span></div>
+      <div class="row"><label>复核没过也发</label><input type="checkbox" data-cfg="image_reply.vision_fail_open">
+        <span class="hint">默认关＝宁可这次发不出。开着等于"复核失败/超时也放行"，这道闸就名存实亡。</span></div>
+      <div class="row"><label>最小边长(像素)</label><input type="number" min="0" data-cfg="image_reply.min_side">
+        <span class="hint">比它小的图丢掉（太糊）；0＝不限。</span></div>
+      <div class="row"><label>肤色占比上限</label><input type="number" min="0" max="1" step="0.05" data-cfg="image_reply.skin_max_ratio">
+        <span class="hint">本地粗筛的阈值（0~1）：肤色像素占比超过它就不发；0＝关掉这道。</span></div>
+      <div class="row"><label>单张上限(MB)</label><input type="number" min="1" data-cfg="image_reply.max_mb">
+        <span class="hint">超过就跳过这张（大图发得慢，也更容易卡）。</span></div>
+      <div class="row"><label>两次间隔(秒)</label><input type="number" min="0" data-cfg="image_reply.min_gap_seconds">
+        <span class="hint">同一个会话里，两次"随机图"至少隔这么久（防刷屏）。</span></div>
+      <div class="row"><label>最近N张不发重</label><input type="number" min="0" data-cfg="image_reply.avoid_recent">
+        <span class="hint">记住最近发过的几张，别连着发同一张；0＝不去重。</span></div>
+      <div class="row"><label>允许发动图</label><input type="checkbox" data-cfg="image_reply.include_gif">
+        <span class="hint">关掉就只发静态图。</span></div>
+      <div class="hint">出图慢、或老是失败时，还有一组**调度项**（各项超时 / 并发几路 / 图源顺序 / 失败后冷却）没摆到界面上——它们互相牵制，裸改容易越调越糟。要动就编辑配置文件里的 image_reply 段。</div>
 
       <div class="sub">③ 视频 / 文件 / 链接</div>
       <div class="row"><label>链接</label><div class="grow"><b>不用下载，直接发</b>
@@ -1810,9 +1969,13 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-tts" class="card" data-sec>
       <div class="sec-hd"><h2>语音回复（TTS）</h2><span class="st" id="stTts">读取中</span></div>
       <div class="desc">让机器人**用语音回一句**：文字合成为音频再发出去。**当前形态＝音频文件，不是微信语音条**——微信 PC 没有"把任意音频发成语音条"的接口；真语音条要装虚拟声卡 + 用微信录音按钮（属待拍板项）。**合成在哪做，取决于下面的「声音来源」那一档**：<b>系统声音</b>＝全程本机、内容不出网；<b>edge 神经语音</b>＝把<b>要念的那一句话</b>发到微软的在线语音服务（只发这一句，不发聊天记录、不发联系人；不上传音频，它只回音频）；<b>自带模型</b>＝发到你自己跑的那个本地服务。</div>
-      <div class="row"><label>引擎状态</label><div class="grow"><b id="ttsWhy">检测中…</b>
+      <div class="sub">① 引擎与音色</div><div class="row"><label>引擎状态</label><div class="grow"><b id="ttsWhy">检测中…</b>
         <div id="ttsList" class="hint"></div></div></div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="voice_reply.enabled">
+      <div class="row"><label>发送形态</label><div class="grow"><select data-cfg="voice_reply.form">
+        <option value="strip">真语音条（默认）</option>
+        <option value="file">音频文件</option>
+      </select><span class="hint">默认发**真语音条**（在微信里是可点的语音条）：走虚拟声卡让微信自己录。虚拟声卡那三件不齐时会**如实退回成音频文件并说明**；选「音频文件」则永远发文件（谁都能用）。</span></div></div>
         <span class="hint">默认关：开着模型才能在合适的时候用语音回一句。</span></div>
       <div class="row"><label>声音来源</label><div class="grow"><select data-cfg="voice_reply.backend" id="ttsBackend">
         <option value="edge">edge 神经语音（开箱可用：免费、无需 Key；需联网）</option>
@@ -1919,7 +2082,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint"><b>这是你自己电脑上跑起来的服务，不是网页、也不是我们帮你托管</b>：像 <b>GPT-SoVITS</b>（文字→音频，可克隆音色）这类本地模型，用它自带的 <code>api.py</code> 起一个本机服务（默认 <code>http://127.0.0.1:9880/tts</code>），模型文件放在它自己的目录里加载；这里填它的地址即可。<b>不填＝用上面「本机系统声音」那一档</b>（系统自带、零配置）。回音频字节（audio/wav）直接用；回配置格式就在下面填字段名。</span></div></div>
       <div class="row"><label>取哪个字段</label><div class="grow"><input type="text" data-cfg="voice_reply.http_json_field" placeholder="如 data（内容编码）或 audio（文件路径）；回音频字节就留空">
         <span class="hint">这条通道只能证明<b>端点通不通、返回的是不是音频</b>；<b>音色是不是目标角色属「未声明」</b>，发出去的仍是音频文件。</span></div>
-      <div class="row"><label>参考音频（SoVITS 类）</label><div class="grow"><input type="text" data-cfg="voice_reply.http_ref_audio" placeholder="服务端本机路径，如 D:////refs////demo.wav"><span class="hint">只有「文字 + 参考音频 → 语音」那一类端点（如 GPT-SoVITS 的 <code>/tts</code>）需要，且必须是<b>服务端那台机器上</b>的路径——不是上传文件。其它端点留空即可。</span></div></div>
+      <div class="sub">② 参考音频</div><div class="row"><label>参考音频（SoVITS 类）</label><div class="grow"><input type="text" data-cfg="voice_reply.http_ref_audio" placeholder="服务端本机路径，如 D:////refs////demo.wav"><span class="hint">只有「文字 + 参考音频 → 语音」那一类端点（如 GPT-SoVITS 的 <code>/tts</code>）需要，且必须是<b>服务端那台机器上</b>的路径——不是上传文件。其它端点留空即可。</span></div></div>
       <div class="row"><label>参考音频的文字</label><div class="grow"><input type="text" data-cfg="voice_reply.http_prompt_text" placeholder="参考音频里念的那句话（同上端点必需）"></div></div>
       <div class="row"><label>参考音频语言</label><div class="grow"><input type="text" data-cfg="voice_reply.http_prompt_lang" placeholder="如 zh / en"></div></div></div>
       <script>
@@ -1942,7 +2105,7 @@ th{color:var(--tx2);font-weight:500}
         };
       })();
       </script>
-      <div class="row"><label>变声服务</label><div class="grow"><input type="text" data-cfg="voice_reply.vc_url" placeholder="如 http://127.0.0.1:7897/infer（留空＝不变声）">
+      <div class="sub">③ 变声</div><div class="row"><label>变声服务</label><div class="grow"><input type="text" data-cfg="voice_reply.vc_url" placeholder="如 http://127.0.0.1:7897/infer（留空＝不变声）">
         <div class="btns" style="margin-top:6px"><button id="vcProbe" class="ghost" type="button">变声连通测试</button><button id="vcModels" class="ghost" type="button" style="margin-left:6px">列出模型</button><span class="hint" id="vcProbeOut"></span></div>
         <span class="hint">这也是**你自己电脑上跑的服务**（RVC 自带的 <code>api.py</code>，默认 <code>http://127.0.0.1:7897/infer</code>），不是网页版。这是**第二段**：先合成出人声，再送去<b>变声</b>成你要的音色。<b>RVC 是「音频→音频」</b>——必须指定 <b>.pth 音色模型</b> 和 <b>.index 检索索引</b>（还要 pitch / index_rate / f0_method 这些参数），所以这里除了地址，还要在下面的「变声参数」里把模型与参数写全；不同的 RVC 部署暴露的入口不一样（Gradio 的 <code>/run/convert_audio</code>、社区扩展的 <code>/api/v1/convert</code>），字段名要照对方来。<br><b>GPT-SoVITS 不是「填个地址就够」</b>：它是「文字 + <b>参考音频</b> → 音频」，它的 <code>/tts</code> 必须带 <code>ref_audio_path</code>（参考音频，而且是<b>服务器本地路径</b>）、<code>prompt_text</code>（参考音频对应的文字）、<code>prompt_lang</code>。本产品目前没有这几个字段 ⇒ 它要接在<b>上面那个「本地服务地址」（合成段）</b>，并且需要新增「参考音频路径 / 参考文本 / 语言」三项配置才能真的用起来。</span></div></div>
       <div class="row"><label>变声方式</label><div class="grow"><select data-cfg="voice_reply.vc_mode">
@@ -1977,15 +2140,32 @@ th{color:var(--tx2);font-weight:500}
         };
       })();
       </script>
-      <div class="row"><label>回复形态</label><div class="grow"><select data-cfg="voice_reply.form" id="voiceForm">
+      <div class="sub">④ 回复形态</div><div class="row"><label>回复形态</label><div class="grow"><select data-cfg="voice_reply.form" id="voiceForm">
         <option value="strip">真语音条（微信语音气泡，推荐）</option>
         <option value="file">音频文件（点开才能听的那种）</option></select>
         <div id="voiceFormHint" class="hint">真语音条要让微信"自己录"一段：需要一块成对的虚拟声卡（VB-CABLE 之类），位置每次发送前**自动扫输入条图标行现算**，不用你标定。</div></div></div>
       <div class="row"><label>真语音条机制</label><input type="checkbox" data-cfg="voice_strip.enabled">
-        <span class="hint">默认开。发真语音条走**右 Alt 键**（按住录音、松开发送）：**不会动你的鼠标**；但它需要**把微信切到前台的那几秒**——那几秒别切窗口、别最小化微信。万一某个微信版本不认右 Alt，会自动退回「真点两下」（那时会短暂借一下光标，用完立刻放回原处）。</span></div>
+        <span class="hint">默认开。默认真语音条走**纯投递**（点那个语音键、再点"按住说话"）：**不动你的鼠标、不借前台、也不注入键盘**——你最小化微信也能发。下面几项是例外情况下的开关。</span></div>
+      <div class="row"><label>进入录音态的方式</label><div class="grow"><select data-cfg="voice_strip.enter_via">
+        <option value="posted">纯投递（推荐：不动鼠标、不借前台）</option>
+        <option value="alt">按住右 Alt（不动鼠标，但那几秒微信要在前台）</option>
+        <option value="click">真点一下录音键（会动一下鼠标，用完还原）</option></select>
+        <div class="hint">"纯投递"是默认：不需要微信在前台、也不动光标 ⇒ 最小化也能用。"右 Alt"要求那几秒**别切窗口、别最小化微信**。"真点"会短暂借一下光标。选"纯投递"时**没有**自动兜底（算不出落点就如实失败，绝不偷偷改成动鼠标的路）。</div></div></div>
+      <div class="row"><label>录音音量点没亮就取消</label><input type="checkbox" data-cfg="voice_strip.meter_guard">
+        <span class="hint">默认勾。录的时候盯着音量点：一直不亮 ⇒ 当场取消，**不发静音语音条**。</span></div>
+      <div class="row"><label>这两下用真鼠标点</label><input type="checkbox" data-cfg="voice_strip.real_click">
+        <span class="hint">默认勾：进录音态/点发送这两下走真鼠标（这对控件对投递不敏感）。取消勾选＝改用投递点，**不动光标**但个别微信版本可能点不动。</span></div>
+      <div class="row"><label>Alt 不成时退回真点</label><input type="checkbox" data-cfg="voice_strip.fallback_click">
+        <span class="hint">默认勾：**只对"按住右 Alt"那一档生效**——个别版本不认右 Alt 时自动退回真点，免得一条也发不出去。选"纯投递"时这一项不参与（那条路算不出落点就如实失败）。</span></div>
+      <div class="row"><label>看得见画面就照着找键</label><input type="checkbox" data-cfg="voice_strip.find_by_frame">
+        <span class="hint">默认勾：抓得到独立窗画面时，顺手用帧里的特征找"语音切换键/录音热区"，跨窗口尺寸与缩放都稳；抓不到帧（最小化）自动退回算式。</span></div>
+      <div class="row"><label>最多等几秒确认</label><input type="number" min="3" max="120" step="1" data-cfg="voice_strip.confirm_timeout">
+        <span class="hint">发完等回读确认的**上限**（秒）：库里一进新行就立刻返回，所以它不是"要等这么久"。语音条落库很快，12 秒足够；别拿这个值去等图片/表情（那些要几十秒到几分钟）。</span></div>
+      <div class="row"><label>虚拟声卡那一端</label><div class="grow"><input type="text" data-cfg="voice_strip.out_device" placeholder="cable">
+        <div class="hint">把合成好的声音"播到哪一路"：填虚拟声卡**接收端**的关键字（默认 `cable`，匹配 VB-CABLE 一类）。微信要从**另一头**录进去，所以两端都要有。留空＝不指定。</div></div></div>
       <div class="row"><label>前提不齐时回退成文件</label><input type="checkbox" data-cfg="voice_reply.fallback_file">
         <span class="hint">勾选（默认）：选了真语音条但前提不齐（没虚拟声卡 / 没合成引擎）时，**如实回退成音频文件并说明原因**；取消勾选＝干脆不发，只告诉你缺什么。</span></div>
-      <div class="row"><label>念法纠正</label><div class="grow"><textarea data-cfg="voice_reply.pronounce" rows="3" spellcheck="false" placeholder="行行行=形形形&#10;银行=银 行"></textarea>
+      <div class="sub">⑤ 念法与字数</div><div class="row"><label>念法纠正</label><div class="grow"><textarea data-cfg="voice_reply.pronounce" rows="3" spellcheck="false" placeholder="行行行=形形形&#10;银行=银 行"></textarea>
         <div class="hint">一行一条「原文=念法」。**读音不对就用同音字替换**（例：`行行行=形形形`——它读 xíng，写成「形」就不会被念成 háng；「换行」可写「换航」）。我们**不会往你的话里插标点**：连续同字（行行行/好好好）常常是**语气偏快的连读**，插逗号会读成一字一顿、把语气读没。</div></div></div>
       <div class="row"><label>语速</label><input type="number" min="-10" max="10" data-cfg="voice_reply.rate">
         <span class="hint">-10 最慢 ~ 10 最快，0＝默认。</span></div>
@@ -1995,7 +2175,7 @@ th{color:var(--tx2);font-weight:500}
         <div id="ttsFmt" class="hint">检测中…</div></div></div>
       <div class="row"><label>单条字数上限</label><input type="number" min="10" max="500" data-cfg="voice_reply.max_chars">
         <span class="hint">超过就直接拒绝，不会硬合成。</span></div>
-      <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="voice_reply.trigger_mode">
+      <div class="sub">⑥ 触发</div><div class="row"><label>触发条件</label><div class="grow"><select data-cfg="voice_reply.trigger_mode">
         <option value="on_request">只在被要求时说（推荐）</option>
         <option value="sometimes">可以偶尔主动说</option>
         <option value="off">不主动说</option></select>
@@ -2012,7 +2192,7 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-imggen" class="card" data-sec>
       <h2>群友要图（按需求生成）</h2>
       <div class="desc">群友说「画一张 / 生成一张 / 来张 xx 的图」时，让模型调 <code>gen_image</code>：先解析要什么，再挑一个生图后端生成，**生成后必过过滤链**，任一层不确定就不发。<b>后端不用你选</b>：程序会自己探本机常用的生图服务（A1111 :7860 / ComfyUI :8188 / Fooocus :7865 / InvokeAI :9090，只读探活），探到就用；也可以在下面「生图后端」里手填固定用哪个。在线还有免密钥的 pollinations（开了「允许出网」才会用到）。**一个都没探到、也没手填**时，模型会如实回「还没配后端」——**不会假装生成过**。红线是硬的：不生成真人换脸/换身体、不生成成人内容，且这些要求本身也不照做。</div>
-      <div class="row"><label>后端状态</label><div class="grow"><b id="igWhy">检测中…</b>
+      <div class="sub">① 触发与后端</div><div class="row"><label>后端状态</label><div class="grow"><b id="igWhy">检测中…</b>
         <div id="igList" class="hint"></div></div></div>
       <div class="row"><label>总开关</label><input type="checkbox" data-cfg="image_gen.enabled">
         <span class="hint">默认关：开着模型才会在群友要图时考虑生成。</span></div>
@@ -2040,7 +2220,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">装完**自动配好并启动**，地址不用你填。要下 ≈10.8 GB（模型 6.46 GB + 运行库 4.35 GB）——
           本机实测走国内源**约 20 分钟**；点「安装」后会先**当场测速**把预计时间告诉你，并支持「**后台进行**」：
           关掉弹窗、去办别的事，它在后台接着下。</div></div></div>
-      <div class="row"><label>在线出图后端</label><div class="grow"><select data-cfg="image_gen.online_preset" id="igOnlinePreset">
+      <div class="sub">② 在线出图</div><div class="row"><label>在线出图后端</label><div class="grow"><select data-cfg="image_gen.online_preset" id="igOnlinePreset">
         <option value="pollinations">Pollinations（免密钥·零配置，**右下角有水印**，3~4 秒）</option>
         <option value="siliconflow">硅基流动 SiliconFlow（要 key·无水印·有免费额度）</option>
         <option value="zhipu">智谱 BigModel（要 key·无水印·cogview-3-flash 免费）</option>
@@ -2054,13 +2234,13 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">不同服务商的模型名不一样，填错会报「模型不存在」。</span></div></div>
       <div class="row"><label>在线优先</label><input type="checkbox" data-cfg="image_gen.online_first">
         <span class="hint">默认开：**先走在线**（质量更好），在线取不到才回落本地模型。关掉＝只走本地/自配后端。</span></div>
-      <div class="row"><label>允许联网下载</label><input type="checkbox" data-cfg="image_gen.local_sd.allow_online_install">
+      <div class="sub">③ 出网与下载</div><div class="row"><label>允许联网下载</label><input type="checkbox" data-cfg="image_gen.local_sd.allow_online_install">
         <span class="hint">默认关：不开我就**不联网下载**任何东西。装好本地后端之后，本地那条生图**全在本机跑、不出网**。</span></div>
       <div class="row"><label>生图后端</label><div class="grow"><input type="text" data-cfg="image_gen.backends" placeholder="本地示例： comfy | local | http://127.0.0.1:8188/prompt">
         <div class="hint">格式：<code>id | local/online | 接口地址</code>，多个用分号分隔。填 <code>online</code> 的还要打开下面的「允许出网」。</div></div></div>
       <div class="row"><label>允许出网</label><input type="checkbox" data-cfg="image_gen.online_allowed">
         <span class="hint">**默认开**（2026-09-18 用户拍板）：在线出的图明显更好（本机实测同一句提示词：本地动漫模型+8 步＝写意动漫图，在线 3~4 秒＝照片级）。不打开时**在线后端根本不会被选中**（图不出网、只用本地）。</span></div>
-      <div class="row"><label>去水印</label><input type="checkbox" data-cfg="image_gen.strip_watermark">
+      <div class="sub">④ 过滤与水印</div><div class="row"><label>去水印</label><input type="checkbox" data-cfg="image_gen.strip_watermark">
         <span class="hint">默认开。**优先级**：①要 key 的那三家（硅基流动/智谱/火山）本来就没水印 ⇒ 不需要它；
           ②免密钥那条 pollinations 的水印**只有账号才去得掉**（官方原话 `nologo` needs account）⇒ 在
           pollinations.ai **免费注册**拿个**令牌**填进上面「出图密钥」，水印就没了；③没令牌时按这个开关
@@ -2077,6 +2257,13 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">非空时**只放行**含这些词的请求。逗号分隔。</div></div></div>
       <div class="row"><label>风格黑名单</label><div class="grow"><input type="text" data-cfg="image_gen.style_block" placeholder="例如： 政治, 明星 （命中直接拒）">
         <div class="hint">命中即拒（生成前就拦，省得白生成）。逗号分隔。</div></div></div>
+      <div class="row"><label>IP 闸门</label><div class="grow">
+        <label class="hint"><input type="checkbox" data-cfg="image_gen.ip_guard.enabled"> 只拦具体角色名/作品名（严格维权方五家）</label>
+        <!-- ⛔ 这一层的判据是「可识别的具体表达」，**不是"风格接近"**（广州 (2024)粤0192民初113号）。
+             画风词（二次元/日系/赛璐璐/Q 版/机甲风/国风…）**一律放行** —— 风格属思想、不受著作权保护，
+             拦了只会误伤。要按风格过滤请用上面的「风格黑名单」（那是你自己填的，与本闸门职责不同）。
+             `extra_block`（补充名单）是列表型，控制台没有列表控件 ⇒ 有意不在此暴露，要加就编辑配置文件。 -->
+        <div class="hint">判断标准是「<b>可识别的具体表达</b>」，不是"风格像不像"。所以：<b>画具体的角色/作品名 ⇒ 拦</b>（只收迪士尼/任天堂/奥特曼/熊出没/哈利·波特这类有公开维权记录的五家）；<b>画风词一律放行</b>（二次元、日系、赛璐璐、Q 版、机甲风、国风、水墨…风格不受著作权保护）。政策查不到明确结论的 ⇒ <b>留痕</b>，不静默放行。</div></div></div>
       <div class="row"><label>过滤链</label><div class="grow">
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.size"> 尺寸/损坏</label>
         <label class="hint" style="margin-right:10px"><input type="checkbox" data-cfg="image_gen.filter_chain.dup"> 重复图</label>
@@ -2093,7 +2280,7 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-videogen" class="card" data-sec>
       <h2>AI 视频（几秒到几十秒的小视频）</h2>
       <div class="desc">群友说「给我做一个…的视频」时，机器人可以去做一条短小视频，做好**自动发出去**。**视频比图慢得多**（几十秒到几分钟），所以是"先回一句正在做、做好再发"，不会卡着聊天。**没配后端就如实说没配**，绝不假装做过。</div>
-      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="video_gen.enabled">
+      <div class="sub">① 后端</div><div class="row"><label>总开关</label><input type="checkbox" data-cfg="video_gen.enabled">
         <span class="hint">默认关。开着并且配了后端，模型才拿得到这个工具。</span></div>
       <div class="row"><label>触发条件</label><div class="grow"><select data-cfg="video_gen.trigger_mode">
         <option value="on_request">按要求做（只有别人明确要才做）</option>
@@ -2105,7 +2292,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">ComfyUI 是节点图，没有通用参数；把你自己调好的工作流「导出（API）」成一个 json 指给它。里面写 <b>%PROMPT%</b> / <b>%SECONDS%</b> 的地方会被换成这次的要求。</span></div></div>
       <div class="row"><label>允许出网</label><input type="checkbox" data-cfg="video_gen.online_allowed">
         <span class="hint">默认关：关着时**只试本机后端**，在线地址不会被用（在线通常按次收费）。</span></div>
-      <div class="row"><label>默认时长(秒)</label><input type="number" min="1" max="30" data-cfg="video_gen.seconds_default">
+      <div class="sub">② 参数与状态</div><div class="row"><label>默认时长(秒)</label><input type="number" min="1" max="30" data-cfg="video_gen.seconds_default">
         <span class="hint">别人没说几秒时用这个（上限 30 秒）。</span></div>
       <div class="row"><label>单次最长等待(秒)</label><input type="number" min="30" max="1800" data-cfg="video_gen.timeout">
         <span class="hint">超过这个时间还没出来就如实说"超时了"，不会一直挂着。</span></div>
@@ -2135,14 +2322,14 @@ th{color:var(--tx2);font-weight:500}
         <button id="utBarProblems" class="ghost">看问题</button>
       </div>
       <div class="desc">把 <b>一个工具一个 <code>.json</code></b> 丢进 <code>tools.d/</code>，在这里**勾选**后模型才能用它。边界先说清：<b>只发 HTTP、不执行任何本地代码</b>；<code>allow_hosts</code> 域名白名单必填，<b>内网/本机地址永远拒绝</b>（写进白名单也一样）；参数必须是合法配置格式；**坏清单会在下面逐条列出来**（不会静默跳过）。<b>不会写就点「怎么加工具 / 自己写一个」——三步 + 可复制模板 + 一键生成，全在弹窗里；别人给了你一份文档，点「导入工具」就等于装上它，「导出工具」则把你这边的打包成一份文档发给别人。</b></div>
-      <div class="row"><label>总开关</label><input type="checkbox" data-cfg="user_tools.enabled">
+      <div class="sub">① 开关与清单</div><div class="row"><label>总开关</label><input type="checkbox" data-cfg="user_tools.enabled">
         <span class="hint">默认关：关着时这些清单一个都不加载，模型也看不到。</span></div>
       <div class="row"><label>清单现状</label><div class="grow"><b id="utGlobals">检测中…</b>
         <div id="utProblems" class="hint"></div></div></div>
       <div id="utList" class="hint"></div>
       <div class="row"><label>清单目录</label><div class="grow"><input data-cfg="user_tools.dir" placeholder="tools.d">
         <span class="hint">相对项目根；一个工具一个 .json，文件名随意。</span></div></div>
-      <div class="row"><label>最多加载</label><input type="number" min="1" max="200" data-cfg="user_tools.max_tools">
+      <div class="sub">② 加载与超时</div><div class="row"><label>最多加载</label><input type="number" min="1" max="200" data-cfg="user_tools.max_tools">
         <span class="hint">超过就只加载前面这些（并在下面提示）。</span></div>
       <div class="row"><label>单次超时(毫秒)</label><input type="number" min="500" max="60000" data-cfg="user_tools.timeout_ms"></div>
       <div class="row"><label>结果截断(字符)</label><input type="number" min="200" max="20000" data-cfg="user_tools.max_chars"></div>
@@ -2230,6 +2417,25 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">发不出去或想刷新时用：「补发」把卡在本机、还没发出去的反馈再发一次；「重载」刷新上面的状态与提交记录。</span>
       </div>
 
+      <div class="sub">提交设置</div>
+      <div class="row"><label>允许反馈</label><input type="checkbox" data-cfg="feedback.enabled">
+        <span class="hint">关掉＝连这个入口一起藏起来（提交按钮不会再出现）。默认开。</span></div>
+      <div class="row"><label>附带兼容性摘要</label><input type="checkbox" data-cfg="feedback.attach_compat">
+        <span class="hint">默认开。开＝提交时自动带上这台机器的系统 / 缩放 / 微信版本 / 库页模式等<b>环境信息</b>，方便定位问题。
+        里面<b>没有</b>群名、昵称、文件路径与聊天内容。不想带就关掉（你写什么就发什么）。</span></div>
+      <div class="sub">发送频率上限</div>
+      <div class="row"><label>每分钟最多</label><input type="number" min="1" step="1" data-cfg="feedback.limit.per_minute">
+        <span class="hint">防止手滑连点把同一件事发很多遍。默认 2。</span></div>
+      <div class="row"><label>每小时最多</label><input type="number" min="1" step="1" data-cfg="feedback.limit.per_hour">
+        <span class="hint">默认 8。</span></div>
+      <div class="row"><label>每天最多</label><input type="number" min="1" step="1" data-cfg="feedback.limit.per_day">
+        <span class="hint">默认 20。</span></div>
+      <div class="row"><label>重复内容合并(秒)</label><input type="number" min="0" step="30" data-cfg="feedback.limit.dup_window_s">
+        <span class="hint">同一段内容在这个时间窗内重复提交 ⇒ 只算一次。默认 300（5 分钟）。</span></div>
+      <div class="hint">⚠️ <b>「发到哪儿」（接收地址 / 邮箱 / 口令）不在这里给界面</b> ——
+        那是投递凭据，等于开一个"把东西发到任意地址"的口子。要自建接收端的人手改 <code>config.json</code> 的
+        <code>feedback</code> 段（手改本身就是一次显式动作）。</div>
+
       <div style="margin-top:12px"><button id="fbAdvBtn" class="ghost">更多（联系邮箱 / 提交记录）</button></div>
       <div id="fbAdv" style="display:none">
         <div class="row"><label>联系邮箱</label><div class="grow"><input type="text" id="fbContact" placeholder="选填：留个邮箱，我想回你的时候能找到你"></div></div>
@@ -2239,18 +2445,23 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-send" class="card" data-sec>
       <h2>发送限制</h2>
       <div class="desc">真人化间隔与限频，防止刷屏/封号风险。</div>
+      <div class="sub">怎么发（走哪条路）</div>
+      <div class="row"><label>只对独立窗操作</label><input type="checkbox" data-cfg="send.only_popup"><span class="hint">默认开：发送只对这个会话的<b>独立窗口</b>做 —— <b>不切会话、不在主窗里发</b>，所以结构上不可能发错（切会话有切错的风险）。拿不到独立窗时程序会自己开：先<b>双击</b>那一行，双击不成改走<b>右键菜单</b>，列表里找不到就<b>搜索</b>；全都不成会如实告诉你（并请你自己拖一次）。关掉＝退回「允许切会话/在主窗里发」的老路，仅作应急。</span><span class="hint">右键菜单那一项的用词随微信版本可能变化；匹配不上时它<b>不会乱点</b>，会如实报错。</span><span class="hint"><b>建议</b>：把你<b>常用的会话</b>自己点成<b>独立窗</b>（双击会话行／把它拖出来）。只要独立窗开着，机器人就<b>直接用它</b> —— <b>不搜索、不点会话列表</b>，既不受置顶／折叠／滚动影响，也不碰你的列表。</span></div>
+      <div class="sub">暂停闸（现在到底能不能发）</div>
+      <div class="row"><label>当前状态</label><div class="grow"><b id="haltState">读取中…</b><span class="hint" id="haltWhy"></span></div></div>
+      <div class="row"><label>闸门来源</label><div class="grow"><span class="hint">两道闸都要看：文件级标记（发送链入口查的是它）与风控层。开关在顶栏那颗按钮上，这里只如实显示。</span></div></div>
       <div class="mid">
-        <div class="row"><label>最小间隔(ms)</label><input type="number" min="200" step="100" data-cfg="send.min_gap_ms"></div>
+        <div class="sub">② 节奏</div><div class="row"><label>最小间隔(ms)</label><input type="number" min="200" step="100" data-cfg="send.min_gap_ms"></div>
         <div class="row"><label>最大间隔(ms)</label><input type="number" min="200" step="100" data-cfg="send.max_gap_ms"></div>
         <div class="row"><label>每字附加(ms)</label><input type="number" min="0" step="5" data-cfg="send.by_length_ms"></div>
       </div>
       <div class="mid">
-        <div class="row"><label>每分钟上限</label><input type="number" min="1" data-cfg="send.max_per_minute"></div>
+        <div class="row"><label>拟人节奏</label><div class="grow"><input type="checkbox" data-cfg="rhythm.enabled"><span class="hint">开启后同一会话不会被几秒内连刷（抹掉「脚本式连发」这个签名）；关掉＝精确还原加这层之前的行为</span></div></div><div class="row"><label>节奏档位</label><div class="grow"><select data-cfg="rhythm.profile"><option value="gentle">gentle　稳（默认：同会话 1.5~4 秒）</option><option value="calm">calm　保守（挂机/真人会话：5~12 秒）</option><option value="off">off　关（不加间隔）</option></select><span class="hint">档位只是取一套参数；下面两个单项覆盖写上去会盖过档位</span></div></div><div class="row"><label>最小间隔(秒)</label><div class="grow"><input type="number" min="0" step="0.5" data-cfg="rhythm.gap_min_seconds"><span class="hint">留空＝跟档位走；填 0＝不用等（用户自控旋钮）</span></div></div><div class="row"><label>最大间隔(秒)</label><div class="grow"><input type="number" min="0" step="0.5" data-cfg="rhythm.gap_max_seconds"><span class="hint">留空＝跟档位走（gentle 是 4 秒）</span></div></div><div class="row"><label>生效节奏</label><div class="grow"><b id="rhState">读取中</b><span class="hint">这是"配置项 ＋ 单项覆盖"合出来的**真正生效值**（只看上面几行看不出它）</span></div></div><div class="sub">③ 限频</div><div class="row"><label>每分钟上限</label><input type="number" min="1" data-cfg="send.max_per_minute"></div>
         <div class="row"><label>每小时上限</label><input type="number" min="1" data-cfg="send.max_per_hour"></div>
         <div class="row"><label>超长切分(字)</label><input type="number" min="0" step="100" data-cfg="send.hard_split_at"></div>
       </div>
       <div class="mid" style="margin-top:10px">
-        <div class="row"><label>兜底自动补发</label><div class="grow"><label class="chip"><input type="checkbox" data-cfg="send.fallback_autosend">
+        <div class="sub">④ 兜底与拦截</div><div class="row"><label>兜底自动补发</label><div class="grow"><label class="chip"><input type="checkbox" data-cfg="send.fallback_autosend">
           模型没调发送工具时，把最终文本当回复发出去</label>
           <div class="hint">关掉＝宁可沉默也不自动发（想说话就得让模型调发送工具）。<b>开着时下面两道过滤会拦住"看着像内心戏"的文本</b>。</div></div></div>
         <div class="row"><label>兜底字数上限</label><input type="number" min="0" step="10" data-cfg="send.fallback_max_chars">
@@ -2260,12 +2471,12 @@ th{color:var(--tx2);font-weight:500}
           <span class="hint">那是内心判断，发进群会显得莫名其妙。过滤本身出异常时**按不发处理**（宁可沉默，也不乱发）。</span></div></div>
       </div>
       <div class="mid" style="margin-top:10px">
-        <div class="row"><label>新对话自动引用</label><input type="checkbox" data-cfg="send.quote_on_new_talk" title="新一轮对话开始时自动引用对方最近一句话"></div>
+        <div class="sub">⑤ 引用</div><div class="row"><label>新对话自动引用</label><input type="checkbox" data-cfg="send.quote_on_new_talk" title="新一轮对话开始时自动引用对方最近一句话"></div>
         <div class="row"><label>引用概率(0~1)</label><input type="number" min="0" max="1" step="0.05" data-cfg="send.quote_reply_probability"></div>
         <div class="row"><label>对话冷却(秒)</label><input type="number" min="0" step="30" data-cfg="send.quote_new_talk_gap_s" title="机器人上条消息超过该秒数才算「新一轮对话」"></div>
       </div>
       <div class="hint" style="margin-top:8px">引用规则：机器人上一条消息超过「对话冷却」秒（对话已冷场）时，以「引用概率」（默认 70%）自动引用对方最近的一句话，让"新开头"更像真人接话；模型显式指定引用时以模型为准。</div>
-      <div class="row"><label>系统无障碍接口 直写输入</label><input type="checkbox" data-cfg="send.uia_setvalue" checked>
+      <div class="sub">⑥ 输入方式</div><div class="row"><label>系统无障碍接口 直写输入</label><input type="checkbox" data-cfg="send.uia_setvalue" checked>
         <span class="hint"><b>当前未接线</b>：勾与不勾目前都不改变发送行为（发送链自己会「先试系统无障碍接口直写输入框、不行再回退粘贴」，不由这里切换）。留着是为了不弄丢你的选择，接上后这里会写清。</span></div>
       <div class="row"><label>允许真鼠标兜底</label><input type="checkbox" data-cfg="input.allow_real_fallback">
         <span class="hint">默认关：投递档确认不了目标会话时<b>宁可漏发、绝不发错</b>，全程不动你的鼠标。打开＝允许机器人<b>真实移动光标、点输入框、点发送</b>（会短暂占用你的鼠标）；只建议「投递档老失败、机器空闲可托管」的场景再开，会话识别正常时不需要它。</span></div>
@@ -2283,14 +2494,18 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-vermat" class="card" data-sec>
       <h2>版本能力矩阵</h2>
       <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
-      <div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
+      <div class="sub">① 版本与门</div><div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
       <div class="row"><label>版本门</label><div class="grow">
         <b id="vmGate">检测中…</b>
         <div class="btns" style="margin-top:6px"><button id="vmAllow" class="ghost">本次允许发送</button></div>
         <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
       </div></div>
       <div id="vmList" class="hint"></div>
-      <div class="row"><label>后台能力</label><div class="grow">
+      <div class="row"><label>不提示新版本</label><input type="checkbox" data-cfg="update.muted">
+        <span class="hint">默认关。勾上＝**不再提示有新版本**（检查照跑、只是不打扰你）。</span></div>
+      <div class="row"><label>跳过某个版本</label><div class="grow"><input type="text" data-cfg="update.skip_version" placeholder="比如 1.2.3">
+        <div class="hint">填一个版本号 ⇒ 那一版**不再提示**（你不想升的那一版）。留空＝不跳过。</div></div></div>
+      <div class="sub">② 后台能力</div><div class="row"><label>后台能力</label><div class="grow">
         <b id="bgHead">检测中…</b>
         <div id="bgList" class="hint"></div>
         <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前，随后自动还回</b>——实测：取 GUI / 朋友圈滚动 / 表情面板 <b>0 秒</b>、发文字约 1 秒、切会话 3~7 秒、<b>切会话失败重试可达约 15 秒</b>。<b>一定非得走前台</b>的只有三项：朋友圈点赞/评论/发朋友圈 · 转发视频文件那一下（系统选择文件框）· UI 标定与真鼠标兜底档（默认关））；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
@@ -2326,7 +2541,7 @@ th{color:var(--tx2);font-weight:500}
         <div id="ufpList" class="hint"></div>
         <div class="hint">点任何图标之前，程序会先比一次<b>图标指纹</b>（目标点周围 48×48 的 dHash，按「微信版本 × 渲染区尺寸 × 缩放」分开存）。指纹<b>明确对不上</b>就停手并告诉你原因——那说明这个位置现在不像原来那个图标（微信更新了 UI / 窗口改了尺寸），照着过期比例盲点只会点到别处。没有记录或窗口最小化抓不到图时放行但留痕（不把第一次用锁死）。</div>
       </div></div>
-      <div class="row"><label>待拍板</label><div class="grow">
+      <div class="sub">③ 版本变更待办</div><div class="row"><label>待拍板</label><div class="grow">
         <b id="pdStat">检测中…</b>
         <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
         <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体依赖 · 本次运行继续发送 · 我去微信那边看看。× 等于什么都不做——单子留着、同一对版本不再追问，<b>不影响发送</b>。</div>
@@ -2337,19 +2552,20 @@ th{color:var(--tx2);font-weight:500}
         <div class="btns" style="margin-top:6px">
           <button id="actHeal" class="ghost">依赖自愈</button>
           <button id="actUp" class="ghost">升级适配层</button>
+          <button id="actCancel" class="ghost" style="display:none">停下</button>
         </div>
-        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。</div>
+        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。跑到一半想停就按「停下」（<b>停下不是失败</b>，是第三档结果）。</div>
         <div id="depHint" class="hint" style="margin-top:2px"></div>
       </div></div>
     </section>
 <section id="sec-server" class="card" data-sec>
       <h2>服务器</h2>
       <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。<br>要在<b>别的电脑</b>上用浏览器打开：① 先设一个「访问口令」；② 打开下面的「允许远程访问」；③ 监听地址填 <code>0.0.0.0</code>（或本机内网 IP），保存后重启控制台，再在对方浏览器里打开 <code>http://本机IP:端口/?token=口令</code>。链路是 HTTP 明文 ⇒ 只在可信内网用，或走 SSH 隧道转发。</div>
-      <div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
+      <div class="sub">① 监听</div><div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
       <div class="row"><label>端口</label><div class="grow"><input type="number" min="1" max="65535" data-cfg="server.port" style="max-width:140px"><button class="ghost" id="portRestore" type="button" title="恢复默认端口 3210" style="margin-left:8px">恢复原端口(3210)</button><span class="hint" style="margin-left:8px">修改后需重启机器人生效（一键关闭→一键启动）</span></div></div>
       <div class="row"><label>允许远程访问</label><input type="checkbox" data-cfg="server.allow_remote"><div class="hint">默认关。打开后才允许把监听地址设成非本机地址（务必先设访问口令）。</div></div>
       <div class="row"><label>自动开浏览器</label><input type="checkbox" data-cfg="server.auto_open_browser"></div>
-      <div class="row"><label>访问口令（掩码）</label><div class="grow" style="display:flex;align-items:center;gap:8px"><input type="password" data-cfg="server.token" placeholder="留空=启动时自动生成" style="flex:1"><button class="ghost" id="tkShow" type="button">显示</button><span class="hint">网址里 ?token= 后就是它；访问口令=控制台钥匙，请保密</span></div></div>
+      <div class="sub">② 口令与统计</div><div class="row"><label>访问口令（掩码）</label><div class="grow" style="display:flex;align-items:center;gap:8px"><input type="password" data-cfg="server.token" placeholder="留空=启动时自动生成" style="flex:1"><button class="ghost" id="tkShow" type="button">显示</button><span class="hint">网址里 ?token= 后就是它；访问口令=控制台钥匙，请保密</span></div></div>
       <div class="row"><label>统计周期</label><div class="grow"><select data-cfg="stats.period">
         <option value="daily">每日（每天 0 点重置）</option>
         <option value="weekly">每周（默认，周一重置）</option>
@@ -2360,10 +2576,14 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-advanced" class="card" data-sec>
       <h2>调试 · 高级功能</h2>
       <div class="desc">一般用户不用、其他分区没覆盖的可调项（行为引擎完整参数 / UI 图标库 / 学习机制）。</div>
+      <div class="sub">本机适配（先试哪条路）</div>
+      <div class="row"><label>按本机战绩自动选路</label><input type="checkbox" data-cfg="env_profile.auto_apply">
+        <span class="hint">默认开。机器人记着"这台机器上哪条路真成过"（切会话路线 / 点击目标 / 识字引擎档位），开着时会**先试更可能成的那条**；**只动"先试哪个"，不动任何安全约束**（不动光标、不主动置前、不群发、不越版本门），而且**连败到阈值就把记忆丢掉**、退回默认顺序。关掉＝只探测、给建议、记事实，不改执行顺序。</span></div>
 
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="desc">人性化行为完整参数（一般用户不用；微信卡只有概率，这里调冷却/每日上限/开关）：</div>
       <div class="mid">
+        <div class="sub">① 表情与互动</div>
         <div class="row"><label>收藏表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.collect_emoji.cooldown_s"></div>
         <div class="row"><label>收藏表情-每日上限</label><input type="number" min="0" data-cfg="behavior.collect_emoji.daily_limit"></div>
       </div>
@@ -2381,6 +2601,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="desc">朋友圈（刷/点赞/评论/发布；默认全关=机器人不主动碰朋友圈，打开后按概率低频触发）：</div>
       <div class="mid">
+        <div class="sub">② 朋友圈</div>
         <div class="row"><label>刷朋友圈</label><input type="checkbox" data-cfg="behavior.moments_surf.enabled"><span class="hint">开启后按概率自动刷（截图给模型看更耗用量，频率请保守）</span></div>
         <div class="row"><label>刷-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_surf.probability"></div>
       </div>
@@ -2410,6 +2631,7 @@ th{color:var(--tx2);font-weight:500}
         频率与夜间静默默认<b>不限 / 关闭</b>；想自己掐节奏就在下面填数字，<b>0＝不限</b>。账号风险由使用者自行把控与承担。
       </div>
       <div class="mid">
+        <div class="sub">③ 发送闸门与限流</div>
         <div class="row"><label>闸门总开关</label><input type="checkbox" data-cfg="risk.enabled"><span class="hint">取消勾选＝完全不做内容/任务把关</span></div>
         <div class="row"><label>暂停所有发送</label><input type="checkbox" data-cfg="risk.paused"><span class="hint">勾上＝立刻停发（本机生效，不会给对方发任何提示）</span></div>
       </div>
@@ -2434,12 +2656,28 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
       </div>
       <div class="mid">
+        <!-- 群活跃度自适应（第 134 项）：让上面那几个「上限」跟着**这个群的冷热**缩放。
+             ⛔ 默认关 ⇒ 关着的时候上面那几个上限一字不差照旧。
+             有意不暴露（3 个）：cold_ratio / hot_ratio / baseline_days ——
+             它们是「多冷算冷、多热算热、拿多少天当基线」的**内部判据**，
+             改错会把冷热判反（那比不调更糟），所以不给裸改口子。 -->
+        <div class="sub">⑤ 跟着群冷热调频率</div>
+        <div class="row"><label>启用</label><input type="checkbox" data-cfg="group_adaptive.enabled"><span class="hint">勾上＝冷群把上限往下调、热群往上调（都不超过封顶）；不勾＝上面那几个上限固定</span></div>
+        <div class="row"><label>看多久算"近期"</label><input type="number" min="1" data-cfg="group_adaptive.window_min"><span class="hint">分钟；与这个群自己的长期均值比</span></div>
+        <div class="row"><label>冷群降到几成</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.cold_scale"><span class="hint">0.6＝降到 60%</span></div>
+        <div class="row"><label>热群提到几成</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.hot_scale"><span class="hint">1.4＝提到 140%</span></div>
+        <div class="row"><label>最多提到几倍</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.max_scale"><span class="hint">封顶，防"越聊越上头"</span></div>
+        <div class="row"><label>至少留几条</label><input type="number" min="1" data-cfg="group_adaptive.min_cap"><span class="hint">缩完不低于这个数（群冷 ≠ 不许说话）</span></div>
+      </div>
+      <div class="mid">
+        <div class="sub">④ 静默与拦截</div>
         <div class="row"><label>夜间静默时段</label><div class="grow"><input data-cfg="risk.quiet_hours" placeholder="如 22，7（起止小时，跨零点自动处理）；留空＝不启用"><div class="hint">这段小时数内一条都不发；填两个 0~23 的整数，用逗号分隔</div></div></div>
         <div class="row"><label>连续被拦升级</label><input type="number" min="0" data-cfg="risk.escalate_after"><span class="hint">连续拦下 N 条就自动暂停发送；0＝不自动暂停</span></div>
       </div>
       <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
       <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
       <div class="desc">微信 UI 图标库（一次性标定；自动检测侧栏图标序列，坐标按窗口尺寸换算）：</div>
+      <div class="sub">⑤ 提醒 · 节日 · 状态</div>
       <div class="row"><label>当前布局</label><div class="grow">
         <span class="hint" id="uiLayoutStat">加载中…</span>
         <button id="uiLayoutReload" class="ghost" style="margin-left:8px">刷新</button>
@@ -2452,7 +2690,7 @@ th{color:var(--tx2);font-weight:500}
         <b>不变人原则</b>：风格学习<b>只给内置的 DeepSeek 小鲸鱼用</b>——它学的是"话怎么说才机灵"，不是学群友的口癖。你自己导入的角色卡（动漫角色 / 原创 / 真人）<b>不参与风格学习</b>：角色设定是绝对基准、权重最高，参考素材只能"换衣服不能换魂"。
       </div>
       <div style="display:flex;gap:12px;align-items:center;margin:14px 0 18px;padding:14px;border-radius:14px;background:rgba(63,168,240,.08);border:1px solid var(--blue-line)">
-        <button id="learnApply" class="pri" title="点击开启机器学习，机制会真的开始工作（有群友回应时学习）" style="font-weight:700">确定学习</button>
+        <button id="learnApply" class="pri" title="点击开启机器学习，机制会真的开始工作（有群友回应时学习）">确定学习</button>
         <button id="learnEval" class="ghost" title="模型按评分细则评估：学习前后对话质量变化，打分并说明提升多少" style="font-weight:700">学习评估</button>
         <span id="learnRst" class="hint" style="flex:1"></span>
       </div>
@@ -2482,7 +2720,7 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-ui" class="card" data-sec>
       <h2>界面适配（缩放 / 遮挡 / 主题）</h2>
       <div class="desc">这台机器的显示缩放、遮挡清理与主题。点击位置对不上时先来这里。</div>
-      <div class="row"><label>开机自动启动</label><div class="grow">
+      <div class="sub">① 启动与外观</div><div class="row"><label>开机自动启动</label><div class="grow">
         <input type="checkbox" id="autostartCk">
         <span class="hint" id="autostartHint">可选：勾选后开机自动运行。是"当前用户"级（免管理员），随时取消；取消＝删掉启动文件夹里那个文件。</span>
       </div></div>
@@ -2508,7 +2746,7 @@ th{color:var(--tx2);font-weight:500}
         <option value="normal">正常</option>
         <option value="whale">鲸语</option>
       </select><span class="hint">切换后保存设置（自动刷新）即生效；功能完全一致。</span></div></div>
-      <div class="row"><label>点击前清遮挡</label><input type="checkbox" data-cfg="ui.clean_overlays"></div>
+      <div class="sub">② 窗口与遮挡</div><div class="row"><label>点击前清遮挡</label><input type="checkbox" data-cfg="ui.clean_overlays"></div>
       <div class="row"><label>固定微信窗口位置</label><input type="checkbox" data-cfg="ui.lock_window_pos">
       <div class="row"><label>限位尺寸（宽 × 高）</label><input type="number" min="600" max="3840" step="1" data-cfg="ui.lock_window_w" style="width:92px"> <span class="dim">×</span> <input type="number" min="500" max="2160" step="1" data-cfg="ui.lock_window_h" style="width:92px"> <span class="hint">限位生效时把微信调到这个尺寸。默认 1113×909——比写死的 1160×900 小一圈，不会在你启动时把窗口撑大。</span></div>
         <span class="hint">默认<b>开</b>（限位）：把微信主窗摆成固定尺寸/位置——后台跑着的人本来也不看窗口，固定下来坐标更稳、<b>少点错</b>。关掉＝绝不移动、缩放、还原你的微信窗口。</span></div>
@@ -2516,7 +2754,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">默认开：为了让点击不漂，我们偶尔要把微信主窗借到固定尺寸，用完（空闲一会儿）自动还回你原来的位置和大小；你在借用期间自己动过窗口的话以你为准，不还。</span></div>
       <div class="row"><label>允许把微信置前</label><input type="checkbox" data-cfg="ui.allow_foreground">
         <span class="hint">默认关＝任何操作都不会抢你的前台，也不把微信钉在最上层；只有确实需要前台点击的老路子才用得上。</span></div>
-      <div class="row"><label>地址栏乱码化</label><input type="checkbox" data-cfg="ui.obscure_url">
+      <div class="sub">③ 其他</div><div class="row"><label>地址栏乱码化</label><input type="checkbox" data-cfg="ui.obscure_url">
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
     </section>
@@ -2533,7 +2771,7 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-cursor" class="card" data-sec>
       <h2>光标设置</h2>
       <div class="desc">把鼠标指针换成鲸鱼（或你自己的图片），点击时向下点头；默认鲸鱼小蓝鲸（22）。</div>
-      <div class="row"><label>启用鲸鱼光标</label><input type="checkbox" data-cfg="ui.whale_cursor"></div>
+      <div class="sub">① 开关与图</div><div class="row"><label>启用鲸鱼光标</label><input type="checkbox" data-cfg="ui.whale_cursor"></div>
       <div class="row"><label>光标图片</label><div class="grow">
         <input type="file" id="cursorFile" accept="image/png,image/jpeg" style="padding:6px">
         <span class="hint">选一张 PNG/JPEG（建议透明底、方形，≤8MB），上传后立即预览效果</span>
@@ -2545,7 +2783,7 @@ th{color:var(--tx2);font-weight:500}
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="desc">拖拽返回动画速度（拖动顶栏鲸鱼后，松手返回的速度倍率；1=标准，越少越快，0.3~3 可调）。</div>
       <div class="mid">
-        <div class="row"><label>蠕动速度系数</label><input type="number" min="0.3" max="3" step="0.1" data-cfg="ui.whale_anim.worm">
+        <div class="sub">② 速度系数</div><div class="row"><label>蠕动速度系数</label><input type="number" min="0.3" max="3" step="0.1" data-cfg="ui.whale_anim.worm">
           <span class="hint">最慢的方式（蠕动/摆尾）</span></div>
         <div class="row"><label>纸飞机速度系数</label><input type="number" min="0.3" max="3" step="0.1" data-cfg="ui.whale_anim.plane">
           <span class="hint">较快（变形滑翔）</span></div>
@@ -2558,21 +2796,25 @@ th{color:var(--tx2);font-weight:500}
 <section id="sec-wavefx" class="card" data-sec>
       <h2>水光波纹（鼠标投石入水）</h2>
       <div class="desc">鼠标像石子投入湖面：一道波纹从鼠标处肉眼可见地一波波荡开，扩散范围=光标所在的整个模块（顶栏/导航栏/功能卡），到模块边缘极强衰减、绝不越界；拖动越快荡得越快。所有参数即时生效。</div>
-      <div class="row"><label>启用水光波纹</label><input type="checkbox" data-cfg="ui.wave_fx.enabled"><span class="hint">关闭后完全无扭曲</span></div>
+      <div class="sub">① 开关与强度</div><div class="row"><label>启用水光波纹</label><input type="checkbox" data-cfg="ui.wave_fx.enabled"><span class="hint">关闭后完全无扭曲</span></div>
       <div class="row"><label>扭曲强度</label><input type="number" min="0" max="40" step="1" data-cfg="ui.wave_fx.scale"><span class="hint">核心位移量（0=无扭曲；建议 8~24）</span></div>
       <div class="row"><label>基础波速</label><input type="number" min="1" max="20" step="0.2" data-cfg="ui.wave_fx.speed"><span class="hint">波前内部的频闪速度（越大越急促）</span></div>
-      <div class="row"><label>鼠标提速</label><input type="number" min="0" max="0.1" step="0.005" data-cfg="ui.wave_fx.mouse_gain"><span class="hint">拖动越快波光越快的增益（0=不联动）</span></div>
+      <div class="sub">② 鼠标与扩散</div><div class="row"><label>鼠标提速</label><input type="number" min="0" max="0.1" step="0.005" data-cfg="ui.wave_fx.mouse_gain"><span class="hint">拖动越快波光越快的增益（0=不联动）</span></div>
       <div class="row"><label>提速上限</label><input type="number" min="0" max="20" step="0.5" data-cfg="ui.wave_fx.max_gain"><span class="hint">鼠标带动额外速度上限 rad/s</span></div>
       <div class="row"><label>扩散圈大小</label><input type="number" min="100" max="600" step="10" data-cfg="ui.wave_fx.radius"><span class="hint">空白处回退用（模块内仍以模块为界）</span></div>
-      <div class="row"><label>衰减强度</label><input type="number" min="1" max="8" step="0.5" data-cfg="ui.wave_fx.falloff"><span class="hint">扩散衰减指数，越大越强（边缘几乎无影响；推荐 4+）</span></div>
+      <div class="sub">③ 衰减与环数</div><div class="row"><label>衰减强度</label><input type="number" min="1" max="8" step="0.5" data-cfg="ui.wave_fx.falloff"><span class="hint">扩散衰减指数，越大越强（边缘几乎无影响；推荐 4+）</span></div>
       <div class="row"><label>可见波纹环数</label><input type="number" min="1" max="3" step="1" data-cfg="ui.wave_fx.rings"><span class="hint">1=单环一波接一波（时间差最清晰）</span></div>
       <div class="row"><label>波纹荡开速度</label><input type="number" min="0.1" max="1.5" step="0.05" data-cfg="ui.wave_fx.ring_speed"><span class="hint">一圈≈1/速度 秒（0.4≈2.5s 一波，肉眼可见）</span></div>
-      <div class="btns"><button class="pri" id="wavefxApply" style="background:linear-gradient(135deg,#30B0C8,#0E8FB0)">应用水光波纹设置</button></div>
+      <div class="btns"><button class="pri" id="wavefxApply">应用水光波纹设置</button></div>
     </section>
   </main>
 </div>
 
-<div id="toast"></div>
+<!-- toast＝**即时反馈**（点一下就得知道成没成）⇒ `aria-live="assertive"`：
+     屏幕阅读器会打断当前朗读立即播报，这正是"错误/结果必须马上知道"需要的语义。
+     ⛔ 不给普通状态用 assertive —— 那会把用户正在听的内容反复打断。
+     `role="status"` 同时给了"这是个动态区域"的语义。 -->
+<div id="toast" role="status" aria-live="assertive" aria-atomic="true"></div>
 
 <!-- 小鲸鱼余额挂件（DeepSeek-Balance-Whale-Widget 迁移版，原版客户端脚本原样引入） -->
 <script defer src="/dsh-whale/widget.js?token=__TKN__"></script>
@@ -2660,6 +2902,11 @@ function syncToForm(){
     if(path === 'wechat.group_name_white_list'){
       wlList = Array.isArray(getPath(cfg,path)) ? getPath(cfg,path).slice() : [];
       renderChips();
+      return;
+    }
+    if(path === 'wechat.private_name_white_list'){
+      pvList = Array.isArray(getPath(cfg,path)) ? getPath(cfg,path).slice() : [];
+      renderPrivateChips();
       return;
     }
     let v = getPath(cfg, path);
@@ -2754,6 +3001,7 @@ function syncFromForm(){
     if(el.type==='checkbox' && SAFE_SWITCH_KEYS.indexOf(path) >= 0
        && !(window._touchedCfg && window._touchedCfg.has(path))){ return; }
     if(path === 'wechat.group_name_white_list'){ setPath(cfg, path, wlList.slice()); return; }
+    if(path === 'wechat.private_name_white_list'){ setPath(cfg, path, pvList.slice()); return; }
     let v;
     if(el.type==='checkbox'){
       if(path==='api.thinking') v = el.checked ? 'off' : 'auto'; // 勾选=off，取消=auto（跟随模型默认）
@@ -2838,6 +3086,48 @@ function renderChips(){
     s.appendChild(x); box.appendChild(s);
   });
 }
+
+let pvList = [];
+let _lastPrivates = []; // 最近一次读到的私聊联系人（把白名单里的 wxid 显示成名字）
+function pvLabel(v){
+  const s=String(v==null?'':v);
+  const hit=(_lastPrivates||[]).find(g=>String((g&&g.wxid)||'')===s);
+  return hit ? String(hit.name||s) : s; // 认不出就原样显示（不猜）
+}
+function renderPrivateChips(){
+  const box=$('pvChips'); if(!box) return;
+  box.innerHTML='';
+  if(!pvList.length){ box.innerHTML='<span class="hint">（未勾选=按「私聊」档位）</span>'; return; }
+  pvList.forEach(g=>{
+    const s=document.createElement('span'); s.className='c'; s.textContent=pvLabel(g);
+    if(String(g)!==pvLabel(g)) s.title='wxid: '+String(g);
+    const x=document.createElement('b'); x.textContent='×'; x.title='移除';
+    x.onclick=()=>{ pvList=pvList.filter(v=>v!==g); renderPrivateChips(); };
+    s.appendChild(x); box.appendChild(s);
+  });
+}
+/* ── 视频号下载「怎么用」（可选功能：把"要装什么、为什么、不装会怎样"讲明白）── */
+$('channelsHowto').onclick = ()=>{
+  const m=document.createElement('div'); m.className='mask';
+  m.innerHTML='<div class="box" style="text-align:left;max-width:620px">'
+    + '<h1>视频号下载 · 怎么用</h1>'
+    + '<p><b>为什么它要单独装东西</b>：视频号官方<b>没有公开下载接口</b> ⇒ 能下的工具都是'
+    + '「用浏览器打开 ＋ 复用登录态」去换出真实视频地址。</p>'
+    + '<p><b>三步</b>：</p>'
+    + '<ol style="margin:6px 0 8px 20px;line-height:1.9">'
+    + '<li>装上 <code>Playwright</code>（可以我来装；本机已有 Edge，<b>不用再下浏览器内核</b>）。</li>'
+    + '<li>在弹出的窗口里<b>扫码登录一次腾讯元宝</b> —— 登录态放在一个<b>专用隔离目录</b>，'
+    + '<b>不碰你日常浏览器</b>，也<b>不装系统证书、不改系统代理</b>。</li>'
+    + '<li>之后遇到视频号分享链接就能直接解析下载，<b>不用每次登录</b>（登录态长期有效）。</li>'
+    + '</ol>'
+    + '<p><b>不装会怎样</b>：遇到视频号链接时我会如实说「这条我拿不到」，并提示你'
+    + '把视频存成文件发我（那条路一直是通的）。<b>其它功能完全不受影响。</b></p>'
+    + '<p class="hint">开关关着 = 一切照旧：不装任何东西、也不弹任何窗。</p>'
+    + '<div class="btns" style="justify-content:flex-end;margin-top:12px">'
+    + '<button class="pri" id="chHowtoOk">知道了</button></div></div>';
+  document.body.appendChild(m);
+  $('chHowtoOk').onclick=()=>{ maskClose(m); m.remove(); };
+};
 /* ── 重新对齐监听水位── */
 $('wmReset').onclick = async ()=>{
   if(!await uiConfirm('重新对齐监听水位？把「已处理到哪一条」对齐到当前最新——不会重发旧消息，只是让它重新看见新消息。')) return;
@@ -2976,6 +3266,52 @@ $('pickGroups').onclick = async ()=>{
     $('gpCancel').onclick=()=>{ maskClose(m); m.remove(); };
   }catch(e){ toast('检测失败：'+e.message); }
 };
+
+$('pickPrivates').onclick = async ()=>{
+  try{
+    const r = await getJSON('/api/wechat-privates');
+    if(r && r.ok === false){ toast(r.error || '读不到私聊联系人（微信可能还没接上）'); return; }
+    const priv = r.privates||[];
+    _lastPrivates = priv;
+    if(!priv.length){
+      toast('这台机器上读到 0 个私聊联系人。请依次确认：①微信登录的是你要用的那个号 ②「运行状态」那行写的是「已连接」。都正常的话点「反馈」把这条发我。');
+      return;
+    }
+    const m=document.createElement('div'); m.className='mask';
+    m.innerHTML='<div class="box" style="text-align:left"><h1>选择监听的私聊</h1><p>检测到 '+priv.length+' 个私聊联系人，勾选机器人需要回应的（全不勾=按「私聊」档位来）。</p><div id="pvPick"></div><div class="btns" style="justify-content:flex-end;margin-top:10px"><button class="pri" id="ppOk">确定</button><button class="ghost" id="ppCancel">取消</button></div></div>';
+    document.body.appendChild(m);
+    const box=$('pvPick');
+    const pick = new Set(pvList);
+    priv.forEach(function(c){
+      const id='pv_'+String(c.wxid||'');
+      const row=document.createElement('label');
+      row.className='row'; row.style.cssText='align-items:center;gap:8px;padding:3px 0';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.id=id;
+      cb.checked = pick.has(String(c.wxid||''));
+      cb.onchange = function(){ if(cb.checked) pick.add(String(c.wxid||'')); else pick.delete(String(c.wxid||'')); };
+      const sp=document.createElement('span');
+      sp.textContent = String(c.name||c.wxid||'') + '（' + String(c.wxid||'') + '）';
+      row.appendChild(cb); row.appendChild(sp); box.appendChild(row);
+    });
+    $('ppOk').onclick=async ()=>{
+      pvList=[...pick]; renderPrivateChips(); maskClose(m); m.remove();
+      try{
+        if(!cfg) cfg = await getJSON('/api/config');
+        setPath(cfg,'wechat.private_name_white_list', pvList.slice());
+        await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+        toast(pvList.length ? ('已保存私聊白名单（'+pvList.length+' 个）') : '已保存：留空＝按「私聊」档位');
+      }catch(e){ toast('私聊白名单保存失败：'+e.message); }
+    };
+    $('ppCancel').onclick=()=>{ maskClose(m); m.remove(); };
+  }catch(e){ toast('检测私聊失败：'+e.message); }
+};
+$('customPrivate').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){
+    const v=$('customPrivate').value.trim();
+    if(v && !pvList.includes(v)){ pvList.push(v); renderPrivateChips(); }
+    $('customPrivate').value=''; e.preventDefault();
+  }
+});
 
 /* ── 主题：whale（默认鲸落）/ light / dark / system ── */
 function applyTheme(t){
@@ -3573,6 +3909,25 @@ async function loadStatus(){  try{
     try{ refreshBadges(s); }catch(e){}
     $('dot').className = 'dot ' + (s.wechat_connected ? 'on':'');
     $('runText').textContent = s.paused ? '已暂停' : '运行中';
+    // 「暂停闸」：**两套真相分开显示**（别给一个笼统的"已暂停"）——
+    //   · 文件级 `data/paused.flag`：**每条发送链入口都查它**，它才是"真拦得住"的那一层；
+    //   · 风控层 `risk.paused`：`/api/pause` 落的那一层。
+    // 两个都摆出来，用户才能看清"到底谁在拦、刚才那句为什么没发"。
+    // ⛔ 这里**只如实显示**，不做第二个开关 —— 开关仍是顶栏那一颗（两个开关必然打架）。
+    // ⚠️ 只写这两个节点，且文案取**整句**（鲸语字典按"整段文本节点"查表，
+    //    拼接出来的半句匹配不上 ⇒ 会露普通话）。静态说明写在 HTML 里不在这里拼。
+    try{
+      const _h = s.halt || {};
+      const _st = $('haltState'), _wh = $('haltWhy');
+      if(_st){
+        if(_h.error){ _st.textContent = '读不到暂停状态'; _st.style.color = 'var(--warn)'; }
+        else if(_h.stopped){ _st.textContent = '已停止（不再发起新动作）'; _st.style.color = 'var(--err)'; }
+        else if(_h.file_paused){ _st.textContent = '已暂停（这条不会发出去）'; _st.style.color = 'var(--err)'; }
+        else if(_h.risk_paused){ _st.textContent = '风控层暂停（发送链还会再过一道）'; _st.style.color = 'var(--warn)'; }
+        else { _st.textContent = '运行中（可以发）'; _st.style.color = 'var(--ok)'; }
+      }
+      if(_wh) _wh.textContent = (_h.error ? '' : (_h.reason || _h.risk_reason || ''));
+    }catch(e){}
     try{
       const lb = $('listen-badge');
       if(lb){
@@ -3599,7 +3954,7 @@ async function loadStatus(){  try{
  // 那条反馈的出口，必须摆在侧栏上（而不是只在日志里一行 warn）。
       _ss.textContent = (s.wechat_connected ? '微信已连接'
                         : ('微信未连接' + (_wa.short ? (' · 原因：' + _wa.short) : '')))
-                        + (_wa.targets_zero ? ' · ⚠️ 监听目标 0 个（去「微信」面板勾群）' : '')
+                        + (_wa.targets_zero ? ' · 注意：监听目标 0 个（去「微信」面板勾群）' : '')
                         + ' · 启动于 '+s.started_at;
       _ss.title = s.wechat_connected ? '已接上微信客户端'
         : ((_wa.reason || '还没拿到失败原因（等一次接入尝试，或看日志）')
@@ -3801,13 +4156,31 @@ async function loadStatus(){  try{
           if(aj){
             const jb = s.jobs || {};
             const ks = Object.keys(jb).filter(function(k){ return k.charAt(0) !== '_'; });
+            // ★ 终态三档：完成 / 失败 / **已取消**。取消**不是失败** ——
+            //   若并进「结束 rc=…」那一档，用户会以为是自己操作坏了（其实是他自己停的）。
             aj.textContent = ks.length
               ? ks.map(function(k){
                   const j = jb[k] || {};
-                  const stt = j.running ? '正在跑' : (j.returncode === 0 ? '完成' : ('结束 rc=' + j.returncode));
-                  return k + '：' + stt;
+                  let stt;
+                  if(j.running) stt = j.canceling ? '正在停下…' : '正在跑';
+                  else if(j.canceled) stt = '已停下（不是失败）';
+                  else if(j.returncode === 0) stt = '完成';
+                  else stt = '结束 rc=' + j.returncode;
+                  return _jlName(k) + '：' + stt;
                 }).join(' ｜ ')
               : '没有在跑的事';
+            // 「停下」按钮：只在**真有作业在跑且还没发过停止请求**时出现。
+            // 拿不到 pid 的（进程可能刚结束）不显示——按了也停不了，显示出来反而是假承诺。
+            const cb = $('actCancel');
+            if(cb){
+              const _run = ks.filter(function(k){
+                const j = jb[k] || {};
+                return j.running && !j.canceling && j.pid;
+              });
+              cb.style.display = _run.length ? '' : 'none';
+              cb.dataset.job = _run.length ? _run[0] : '';
+              cb.textContent = _run.length > 1 ? ('停下（选第一个）') : '停下';
+            }
           }
         }catch(e){}
       }catch(e){}
@@ -4218,6 +4591,36 @@ async function loadStatus(){  try{
     $('st-dlabel').textContent = '今日用量（' + (u.day?u.day.sent:0||0) + ' 条）';
     $('st-pcost').textContent = fmt(u.period);
     $('st-plabel').textContent = (lbl[u.period_type]||'本周期') + '用量（' + (u.period?u.period.sent:0||0) + ' 条）';
+    // 月账单（第 151 项）：`months` 是降序、含当月 ⇒ 第一项就是本月。
+    // ⛔ 没花费的月份后端会给 0（不是缺项）⇒ 这里照常显示，不要写"—"（那看起来像页面坏了）。
+    $('st-mcost').textContent = fmt((u.months||[])[0]);
+    // 运行环境提示（第 150 项）：**只在非 ok 时出现**（ok ⇒ 整条隐藏，不占版面）。
+    // ⛔ 文案由后端给（含「不改也能用」那句）—— 前端**不自己编**，免得两边口径漂。
+    (function(){
+      const b = $('envHint'); if(!b) return;
+      const eh = s.env_hint || {};
+      if(eh.level && eh.level !== 'ok' && eh.text){
+        b.style.display = '';
+        b.textContent = '运行环境：' + eh.text;
+      } else { b.style.display = 'none'; }
+    })();
+    // 「开独立窗失败，请你帮一把」（第 225 项收尾）：开独立窗是唯一的发送入口，
+    // 卡住＝机器人什么都不发了 ⇒ **必须让用户看见**。同一条求助**只弹一次**（按时间戳去重）。
+    // ⛔ 标题与正文**由后端组装**（`whale_text.popup_help_text`，会跟着鲸语开关走）——前端不自己写。
+    (function(){
+      const ph = s.popup_help || {};
+      if(!ph.at || !ph.text) return;
+      if(window.__popupHelpAt === ph.at) return;          // 这条已经弹过了
+      window.__popupHelpAt = ph.at;
+      const box=document.createElement('div'); box.className='box'; box.style.textAlign='left';
+      box.innerHTML='<h1>'+esc(ph.title||'需要你帮一下')+'</h1><p style="white-space:pre-wrap">'
+        + esc(ph.text) + '</p>'
+        + '<div class="btns" style="justify-content:flex-end;margin-top:10px">'
+        + '<button class="pri" id="phOk">知道了，我去开</button></div>';
+      const mm=document.createElement('div'); mm.className='mask'; mm.appendChild(box);
+      document.body.appendChild(mm); maskOpen(mm);
+      $('phOk').onclick=()=>{ maskClose(mm); mm.remove(); };
+    })();
     $('st-groups').textContent = s.groups.filter(g=>g.target).length;
  // 成本明细（最近5条/平均/本次其他工具/累计其他工具——恒显示数值）
     $('st-r5c').textContent = '¥' + (s.stats.recent5_cost||0).toFixed(4);
@@ -4248,6 +4651,9 @@ async function loadStatus(){  try{
         $('st-extra').textContent=fmt(r);
         $('st-pcost').textContent=fmt(r);
         $('st-plabel').textContent='截止 '+d+' 用量';
+        // ⛔ 选中的是**某一天**时，"本月花费"这个数**没法从这一天推出来** ⇒ 显式置 "—"，
+        //   不许留着上一次的快照值（那会显示一个和当前视图不一致的数字，比空白更糟）。
+        $('st-mcost').textContent='—';
       }
       window.applyDay = applyDay;
       window.__renderCal = ()=>{ renderCal(); }; // 计费删除后重绘日历
@@ -4288,7 +4694,7 @@ async function loadStatus(){  try{
         const yrs=[]; for(let yy=curY-4; yy<=curY+6; yy++) yrs.push(yy);
         bx.innerHTML='<b style="color:var(--blue)">跳到年份</b>'
           +'<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:12px">'
-          + yrs.map(yy=>'<button class="ghost '+(yy===curY?'on':'')+'" data-y="'+yy+'" style="padding:6px 0;border-radius:9px;'+(yy===curY?'background:var(--blue);color:#fff;':'' )+'">'+yy+'</button>').join('')
+          + yrs.map(yy=>'<button class="ghost '+(yy===curY?'on':'')+'" data-y="'+yy+'" style="padding:6px 0;border-radius:8px;'+(yy===curY?'background:var(--blue);color:#fff;':'' )+'">'+yy+'</button>').join('')
           +'</div>'
           +'<div class="btns" style="margin-top:12px;justify-content:flex-end"><button class="ghost" id="cyCancel">关闭</button></div>';
         const mm=document.createElement('div'); mm.className='mask'; mm.style.background='rgba(8,14,26,.6)';
@@ -4383,7 +4789,7 @@ function openBillDlg(bills){
       +'<select id="bdY" style="'+_selStyle+';width:86px">'+_yOpts+'</select>'
       +'<select id="bdM" style="'+_selStyle+';width:72px"></select>'
       +'<select id="bdD" style="'+_selStyle+';width:72px"></select>'
-      +'<button class="ghost tiny" id="bdFind" style="padding:7px 12px">定位到该日</button>'
+      +'<button class="ghost tiny" id="bdFind">定位到该日</button>'
       +'<span class="hint" id="bdFindRst" style="font-size:12px;color:var(--tx2);word-break:break-all"></span>'
     +'</div>'
     +'<div class="bill-list">'+listHtml+'</div>'
@@ -5922,6 +6328,12 @@ async function postVersionAction(choice, id){
     body: JSON.stringify({choice: choice, id: id || ''})});
 }
 
+/* 后台作业名 → 给人看的名字（取消回执与状态行共用同一份映射，别两边各写一套）。 */
+function _jlName(k){
+  const m = {upgrade_adapter:'一键升级适配层', dep_heal:'依赖自愈'};
+  return m[k] || k;
+}
+
 /* 版本不匹配那张单：四选一 + 把结果落台账（服务端写回能力矩阵）
    `item.strict` 由后端给出（`version_gate._strict()`）：
      · 非严格（默认）⇒ **soft** 非模态卡片，去不去看随你、不点也照发；
@@ -6428,11 +6840,11 @@ function syncMemGroupsToCfg(){
       card.onmouseleave = ()=> card.style.background = '';
       card.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px">'+
-          '<button class="ghost fav" title="'+(fav?'取消星标':'收藏置顶')+'" style="padding:0 6px;color:'+(fav?'#FFD54F':'var(--tx2)')+'">'+(fav?'已收藏':'收藏')+'</button>'+
+          '<button class="ghost fav tiny" title="'+(fav?'取消星标':'收藏置顶')+'" style="color:'+(fav?'var(--warn)':'var(--tx2)')+'">'+(fav?'已收藏':'收藏')+'</button>'+
           '<b style="flex:1">'+esc(p.name)+'</b>'+
           (model!=null?('<span class="hint">模型 <b style="color:var(--warn)">'+Number(model).toFixed(2)+'</b></span>'):'')+
-          (p.key && String(p.key).indexOf('custom_')===0 ? '<button class="ghost move" style="padding:1px 8px">移动</button><button class="ghost del" style="padding:1px 8px;color:var(--err-tx)">删</button>' : '')+
-          '<button class="ghost use" style="padding:1px 12px">使用</button>'+
+          (p.key && String(p.key).indexOf('custom_')===0 ? '<button class="ghost move tiny">移动</button><button class="ghost del tiny" style="color:var(--err-tx)">删</button>' : '')+
+          '<button class="ghost use tiny">使用</button>'+
           '<span class="dots" title="更多操作">⋯</span>'+
         '</div>'+
         '<div class="hint" style="margin-top:3px">'+(p.text||'').replace(/\n/g,' ').slice(0,60)+(p.text&&p.text.length>60?'…':'')+'</div>';
@@ -6974,8 +7386,13 @@ const _EASTER_TXT = [
   };
 })();
 
-/* 鲸语字典：由服务端从 agent/whale_text.py 注入（单一来源）——不再在这里手写一份，两份必然漂移。动态刷新出来的文案由下面的 applyWhale 用它换。 */
-const WHALE_TXT = __WHALE_TXT__;function applyWhale(){
+/* 鲸语字典：由服务端从 agent/whale_text.py 注入（单一来源）——不再在这里手写一份，两份必然漂移。动态刷新出来的文案由下面的 applyWhale 用它换。
+   ⛔ 必须容错：静态打开本页（不经服务端替换）时 `__WHALE_TXT__` 仍是未声明标识符，
+      若直写成 `const WHALE_TXT = __WHALE_TXT__;` 会抛 ReferenceError
+      ⇒ **本脚本块后面的代码全部不执行**（导航同步 / 全局搜索 / 组锚点条都在后面，
+      表现就是"功能整片消失"）。用 typeof 兜住，未注入时退化成空表。
+      服务端注入仍是同一个占位符（纯字符串替换），所以产品侧行为不变。 */
+const WHALE_TXT = (typeof __WHALE_TXT__ !== "undefined" && __WHALE_TXT__) || {};function applyWhale(){
   try{
     if(!cfg || (getPath(cfg,'ui.text_style')||'') !== 'whale') return;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -6993,6 +7410,9 @@ const WHALE_TXT = __WHALE_TXT__;function applyWhale(){
       lg.innerHTML = lg.innerHTML.replace('群相 控制台', '鲸鲸号 · 深度摸鱼');
     }
     document.title = '鲸鲸号 · 深度摸鱼';
+    // 锚点条的文字是从 .sub 抄来的**副本** ⇒ 换完 DOM 要让它重抄一遍，
+    // 否则 .sub 已是鲸语、锚点条还停在正常文案（两条轴就没对齐）
+    if(typeof window.__ia3SyncBarText === 'function') window.__ia3SyncBarText();
   }catch(e){}
 }
 document.addEventListener('DOMContentLoaded', applyWhale);
@@ -7156,6 +7576,13 @@ async function loadMemory(chat_key){
     chats.forEach(c=>{ const o=document.createElement('option'); o.value=c.chat_key; o.textContent=c.name+'（'+c.count+' 人）'; sel.appendChild(o); });
     if(prev && chats.some(c=>c.chat_key===prev)) sel.value=prev; else sel.value = r.chat_key || '';
     memMembers = r.members||[];
+ // 群名片名录（第 148 项）：别名来自 `member_notes`（唯一来源），按 **wxid** 存 ——
+ //   这里拉一次映射，用来在「成员」列显示成「别名（原昵称）」。拉不到就当没有，不挡列表。
+    memAliases = {};
+    try{
+      const _mb = await getJSON('/api/member_book?chat='+encodeURIComponent(r.chat_key||''));
+      ((_mb&&_mb.members)||[]).forEach(x=>{ if(x.userId) memAliases[x.userId]=x.alias||''; });
+    }catch(e){}
  // 整理是**整份覆盖**：模型顺手少写一条就是静默丢。后端把"最近一次真丢了东西"的记录带上来，
  // 这里如实显示丢了哪几条、去哪儿捞（审计只追加，不改任何记忆内容）。
     { const _au=$('memAudit'); if(_au){
@@ -7173,7 +7600,10 @@ async function loadMemory(chat_key){
     { const _mb=$('memClearSel'); if(_mb){ _mb.disabled = true; _mb.textContent='清除勾选的印象'; } }
     for(const m of memMembers){
       const tr=document.createElement('tr');
-      const name = m.name || m.userId || '某人';
+      // 有别名就显示「别名（原昵称）」—— 让人一眼看出"这是我起的名，那是他本来的昵称"
+      const _al = memAliases[String(m.userId||'')] || '';
+      const _raw = m.name || m.userId || '某人';
+      const name = _al ? (_al + '（' + _raw + '）') : _raw;
       const n = (Array.isArray(m.impressions)?m.impressions.length:0);
       const del=document.createElement('button'); del.className='ghost'; del.textContent='删除';
       del.onclick=async ()=>{
@@ -7208,6 +7638,22 @@ async function loadMemory(chat_key){
         $('memEditCancel').onclick=()=>{ maskClose(mm); mm.remove(); };
       };
       tr.appendChild(editBtn);
+      // 起名 / 改名 / 去掉名字（第 148 项）：写 `member_notes`（按 wxid 存）。
+      // ⛔ 清空输入＝去掉别名，回到他的群昵称。
+      const nameBtn=document.createElement('button'); nameBtn.className='ghost'; nameBtn.textContent='起名';
+      nameBtn.title='给这个人起一个你能记住的称呼（按账号存，改名不影响身份判断）';
+      nameBtn.onclick=async ()=>{
+        const cur = memAliases[String(m.userId||'')] || '';
+        const v = await uiPrompt('给「'+_raw+'」起个称呼（留空＝去掉，回到群昵称）', cur);
+        if(v === null) return;
+        try{
+          const r2 = await getJSON('/api/member_book',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({user_id:m.userId, alias:String(v||'').trim()})});
+          if(!(r2&&r2.ok)) throw new Error((r2&&r2.note)||'保存失败');
+          toast(r2.note||'已保存'); loadMemory(sel.value);
+        }catch(e){ toast('起名失败：'+e.message); }
+      };
+      tr.appendChild(nameBtn);
       const deepBtn=document.createElement('button'); deepBtn.className='ghost'; deepBtn.textContent='深度印象';
       deepBtn.onclick=async ()=>{
         toast('正在整理「'+name+'」的全部历史印象…');
@@ -7241,6 +7687,8 @@ async function loadMemory(chat_key){
   }catch(e){ $('memEmpty').style.display='block'; $('memEmpty').textContent='加载失败：'+e.message; }
 }
 let memMembers = [];
+// 群名片名录（第 148 项）：{wxid: 别名}，来自 `/api/member_book`（别名唯一来源＝配置里的 member_notes）
+let memAliases = {};
 /* 清除勾选的记忆 / 清除全部 / 清除会话日志 */
 (async function(){
   const selB = document.getElementById('memClearSel'), allB = document.getElementById('memClearAll'), rst = document.getElementById('memClearRst');
@@ -7291,6 +7739,20 @@ let memMembers = [];
 })();
 $('memChats').addEventListener('change', ()=>loadMemory($('memChats').value));
 $('memRefresh').onclick = ()=>loadMemory($('memChats').value);
+// 热词词云（第 136 项）：出图后**顺手把文件打开**（`/api/open-path` 是既有入口，别另写一套）
+// ⛔ 没选群 ⇒ 直接说不选群没法出；后端说没数据 ⇒ 原样告诉用户，别显示"成功"。
+$('memWordcloud').onclick = async ()=>{
+  const ck = $('memChats').value;
+  if(!ck){ toast('先在上面选一个群'); return; }
+  const b = $('memWordcloud'); b.disabled = true; const t0 = b.textContent; b.textContent = '出图中…';
+  try{
+    const r = await getJSON('/api/wordcloud',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_key:ck})});
+    if(!(r&&r.ok)) throw new Error((r&&r.note)||'出图失败');
+    toast(r.note||'已出图');
+    try{ await getJSON('/api/open-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:r.path})}); }catch(e){}
+  }catch(e){ toast('出词云失败：'+e.message); }
+  finally{ b.disabled = false; b.textContent = t0; }
+};
 /* 记忆页群搜索：过滤下拉选项；回车选中第一个匹配（群多时最顺手） */
 $('memSearch').addEventListener('input', ()=>{
   const kw=$('memSearch').value.trim().toLowerCase();
@@ -7358,8 +7820,58 @@ $('memSearch').addEventListener('keydown', (e)=>{
         const d = sec ? sec.querySelector('.desc') : null;
         if(d) desc = (d.textContent || '').trim();
       }catch(e){}
-      return {href: href, sid: sid, name: (name||'').trim(), grp: (grp||'').trim(), desc: desc};
+      return {href: href, sid: sid, name: (name||'').trim(), grp: (grp||'').trim(), desc: desc, kind:'sec', sec: sid};
     });
+
+    /* ── 搜索下沉：把「组名（.sub）」与「配置行（.row）」也收进候选 ─────────────
+       为什么：最长的小项有 43 行，用户记得住"冷却"，记不住它在哪个小项里。
+       为什么要"双键"：鲸语模式下 DOM 文本已被 applyWhale 换成鲸语文案
+         ⇒ 只按当前文本建索引，**正常说法就搜不到了**（验收时通常只跑默认状态，很难发现）。
+       ⇒ 从 WHALE_TXT（正常→鲸语）反推一张表，让两种说法都能命中。 */
+    const REV = (function(){
+      const r = {};
+      try{
+        if(typeof WHALE_TXT === 'object' && WHALE_TXT){
+          for(const k in WHALE_TXT){ const v = WHALE_TXT[k]; if(v && !(v in r)) r[v] = k; }
+        }
+      }catch(e){}
+      return r;
+    })();
+    function altKey(text){
+      const t = String(text||'').trim();
+      if(!t) return '';
+      if(REV[t]) return REV[t];                 // 当前是鲸语 ⇒ 补上正常说法
+      for(const k in WHALE_TXT){                 // 当前含鲸语子串 ⇒ 补上对应正常说法
+        try{ if(WHALE_TXT[k] && t.indexOf(WHALE_TXT[k]) >= 0) return k; }catch(e){}
+      }
+      return '';
+    }
+    const secName = {};
+    items.forEach(it=>{ secName[it.sid] = it.name; });
+    let nSub = 0, nRow = 0;
+    document.querySelectorAll('section[data-sec]').forEach(sec=>{
+      let lastSub = '';
+      let gi = 0, ri = 0;
+      Array.from(sec.querySelectorAll('.sub, .row')).forEach(node=>{   // 文档顺序
+        if(node.classList.contains('sub')){
+          lastSub = (node.textContent||'').trim();
+          if(!node.id) node.id = sec.id + '-g' + (++gi);
+          if(!lastSub) return;
+          items.push({href:'#'+node.id, sid:node.id, name:lastSub, grp:secName[sec.id]||'',
+                      desc:'', kind:'sub', sec:sec.id, alt:altKey(lastSub)});
+          nSub++;
+          return;
+        }
+        const lb = node.querySelector('label');
+        const nm = ((lb ? lb.textContent : '') || '').trim();
+        if(!nm) return;                                                 // 无 label 的行（纯说明/按钮）不入索引
+        if(!node.id) node.id = sec.id + '-r' + (++ri);
+        items.push({href:'#'+node.id, sid:node.id, name:nm, grp:secName[sec.id]||'',
+                    desc:lastSub, kind:'row', sec:sec.id, alt:altKey(nm)});
+        nRow++;
+      });
+    });
+    window.__ia3Index = {sec: items.length - nSub - nRow, sub: nSub, row: nRow};
     function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
     function mark(text, kw){
       if(!kw) return esc(text);
@@ -7373,18 +7885,33 @@ $('memSearch').addEventListener('keydown', (e)=>{
       const hits = items.filter(it=>
         it.name.toLowerCase().indexOf(kw) >= 0 ||
         it.grp.toLowerCase().indexOf(kw) >= 0 ||
-        it.desc.toLowerCase().indexOf(kw) >= 0);
+        (it.desc||'').toLowerCase().indexOf(kw) >= 0 ||
+        (it.alt && it.alt.toLowerCase().indexOf(kw) >= 0));
       if(!hits.length){
         res.innerHTML = '<div class="nfr-empty">没找到「' + esc(box.value.trim()) + '」——换个说法试试，比如"发消息""换模型"</div>';
         res.classList.add('open');
         return;
       }
       res.innerHTML = hits.slice(0, 12).map(it=>{
+        const inName = it.name.toLowerCase().indexOf(kw) >= 0;
+        const inDesc = (it.desc||'').toLowerCase().indexOf(kw) >= 0;
+        const inAlt  = !!(it.alt && it.alt.toLowerCase().indexOf(kw) >= 0);
  // 命中说明行时把说明里的关键词也标出来（用户才知道"为什么它被搜到"）
-        const why = (it.name.toLowerCase().indexOf(kw) < 0 && it.desc.toLowerCase().indexOf(kw) >= 0)
-          ? '<span style="display:block;font-size:11.5px;color:var(--tx3);margin-top:2px">' + mark(it.desc.slice(0, 46), kw) + '</span>' : '';
-        return '<a href="' + esc(it.href) + '">' + mark(it.name, kw) +
-               '<span style="color:var(--tx3);font-weight:400">　' + esc(it.grp) + '</span>' + why + '</a>';
+        let why = '';
+        if(!inName && inDesc)
+          why = '<span style="display:block;font-size:11.5px;color:var(--tx3);margin-top:2px">' + mark((it.desc||'').slice(0, 46), kw) + '</span>';
+        else if(!inName && inAlt)
+          why = '<span style="display:block;font-size:11.5px;color:var(--tx3);margin-top:2px">'
+              + '<span class="ia-alias">别名</span>' + esc(it.alt) + '</span>';
+        // 组/行结果要标出来：用户才知道这次命中的是"小项"还是"小项里的哪一组/哪一行"
+        const tail = (it.kind === 'row' && it.desc) ? '　' + esc(it.desc) : '';
+        // 前缀必须放**独立元素**里：鲸语是按"整段文本节点"查表的，
+        // 把它并进名称文本会让那一段整体查不到、名称就换不成鲸语。
+        // 另外**不要用单字**（「行」「组」）：页面里已有同名单字文本节点，加字典会误伤它们。
+        const badge = it.kind === 'row' ? '<span class="ia-badge">配置项</span>'
+                    : (it.kind === 'sub' ? '<span class="ia-badge">分组</span>' : '');
+        return '<a href="' + esc(it.href) + '" data-sec="' + esc(it.sec || '') + '">' + badge + mark(it.name, kw) +
+               '<span style="color:var(--tx3);font-weight:400">　' + esc(it.grp) + tail + '</span>' + why + '</a>';
       }).join('');
       res.classList.add('open');
     }
@@ -7402,9 +7929,9 @@ $('memSearch').addEventListener('keydown', (e)=>{
       if(!a) return;
  // 命中被折叠的分组时先展开它（否则跳过去看不见高亮）
       const sid = (a.getAttribute('href')||'').replace('#','');
-      const tgt = document.getElementById(sid);
-      const g = tgt && tgt.closest ? tgt.closest('.nav-grp') : null; // 面板不在导航里，得回导航找
-      const navA = navEl.querySelector('a[href="#' + sid + '"]');
+      // 组/行结果的目标不是 section ⇒ 用 data-sec 回导航找它所属的分组
+      const secId = a.getAttribute('data-sec') || sid;
+      const navA = navEl.querySelector('a[href="#' + secId + '"]');
       const g2 = navA && navA.closest ? navA.closest('.nav-grp') : null;
       if(g2 && g2.classList.contains('collapsed')){
         const key = g2.getAttribute('data-grp') || '';
@@ -7427,6 +7954,72 @@ $('memSearch').addEventListener('keydown', (e)=>{
       e.preventDefault(); box.focus(); box.select();
     });
   }
+})();
+
+/* ── 第三层索引：功能项内的自动锚点条 ──────────────────────────────────────
+   扫每个 section 的 .sub：**≥2 组才生成**一条锚点条，点它平滑滚到该组。
+   ⇒ 以后新增 section 只要写 .sub 就自动有锚点条，不必再来改这段。 */
+(function(){
+  const REDUCE = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches);
+  function flash(el){
+    if(!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth;                 // 强制重排，动画才会重播（否则连点不闪）
+    el.classList.add('flash');
+    setTimeout(()=>el.classList.remove('flash'), 1200);
+  }
+  function goTo(id){
+    const el = document.getElementById(id);
+    if(!el) return;
+    try{ el.scrollIntoView({behavior: REDUCE ? 'auto' : 'smooth', block:'start'}); }
+    catch(e){ el.scrollIntoView(); }     // 老引擎不认 options 对象
+    flash(el);
+    document.querySelectorAll('.sub-nav a').forEach(x=>
+      x.classList.toggle('on', x.getAttribute('data-sub') === id));
+  }
+  function build(){
+    let bars = 0, groups = 0;
+    document.querySelectorAll('section[data-sec]').forEach(sec=>{
+      if(sec.querySelector('.sub-nav')) return;        // 幂等：重建时不重复插
+      const subs = Array.from(sec.querySelectorAll('.sub'));
+      if(subs.length < 2) return;                      // 只有一组 ⇒ 放锚点条没有意义
+      const bar = document.createElement('div');
+      bar.className = 'sub-nav';
+      subs.forEach((s,i)=>{
+        if(!s.id) s.id = sec.id + '-g' + (i+1);
+        const a = document.createElement('a');
+        a.href = '#' + s.id;
+        a.setAttribute('data-sub', s.id);
+        a.textContent = (s.textContent||'').trim();
+        a.addEventListener('click', ev=>{ ev.preventDefault(); goTo(s.id); });
+        bar.appendChild(a);
+      });
+      // 插在说明文字之后：说明在顶上时不该被锚点条顶掉
+      const d = sec.querySelector('.desc');
+      if(d && d.parentNode === sec) d.insertAdjacentElement('afterend', bar);
+      else sec.insertBefore(bar, sec.firstChild);
+      bars++; groups += subs.length;
+    });
+    return {bars: bars, groups: groups};
+  }
+  /* 锚点条的文字是从 .sub 抄来的副本 ⇒ 鲸语切换后要让它重抄一遍，
+     否则 .sub 已变鲸语、条上还是正常文案（两条轴对不齐）。 */
+  function syncText(){
+    try{
+      document.querySelectorAll('.sub-nav a').forEach(a=>{
+        const t = document.getElementById(a.getAttribute('data-sub'));
+        if(t) a.textContent = (t.textContent||'').trim();
+      });
+    }catch(e){}
+  }
+  function init(){
+    try{ window.__ia3Bars = build(); }
+    catch(e){ /* 锚点条是增强项：失败不拖累控制台其余部分 */ }
+    window.__ia3SyncBarText = syncText;
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+  window.__ia3RebuildBars = init;   // 局部重绘后长出 .sub 时可手动重建
 })();
 
 /* 导航：滚动同步高亮 + 蓝色指示条平滑滑动 */
@@ -7914,6 +8507,21 @@ async function probeWechatDir(){
   };
   actBtn('actHeal', 'update_host', '依赖自愈');
   actBtn('actUp', 'upgrade_adapter', '升级适配层');
+  /* ★ 停下：取消正在跑的一键作业（第三种终态）。
+     ⛔ **取消失败必须如实弹出来** —— 静默当成功会让用户以为停了，实际进程还在跑。
+     后端已把「作业不存在 / 已结束 / 拿不到 pid / 杀不动」各档说清楚，这里原样转达。 */
+  const actCancelBtn = document.getElementById('actCancel');
+  if(actCancelBtn) actCancelBtn.onclick = async ()=>{
+    const nm = actCancelBtn.dataset.job || '';
+    if(!nm){ toast('现在没有正在跑的事'); return; }
+    try{
+      const r = await getJSON('/api/version/job/cancel', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: nm})});
+      toast(r && r.ok ? ('已发出停止请求：' + (_jlName(nm)) + '（停下不算失败）')
+                      : ('停不下来：' + ((r && r.why) || '未知原因')));
+      loadStatus();
+    }catch(e){ toast('停止失败：' + e.message); }
+  };
   if(recheckBtn) recheckBtn.onclick = async ()=>{
     try{
       const r = await getJSON('/api/wechat/recheck');
@@ -7957,6 +8565,102 @@ function renderGroupTierBox(){
   });
 }
 $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
+/* 资源市场：社区分区顶部按钮 ⇒ 三栏弹窗（人设 / Skill / 工具）。
+   与 Qt 端同一套后端（/api/market/*），⛔ 不碰发送链。
+   状态文案一律用后端给的 ready_reason（不在这里另拼句子）。 */
+(function(){
+  const KINDS = [
+    ['persona','人设','以谁的身份说话。下载别人做好的，或把自己的传上去。'],
+    ['skill','Skill','让模型自己判断什么时候用的能力包。'],
+    ['tool','工具','声明式 HTTP 工具，勾选后模型才能调用。这一类本机已经能装。'],
+  ];
+  const btn = document.getElementById('marketOpenBtn');
+  if(!btn) return;
+  let dlg = null;
+  function build(){
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-mask';
+    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;display:flex;align-items:center;justify-content:center';
+    wrap.innerHTML = '<div class="card" style="max-width:880px;width:92%;max-height:80vh;overflow:auto;background:var(--bg);padding:18px">'
+      + '<h2 style="margin:0 0 6px">资源市场</h2>'
+      + '<div class="desc">从站上下载人设 / Skill / 工具，或把你自己的传上去。</div>'
+      + '<div class="btns" id="mkTabs" style="justify-content:flex-start;gap:8px;margin:10px 0"></div>'
+      + '<div id="mkWhy" class="hint" style="margin:6px 0"></div>'
+      + '<div id="mkList"></div>'
+      + '<div class="btns" style="justify-content:flex-start;gap:8px;margin-top:12px">'
+      + '<button id="mkUp" class="ghost">上传到网站</button>'
+      + '<button id="mkSite" class="ghost">打开网站</button>'
+      + '<button id="mkClose" class="pri" style="margin-left:auto">关闭</button></div></div>';
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+  let data = {}, cur = 'persona';
+  function render(){
+    const info = (data.kinds||{})[cur] || {};
+    const ready = !!info.ready;
+    const why = document.getElementById('mkWhy');
+    why.textContent = info.ready_reason || '就绪';
+    why.style.color = ready ? 'var(--tx2)' : 'var(--err-tx)';
+    const tabs = document.getElementById('mkTabs');
+    tabs.innerHTML = '';
+    KINDS.forEach(([k,label])=>{
+      const b = document.createElement('button');
+      b.className = (k===cur?'pri':'ghost'); b.textContent = label;
+      b.onclick = ()=>{ cur = k; render(); };
+      tabs.appendChild(b);
+    });
+    const list = document.getElementById('mkList');
+    list.innerHTML = '';
+    const rows = (info.remote||[]).concat(info.local||[]);
+    if(!rows.length){
+      const p = document.createElement('div'); p.className = 'hint';
+      p.textContent = '这里现在是空的。'; list.appendChild(p);
+    }
+    rows.slice(0,200).forEach(it=>{
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<label>'+ (it.name||it.id||'') +'</label><div class="grow">'
+        + '<span class="hint">'+ (it.installed?'已安装':'站上') +'</span> '
+        + '<button class="ghost">'+ (it.installed?'卸载':'安装') +'</button></div>';
+      const b = row.querySelector('button');
+      b.disabled = !ready;
+      b.onclick = async ()=>{
+        const api = it.installed ? '/api/market/uninstall' : '/api/market/install';
+        try{
+          const r = await getJSON(api,{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({kind:cur,id:it.id})});
+          toast(r.ok ? (r.message||'完成') : ('失败：'+(r.message||r.error||'')));
+          await load();
+        }catch(e){ toast('失败：'+e.message); }
+      };
+      list.appendChild(row);
+    });
+    document.getElementById('mkUp').disabled = !ready;
+  }
+  async function load(){
+    try{
+      const r = await getJSON('/api/market/list');
+      data = r || {};
+    }catch(e){ data = {}; }
+    render();
+  }
+  btn.onclick = ()=>{
+    if(!dlg) dlg = build();
+    dlg.style.display = 'flex';
+    document.getElementById('mkClose').onclick = ()=>{ dlg.style.display='none'; };
+    document.getElementById('mkSite').onclick = ()=>{
+      // 站地址还没定 ⇒ 不编一个网址出来，如实提示。
+      const site = (data.site_url||'');
+      if(!site){ toast('资源站还在建设中，建好后这里会直接打开对应分栏'); return; }
+      window.open(site.replace(/\/$/,'')+'/'+cur, '_blank');
+    };
+    document.getElementById('mkUp').onclick = ()=>{
+      if(!data.kinds){ return; }
+      toast('资源站还在建设中，建好后这里可以直接选文件上传');
+    };
+    load();
+  };
+})();
 /* 打开种子库 / 确认上传（联动社区上传开关+URL） */
 (function(){
   const ob = document.getElementById('openSeedBtn'), ub = document.getElementById('uploadSeeds');
@@ -8110,7 +8814,46 @@ $('unifiedTierChk').addEventListener('change', ()=>renderGroupTierBox());
   const ex = document.getElementById('dataExport');
   const im = document.getElementById('dataImport');
   const file = document.getElementById('dataImportFile');
+  const bkEx = document.getElementById('backupExport');
+  const bkIm = document.getElementById('backupImport');
+  const bkFile = document.getElementById('backupImportFile');
   const q = URL_TOKEN ? ('?token='+URL_TOKEN) : '';
+  /* ── 一键备份 / 一键恢复（全量设置+数据）── */
+  if(bkEx) bkEx.onclick = async ()=>{
+    try{
+      const r = await fetch('/api/backup/export'+q, {method:'POST'});
+      if(!r.ok){ toast('备份失败：HTTP '+r.status); return; }
+      const blob = await r.blob();
+      const d = new Date();
+      const ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'Persona Morph-备份-设置+数据-'+ds+'.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+      toast('已备份全部设置与数据，见下载');
+    }catch(e){ toast('备份失败：'+e.message); }
+  };
+  if(bkIm) bkIm.onclick = ()=>{ if(bkFile) bkFile.click(); };
+  if(bkFile) bkFile.onchange = async ()=>{
+    const f = bkFile.files && bkFile.files[0];
+    if(!f) return;
+    if(!confirm('导入备份会覆盖当前的设置与数据（部分需重启后生效）。确定继续？')){ bkFile.value=''; return; }
+    try{
+      const r = await fetch('/api/backup/import'+q, {method:'POST', body: f});
+      const j = await r.json();
+      if(j && j.ok){
+        toast('恢复完成：'+(j.note||''));
+        if(j.warnings && j.warnings.length) toast('有 '+j.warnings.length+' 条提示（多数是安全跳过）');
+        if(typeof loadSessions==='function') loadSessions();
+        if(typeof loadStatus==='function') loadStatus();
+        if(typeof loadConfig==='function') loadConfig();
+      } else {
+        toast('恢复失败：'+((j && j.error) || '未知'));
+      }
+    }catch(e){ toast('恢复失败：'+e.message); }
+    bkFile.value='';
+  };
   if(ex) ex.onclick = async ()=>{
     try{
       const r = await fetch('/api/data/export'+q, {method:'POST'});
@@ -8396,5 +9139,165 @@ ttsSyncRows();
   setInterval(()=>{ if(S('sdLocalState') && !poll) refresh(); }, 8000);
 })();
 </script>
-<div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">Persona Morph build 2026-09-09</div></body>
+<script>
+// 表情语义索引面板（sec-emoji）。取数走 GET /api/emoji_index，回填走 POST（action=learn|refresh）。
+// ⛔ 缩略图是 <img>，不许用 emoji 字符当图标（显示层红线）；列表点击 = 载入左侧那条到底部表单。
+(function(){
+  const EI=(id)=>document.getElementById(id);
+  let EI_ALL=[], EI_SEL=null;
+  const eiConf=(c)=> (c==='high') ? 'high' : 'low';
+  function eiPaint(r){
+    const st=EI('stEmojiIndex');
+    if(!st) return;
+    st.textContent = (r && r.ok) ? ('共 '+(r.total||0)+' 条') : '读取失败';
+    EI('eiTotal').textContent = r.total||0;
+    EI('eiDone').textContent = r.with_caption||0;
+    EI('eiTodo').textContent = (r.pending||[]).length;
+    EI('eiLow').textContent = (r.low||[]).length;
+    EI('eiAnim').textContent = r.animated||0;
+    EI('eiStill').textContent = r.static||0;
+    // ⭐ 群友最常用的表情（后端 top_used 给的 key 就是编号）—— 这是"发哪个表情"的可见依据
+    if(EI('eiTop')){
+      const tu = r.top_used || [];
+      EI('eiTop').textContent = tu.length ? ('#'+tu[0][0] + ' ×' + tu[0][1]) : '—';
+      EI('eiTop').title = tu.map(x=>('#'+x[0]+' 用了 '+x[1]+' 次')).join('\n') || '还没有使用记录';
+    }
+    const np=(r.pending||[]).length;
+    EI('eiNote').textContent = np ? ('待打标 '+np+' 条：这些还没有语义，机器人选中它们的概率为 0') : '';
+    const cur = r.curiosity || {};
+    if(EI('eiCurState')){
+      const pd = cur.pending_detail;
+      let s = (cur.enabled ? '已开启' : '未开启（不会主动问）') + ' · 已问 ' + (cur.asked_count||0)
+              + ' 张 · 待打标 ' + (cur.low_total||0) + ' 张';
+      if(pd) s += ' · 正在等回答：# ' + pd.emoji_id + '（' + Math.round(Date.now()/1000 - (pd.asked_at||0)) + ' 秒前问的）';
+      EI('eiCurState').textContent = s;
+    }
+    if(EI('eiCurLearned')){
+      const ls = cur.learned || [];
+      EI('eiCurLearned').textContent = ls.length
+        ? ls.map(x=>('#' + x.id + ' ' + String(x.caption||'').slice(0, 40))).join('；')
+        : '还没有从群友那儿学到新语义';
+    }
+    EI_ALL = (r.items||[]).slice();
+    eiList();
+  }
+  function eiRow(e){
+    const low = eiConf(e.confidence)==='low';
+    const mark = low ? '把握不足' : (e.confidence==='high' ? '把握高' : '未定');
+    const cap = e.caption || '（还没有语义）';
+    const sit = e.situation || '';
+    return '<div class="ei-item" data-id="'+e.id+'" style="display:flex;gap:10px;align-items:flex-start;padding:8px;border-radius:8px;cursor:pointer;'+(EI_SEL===e.id?'background:var(--input-bg);':'')+'">'
+      + '<img src="'+e.img+'" alt="" loading="lazy" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:rgba(0,0,0,.12);flex:0 0 auto">'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-weight:600">#'+e.id+' <span class="hint" style="font-weight:400">'+(e.kind||'')+' · '+mark+'</span></div>'
+      + '<div>'+cap+'</div>'
+      + (sit ? ('<div class="hint">用在哪：'+sit+'</div>') : '')
+      + ((e.moods&&e.moods.length) ? ('<div class="hint">情绪：'+e.moods.join('、')+'</div>') : '')
+      + '</div></div>';
+  }
+  function eiList(){
+    const box=EI('emojiList'); if(!box) return;
+    const q=(EI('eiSearch') && EI('eiSearch').value || '').trim().toLowerCase();
+    const po=EI('eiPendingOnly') && EI('eiPendingOnly').checked;
+    const lst=EI_ALL.filter(e=>{
+      if(po && e.caption) return false;
+      if(!q) return true;
+      return ('#'+e.id+' '+(e.caption||'')+' '+(e.situation||'')).toLowerCase().indexOf(q)>=0;
+    });
+    if(!lst.length){ box.innerHTML='<span class="hint">没有匹配的表情</span>'; return; }
+    box.innerHTML = lst.map(eiRow).join('');
+    box.querySelectorAll('.ei-item').forEach(el=>{
+      el.onclick = ()=>eiPick(parseInt(el.getAttribute('data-id'),10));
+    });
+  }
+  function eiPick(id){
+    const e = EI_ALL.filter(x=>x.id===id)[0]; if(!e) return;
+    EI_SEL=id;
+    EI('eiCap').value=e.caption||''; EI('eiSit').value=e.situation||'';
+    EI('eiMoods').value=(e.moods||[]).join(','); EI('eiConf').value=eiConf(e.confidence);
+    EI('eiMeme').value=e.meme||'';
+    EI('eiWho').textContent='正在改 #'+id+'（'+(e.kind||'')+'）';
+    eiList();
+  }
+  async function eiLoad(){
+    try{ eiPaint(await getJSON('/api/emoji_index') || {}); }
+    catch(err){ eiPaint({}); }
+  }
+  async function eiPost(body){
+    return await getJSON('/api/emoji_index',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}) || {};
+  }
+  if(EI('eiSave')) EI('eiSave').onclick=async()=>{
+    if(EI_SEL===null){ toast('先在上面点一条表情'); return; }
+    try{
+      const r=await eiPost({action:'learn',id:EI_SEL,caption:EI('eiCap').value,situation:EI('eiSit').value,
+                            moods:EI('eiMoods').value,meme:EI('eiMeme').value,confidence:EI('eiConf').value});
+      toast(r.ok ? '已保存（机器人下次挑表情就按这句来）' : ('没保存：'+(r.error||'')));
+      if(r.ok) await eiLoad();
+    }catch(err){ toast('保存失败：'+err.message); }
+  };
+  if(EI('eiRescan')) EI('eiRescan').onclick=async()=>{
+    try{
+      const r=await eiPost({action:'refresh'});
+      toast('已重扫：新增 '+(r.added||0)+' 条，待打标 '+(r.missing_caption||[]).length+' 条');
+      eiLoad();
+    }catch(err){ toast('重扫失败：'+err.message); }
+  };
+  if(EI('eiRefresh')) EI('eiRefresh').onclick=()=>eiLoad();
+  if(EI('eiSearch')) EI('eiSearch').addEventListener('input', eiList);
+  if(EI('eiPendingOnly')) EI('eiPendingOnly').addEventListener('change', eiList);
+  eiLoad();
+  // 行高缓存（sec-wechat 的「行高缓存」行）：读当前记住的值 + 「重新测量」清掉它。
+  // 行高由绿带尺从屏幕量出来，我们**只允许清、不允许手填** —— 手填一个数会让"该点第几行"错得没声息。
+  async function rgLoad(){
+    try{
+      const r = await getJSON('/api/row_geometry');
+      if(!EI('rgState')) return;
+      EI('rgState').textContent = (r && r.has_cache)
+        ? ('已记住 ' + r.row_h + ' 像素（本机合法区间 ' + (r.green_expect||[]).join('~') + '）')
+        : '还没量到（下次动会话列表时会自己量）';
+    }catch(e){ if(EI('rgState')) EI('rgState').textContent = '读取失败'; }
+  }
+  if(EI('rgForget')) EI('rgForget').onclick = async ()=>{
+    try{
+      const r = await getJSON('/api/row_geometry',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'forget'})});
+      toast((r && r.note) || '已清掉');
+      rgLoad();
+    }catch(e){ toast('清不掉：'+e.message); }
+  };
+  rgLoad();
+  // Emoji 库（sec-emoji 第 ⑤ 组）：只读清单 —— 哪些 [名] 能用、20 个情绪组各给什么。
+  (async function(){
+    try{
+      const r = await getJSON('/api/emoji_codes');
+      const st = (r && r.stats) || {};
+      if(EI('ecStats')) EI('ecStats').textContent =
+        '微信表情码 ' + (st.wx_codes||0) + ' 个 · Unicode ' + (st.unicode||0) + ' 个 · 情绪组 ' + (st.moods||0) + ' 组';
+      if(EI('ecWx')) EI('ecWx').textContent = (r && r.wx_codes || []).map(x=>'['+x+']').join(' ');
+      if(EI('ecMood')) EI('ecMood').textContent = Object.keys((r && r.moods) || {}).map(function(k){
+        const m = r.moods[k] || {};
+        const wx = (m.wx_candidates||[]).join('／');
+        const un = (m.unicode_candidates||[]).join(' ');
+        return k + ' → ' + wx + (un ? ('　或　' + un) : '');
+      }).join('；');
+    }catch(e){
+      if(EI('ecStats')) EI('ecStats').textContent = '读取失败';
+    }
+  })();
+  // 拟人节奏（sec-send「② 节奏」组）：显示**真正生效**的档位与区间 ——
+  // 只看配置里那几行看不出生效值（档位与单项覆盖是合起来算的）。
+  (async function(){
+    try{
+      const r = await getJSON('/api/rhythm');
+      if(!EI('rhState')) return;
+      if(!r || !r.ok){ EI('rhState').textContent = '读取失败'; return; }
+      const e = r.effective || {};
+      const g = (e.gap || [0,0]).map(x=>Number(x).toFixed(1)).join('~');
+      EI('rhState').textContent = (r.enabled ? '开' : '关') + ' · ' + (e.name||'')
+        + ' · 同会话间隔 ' + g + ' 秒 · ' + (e.window||0) + ' 秒内最多 '
+        + (e.burst > 0 ? e.burst : '不限') + ' 次';
+    }catch(err){ if(EI('rhState')) EI('rhState').textContent = '读取失败'; }
+  })();
+})();
+</script><div style="position:fixed;left:4px;bottom:2px;font-size:10px;color:#8aa0c0;opacity:.55;z-index:9">Persona Morph build 2026-09-09</div></body>
 </html>

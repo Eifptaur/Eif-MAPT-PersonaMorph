@@ -18,11 +18,14 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
 
 from agent import chat_ocr as co  # noqa: E402
 from agent import chat_header as ch  # noqa: E402
 import glob  # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 def norm(s):
@@ -55,7 +58,8 @@ def span_bounded(img, y0, y1, left, ratio=0.5):
         segs.append((s, e))
         x0, x1 = max(segs, key=lambda p: p[1] - p[0])
         return int(x0), int(x1)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0, 0
 
 
@@ -73,7 +77,8 @@ for d in ('wechat', 'local'):
                 if gx1 > left + 5:
                     bad += 1
                     worst.append((gx1 - left, os.path.basename(p)[:34], left, b, gx0, gx1))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 worst.sort(reverse=True)
 for over, nm, left, b, gx0, gx1 in worst[:6]:

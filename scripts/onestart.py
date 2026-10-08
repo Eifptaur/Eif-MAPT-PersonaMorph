@@ -12,6 +12,9 @@ import subprocess
 import threading
 import time
 import urllib.request
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -38,7 +41,8 @@ def evt(kind, *args):
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         print(line, flush=True)
@@ -51,7 +55,8 @@ def log(msg):
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if not GUI:
         try:
@@ -82,8 +87,55 @@ def _prog(prefix, done, total):
         except Exception:
             bar = ""
         print("  ┃ %s %3d%% [%s] (%d/%d)" % (prefix, pct, bar, done, total), flush=True)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
+
+
+def _deps_marker_path():
+    return os.path.join(ROOT, "data", ".deps_ok")
+
+
+def _clear_deps_marker():
+    """开始核对依赖**之前**先清掉"就绪标记"。
+
+    ⛔ 为什么要先清：标记的语义是"**这一次**核对通过"。
+      若只在成功时写、失败时不管，那"上次通过、这次失败"的情况下旧标记还在
+       ⇒ 启动器会误判成"就绪"而走静默档 ⇒ **失败被静默掉**（用户看不到任何提示）。
+    """
+    try:
+        os.remove(_deps_marker_path())
+    except Exception as _e:
+        # 清理型：标的不存在就是正常情况（首次启动），静默合法 ——
+        # 但要留痕，否则"删不掉（权限/占用）"会被静默吞掉，下次仍走静默档、失败看不见。
+        log("清依赖就绪标记失败（多为首次启动、本来就没有）：%s" % str(_e)[:60])
+
+
+def _write_deps_marker():
+    """依赖核对**通过后**写"就绪标记"（带 requirements 指纹 + Python 版本）。
+
+    用途：启动器据此判断"要不要弹那个安装窗"（见 `launcher-src/launcher.cs` 的 `FastPathReady`）。
+    ⚠️ 指纹＝`requirements.txt` 的哈希 ⇒ 将来换了依赖，标记自然失效、重新走一遍完整检查（不会漏装）。
+    """
+    try:
+        import hashlib
+        import json as _json
+        _req = os.path.join(ROOT, "requirements.txt")
+        _h = ""
+        try:
+            with open(_req, "rb") as _f:
+                _h = hashlib.sha256(_f.read()).hexdigest()[:16]
+        except Exception as _e:
+            # 读不到 requirements ⇒ 退回一个"永不匹配"的指纹（下次仍走完整检查，是安全方向）。
+            # 留痕：否则"文件权限坏了"与"文件本来就缺"在日志里长得一样。
+            _h = "no-requirements"
+            log("读 requirements.txt 失败（指纹退回 %s）：%s" % (_h, str(_e)[:60]))
+        os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
+        with open(_deps_marker_path(), "w", encoding="utf-8") as _f:
+            _json.dump({"req_sha": _h, "py": sys.version.split()[0],
+                        "at": time.strftime("%Y-%m-%d %H:%M:%S")}, _f)
+    except Exception as _e:  # noqa: BLE001
+        log("写依赖就绪标记失败（不影响本次启动，只会让下次仍弹启动窗）：%s" % str(_e)[:60])
 
 
 def run_stream(cmd, timeout=900, on_line=None):
@@ -120,7 +172,8 @@ def run_stream(cmd, timeout=900, on_line=None):
                     sys.stdout.flush()
                 except Exception:
                     pass
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         finally:
             done.set()
@@ -250,7 +303,8 @@ def popup_fail(reason, tail=""):
         if tail:
             msg += "—— 最近日志（看前几行即可定位）：\n" + tail[-1500:]
         ctypes.windll.user32.MessageBoxW(0, msg, "Persona Morph 启动失败", 0x10)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -261,7 +315,8 @@ def _mark_browser_opened():
     try:
         with open(os.path.join(LOG_DIR, "browser_opened.txt"), "w", encoding="utf-8") as f:
             f.write(str(time.time()))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -270,7 +325,8 @@ def _build_tag_local():
         import datetime
         mt = os.path.getmtime(os.path.join(ROOT, "assets", "console", "index.html"))
         return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "b?"
 
 
@@ -300,7 +356,8 @@ def _probe_console_window():
             return 0
         import ctypes
         return h if ctypes.windll.user32.IsWindow(ctypes.c_void_p(h)) else 0
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
@@ -323,7 +380,8 @@ def _probe_running_instance(timeout=2):
         with urllib.request.urlopen("http://127.0.0.1:%d/api/version" % _port, timeout=timeout) as _r:
             _d = _j.loads(_r.read().decode("utf-8", "replace"))
             return "same" if str(_d.get("ver") or "") == _build_tag_local() else "old"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "none"
 
 
@@ -399,7 +457,7 @@ def _cmd_script_paths(cmd):
 def _is_our_install(cmd):
     """这条命令行的**脚本完整路径**是否落在本安装目录（ROOT）下、且文件名是那三个之一。
 
-    ⛔ 这是 的正解：`taskkill /F` 是强制终止，判据必须是"这个进程属于本次安装"，
+    ⛔ 这是正解：`taskkill /F` 是强制终止，判据必须是"这个进程属于本次安装"，
     而不是"它的命令行里有几个像样的字"。实现见 `agent/proc_match.is_our_install`（单一来源）。
     """
     from agent.proc_match import is_our_install
@@ -520,6 +578,9 @@ def _open_console(url, browser_path=""):
 
 def main():
     check_only = (os.environ.get("WX_ONESTART_CHECK") == "1") or ("--check-only" in sys.argv[1:])
+    #: `--restart` ＝ 检测到机器人已在运行就**先结束它、等锁放开、再启新的**（不必让用户去点「停止机器人」）。
+    #: `WX_ONESTART_RESTART=1` 是给 GUI 启动器用的等价开关（它不便传命令行参数）。
+    want_restart = ("--restart" in sys.argv[1:]) or (os.environ.get("WX_ONESTART_RESTART") == "1")
     log("")
     log("╔══════════════════════════════════════════════╗")
     log("║        群相 一键启动（全程进度）         ║")
@@ -564,7 +625,8 @@ def main():
                     log("⚠ 有 %d 个旧实例**没能踢掉**（%s）⇒ 它们可能仍占着端口/单实例锁。"
                         % (len(_bad_kick),
                            "、".join("PID=%s rc=%s" % (x.get("pid"), x.get("rc")) for x in _bad_kick)))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     log("[1/3] 依赖检查（缺则自动安装；已装自动跳过）")
@@ -572,19 +634,31 @@ def main():
 
     # 1. 依赖（检查表 14 项逐项百分比；安装阶段由 pip 自带百分比条显示）
     deps_done = [0]
+    _clear_deps_marker()  # ⛔ 先清：标记语义是"**这一次**核对通过"（见该函数注释）
     evt("PHASE", "deps")
-    log("      首次安装要下载约 100~150MB（慢网十几分钟正常，中途别关窗；装过的不会重下）")
+    # ⛔ 文案随发行形态走：正式包自带离线轮子 ⇒ 首装不下载；只有离线判据不成立才退回联网。
+    #   写成"要下载 N MB"会让装了离线包的用户以为下错了包（用户口径：装整包就是不想等下载）。
+    try:
+        from agent import dep_heal as _dh_off
+        _off_now = bool(_dh_off.offline_available(sys.executable or "python"))
+    except Exception:  # noqa: BLE001
+        _off_now = False
+    if _off_now:
+        log("      依赖从包内自带的离线轮子装（不需要联网下载；装过的不会重装）")
+    else:
+        log("      首次安装要下载约 100~150MB（慢网十几分钟正常，中途别关窗；装过的不会重下）")
 
     # 依赖安装实时进度：统计 requirements 包数作为总量，逐包 +1（pip Collecting/Downloading/安装缺失 均计）
     try:
         _req_n = len([_l for _l in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8")
                       if _l.strip() and not _l.strip().startswith("#")])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _req_n = 21
     deps_install = [0]
 
     def _deps_progress(ln):
-        _s = str(ln or "").strip() # pip 的行是缩进的（"  Downloading …"）⇒ 必须先 strip
+        _s = str(ln or "").strip() # pip 的行是缩进的⇒ 必须先 strip
         if _s.startswith("OK"):
             deps_done[0] += 1
             _prog("依赖检查", min(deps_done[0], 14), 14)
@@ -601,6 +675,7 @@ def main():
         log("一键启动结束（失败：依赖）")
         return 1
     log("依赖检查通过 ✔")
+    _write_deps_marker()
 
     # 1.5 界面组件（PySide6，桌面控制台的图形库）提前到首启可见的依赖阶段装。
     #     requirements.txt 不含它：以前它拖到机器人起来之后才由 qt_bootstrap 临时下载
@@ -609,7 +684,15 @@ def main():
     #     放子进程跑（scripts/setup_ui.py）：GUI 模式下显示与进度计数由本进程决定，
     #     子进程崩溃也不影响启动流程。失败不致命：真正要用界面时 qt_bootstrap 还会再试，
     #     仍失败照旧回落网页控制台。
-    log("      界面组件（PySide6，桌面控制台的图形库）检查——已装自动跳过，首次约 74MB")
+    #     ⛔ 正式包自带 PySide6 轮子（`offline/wheels/pyside6_essentials-*.whl`）
+    #       ⇒ `ensure_pyside6` 走本地安装、零下载（那条快路径见 qt_bootstrap.py）。
+    _ui_local = os.path.exists(os.path.join(
+        ROOT, "offline", "wheels", "pyside6_essentials-6.11.2-cp310-abi3-win_amd64.whl"))
+    if _ui_local:
+        log("      界面组件（PySide6，桌面控制台的图形库）检查——已装自动跳过，本包自带、不需要下载")
+    else:
+        # 只有"在线包"（`--no-wheels`，包里没带轮子）才会走到这里 —— 那时确实要联网下 74MB。
+        log("      界面组件（PySide6，桌面控制台的图形库）检查——已装自动跳过，首次约 74MB（联网下载）")
     ui_pct = [0]
 
     def _ui_progress(ln):
@@ -678,7 +761,8 @@ def main():
         _lk = os.path.join(ROOT, "data", "bot.lock")
         _held, _hpid = _si_probe(lock_path=_lk)
         existing = ((_hpid or -1) if _held else (_si_legacy(_lk) or None))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         existing = None
     # ⛔ **残留的旧包实例不算"已在运行"**。
     #    旧包更新完可能没人接替（旧看门狗还在、机器人已死），这时如果这里直接 return 0，
@@ -699,7 +783,8 @@ def main():
             _stale = True
             log("发现**旧包残留实例**（watchdog.pid 记的版本=%r ≠ 本包 %r）⇒ 不跳过，拉起新看门狗接管"
                 % (_rec or "(读不出，多半是旧版格式)", _cur))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _stale = False
     # ⛔ 「已在运行」不能只信单实例互斥体 —— 互斥体只证明「有进程持锁」，
     #    不证明「控制台起来了」。真机出现过：互斥体被半死不活的机器人/看门狗占着，
@@ -721,7 +806,8 @@ def main():
                 with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as _pcf:
                     _server = (_pj.load(_pcf).get("server", {}) or {})
                 _cfg_port = int(_server.get("port") or 3210)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _cfg_port = 3210
             # 候选口 2：顺延口 —— webui 在端口被占时会静默顺延（3210→3211…），往上多试 5 个
             for _p in range(_cfg_port, _cfg_port + 6):
@@ -749,24 +835,58 @@ def main():
                     break
                 except Exception:
                     continue
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             _port_up = False
     if existing is not None and not _stale:
         _who = ("pid=%s" % existing) if (existing and existing > 0) else "pid 未知"
         _tried = "、".join(str(x) for x in _ports_tried) or "(没探到候选端口)"
-        if _port_up:
-            log("检测到机器人已在运行（%s；控制台端口 %s 有人听，探过 %s）→ 打开控制台，不再重复启动。%s" % (
-                _who, _port_hit, _tried, "如想重启请先「停止机器人」."))
+        if _port_up and want_restart:
+            # 「立即重启」：结束旧实例（连同看门狗），**等锁真的放开**，再往下走正常拉起流程。
+            # ⛔ 不能"杀了就立刻启"：内核回收互斥体、锁文件被清、端口退出 TIME_WAIT 都要一点时间，
+            #   马上取锁会撞上还没释放的锁、被误判成"已有实例"。`stop_for_restart` 里做了有界等待。
+            log("按「立即重启」处理：先结束正在运行的实例（%s），等它放开单实例锁再启新的…" % _who)
+            _wd_pids = []
+            try:
+                _wdf = os.path.join(ROOT, "data", "watchdog.pid")
+                with open(_wdf, encoding="utf-8", errors="replace") as _wf:
+                    _wl = [x.strip() for x in (_wf.read() or "").splitlines()]
+                if _wl and _wl[0].isdigit():
+                    _wd_pids.append(int(_wl[0]))
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                pass
+            try:
+                from agent import restart as _rs
+                _rr = _rs.stop_for_restart(_lk, watchdog_pids=_wd_pids)
+                if _rr.get("ok"):
+                    log("旧实例已收尾：%s；下面照常拉起新实例。" % _rr.get("reason"))
+                else:
+                    # 收尾没成功 ⇒ 如实说清卡在哪，**不硬启**（硬启只会双开失败、让人更懵）。
+                    log("立即重启未完成：%s。请稍后重试，或手动结束该进程后再启动。" % _rr.get("reason"))
+                    if GUI:
+                        evt("DONE")
+                    return 1
+            except Exception as _re:
+                log("立即重启时出错（%s）：%s；请手动结束旧实例后再启动。" % (type(_re).__name__, _re))
+                if GUI:
+                    evt("DONE")
+                return 1
+        elif _port_up:
+            log("检测到机器人已在运行（%s；控制台端口 %s 有人听，探过 %s）→ 打开控制台，不再重复启动。"
+                "如想换成当前这一版立刻重启，请用「立即重启」（一键启动加 `--restart`，或设 WX_ONESTART_RESTART=1）。"
+                % (_who, _port_hit, _tried))
             try:
                 # 已有实例：走同一个开窗实现（自家 WebView2 窗口优先；地址从权威来源取，不再手拼 token）
                 _open_console("")
             except Exception:
                 pass
             return 0
-        # 进程持锁但控制台端口没人听（典型僵尸 pid）⇒ 不跳过，照常往下走拉起流程。
-        # 这句必须打出来，否则用户只看到"又在装依赖"却不知道为什么没走"已在运行"捷径。
-        log("单实例说在跑（%s），但控制台端口没人听（探过 %s）⇒ 按「没在跑」处理，往下照常拉起。" % (
-            _who, _tried))
+        else:
+            # 进程持锁但控制台端口没人听（典型僵尸 pid）⇒ 不跳过，照常往下走拉起流程。
+            # 这句必须打出来，否则用户只看到"又在装依赖"却不知道为什么没走"已在运行"捷径。
+            log("单实例说在跑（%s），但控制台端口没人听（探过 %s）⇒ 按「没在跑」处理，往下照常拉起。" % (
+                _who, _tried))
     try:
         _wd_proc = subprocess.Popen([py, watchdog], creationflags=0x08000000,
                                     cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -853,7 +973,7 @@ def main():
                     # ⛔ **端口通 ≠ 窗已显示**。Qt 壳在
                     #   persona_morph.py 里要等 PySide6 自举完才 show，快则 2~3 秒、慢则十来秒；
                     #   老逻辑端口一通就 `_probe_console_window()`，此刻「群相 控制台」窗还没出来
-                    #   ⇒ 误判"机器人侧没开" ⇒ 启动器抢开网页窗 ⇒ **真机首跑双窗**（用户问题②）。
+                    #   ⇒ 误判"机器人侧没开" ⇒ 启动器抢开网页窗 ⇒ **真机首跑双窗**（题②）。
                     #   ⇒ 端口通后**最多再等 15 秒**窗出现（每秒探一次）；等到 = Qt 壳或网页后备
                     #     已开，启动器仍不开；超时 = Qt 自举失败且后备也没开，才走启动器兜底。
                     _w_hwnd = 0
@@ -886,7 +1006,8 @@ def main():
                         log("控制台已由机器人侧打开（单点执行），启动器不再打开。%s" % _seen)
                     opened = True
                     break
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             spent = int(time.time() - t0)
             if spent >= _nxt_hint:
@@ -899,7 +1020,8 @@ def main():
                 _open_console("", _bpath)
             except Exception:
                 pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     log("一键启动完成。")
     _ask_shortcut()

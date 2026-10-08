@@ -23,9 +23,9 @@
 import io
 import json
 import os
-import shutil
+
 import sys
-import tempfile
+
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +49,7 @@ def ok(name, cond, detail=""):
                              "  [{}]".format(detail) if detail else ""))
 
 
-import local_truth_feed as F # noqa: E402
+
 import ocr_corpus_local as L # noqa: E402
 
 LOCAL_DIR = os.path.join(ROOT, "..", "dev-workspace", "persona-morph", "ocr-samples", "local")

@@ -40,7 +40,8 @@ def _read_state() -> dict:
     try:
         with open(p, encoding="utf-8") as fh:
             return json.load(fh) or {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -181,7 +182,7 @@ def has_dot_segments(u: str) -> bool:
     （审计用产品自己的 `_dl_once` 实测：连 octocat/Hello-World 的 README 都取回来了，
     sha 与正常路径逐字节一致 ⇒ 投毒任一镜像就能装任意仓库的包）。
     ⇒ 本产品生成的地址里**永远不含点段**（分片/镜像都是拼接固定段），所以**见到点段一律拒**
-    （fail-closed），并且下载侧用同一个判据再拦一次（"判的就是取的"）。
+    （fail-closed），并且下载侧用同一个判据再拦一次。
     """
     for s in _raw_segments(u):
         # 段内也要查：`..%5c..%5cattacker` 解出来是 `..\..\attacker`（反斜杠变体），
@@ -262,7 +263,7 @@ def manifest_origin_ok(u: str, cfg: dict = None) -> tuple:
     （9 条源里 6 条是第三方反代/CDN）⇒ 任一被投毒/被劫持的镜像回一份版本号更高的清单就能赢过
     官方源，用户点「立即更新」就会装上任意代码（而"哈希校验"只保证包与清单自洽，自洽即通过）。
     现在：①**只有官方域**（或内嵌官方地址的已知镜像）的清单才有资格参与"选版本"；
-    ②用户自己填的 `update.url` 若不在官方/已知镜像里，需要显式 `update.trust_custom_url=true`
+    ②的 `update.url` 若不在官方/已知镜像里，需要显式 `update.trust_custom_url=true`
     才放行（否则拒绝并**告诉他开关名在哪**）；③第三方镜像从此只作传输通道，不作权威。
 
     ⛔ 再修 （P0）**：**"域可信"不等于"内容可信"** —— 上面那条只到"域"，
@@ -400,7 +401,8 @@ def _short_url(u: str) -> str:
     try:
         from urllib.parse import urlparse
         return urlparse(str(u)).hostname or str(u)[:24]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return str(u)[:24]
 
 
@@ -551,7 +553,8 @@ def fetch_any(urls, timeout: float = 12.0, patient: float = None):
         #   于是出现"复核说 b.invalid → ok、函数却仍返回『所有源都拉不到』"这种自相矛盾的结论。
         if retry_hit:
             return retry_hit[0][1], "", retry_hit[0][0]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if _ranked_rejected:
         why = (why + "；" if why else "") + "已忽略非官方来源：" + "、".join(_ranked_rejected[:3])
@@ -580,7 +583,7 @@ def candidate_urls(cfg: dict | None = None) -> list:
     c = cfg if isinstance(cfg, dict) else _cfg()
     cfg_url = str(c.get("url") or "").strip()
     if cfg_url:
-        # 用户自己填的源：失败就**如实报**，不去偷偷换别人的源（换了他会更懵）
+        # 的源：失败就**如实报**，不去偷偷换别人的源（换了他会更懵）
         return [cfg_url]
     _last = str((_read_state() or {}).get("lastGoodUrl") or "")
     return ([_last] if _last else []) + [u for u in DEFAULT_URLS if u != _last]
@@ -620,7 +623,8 @@ def fetch(url: str, timeout: float = 8.0):
                     if isinstance(_d, dict) and _d.get("encoding") == "base64" and _d.get("content"):
                         import base64 as _b64
                         raw = _b64.b64decode(_d["content"])
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
         else:
             with open(url, "rb") as fh:
@@ -659,7 +663,8 @@ def _read_installed() -> dict:
         with open(os.path.join(ROOT, "data", "installed.json"), encoding="utf-8") as fh:
             d = json.load(fh)
         return d if isinstance(d, dict) else {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -670,7 +675,8 @@ def _expires_ts(v) -> float:
         return 0.0
     try:
         return time.mktime(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S"))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0.0
 
 
@@ -685,7 +691,8 @@ def _ver_ts(v) -> float:
         if len(p) < 3 or not (2000 <= p[0] <= 2199) or not (1 <= p[1] <= 12) or not (1 <= p[2] <= 31):
             return 0.0
         return time.mktime((p[0], p[1], p[2], 0, 0, 0, 0, 0, -1))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0.0
 
 
@@ -818,8 +825,8 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
     out["expires"] = _gate["expires"]
     out["maxSeenVersion"] = _gate["maxSeenVersion"]
     # ⛔ **必须把 `kind` 抄进 `out`** ——
-    # 加的那道"只有过闸的清单才配入账"守卫写的是 `if not out.get("kind")`，
-    #   而 `state()` 从来没往 `out` 里放过 `kind` ⇒ `out.get("kind")` 恒 `None` ⇒ 守卫**永不成立**
+    # 加的那道"只有过闸的清单才配入账"守卫写的是 `if not out.get`，
+    #   而 `state()` 从来没往 `out` 里放过 `kind` ⇒ `out.get` 恒 `None` ⇒ 守卫**永不成立**
     #   （审计实测：源给 `2099.9.9` 照样被写进 `maxSeenVersion`，此后真清单全判 rollback 拒装，
     #    而同一个 `state()` 还报"有新版本" —— 同一份清单两条路相反）。
     out["kind"] = str(_gate.get("kind") or "")
@@ -853,7 +860,7 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         out["status"] = "error"
         out["why"] = "清单里没有版本号（清单坏了）"
     elif theirs == mine:
-        # ⚡ **同名版本换包也要能看出来**（
+        # ⚡ **同名版本换包也要能看出来**
         #   也接到更新提示吗」）。两边都有指纹且不同 ⇒ 判"有新包"；任一侧缺指纹（老包/老清单）⇒ 按原口径
         #   判 current（**不误报**：没有指纹时我们无法区分"同一个包"和"换了包"）。
         _tb, _mb = str(out.get("build") or ""), str(out.get("mineBuild") or "")
@@ -907,7 +914,8 @@ def state(cfg: dict | None = None, timeout: float = 12.0) -> dict:
         if not out.get("kind") and theirs and vtuple(theirs) and (not out.get("maxSeenVersion")
                                                                  or vtuple(theirs) > vtuple(str(out.get("maxSeenVersion")))):
             st["maxSeenVersion"] = theirs
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     _wsw = _write_state(st) # c：写失败要让外面看得见（别当"已记下"）
     out["stateSaved"] = (_wsw == "")
@@ -948,4 +956,5 @@ def skip_version(v: str) -> dict:
         save_config(cfg)
         return {"ok": True, "skip_version": str(v or "")}
     except Exception as e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", e, exc_info=True)
         return {"ok": False, "why": str(e)[:80]}

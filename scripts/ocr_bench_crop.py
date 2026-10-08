@@ -33,13 +33,13 @@ _FULL = os.path.join(_DEV, "_r18_full.png")      # 整屏（2560×1600）
 
 #: 真实小块：`(图, 像素框 x0,y0,x1,y1, 真值串...)` —— 框与真值都**目视核对过**（拼图 `_crops_verify.png`）
 #: ⛔ 改这里之前先重新做拼图核对（上一版就是坐标拍脑袋，量出来全是垃圾数据）。
-#: 用户提供的**真机微信截图**（150% DPI，1854×1281；见 `dev-workspace/persona-morph/ocr-samples/wechat/`）
+#: 的**真机微信截图**（150% DPI，1854×1281；见 `dev-workspace/persona-morph/ocr-samples/wechat/`）
 _WX = os.path.join(os.path.dirname(_DEV), "ocr-samples", "wechat")
 
 CASES = [
     # 真机微信：**绿底高亮行（白字）**——我们最难读的形态，用户专门截给我的
     (os.path.join(_WX, "0af83564-b60d-4812-aa4f-3c330c6399c0.png"), None, ("微信团队",)),
-    (os.path.join(_WX, "7bcf1579-61e9-4c80-a54a-47eb45341b53.png"), None, ("aaa偷啃使",)),
+    (os.path.join(_WX, "7bcf1579-61e9-4c80-a54a-47eb45341b53.png"), None, ("某会话",)),
     (os.path.join(_WX, "0af83564-b60d-4812-aa4f-3c330c6399c0.png"),
      (0.06, 0.03, 0.40, 0.07), ("微信团队",)),          # 会话头（黑字浅底）
     (_FULL, (0.05, 0.20, 0.30, 0.25), ("新建任务",)),        # 侧栏首项（真实小字）

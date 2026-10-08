@@ -18,6 +18,8 @@ import time
 
 from .config import DATA_DIR, get_config
 
+import logging
+log = logging.getLogger("persona-morph")
 SCORE_FILE = os.path.join(DATA_DIR, "scoring.json")
 
 HEAT_HALF_LIFE_MS = 7 * 24 * 3600 * 1000 # 7 天热度半衰期
@@ -31,7 +33,8 @@ def _load() -> dict:
             d = json.load(f)
         if isinstance(d, dict):
             return d
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {"reactions": {}, "seed_imported": []}
 
@@ -40,11 +43,12 @@ def _save(data: dict):
     try:
         import json
         os.makedirs(os.path.dirname(SCORE_FILE), exist_ok=True)
-        tmp = SCORE_FILE + ".tmp"
+        tmp = persist.tmp_for(SCORE_FILE)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
         persist.replace_into(tmp, SCORE_FILE)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -78,6 +82,8 @@ def _decay(score: float, last_ts: float, now: float) -> float:
 import json as _json
 import os as _os
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
 
 _SEED_FILE = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data", "seed_library.json")
 
@@ -99,7 +105,8 @@ def _load_default_seeds() -> list:
         _seeds = [str(s).strip() for s in (_d.get("seeds") or []) if str(s).strip()]
         if _seeds:
             return _seeds[:MAX_POOL]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return fallback
 

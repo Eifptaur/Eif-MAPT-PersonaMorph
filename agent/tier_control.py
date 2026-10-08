@@ -22,8 +22,16 @@ import time
 
 from .config import DATA_DIR
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _lock = threading.RLock()
+#: 会话控制用的 store 缓存（只建一次；建不出来 ⇒ 那类指令如实报「做不到」）
+_STORE = None
+#: 会话控制里**需要白名单**的动作（与 `session_cmd.NEED_ADMIN` 同源：这里只做入口判定）
+#  ⛔ 两边必须一致 —— 有判据盯着（`session_cmd_selftest` 的 F4）。
+NEED_ADMIN_OF_SESSION = ("restart",)
 
 TIER_MIN, TIER_MAX = 1, 4
 MUTE_DEFAULT_MIN = 30
@@ -54,7 +62,8 @@ def load() -> dict:
             d = json.load(f)
         if isinstance(d, dict) and isinstance(d.get("muted"), dict):
             return d
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {"muted": {}, "updatedAt": 0}
 
@@ -63,12 +72,13 @@ def _save(state: dict) -> None:
     with _lock:
         try:
             os.makedirs(os.path.dirname(state_path()), exist_ok=True)
-            tmp = state_path() + ".tmp"
+            tmp = persist.tmp_for(state_path())
             state["updatedAt"] = int(time.time() * 1000)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(state, f, ensure_ascii=False, indent=1)
             persist.replace_into(tmp, state_path())
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
 
@@ -136,7 +146,8 @@ def parse_table(table) -> list:
     if isinstance(table, str):
         try:
             table = json.loads(table) if table.strip() else []
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return []
     out = []
     for row in (table or []):
@@ -193,7 +204,13 @@ def scheduled_tier(now=None, cfg=None) -> dict | None:
 
 # ── 指令禁言（@机器人 + 指令）───────────────────────────────────────────
 def parse_command(text) -> dict | None:
-    """识别指令本身（调用方负责确认「确实 @ 了机器人」与「发送者在白名单里」）。"""
+    """识别指令本身（调用方负责确认「确实 @ 了机器人」与「发送者在白名单里」）。
+
+    两个指令族（**同一个入口**，别各开一套）：
+      · **禁言族**（本文件）—— 排档/闭嘴；
+      · **会话控制族**（`agent/session_cmd.py`）—— 重说 / 回溯 / 重启（第 140 项）；
+        本函数只把它们**规范化**成 `{"action": "session", "cmd": …}`，权限与执行交给下面与那边。
+    """
     t = _AT_PREFIX_RE.sub("", str(text or "").strip()).strip()
     if not t:
         return None
@@ -206,11 +223,31 @@ def parse_command(text) -> dict | None:
         m = re.match(r"^%s\s*(\d{1,5})\s*(分钟|分|min|m)?[。]?$" % re.escape(w), t)
         if m:
             return {"action": "mute", "minutes": int(m.group(1))}
+    try:
+        from . import session_cmd as _sc
+        _c = _sc.parse(t)
+        if _c:
+            return {"action": "session", "cmd": _c["action"], "raw": _c.get("raw") or t}
+    except Exception as e:  # noqa: BLE001
+        log.debug("会话控制解析异常（按非指令处理）：%s", str(e)[:80])
     return None
 
 
 def _norm(s) -> str:
     return re.sub(r"\s+", "", str(s or "")).casefold()
+
+
+def _lazy_store():
+    """会话控制要用消息库；这里是**唯一**给它建 store 的地方（建一次、失败就如实返回 None）。"""
+    global _STORE
+    if _STORE is None:
+        try:
+            from .store import ChatStore
+            _STORE = ChatStore()
+        except Exception as e:  # noqa: BLE001
+            log.debug("建 ChatStore 失败：%s", str(e)[:80])
+            return None
+    return _STORE
 
 
 def is_admin(admins, name="", wxid="") -> bool:
@@ -234,12 +271,35 @@ def handle_command(chat_key: str, entry: dict, at_me: bool, cfg=None) -> dict:
     admins = (cfg.get("store") or {}).get("tier_cmd_admins") or []
     who = str((entry or {}).get("sender_name") or "")
     wid = str((entry or {}).get("sender_id") or "")
-    if not is_admin(admins, who, wid):
+    _adm = is_admin(admins, who, wid)
+    # ⛔ **权限分层**：白名单**不是所有指令的门槛**。
+    #   · 禁言族（排档/闭嘴）与「重启」＝**破坏性** ⇒ 要白名单；
+    #   · 「重说 / 回溯」＝**只动机器人自己刚说的话**、无损可预期 ⇒ 任何 @ 到我的人都行
+    #     （否则"说错话当场纠正"这件事对普通群友就不成立了，等于没做）。
+    #   ⇒ 判定写在**这一处**，执行侧（`session_cmd.apply`）只认传进去的 `is_admin`。
+    if not _adm and not (cmd["action"] == "session" and cmd.get("cmd") not in NEED_ADMIN_OF_SESSION):
         return {"handled": True, "action": "denied", "who": who or wid,
                 "note": "不在 store.tier_cmd_admins 白名单里，指令未生效"}
     if cmd["action"] == "unmute":
         had = unmute(chat_key)
         return {"handled": True, "action": "unmute", "who": who or wid, "note": "已恢复" if had else "本来就没禁言"}
+    if cmd["action"] == "session":
+        # ── 会话控制族（第 140 项）：重说 / 回溯 / 重启 ──
+        #   权限分层在 `session_cmd`（`restart` 要白名单；`redo`/`rewind` 任何 @ 到我的人都行）。
+        try:
+            from . import session_cmd as _sc
+            res = _sc.apply(_lazy_store(), chat_key, cmd.get("cmd"), is_admin=_adm)
+        except Exception as e:  # noqa: BLE001
+            return {"handled": True, "action": "session_error", "who": who or wid,
+                    "note": "会话控制执行失败：%s" % str(e)[:60]}
+        if cmd.get("cmd") == "redo" and res.get("ok"):
+            # ⛔ **「重说」不进拦截**：让它照常触发一轮回复（上下文一个字没动）——
+            #   这就是"重新调模型"的落地方式；拦下来反而什么都不会发生。
+            #   连点限频命中时（`ok=False`）才拦下并告诉他缓一缓。
+            return {"handled": False, "action": "session_redo", "who": who or wid, "note": res.get("note") or ""}
+        return {"handled": True, "action": "session_" + str(cmd.get("cmd")), "who": who or wid,
+                "ok": bool(res.get("ok")), "cut": int(res.get("cut") or 0),
+                "note": res.get("note") or ""}
     res = mute(chat_key, cmd.get("minutes"), by=who or wid, note="群内指令")
     return {"handled": True, "action": "mute", "who": who or wid, "minutes": res["minutes"],
             "until": res["until"], "clamped": res["clamped"],
@@ -259,7 +319,8 @@ def snapshot(now=None) -> dict:
             if int((v or {}).get("until") or 0) > now_ms:
                 active[k] = {"until": int(v.get("until") or 0), "by": str(v.get("by") or ""),
                              "left_min": max(0, int((int(v.get("until") or 0) - now_ms) / 60000))}
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     sch = scheduled_tier(now=now, cfg=cfg) if sc.get("enabled") else None
     return {"mode": str((cfg.get("store") or {}).get("tier_mode") or "fixed"),

@@ -17,18 +17,18 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
 
 from agent import chat_ocr as co  # noqa: E402
 
 # (目录, 文件, 候选集＝模拟"这一分钟都有消息的会话名", 真值＝当前真正打开的那个)
 CASES = [
     ('wechat', '0af83564-b60d-4812-aa4f-3c330c6399c0.png',
-     ['微信团队', '腾讯新闻', '海绵宝宝', '服务号'], '微信团队'),
+     ['微信团队', '腾讯新闻', '某中文群名', '服务号'], '微信团队'),
     ('wechat', '6c29e9f4-2c81-4b4d-9a71-a826c521f403.png',
-     ['微信团队', '腾讯新闻', '海绵宝宝', '服务号'], '服务号'),
+     ['微信团队', '腾讯新闻', '某中文群名', '服务号'], '服务号'),
     ('wechat', '7bcf1579-61e9-4c80-a54a-47eb45341b53.png',
-     ['微信团队', '腾讯新闻', '海绵宝宝', '服务号'], 'aaa偷啃使用者'),
+     ['微信团队', '腾讯新闻', '某中文群名', '服务号'], '某会话'),
 ]
 
 

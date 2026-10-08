@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-r"""「只截底图」工具（2026-09-16）：**只读**，不点、不发、不动鼠标。
+r"""「只截底图」工具：**只读**，不点、不发、不动鼠标。
 
 用途：把渲染区**底部那一带**（输入栏图标行）截下来，并把每个图标**单独裁一张**存盘 ——
 这些就是"图标身份定位（模板匹配）"要用的模板；同时打印共用实现算出来的行位置与各簇坐标，
@@ -21,6 +21,9 @@ os.chdir(ROOT)
 
 from agent import chat_header as ch # noqa: E402
 from agent import input_bar as ib # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 def main():
@@ -29,7 +32,8 @@ def main():
     gui = ad._get_gui()
     try:
         gui._update_render_rect()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     r = tuple(gui.render_rect or (0, 0, 0, 0))
     print("渲染区（屏幕坐标）= %s" % (r,))

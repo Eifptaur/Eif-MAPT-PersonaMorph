@@ -25,6 +25,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
 import _srcslice
+from _probe import assert_probe_hit   # 分母守卫：先自证探针有效，再断言结论
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent.wechat import WeChatAdapter # noqa: E402
@@ -70,12 +71,24 @@ import time # noqa: E402
 NOW = int(time.time())
 
 
+def _searched(ad, target: str) -> int:
+    """**分母**：这次调用真的往"目标以外"的会话查过几个库。
+    ⛔ 为什么要它：本判据好几条是"找不到 ⇒ None"这种**负向断言** ——
+       探针一失效（`_groups`/`_privates` 空了、排除逻辑把谁都排掉了、读库整个没跑），
+       "别处没有这句"就**自动成立**、判据静默变绿。⇒ 每个"0 次/Nothing"前面先钉分母。"""
+    return len({str(c) for c in ad._db.asked} - {str(target)})
+
+
 def _adapter_raising():
     """读库就抛异常的适配器（真实场景：库被清空/锁住）。"""
     ad = _adapter({})
 
     class _Boom(object):
+        def __init__(self):
+            self.asked = []
+
         def get_messages(self, chat_id, limit=4):
+            self.asked.append(str(chat_id))
             raise RuntimeError("库坏了")
 
     ad._db = _Boom()
@@ -86,19 +99,25 @@ ad = _adapter({
     "群B@chatroom": [{"content": "晚上一起去吃火锅吧", "create_time": NOW - 5}],
 })
 hit = ad._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom")
+assert_probe_hit(ok, "A0 探针有效：真的往**目标以外**的会话查过库", _searched(ad, "群A@chatroom"))
 ok("在别的会话里找到 ⇒ 返回那个会话", bool(hit) and hit[0] == "群B@chatroom", str(hit))
 ok("带上可读的会话名（给用户/日志看得懂）", bool(hit) and hit[1] == "大群", str(hit))
 
 print("── B. 没落到别处 ⇒ 不误报（正常发送路径不受影响）──")
 ad2 = _adapter({"群B@chatroom": [{"content": "别的话", "create_time": NOW - 5}]})
-ok("别处没有这句 ⇒ None", ad2._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom") is None)
+_b2 = ad2._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom")
+assert_probe_hit(ok, "B0 探针有效：B 段也真的往别的会话查了（否则『没落到别处 ⇒ None』是空转）",
+                 _searched(ad2, "群A@chatroom"))
+ok("别处没有这句 ⇒ None", _b2 is None)
 ad3 = _adapter({"群A@chatroom": [{"content": "晚上一起去吃火锅吧", "create_time": NOW - 5}]})
 ok("只在自己（目标）会话里 ⇒ None（不算发错）",
    ad3._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom") is None)
 
 print("── C. 时间窗：陈年旧话不算（防同一句话历史上说过就误报）──")
 ad4 = _adapter({"群B@chatroom": [{"content": "晚上一起去吃火锅吧", "create_time": NOW - 3600}]})
-ok("1 小时前的那句 ⇒ None", ad4._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom") is None)
+_c4 = ad4._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom")
+assert_probe_hit(ok, "C0 探针有效：时间窗用例也真的查过别的会话", _searched(ad4, "群A@chatroom"))
+ok("1 小时前的那句 ⇒ None", _c4 is None)
 ad5 = _adapter({"群B@chatroom": [{"content": "晚上一起去吃火锅吧", "create_time": NOW - 30}]})
 ok("30 秒前的那句 ⇒ 命中", bool(ad5._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom")))
 ok("窗口可调（window_s=10 时 30 秒前不算）",
@@ -116,13 +135,18 @@ print("── E. 私聊也在扫描范围内（不只群）──")
 ad8 = _adapter({"wxid_E": [{"content": "晚上一起去吃火锅吧", "create_time": NOW - 3}]},
                groups=[], privates=[{"wxid": "wxid_E", "name": "E"}])
 h8 = ad8._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom")
+assert_probe_hit(ok, "E0 探针有效：私聊真的进了扫描面（只配私聊、不配群）",
+                 _searched(ad8, "群A@chatroom"))
 ok("私聊里命中 ⇒ 报出私聊", bool(h8) and h8[0] == "wxid_E", str(h8))
 
 print("── F. 边界：空文本/极短文本不判（防乱报）──")
 ok("空文本 ⇒ None", ad._text_landed_in_other_chat("", "群A@chatroom") is None)
 ok("1 个字 ⇒ None", ad._text_landed_in_other_chat("好", "群A@chatroom") is None)
-ok("读库抛异常 ⇒ 不崩、按未命中", _adapter_raising()._text_landed_in_other_chat(
-    "晚上一起去吃火锅吧", "群A@chatroom") is None)
+_raise_ad = _adapter_raising()
+_raise_r = _raise_ad._text_landed_in_other_chat("晚上一起去吃火锅吧", "群A@chatroom")
+assert_probe_hit(ok, "F0 探针有效：读库真的被调用过（否则『不崩』也是空转）",
+                 len(_raise_ad._db.asked))
+ok("读库抛异常 ⇒ 不崩、按未命中", _raise_r is None)
 
 print("── G. 源码级接线：命中就停手 + 只在回读失败时问 ──")
 _SRC = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()

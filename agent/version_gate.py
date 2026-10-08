@@ -96,7 +96,8 @@ def note_no_measured(caps, reason: str = "") -> None:  # noqa: ANN001
             _no_measured["caps"] = [str(c) for c in (caps or [])][:6]
             _no_measured["last_reason"] = str(reason or "")[:200]
             _no_measured["last_at"] = time.time()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -149,10 +150,12 @@ def _local_save(key: str, rec: dict) -> None:
         #    写盘会抛 ⇒ 被本函数的 except 吞掉 ⇒ **自证结论永远落不了盘**（静默失效）。
         try:
             _os.makedirs(_os.path.dirname(path), exist_ok=True)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         atomic_write_json(path, data, indent=1)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -213,9 +216,11 @@ def note_send_result(ok: bool, why: str = "", wechat: str = "", adapter: str = "
                 get_logger().warning(
                     "本机连续 %d 次发不出去（%s × %s）⇒ 记为本机实测发不出去：%s",
                     n, w, a, str(why or "")[:160])
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -227,7 +232,8 @@ def note_blocked(capability: str, reason: str) -> None:
             _blocked["last_reason"] = str(reason or "")[:200]
             _blocked["last_at"] = time.time()
             _blocked["capability"] = str(capability or "")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         from .util import get_logger
@@ -336,6 +342,7 @@ def check(capability: str = "send", wechat: str = "", adapter: str = "") -> dict
                            "控制台点「本次允许发送」可临时放行（重启后重新拦）" % (w, a))}
     except Exception as e:
         # 版本门自己出错时**不许拦发送**（fail-open）：它是提示性的，不该成为新的故障点
+        log.debug("宽捕处出错（留栈，便于归因）：%s", e, exc_info=True)
         return {"level": "warn", "allow": True, "wechat": wechat, "adapter": adapter,
                 "reason": "版本门检查异常 ⇒ 不拦发送（版本门只是提示）：%s" % e}
 
@@ -356,10 +363,10 @@ def status() -> dict:
 # 「我去微信那边看看」永远只给指引；「本次运行继续发送」只动本进程内存。**一律不装/不降级微信本体。**
 ACTION_JOBS = {"upgrade_adapter": "upgrade_adapter", "update_host": "dep_heal"}
 
-# ⛔ 键 vs 值这个坑真的踩到了（2026-09-30）：
+# ⛔ 键 vs 值这个坑真的踩到了：
 #   `ACTION_JOBS` 的**键**是选项 key，**值**是 job 名；而 `VERSION_OPTIONS` 里
 #   `update_host` 的 `action` 是 `heal_deps`（≠ 它的 key）。
-#   于是 `action_cmd("heal_deps")` 一路落到 `return ""` ⇒ 判成"拿不到命令"⇒ 按钮被误置灰
+#   于是 `action_cmd` 一路落到 `return ""` ⇒ 判成"拿不到命令"⇒ 按钮被误置灰
 #   （"点了没反应"那类观感的**第二个**来源）。修法：**key 和 action 值都认**，
 #   并在这里集中别名，别再让调用方猜自己手里是 key 还是 action。
 _ALIAS = {"heal_deps": "update_host"}
@@ -487,7 +494,7 @@ def _pop_ui(item: dict) -> dict:
 def pending(capability: str = "send", wechat: str = "", adapter: str = "") -> dict:
     """返回 `{needed, item, created, status}`：门没过就保证有一张待决单（幂等）。
 
-    ⛔★ **本函数默认已停用开单与弹窗**（2026-10-01 用户决策，见 `_pending_enabled()`）：
+    ⛔★ **本函数默认已停用开单与弹窗**（用户决策，见 `_pending_enabled()`）：
       理由——① **我方本来就"能跨版本运行"**：`check()` 的四条返回 `allow` **全为 True**
         （`no_measured` / `no_measured_local` / `warn` / `ok`），也就是说**不点这张单子、程序照常发**；
       ② 但**这张单子会跳出来**，而**上面的选项被现场反馈"都有问题、点了程序没法正常跑"**
@@ -519,7 +526,7 @@ def _pending_enabled() -> bool:
 
     ⛔ 默认停用的理由见 `pending()` 的 docstring：能跨版本运行（`allow` 恒 True）
       ⇒ 弹窗不拦发送；而现场反馈"上面的选项都有问题、点了程序没法正常跑"
-      ⇒ **弹窗＝纯风险源**（用户 2026-10-01 决策："如果能跨版本运行，这个弹窗直接删掉"）。
+      ⇒ **弹窗＝纯风险源**（用户 决策："如果能跨版本运行，这个弹窗直接删掉"）。
     恢复办法：`config.version_gate.pending_enabled = true`。
     """
     try:
@@ -535,8 +542,7 @@ def _pending_enabled() -> bool:
 def option_availability(item: dict | None, status: dict | None = None) -> dict:
     """这张单的每条选项**此刻真能不能做**：`{key: {"runnable": bool, "why": str}}`。
 
-    ⛔ 起因（用户 2026-09-30 当面指正「其他都有 bug，只能选什么都不做」）：
-       根因不是功能缺失，而是**点了没反应** —— `update_host` 在本机依赖齐全时
+    ⛔ 起因：问题不在功能缺失，而在于**点了没反应** —— `update_host` 在本机依赖齐全时
        `action_cmd()` 返回空串（同一个洞还有 `upgrade_adapter` 拿不到 runtime python 时）。
        坏选项要让用户在**按钮上**先看明白（置灰 + 写明"为什么点不了"），
        而不是点完等一个永远不来的结果。
@@ -620,7 +626,8 @@ def decide(decision_id: str, choice: str, note: str = "",
     #   `pending_decisions` 那边已改成留空，命令一律在这里按真实路径生成。
     try:
         act["cmd"] = action_cmd(str(item.get("choice") or "")) or act.get("cmd") or ""
-    except Exception: # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     w = str(item.get("wechat") or wechat or "unknown")
     a = str(item.get("adapter") or adapter or vm.adapter_version())

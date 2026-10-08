@@ -41,6 +41,8 @@ CAPS = {
     "moments_comment":  {"label": "朋友圈评论", "level": "L0/L5"},
     "switch_chat":      {"label": "切会话", "level": "L5"},
     "image_send":       {"label": "发图片（剪贴板 + 投递）", "level": "L5"},
+    "file_send":        {"label": "发文件（剪贴板 + 投递）", "level": "L5"},
+    "voice_send":       {"label": "发真语音条（录音链 + 投递）", "level": "L5"},
     "poke_menu":        {"label": "拍一拍右键菜单", "level": "L5"},
     "minimized_send":   {"label": "微信最小化时仍能发送", "level": "L5"},
     "uia_tree":         {"label": "UIA 控件树可用（L2 档）", "level": "L2"},
@@ -64,8 +66,80 @@ SEED_RUNS = [{
         "switch_chat": {"status": "unknown", "evidence": "用户目视确认切成功过，但第二枪把界面点乱 ⇒ 换判据重测"},
         "image_send": {"status": "unknown", "evidence": "未测"},
         "poke_menu": {"status": "unknown", "evidence": "未测"},
-        "minimized_send": {"status": "unknown", "evidence": "未测（最高目标的最严条件）"},
+        # ★ 旧记录（保留作历史，不要删）：建表时这一项是未测的 ——
+        #   "minimized_send": {"status": "unknown", "evidence": "未测（最高目标的最严条件）"},
+        # ★ 现结论（逐类标定完毕）：**五类全部有结论**。（标定过程与日期见报告，不写进代码。）
+        #   ⚠️ 口径（很重要，别简化成"最小化能发"）：
+        #     · **真最小化（`IsIconic`）⇒ Windows 屏蔽最小化窗口的鼠标消息 ⇒ 投递 WM_* 无效**；
+        #     · **屏外档（窗口移出屏幕、未最小化、不在前台）⇒ 投递立即生效** ——
+        #       本项所有 ✅ 都是**在这个档位**上测的（`render_rect` 全为负值＝与屏幕无交集、用户看不到）。
+        #     ⇒ 所以正确说法是"**屏外档能发**"，不是"最小化档能发"（后者物理上做不到）。
+        #   实测（`scripts/verify_minimized_send.py`，收件人一律＝文件传输助手＝发给自己）：
+        #     · 文字   ✅ 屏外档 `send_text=True` ＋ 库回读命中（前 `local_id=745`）
+        #     · 静态图 ✅ `local_id=747/749  type=图片`
+        #     · 动态表情 ✅ `local_id=748/750  type=动画表情`（**动图仍是动图**，没被抽成首帧）
+        #     · 文件   ✅ 此前已测（`local_id=719/720`，`minimized_send__file`）
+        #     · 真语音条 ⛔ **设计上明确拒绝**：`voice_strip.send()` 在 `background_only=开` 时
+        #       直接 return False（真语音条＝真鼠标点录音键＋真键盘右 Alt 注入 ⇒ 天然要前台）
+        "minimized_send": {"status": "ok",
+                           "evidence": "**屏外档（窗口移出屏幕、未最小化）：文字 / 静态图 / 动态表情 / 文件"
+                                       " 四类实测通过，判据一律＝`send_*` 返回 True ＋ **DB 回读命中**"
+                                       "（type 分别为 文本/图片/动画表情/文件）；真语音条按设计拒绝"
+                                       "（`background_only=开` ⇒ `voice_strip.send()` 直接 False）。"
+                                       "⛔ 真最小化（`IsIconic`）投递无效（系统屏蔽鼠标消息），"
+                                       "机制见 `wechat_windows.send_to_popup`（判到 IsIconic 即降级到"
+                                       " `send_to_popup_blind`，判据只认 DB 回读）。"
+                                       "复验入口 `scripts/verify_minimized_send.py --kind text|image|gif|file`"},
+        "minimized_send__image": {"status": "ok",
+                                  "evidence": "屏外档 `send_image=True` ＋ 库回读 `type=图片`（local_id 747/749）"},
+        "minimized_send__gif": {"status": "ok",
+                                "evidence": "屏外档 `send_image(GIF)=True` ＋ 库回读 `type=动画表情`（local_id 748/750，动图未被抽首帧）"},
+        "minimized_send__file": {"status": "ok",
+                                 "evidence": "屏外档走 `send_file_posted` 的 `ctrl_v_blind` 通道 ＋ 库回读命中（local_id 719/720，2.8~2.9s）"},
+        "minimized_send__voice": {"status": "no",
+                                  "evidence": "⛔ **设计拒绝**（不是做不到）：`background_only=开` ⇒ `voice_strip.send()` 开头直接 return False"
+                                              "（真语音条要真鼠标点录音键＋真键盘右 Alt 注入 ⇒ 天然需前台）。想看别的档位见 `voice_reply.form`"},
         "uia_tree": {"status": "no", "evidence": "本版本 UIA 只有 2 个节点、mmui 命中 0（本机实测）"},
+    },
+}, {
+    # ── 第二台机器（Win10 22H2 / 1920×1080 @125% / 微信 4.1.13.65）──
+    #    为什么要把它放进**出厂种子**：这一对的结论已经用真机核过（库回读逐条），
+    #    却因为记录只在本机 `data/capability_matrix.json` 里而**不随包走** ⇒
+    #    任何装了这对版本的机器第一次运行都会重新报「没实测记录 ⇒ 控制台出横幅 + 降级」。
+    #    ⛔ 写法与 `gate()` 的 `basis` 口径一致：这属于「**同版本号的历史记录**」，
+    #      不是本机的 UI 指纹核对 ⇒ 上层会如实标注"只作参考"。
+    "wechat": "4.1.13.65",
+    "adapter": "1.2.4.4",
+    "when": "2026-10-06",
+    "caps": {
+        "send_text": {"status": "ok",
+                      "evidence": "独立窗直通：投递 WM_CHAR ＋ 投递回车 ⇒ DB 回读逐字命中；"
+                                  "可见档 10 条全中、最小化档（IsIconic=1）10 条全中。"},
+        "minimized_send": {"status": "ok",
+                           "evidence": "**最小化档逐类验证**（不只文本）：独立窗最小化、主窗后台 ⇒ "
+                                       "文字/图片/动态表情/文件/真语音条**五类都进库**"
+                                       "（type 分别为 文本 / 图片 / 动画表情 / 文件·链接·卡片 / 语音）。"
+                                       "窗口侧实测：独立窗 821 帧采样里「非最小化且可见」＝ 0 帧（没上屏）、"
+                                       "前台采样里主窗 0 帧（没被顶到最前）。"},
+        "image_send": {"status": "ok",
+                       "evidence": "最小化档独立窗盲粘贴（静图走 CF_DIB）⇒ DB 回读 type=图片；"
+                                   "剪贴板置标记后核查仍为标记值（用后还原）。"},
+        "emoji_send": {"status": "ok",
+                       "evidence": "最小化档独立窗盲粘贴（动图走 CF_HDROP）⇒ DB 回读 type=动画表情；"
+                                   "剪贴板用后还原。"},
+        "file_send": {"status": "ok",
+                      "evidence": "最小化档独立窗盲发文件（通道 ctrl_v_blind，enter×2）⇒ "
+                                  "DB 回读 type=文件/链接/卡片；剪贴板用后还原。"},
+        "voice_send": {"status": "ok",
+                       "evidence": "最小化档真语音条：录音链跑通 ⇒ DB 回读新增 type=语音"
+                                   "（voicelength≈4s）且**只新增一行**（没有触发回退补发文件）。"
+                                   "⚠️ 该机无 CABLE 虚拟声卡 ⇒ 需把输出设备钉到真实扬声器"
+                                   "（会外放一声）或装 VB-Cable。"},
+        # ⛔ 这两项**没有**拿到可用结论，如实留 unknown（别为了让表好看而抬上去）：
+        "switch_chat": {"status": "unknown",
+                        "evidence": "该机「按时间唯一匹配」曾判成功一次，但随后两回合分别落在"
+                                    "「会话列表不可见」与「抓帧空白」⇒ 未形成可复现结论。"},
+        "uia_tree": {"status": "unknown", "evidence": "未测"},
     },
 }]
 
@@ -137,9 +211,11 @@ def fact_key(adapter: str = "") -> str:
         try:
             ctx = ctypes.windll.user32.GetThreadDpiAwarenessContext()
             parts.append("dpi%d" % int(ctypes.windll.user32.GetAwarenessFromDpiAwarenessContext(ctx)))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     a = str(adapter or "")
     if a:
@@ -236,26 +312,55 @@ def summarize(caps: dict) -> str:
 
 
 # ── 薄 I/O ─────────────────────────────────────────────────────────────
+def _with_seed(runs: list) -> list:
+    """把**出厂种子**垫在本机记录**下面**（同一能力：本机记录优先，种子只补空缺）。
+
+    为什么必须有它：`load()` 原来只在"本机文件不存在 / 没有 runs"时才用种子 ——
+    ⇒ **本机一旦有了记录，之后随包发布的实测结论再也进不来**
+    （第二台机器跑完自己那一档之后就正好是这个状态：库里只有它自己测过的那几项，
+      其余全 `unknown`，而我们在别的机器上早就测过了）。
+    ⛔ 合并方向不许反：种子**只补空缺**，不许覆盖本机结论（本机是本机、种子是历史）。
+    """
+    out = [dict(r) for r in (runs or [])]
+    idx = {}
+    for r in out:
+        idx.setdefault(_key(r), r)
+    for s in SEED_RUNS:
+        cur = idx.get(_key(s))
+        if cur is None:
+            out.append(json.loads(json.dumps(s)))
+            continue
+        caps = cur.setdefault("caps", {})
+        for name, v in (s.get("caps") or {}).items():
+            if name not in caps:
+                caps[name] = json.loads(json.dumps(v))
+        if not cur.get("when"):
+            cur["when"] = s.get("when") or ""
+    return out
+
+
 def load(path: str | None = None) -> dict:
     p = path or MATRIX_PATH
     if not os.path.exists(p):
-        return {"schema": 1, "runs": list(SEED_RUNS)}
+        return {"schema": 1, "runs": json.loads(json.dumps(list(SEED_RUNS)))}
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f) or {}
         if not data.get("runs"):
-            data["runs"] = list(SEED_RUNS)
+            data["runs"] = json.loads(json.dumps(list(SEED_RUNS)))
+        else:
+            data["runs"] = _with_seed(data.get("runs") or [])
         return data
     except Exception as e:
         log.warning("能力矩阵读失败（用内置种子）：%s", e)
-        return {"schema": 1, "runs": list(SEED_RUNS)}
+        return {"schema": 1, "runs": json.loads(json.dumps(list(SEED_RUNS)))}
 
 
 def save(data: dict, path: str | None = None) -> str:
     """原子写（temp + os.replace + fsync），避免半个 JSON 把矩阵读坏。"""
     p = path or MATRIX_PATH
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
+    tmp = persist.tmp_for(p)
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
         f.flush()

@@ -34,7 +34,7 @@ def session_fingerprint(session_id) -> str:
     """会话短指纹：`sha256(str(session_id))[:10]`。
 
     用 `str()` 而不是要求某个具体类型：调用方给 wxid / 群 id / 数字都不必先转换。
-    **空值也产指纹**（`sha256("")`）——这样不会因为"这次没拿到 id"就退化成无后缀，
+    **空值也产指纹**（`sha256`）——这样不会因为"这次没拿到 id"就退化成无后缀，
     从而与其它空 id 的产物互相覆盖。
     """
     return hashlib.sha256(str(session_id if session_id is not None else "").encode("utf-8")).hexdigest()[:10]

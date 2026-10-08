@@ -102,9 +102,27 @@ def main():
     print("== E. 重放保护 + 异常不打断整批 ==")
     wm4 = lw.Watermark(wm_path)
     wm4.set("group:e", 5, forward_only=False)
+    # 先**真的处理过** seq=5（这样 seen 里才有 m5）—— 这才是"水位 5"在现实中的样子
+    lw.process_batch("group:e", items(5), lambda it: True, wm4, log=log, sleep=lambda s: None)
     ran = []
     st = lw.process_batch("group:e", items(4, 5, 6), lambda it: ran.append(it["sort_seq"]) or True, wm4, log=log, sleep=lambda s: None)
+    # ★ B7语义更新：
+    #   · seq 4 **< 水位 5** ⇒ 明确在处理过的范围内 ⇒ 跳过（不重放）；
+    #   · seq 5 **== 水位** ⇒ 交界格：它的 mid 已在 seen（上面处理过）⇒ 也跳过；
+    #   · seq 6 **> 水位** ⇒ 新条 ⇒ 处理。
+    #   老断言 `ran == [6]` 依赖老实现在 `==` 上也用位置跳过 —— 那正是"同 seq 其余条永久漏读"
+    #   的元凶（见 B7 根治方案）。这里保留"不重放"的**意图**，但按新语义精确化。
     ok("水位之前的消息被跳过（不重放）", st["skipped"] == 2 and ran == [6], (st, ran))
+    # ★ 反向锚：**同 seq 但 mid 没见过** 的条必须被处理 —— 否则 B7 漏读没修好。
+    #   ⛔ 必须用**独立会话**（`group:e2`）：上面那批把 group:e 的水位推到了 6，
+    #      再用 group:e 造 `seq=5` 会因 `5 < 6` 被"水位之前"跳过 —— 那是**正确**行为，
+    #      但它测不到"同 seq 交界格"这一格。
+    ran2 = []
+    _same_seq_new = [{"mid": "mX", "sort_seq": 5, "text": "同 seq 的新条"}]
+    lw.process_batch("group:e2", _same_seq_new,
+                     lambda it: ran2.append(it["mid"]) or True, wm4, log=log, sleep=lambda s: None)
+    ok("反例锚：同 seq 但没见过的新条**必须**被处理（B7 漏读修复）",
+       ran2 == ["mX"], "实收：%s" % ran2)
 
     print("== F. 每会话串行（并发调用者排队） ==")
     wm5 = lw.Watermark(wm_path)
@@ -137,9 +155,9 @@ def main():
     _wx = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "agent", "wechat.py"), encoding="utf-8").read()
     ok("poll_new_messages 会给被丢弃的行带一个只含 seq 的 skip 标记（否则水位推不过去）",
-       '{"mid": None, "sort_seq": _sq' in _wx and '"skip": "归一化阶段丢弃' in _wx)
+       _sm.has(_wx, '{"mid": None, "sort_seq": _sq') and _sm.has(_wx, '"skip": "归一化阶段丢弃'))
     ok("监听侧把 skip 标记算「已处理」（返回真值 ⇒ 水位前进）",
-       'if nm.get("skip"):' in _pm and 'return {"dropped": nm.get("skip")}' in _pm)
+       _sm.has(_pm, 'if nm.get("skip"):') and _sm.has(_pm, 'return {"dropped": nm.get("skip")}'))
     wm6 = lw.Watermark(wm_path)
     wm6.set("group:g", 0, forward_only=False)
     _seen = []
@@ -161,11 +179,11 @@ def main():
     print("\n-- G. 记录被清空后的水位自愈（源码级，防以后被顺手删掉） --")
     _pm = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "persona_morph.py"),
                encoding="utf-8").read()
-    ok("监听循环里有自愈限频表 `_wm_heal`", "_wm_heal = {}" in _pm and "_wm_heal.get(wxid" in _pm)
+    ok("监听循环里有自愈限频表 `_wm_heal`", _sm.has(_pm, "_wm_heal = {}") and "_wm_heal.get(wxid" in _pm)
     ok("判据是「最新序号**低于**水位」（正常运行时不会成立 ⇒ 不误触发）",
-       "_latest < _cur" in _pm and "latest_seq_ex(wxid)" in _pm)
+       _sm.has(_pm, "_latest < _cur") and "latest_seq_ex(wxid)" in _pm)
     ok("回退走显式 `forward_only=False`（默认只前进，不许悄悄退）",
-       "wm.set(chat_key, _latest, forward_only=False)" in _pm)
+       _sm.has(_pm, "wm.set(chat_key, _latest, forward_only=False)"))
     ok("自愈要落盘 + 留日志（否则用户永远不知道为什么它不回）；"
        "**落盘看返回值**（`wm.flush()` 裸调用一处都不许剩）",
        _sm.has(_pm, "flush_checked(wm") and not _sm.has(_pm, "wm.flush()")
@@ -175,7 +193,7 @@ def main():
     print("\n-- H. 用户零操作：控制台一键「重新对齐监听水位」（不删文件、不重启） --")
     ok("主程序里有 _reset_watermark（按当前最新对齐、显式 forward_only=False；"
        "起改调带 `ok` 的 `latest_seq_ex`，读失败**不动水位**）",
-       "def _reset_watermark()" in _pm
+       _sm.has(_pm, "def _reset_watermark()")
        and _sm.has(_pm, 'wm.set("group:" + wxid, int(_seq13), forward_only=False)')
        and _sm.has(_pm, "_ok13, _seq13, _why13 = _wc.latest_seq_ex(wxid)")
        and not _sm.has(_pm, 'wm.set("group:" + wxid, seq, forward_only=False)'))
@@ -184,7 +202,7 @@ def main():
     _ui = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent", "webui.py"),
                encoding="utf-8").read()
     ok("WebUI 有 POST /api/watermark/reset 这条路",
-       'elif path == "/api/watermark/reset":' in _ui and "parent.watermark_reset_fn()" in _ui)
+       _sm.has(_ui, 'elif path == "/api/watermark/reset":') and "parent.watermark_reset_fn()" in _ui)
     _ch = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "console", "index.html"),
                encoding="utf-8").read()
     ok("控制台有按钮并打这个接口（含二次确认）",
@@ -236,7 +254,7 @@ def main():
     ok("③ 正常读但没有新消息 ⇒ `poll_new_messages` 回空列表（与 None 分开）",
        _ad_ok.poll_new_messages("g", 0) == [])
 
-    # ── 快路径（2026-09-30 收编朋友的 wechatauto 侧）：`MAX(sort_seq)` 不排序、不读大 BLOB ──
+    # ── 快路径（收编朋友的 wechatauto 侧）：`MAX(sort_seq)` 不排序、不读大 BLOB ──
     #   `latest_seq_ex` 被监听循环按上百个目标反复调，是全链路最热的读库点。
     #   判据要点：①快路径命中就不碰旧路；②快路径拿不到（None）**必须回退**旧路；
     #             ③两条都读不出来仍然 ok=False（fail-closed 不被快路径改坏）。
@@ -333,16 +351,19 @@ def main():
     ok("⑧ 库结构变了（无 `_msg_row_to_dict`）⇒ 回 None（不猜）",
        _ad_nc._db_recent_rows("g", 25) is None)
 
+    # ⛔ 第一处只锚**调用前缀**：实际是 `wm.set(_key0, max(0, int(_seq0) - 1))` ——
+    #   原来锚写成 `wm.set(_key0, _seq0)` 会**整串匹配不上**（第二个实参外面套了 max/int）⇒ 恒红。
+    #   要守的语义是"**起点取自库里的真实序号、且不是写死的 0**"，不是"第二个实参的精确写法"。
     ok("④ 三处「定起点」都走 `latest_seq_ex`（源码），且全文件**没有**把 0 写进水位",
-       "wm.set(_key0, _seq0)" in _pm and "wm.set(_k, _seqn)" in _pm
-       and "wm.set(chat_key, _seqp)" in _pm
-       and "wm.set(_key0, 0)" not in _pm and "wm.set(_k, 0)" not in _pm)
+       _sm.has(_pm, "wm.set(_key0,") and _sm.has(_pm, "wm.set(_k, _seqn)")
+       and _sm.has(_pm, "wm.set(chat_key, _seqp)")
+       and (not _sm.has(_pm, "wm.set(_key0, 0)")) and (not _sm.has(_pm, "wm.set(_k, 0)")))
     ok("⑤ 监听循环里有「水位 0 ⇒ 对齐到最新 / 这一轮跳过」的自愈",
-       "的水位是 0（起点没定下来）" in _pm and "水位是 0 且现在读不出最新序号" in _pm)
+       _sm.has(_pm, "的水位是 0（起点没定下来）") and _sm.has(_pm, "水位是 0 且现在读不出最新序号"))
     ok("⑥ 监听循环对 `None` 有显式分支（读失败不再被当成「没有新消息」）",
-       "if new is None:" in _pm and "读新消息失败（**不是**" in _pm)
+       _sm.has(_pm, "if new is None:") and "读新消息失败（**不是**" in _pm)
     ok("⑥ 回退自愈也看 `ok`（读失败不许当成「库里最新是 0」）",
-       "_okH and _latest and _cur and _latest < _cur" in _pm)
+       _sm.has(_pm, "_okH and _latest and _cur and _latest < _cur"))
     # 反例锚：老写法必须被同一组判据判不合格（证明上面这些断言有灵敏度）
     _OLD_PM = ('    for g in targets:\n'
                '        if wm.get("group:" + g["wxid"], 0) <= 0:\n'
@@ -353,8 +374,8 @@ def main():
                '    new = wechat.poll_new_messages(wxid, wm.get(chat_key, 0), limit=50)\n'
                '    if not new:\n'
                '        continue\n')
-    _old_bad = ("latest_seq_ex" not in _OLD_PM and "if new is None:" not in _OLD_PM
-                and "wm.set(\"group:\" + g[\"wxid\"], 0)" in _OLD_PM)
+    _old_bad = ("latest_seq_ex" not in _OLD_PM and (not _sm.has(_OLD_PM, "if new is None:"))
+                and _sm.has(_OLD_PM, "wm.set(\"group:\" + g[\"wxid\"], 0)"))
     ok("⑦ 反例锚：老写法（吞成 0 当起点 + [] 当没消息）**确实**会被判不合格", _old_bad is True)
 
     # ── （P2）：**水位表账号维** · **flush 看返回值** · 切号放掉旧句柄 ──
@@ -460,7 +481,7 @@ def main():
                '    def flush(self):\n'
                '        persist.atomic_write_json(self.path, self.data)\n')
     _old_bad2 = ("self.account" not in _OLD_WM and "self._ns(" not in _OLD_WM
-                 and "def flush(self):\n        persist" in _OLD_WM.replace("\r", ""))
+                 and _sm.has(_OLD_WM.replace("\r", ""), "def flush(self):\n        persist"))
     ok("⑧ 反例锚：老写法（无账号维 + flush 不看返回值）**确实**会被判不合格", _old_bad2 is True)
 
     # ── （P1）：**带账号时「只前进」必须照样成立** ──

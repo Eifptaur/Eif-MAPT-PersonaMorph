@@ -26,6 +26,9 @@ import socket
 import sys
 import urllib.error
 import urllib.request
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -266,7 +269,8 @@ try:
     def _jr(txt):
         try:
             return _json.loads(txt or "{}")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return {}
 
     _code, _txt = _req("GET", "/api/tools/test?name=judge_demo&args=%7B%22city%22%3A%22x%22%7D")
@@ -315,7 +319,8 @@ finally:
         import shutil
         if _tmp:
             shutil.rmtree(_tmp, ignore_errors=True)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 print("\n==== 前后端连接判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))

@@ -484,7 +484,7 @@ _src_uc11 = io.open(os.path.join(ROOT, "agent", "update_check.py"), encoding="ut
 _src_w11 = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 _src_c11 = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
 # ⛔ 源码子串断言**抓不住**"那道守卫永不成立"
-#   （`state()` 不把 `kind` 抄进 `out` ⇒ `out.get("kind")` 恒 None ⇒ `not ...` 恒真）。换成**行为锚**。
+#   （`state()` 不把 `kind` 抄进 `out` ⇒ `out.get` 恒 None ⇒ `not ...` 恒真）。换成**行为锚**。
 _far_r12 = {"base": {"version": "2099.9.9", "url": "https://github.com/x/y.zip"}, "announce": {}}
 _saved_fa12 = _uc_top.fetch_any
 _saved_sp12 = _uc_top._state_path

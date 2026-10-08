@@ -34,7 +34,8 @@ def _win() -> dict:
     rep = {"release": "Windows", "build": "", "arch": "", "admin": None}
     try:
         rep["arch"] = "64-bit" if sys.maxsize > 2 ** 32 else "32-bit"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         import winreg
@@ -44,21 +45,25 @@ def _win() -> dict:
             rep["build"] = str(winreg.QueryValueEx(k, "CurrentBuildNumber")[0] or "")
             try:
                 rep["build"] += ".%s" % str(winreg.QueryValueEx(k, "UBR")[0])
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         # ⚠️ `ProductName` 在 Win11 上仍是 "Windows 10"（微软没改这个值）⇒ 按 build 号纠正，
         #    否则报告里会出现"系统名报 Win10、装的其实是 Win11"这种对不上的噪音。
         try:
             if int(str(rep["build"]).split(".")[0]) >= 22000:
                 rep["release"] = "Windows 11"
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         import ctypes
         rep["admin"] = bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         rep["admin"] = None
     return rep
 
@@ -71,13 +76,15 @@ def _display() -> dict:
         u = ctypes.windll.user32
         try:
             u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)) # PerMonitorV2；失败也无妨
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         rep["primary"] = "%dx%d" % (int(u.GetSystemMetrics(0)), int(u.GetSystemMetrics(1)))
         try:
             dpi = int(ctypes.windll.user32.GetDpiForSystem())
             rep["scale"] = "%d%%" % round(dpi / 96.0 * 100)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             dc = u.GetDC(0)
             try:
                 dpi = int(ctypes.windll.gdi32.GetDeviceCaps(dc, 88)) # LOGPIXELSX
@@ -95,9 +102,11 @@ def _display() -> dict:
                                     ctypes.POINTER(ctypes.c_long * 4), ctypes.c_double)
             u.EnumDisplayMonitors(0, None, CB(_cb), 0)
             rep["monitors"] = cnt[0]
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return rep
 
@@ -119,8 +128,30 @@ def _wechat_window() -> dict:
             t = ctypes.create_unicode_buffer(256)
             u.GetWindowTextW(ctypes.c_void_p(hwnd), t, 256)
             rep["title"] = str(t.value)[:40]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
+    return rep
+
+
+def _wechat_version() -> dict:
+    """微信版本 + 适配层版本（**只读进程信息**：不碰内存、不动窗口、不写文件）。
+
+    为什么单独成一节：兼容矩阵里那一行标题是「微信版本 / UI 代」，
+    而它原先只填了**窗口类名** ⇒ **标题写着版本、值里却没有版本号**
+    ⇒ 用户读成"微信版本测不出来"（实际版本是读得到的，只是没被摆到这一行）。
+    版本来源与「微信装没装」同一处：`wechat.wechat_version_info()`。
+    """
+    rep = {"version": "", "adapter": "", "supported": None, "found": None}
+    try:
+        from .wechat import wechat_version_info
+        info = wechat_version_info() or {}
+        rep["version"] = str(info.get("version") or "")
+        rep["adapter"] = str(info.get("adapter") or "")
+        rep["supported"] = info.get("supported")
+        rep["found"] = bool(info.get("found"))
+    except Exception as e: # noqa: BLE001
+        rep["error"] = "%s: %s" % (type(e).__name__, str(e)[:60])
     return rep
 
 
@@ -139,12 +170,13 @@ def _data_dir() -> dict:
                 if _d.get("effective"):
                     st["effective"] = _d["effective"]
                     st["source_text"] = "扫盘（%s）" % (_d.get("source_text") or _d.get("src") or "")
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         rep["dir"] = str(st.get("effective") or st.get("now") or "")
         rep["how"] = str(st.get("source_text") or st.get("src") or st.get("effective_from") or "")
         if st.get("account"):
-            # ⛔ 这里是 2026-09-28 的隐私事故点：原来拼的是**账号原名**，而 `how` 会进
+            # ⛔ 这里是隐私事故点：原来拼的是**账号原名**，而 `how` 会进
             #    反馈消息（`attach_text`）与检验报告 ⇒ 用户一提交，别人的微信号就发到了群里。
             #    现在统一走 `pii.mask_id`（只留首尾，够核对"是不是同一个号"）。
             from .pii import mask_id as _mid
@@ -156,9 +188,11 @@ def _data_dir() -> dict:
         try:
             if up:
                 rep["accounts"] = len(wechat_dir.accounts(up) or [])
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             rep["accounts"] = None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         root = rep["dir"]
@@ -181,7 +215,8 @@ def _data_dir() -> dict:
                     rep["page1"] = ("密文（无 SQLite 明文头）" if head[:6] != b"SQLite"
                                     else "明文头（SQLite）")
                     break
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         import wechatauto.db as _wdb
@@ -193,7 +228,8 @@ def _data_dir() -> dict:
         except Exception:
             ver = ""
         rep["patched_lib"] = ("%s%s" % (ver or "?", "（本地打过补丁：%s）" % ",".join(baks[:2]) if baks else ""))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return rep
 
@@ -204,7 +240,8 @@ def _runtime() -> dict:
     try:
         rep["python"] = "%d.%d.%d (%s)" % (sys.version_info[0], sys.version_info[1], sys.version_info[2],
                                            "portable" if "runtime" in sys.executable.lower() else "system")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         from .notify_ui import console_url, webview_ready, _url_live
@@ -212,7 +249,8 @@ def _runtime() -> dict:
         rep["port"] = str(u).split("/")[2] if "//" in str(u) else ""
         rep["console_live"] = bool(_url_live(u))
         rep["webview2"] = str((webview_ready() or {}).get("runtime_ver") or "未装/未知")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return rep
 
@@ -221,6 +259,7 @@ def fingerprint() -> dict:
     """一张"这台机器长什么样"的只读快照（任何一节失败都不影响其它节）。"""
     out = {}
     for key, fn in (("windows", _win), ("display", _display), ("wechat_window", _wechat_window),
+                    ("wechat", _wechat_version),
                     ("data_dir", _data_dir), ("runtime", _runtime)):
         try:
             out[key] = fn()
@@ -241,6 +280,10 @@ def lines() -> list:
                                              d.get("monitors")),
         "微信主窗: 类名=%s · 可见=%s · 标题=%s" % (c.get("class") or "(没找到)", c.get("visible"),
                                               c.get("title") or ""),
+        "微信版本: %s · 适配层 %s · 支持=%s" % (
+            (str((f.get("wechat", {}) or {}).get("version") or "") or "(读不到)"),
+            (str((f.get("wechat", {}) or {}).get("adapter") or "") or "?"),
+            (f.get("wechat", {}) or {}).get("supported")),
         "运行环境: Python %s · 控制台端口 %s · 在听=%s · WebView2=%s" % (
             r.get("python") or "?", r.get("port") or "?", r.get("console_live"), r.get("webview2") or "?"),
         "消息库: 来源=%s · 账号目录 %s 个 · 分片=%s" % (g.get("how") or "?", g.get("accounts"),
@@ -259,7 +302,8 @@ def _click_pref() -> str:
             import json
             with open(getattr(_cp, "PATH", ""), encoding="utf-8") as fh:
                 d = json.load(fh) or {}
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             d = {}
         if not isinstance(d, dict) or not d:
             return "未记录（还没成功过 ⇒ 用默认候选顺序）"
@@ -270,7 +314,8 @@ def _click_pref() -> str:
                 items.append("%s ⇒ 成功过 %s（成 %s / 败 %s）"
                              % (str(k)[:44], v.get("ok") or "?", v.get("okN"), v.get("failN")))
         return "；".join(items) if items else "未记录（还没成功过 ⇒ 用默认候选顺序）"
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "未知（读不到偏好文件）"
 
 
@@ -286,7 +331,8 @@ def _update_state() -> str:
         src = str(d.get("lastSource") or d.get("source") or "")
         if st or src:
             return "上次探测：%s%s" % (st or "?", ("（源=%s）" % src) if src else "")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return "未探测（点控制台「更新」即得）"
 
@@ -304,8 +350,11 @@ def axes(how: dict | None = None) -> list:
     g, r = f.get("data_dir", {}) or {}, f.get("runtime", {}) or {}
     _cls = str(c.get("class") or "")
     return [
-        {"axis": "微信版本 / UI 代", "fact": "主窗类名（UI 代的直接证据）+ 可见性",
-         "value": ("%s · 可见=%s" % (_cls or "没找到主窗", c.get("visible")))},
+        {"axis": "微信版本 / UI 代", "fact": "微信版本 + 适配层 + 主窗类名（UI 代的直接证据）+ 可见性",
+         "value": ("微信 %s · 适配层 %s · UI 代 %s · 可见=%s"
+                   % (str((f.get("wechat", {}) or {}).get("version") or "") or "读不到（微信没在跑 / 读不到进程）",
+                      str((f.get("wechat", {}) or {}).get("adapter") or "") or "-",
+                      _cls or "没找到主窗", c.get("visible")))},
         {"axis": "Windows 版本", "fact": "ProductName（按 build 号纠正）+ build",
          "value": "%s build %s" % (w.get("release") or "?", w.get("build") or "?")},
         {"axis": "DPI 缩放 / 多显示器", "fact": "主屏分辨率 + 系统缩放 + 显示器数",
@@ -556,9 +605,11 @@ def note_failure(code: str, where: str, detail: str = "") -> None:
         try:
             from . import persist as _ps
             _ps.atomic_write_json(_fail_path(), cur[-FAIL_KEEP:], indent=0)
-        except Exception: # noqa: BLE001
+        except Exception as _e: # noqa: BLE001
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
-    except Exception: # noqa: BLE001
+    except Exception as _e: # noqa: BLE001
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -628,7 +679,7 @@ def attach_text() -> str:
             out.append("  %s %s @%s %s" % (it.get("at_text"), it.get("code"), it.get("where"),
                                            it.get("detail") or ""))
     # ⛔ 出口兜底：整段再过一次 `pii.scrub_text` —— 白名单漏一处（或以后新加的字段带了 id）
-    #    也不会把**别人的微信号**发出去（2026-09-28 现场：反馈消息里带着 `账号=wxid_<真号>`）。
+    #    也不会把**别人的微信号**发出去（现场：反馈消息里带着 `账号=wxid_<真号>`）。
     #    掩码只留首尾，排障照旧够用。
     from .pii import scrub_text as _scrub
     return _scrub("\n".join(out))

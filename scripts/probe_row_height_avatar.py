@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """probe_row_height_avatar.py —— 用「头像列」测会话列表行高（**完全不依赖 OCR**）
 
-⛔ 为什么要换数据源（2026-09-30 连续两轮失败换来的）
+⛔ 为什么要换数据源（连续两轮失败换来的）
   行高这条锚本身是对的（用户实机验证：行高恒定、窗口矮时只裁剪不压缩；图核对 ≈95~100）。
   但我前两版都用 **`session_rows` 的 `y_abs`** 去算：
     · 第一版「相邻间距众数」⇒ 被"名字↔预览"的**半行距**污染（实测冒出 48/78）；
@@ -27,6 +27,9 @@ import json
 import os
 import sys
 from collections import Counter
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -103,7 +106,8 @@ def detect_row_height_by_avatar(img, x_left=None, pad=8, avatar_w=52,
             return 0
         h_row = Counter(gaps).most_common(1)[0][0]
         return int(h_row) if (H_LO <= h_row <= H_HI) else 0
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
@@ -122,7 +126,8 @@ def main():
                 continue
             try:
                 img = Image.open(p).convert("RGB")
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
             res.append((img.size, r.get("theme"), detect_row_height_by_avatar(img)))
     print("=" * 74)

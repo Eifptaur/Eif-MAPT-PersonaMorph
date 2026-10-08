@@ -70,7 +70,8 @@ def _load() -> list:
         try:
             if os.path.exists(PATH):
                 os.replace(PATH, "%s.bad.%d" % (PATH, int(time.time())))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         _cache = []
     return _cache
@@ -80,7 +81,7 @@ def _save(items: list) -> str:
     """原子写；失败**不抛**（重试只是补救手段，绝不许因为它把主流程搞崩），返回原因。"""
     try:
         os.makedirs(os.path.dirname(PATH), exist_ok=True)
-        tmp = PATH + ".tmp"
+        tmp = persist.tmp_for(PATH)
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({"items": items, "when": time.strftime("%Y-%m-%d %H:%M:%S")},
                       fh, ensure_ascii=False, indent=1)
@@ -101,7 +102,8 @@ def enqueue(chat_key: str, text: str, why: str = "", now: float = None) -> dict:
                 try: # 原因码同步：去重更新时也要跟着刷新
                     from . import reason_codes as _rc
                     it["code"] = _rc.classify(it["why"])
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
                 # ⛔ 原来每次都把 `next_at` 重置成 `now+15`
                 #   ⇒ 反复入队会让本该到点的条目**永远到不了点**（饥饿），饿到 MAX_AGE_S 后一失败就丢。

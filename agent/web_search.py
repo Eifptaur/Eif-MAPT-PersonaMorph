@@ -13,6 +13,9 @@ import requests
 
 from .config import get_config
 from .safe_fetch import safe_fetch, read_stream
+import logging
+
+log = logging.getLogger("persona-morph")
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
@@ -51,7 +54,8 @@ def _err_text(resp, cap: int = 300) -> str:
     """错误回包的短摘要（**也带上限**：错误页同样可能被对面灌成 200MB）。"""
     try:
         return _body_text(resp, max(cap * 4, 4096), "错误回包")[:cap]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -143,7 +147,7 @@ def web_search(query: str) -> dict:
     # ⚠️ 注意这行的折叠：**没配置（空串）会被折成 "bing"** ⇒ "默认配置"走的也是必应免费抓取，
     #    而不是 DeepSeek 联网搜索。这正是 P0-1 想达到的效果（默认不再产生隐藏调用）。
     provider = str(cfg.get("provider") or "bing").lower()
-    # ⛔ 2026-09-29（降 Token 报告 P0-1）：**只有"没显式选引擎"或"显式选了 deepseek"才走 DeepSeek 联网**。
+    # ⛔ （降 Token 报告 P0-1）：**只有"没显式选引擎"或"显式选了 deepseek"才走 DeepSeek 联网**。
     #    旧写法把 `"bing"`/`"google"` 也放进这条分支 ⇒ 用户明明配了必应，**每次搜索仍先发一次
     #    DeepSeek 联网调用**（复用主 API Key）：那是纯隐藏开销 —— 新会话没有前缀可命中缓存，
     #    一次约 8.8k token 全按 fresh 全价计费。验收口径：provider=bing 时该分支调用次数**归零**。

@@ -25,6 +25,9 @@ import os
 import time
 
 from . import wechat as _W
+import logging
+
+log = logging.getLogger("persona-morph")
 
 # 扫一个目录最多看多少个文件（防网络盘/超大目录把控制台拖住；够判断"有没有库文件"了）
 _WALK_BUDGET = 6000
@@ -37,7 +40,8 @@ def _same(a: str, b: str) -> bool:
         if not a or not b:
             return False
         return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -65,7 +69,8 @@ def scan(p: str) -> dict:
     try:
         out["exists"] = os.path.exists(p)
         out["is_dir"] = os.path.isdir(p)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return out
     if not out["is_dir"]:
         return out
@@ -79,7 +84,8 @@ def scan(p: str) -> dict:
             elif os.path.isdir(os.path.join(base, name, "db_storage")):
                 out["has_db_storage"] = True
                 roots.append(os.path.join(base, name, "db_storage"))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if os.path.basename(base).lower() in _ACCEPT_NAMES:
         out["has_db_storage"] = True
@@ -111,7 +117,8 @@ def scan(p: str) -> dict:
                         pass
                 if stop:
                     break
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     out["newest"] = newest
     return out
@@ -163,7 +170,8 @@ def _acct_layer(p: str) -> dict:
             except OSError:
                 n = 0
             out["siblings"] = n
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {"is_account": False, "name": "", "up": "", "siblings": 0}
     return out
 
@@ -236,7 +244,8 @@ def probe(extra: str = "") -> dict:
     for p in cands:
         try:
             key = os.path.normcase(os.path.normpath(str(p)))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             key = str(p)
         if not p or key in seen:
             continue
@@ -255,7 +264,7 @@ def probe(extra: str = "") -> dict:
 #   而**切走的那一刻微信会把旧账号的库 checkpoint 一遍** ⇒ 旧账号的 `.db` 反而最新
 #   ⇒ 挑中**已经不在用的那个账号**，我们跟着读它的库。后果正好两条：
 #     ① 旧账号的缓存密钥还能过页1校验 ⇒ 驱动库的账号自愈（`if still:` 那条）**根本不触发**
-#        ⇒ **静默**读旧库：新消息全在新账号的库里 ⇒ 监听像死了一样（「后面不回复」）；
+#        ⇒ **静默**读旧库：新消息全在新账号的库里 ⇒ 监听像死了一样；
 #     ② 旧账号的密钥对不上时 ⇒ 它报「数据库无可用密钥…②本程序权限低于微信（微信以管理员运行时…）」
 #        ⇒ 用户在控制台看到的就是「找不到库 + 要权限」（那句"权限"是**提示语里的一种可能**，
 #        不是真相 —— 真相是选错了账号）。
@@ -284,7 +293,8 @@ def accounts(parent: str) -> list:
     try:
         if not os.path.isdir(p):
             return out
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return out
     dirs = []
     try:
@@ -622,10 +632,22 @@ def line(info: dict) -> str:
 def remember_scanned(picked: str, configured: str = "") -> dict:
     """**扫盘探到的目录自动记住**。
 
-    为什么要有它：原来扫盘成功只**打一句提示**「建议在控制台「数据库目录」里保存它」（
+    为什么要有它：原来扫盘成功只**打一句提示**「建议在控制台「数据库目录」里保存它」
     定的口径：不写用户 config）—— 但对**从没填过**的机器，这句话等于每次都让用户去点一下；
     就是这种（库在自定义路径 `M:\\WX\\talk\\xwechat_files`，每次启动都扫盘 + 每次都提醒）。
-    ⇒ 只在**用户从没填过**（`configured` 为空）时自动记住；填过就先不动（填错了另有提示，不替他改）。
+
+    ⭐⭐ **修正口径**：**凡是影响"能不能正常运作"的 ⇒ 一律改对，静默改**
+      （⛔ 不评判、不提示"你填错了"、不等确认 —— 唯一目标＝**让它跑起来**）；
+      **凡是"个性化"的 ⇒ 一律不许改**（昵称/人设/群白名单/回复风格/开关偏好…）。
+      判据＝「**这项影响不影响正常运作**」。
+
+      ⛔ **本函数原写法与这条相反，是错的**（此前是"用户填过就一个字不动"）：
+        那会让"**用户填错了目录 ⇒ 扫不到盘**"这种**必须修**的情况**卡死**。
+      ⇒ 现在的判据改成**"配着的那个到底能不能用"**：
+        · 没填过 ⇒ 记住扫到的（原行为不变）；
+        · **填过但用不了（扫不到盘）** ⇒ **改成扫到的那个**（静默，让它跑起来）；
+        · **填过且能用** ⇒ 不动（**不覆盖一个好配置**，这才是"不替用户改"该守的地方）。
+
     写盘走 `save()` 的**校验**：校验不过/写不进去都只返回原因，**绝不影响继续用扫盘结果**。
 
     返回 `{"ok","saved","why"}`；**永不抛**。
@@ -640,8 +662,18 @@ def remember_scanned(picked: str, configured: str = "") -> dict:
     p = expand(picked)
     if not p:
         return {"ok": False, "saved": False, "why": "扫盘结果为空"}
-    if str(configured or "").strip():
-        return {"ok": False, "saved": False, "why": "「数据库目录」本来就有值 ⇒ 不替你改"}
+    _cfg_now = str(configured or "").strip()
+    if _cfg_now:
+        # ⭐ 配着的那条**能不能用**：能用 ⇒ 不动（不覆盖好配置）；用不了 ⇒ 改对（让它跑起来）。
+        #   ⛔ 这里**只判"能不能读到库"**（影响正常运作的唯一标准），**不判**用户是不是"填错了"。
+        try:
+            _ok_now = bool((check(expand(_cfg_now)) or {}).get("ok"))
+        except Exception: # noqa: BLE001
+            _ok_now = False
+        if _ok_now:
+            return {"ok": False, "saved": False, "why": "配着的目录本来就能用 ⇒ 不替你改"}
+        # 用不了 ⇒ 静默改成扫到的那个（不提示、不评判、不等确认）
+
     try:
         r = save(p)
     except Exception as e: # noqa: BLE001

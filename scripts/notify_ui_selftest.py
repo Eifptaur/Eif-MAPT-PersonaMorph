@@ -13,6 +13,8 @@ import ctypes
 import os
 import sys
 
+import logging
+log = logging.getLogger("persona-morph")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_srcslice`
@@ -109,7 +111,8 @@ def _enum_cb(h, _l):
                 ctypes.windll.user32.GetWindowTextW(h, _b, _n + 2)
                 if "控制台" in _b.value and "群相" in _b.value:
                     _live.append(int(h))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return True
 
@@ -262,7 +265,7 @@ finally:
     NU.find_console_window, NU.foreground, NU.open_console = _real_find, _real_fg, _real_open
 
 print("── D. 版本门弹窗：**已整体停用**（能跨版本运行 ⇒ 弹窗是纯风险源）──")
-# 背景：2026-10-01 用户决策 —— "**如果能跨版本运行，这个弹窗直接删掉**"。
+# 背景：用户决策 —— "**如果能跨版本运行，这个弹窗直接删掉**"。
 #   `check()` 四条返回 allow **全为 True** ⇒ 不点单子照常发 ⇒ 弹窗不拦发送，
 #   而现场反馈"上面的选项都有问题、点了程序没法正常跑" ⇒ 弹窗＝纯风险源。
 ok("★ 反向锚：`_pending_enabled` 还在（被删掉 ⇒ 本行必红）",
@@ -299,6 +302,8 @@ ok("弹窗代码仍在：失败只写日志、不影响开单", "待决单弹窗
 ok("弹窗代码仍在：WX_NO_UI_POP=1 仍能关掉", 'os.environ.get("WX_NO_UI_POP") == "1"' in GSRC)
 import tempfile # noqa: E402
 from agent import pending_decisions as PD # noqa: E402
+import logging
+
 _tmp = tempfile.mkdtemp(prefix="nu-judge-")
 try:
     PD.DECISIONS_PATH = os.path.join(_tmp, "pd.json")

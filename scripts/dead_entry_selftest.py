@@ -53,6 +53,10 @@ PATS = (
 
 #: 明确**不该存在**或**不在本仓**的引用（每条都要有理由；只许在证明它是反例时加）
 OK_LIST = {
+    # ⛔ 启动器**已改名** `一键启动.exe` → `群相.exe`（用户口径：启动器的名字就是产品的名字）。
+    #   老名仍出现在大量**历史/兼容**语境里（文档、注释、`LEGACY_LAUNCHER_EXES`、排障指引），
+    #   而**文件本身不该再存在**（根目录出现两个入口会让人误点）⇒ 归入"提到但不该存在"。
+    "一键启动.exe": "已改名为 群相.exe（`agent/autostart.py::LAUNCHER_EXE`）；此处仅历史/兼容语境",
     "一键启动.bat": "fullcheck 里的**反例**：断言这些老入口不该存在",
     "安装依赖.bat": "同上（反例）",
     "自检.bat": "同上（反例）",
@@ -90,6 +94,10 @@ OK_LIST = {
     "sys.exe": "同上（顺带验 `sys.executable` 不被误认成文件）",
     "没有这个文件的东西.bat": "同上",
     "t.cmd": "cmd 入口判据的临时夹具", "t_lf.cmd": "同上（LF 行尾反例）",
+    # 下面三个是**判据自己的夹具/注释占位名**，不是"指引用户去双击"的文案：
+    "evil.bat": "backup 判据的夹具（故意造一个不该进备份的文件）",
+    "r2.cmd": "decide_ui 判据的断言载荷（界面回显的命令文本）",
+    "xxx.exe": "launcher_build_files 判据注释里讲的编译命令格式（占位名）",
     "result.cmd": "decide_ui 判据的夹具",
     "ps1": "cmd 入口判据里是扩展名本身",
     "python%.exe": "cmd 里的环境变量模板（不是文件名）",
@@ -195,7 +203,13 @@ def main():
        missing_in(_quote_case) != [], str(missing_in(_quote_case)))
 
     print("== C. 三个真入口在位（用户真正会双击的东西）==")
-    for nm in ("一键启动.exe", "一键关闭.exe", "一键检验（生成报告）.cmd", "一键体检（只读，不发消息）.cmd"):
+    # ⛔ 启动器名**从唯一来源取**（`agent/autostart.py`）—— 我这里原来写死 `一键启动.exe`
+    #   ⇒ 改名成 `群相.exe` 之后连 A/B 两段都跟着假红（"提到的入口找不到"）。
+    #   ⚠️ **只要求新名必须存在**；老名（`LEGACY_LAUNCHER_EXES`）**只用于识别**、可能已不存在
+    #      ⇒ 把它列进"必须存在"会立刻假红（我第一版就差点这么写）。
+    from agent import autostart as _as
+    for nm in (_as.LAUNCHER_EXE, "一键关闭.exe",
+               "一键检验（生成报告）.cmd", "一键体检（只读，不发消息）.cmd"):
         ok("C 存在：%s" % nm, os.path.exists(os.path.join(ROOT, nm)))
 
     print("== 死指引判据：%d 通过 / %d 失败 ==" % (PASS[0], FAIL[0]))

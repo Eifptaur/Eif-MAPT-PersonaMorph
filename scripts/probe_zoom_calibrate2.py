@@ -11,10 +11,13 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
 
 from agent import chat_ocr as co  # noqa: E402
 from agent import chat_header as ch  # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 TRUTH = {
     ('local', 'local-021-ScreenShot_2026-09-29_225525_975.png'):
@@ -57,7 +60,8 @@ def text_height_from_blocks(img, x0, left):
                 bh = int(byb) - int(byt)
                 if 6 <= bh <= 40:          # 文字块
                     hs.append(bh)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if not hs:
         return 0

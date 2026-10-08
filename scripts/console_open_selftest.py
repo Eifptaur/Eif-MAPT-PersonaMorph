@@ -27,6 +27,8 @@ import os
 import subprocess
 import sys
 
+import logging
+log = logging.getLogger("persona-morph")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -70,7 +72,8 @@ def src(rel):
 def rm_url_file():
     try:
         os.remove(U.console_url_path())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
 
 
@@ -92,7 +95,8 @@ try:
     if os.path.exists(_urlf):
         with open(_urlf, encoding="utf-8") as f:
             _old_url = f.read()
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     _old_url = None
 
 print("── A. 控制台地址：现成文件优先（token 由拥有者落盘）──")
@@ -144,7 +148,8 @@ if os.path.exists(_cf):
     _txt = open(_cf, encoding="utf-8").read()
     try:
         _cfg = json.loads(_txt)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _cfg = {}
     _real_tok = str(((_cfg.get("server") or {}).get("token")) or "")
     _i = _txt.find('"token"')
@@ -330,7 +335,8 @@ try:
     # 同上：本节只需一把干净的**锁**文件（下一行已显式删锁），不需要动地址文件。
     try:
         os.remove(U.console_lock_path())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
     ok("第一次拿到锁", U.take_console_lock() is True)
     ok("同一把锁 90 秒内第二次拿不到", U.take_console_lock() is False)
@@ -354,7 +360,8 @@ try:
                        creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
         _p.wait()
         _dead = _p.pid
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _dead = 0
     if _dead > 0:
         with open(U.console_lock_path(), "w", encoding="utf-8") as f:
@@ -367,7 +374,8 @@ try:
 finally:
     try:
         os.remove(U.console_lock_path())
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
 
 print("── E. 端到端：真起一个控制台，用落盘的地址访问必须 200（空口令地址必须 401）──")
@@ -465,7 +473,7 @@ try:
         _seg_put = _src_ui[_src_ui.index("def do_PUT"):_src_ui.index("\n    def ", _src_ui.index("def do_PUT") + 10)]
         ok("do_PUT 里有统一鉴权", "_auth_ok" in _seg_put)
         # ⛔ `save_config` 必须有**可注入根**。
-        # 判据一旦照 的建议扩到 `/api/config` 的落盘，就会把**用户真的 config.json**
+        # 判据一旦照建议扩到 `/api/config` 的落盘，就会把**用户真的 config.json**
         #   覆写掉（B 线实测撞上两次：那个副本 25991 字节 → 164 字节，事后从真仓库只读拷回）。
         from agent import config as _C10
         _iso_dir = tempfile.mkdtemp(prefix="pm-iso-cfg-")
@@ -527,7 +535,8 @@ try:
                     _resp4 += _chunk
                     if len(_resp4) > 8192:
                         break
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             _s4.close()
             _resp4s = _resp4.decode("latin1", "replace")
@@ -684,6 +693,8 @@ else:
 print("── I. 左导航间距──")
 _html = src("assets/console/index.html")
 from agent import console_html as _CH # noqa: E402
+import logging
+
 _css = _CH.HTML.split("<style>", 1)[1].split("</style>", 1)[0]
 _i = _css.rfind(".side .nav a{") # 生效的是最后一条同选择器规则
 _seg = _css[_i:_css.find("}", _i)] if _i >= 0 else ""
@@ -765,7 +776,7 @@ except Exception as e:
     skip("收尾零污染检查", str(e)[:40])
 
 print("")
-print("── L. 「重启后页面自己连回来」（2026-09-18 用户实测后加）──")
+print("── L. 「重启后页面自己连回来」──")
 # 真因：控制台**没有任何周期性状态轮询**，也没有"重启后重连"的判断 —— 而页面文案早就写着
 #      「正在重启，页面稍后会自己连回来」⇒ **承诺没有实现**。这三条钉住它别再退化。
 _ch = src("assets/console/index.html")

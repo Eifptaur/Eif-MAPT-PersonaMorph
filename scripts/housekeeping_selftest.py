@@ -86,8 +86,48 @@ try:
     ok("**没有**删够新（60 秒前）的 pm- 目录", os.path.exists(fresh_pm) and r["kept"] == 1, repr(r["kept"]))
     ok("**没有**碰别人名字的目录（哪怕它更老）", os.path.exists(other))
     ok("报了回收字节数（不是只报个数）", r["bytes"] >= 2048, repr(r["bytes"]))
-    ok("反证：默认前缀就是 pm-，不许是空串（空串会删光临时目录）",
-       HK.TEMP_PREFIXES == ("pm-",), repr(HK.TEMP_PREFIXES))
+    ok("反证：默认前缀**不许是空串**（空串会删光临时目录）",
+       bool(HK.TEMP_PREFIXES) and all(HK.TEMP_PREFIXES), repr(HK.TEMP_PREFIXES))
+    # ⛔ 断言**意图**而不是字面（原来锚成 `== ("pm-",)` ⇒ 把"漏了一整族"这个错行为也一起钉住了）：
+    #   ① 两族 pm 都要覆盖（只写连字符 ⇒ 下划线那一族 3,316 个永远回收不了）；
+    #   ② **名字要够"专属"**，不许宽到能匹配别的程序（用真名反证）。
+    ok("两族 pm 前缀都覆盖（`pm-` 与 `pm_`）",
+       any(x == "pm-" for x in HK.TEMP_PREFIXES) and any(x == "pm_" for x in HK.TEMP_PREFIXES),
+       repr(HK.TEMP_PREFIXES))
+    ok("前缀**不许宽到能匹配别人的目录**（拿几个真名反证：pip-/node-/Temp/python）",
+       not any(str(n).startswith(HK.TEMP_PREFIXES)
+               for n in ("pip-build-env", "node-compile-cache", "python-build", "Temp1")),
+       repr(HK.TEMP_PREFIXES))
+
+    # ── 防漂：**重新扫源码**，产品（agent/ ＋ ui_qt/）里出现的前缀必须都在名单里 ──
+    #   ⛔ 为什么要这条：名单是**手写**的，而"新加一个 mkdtemp 前缀"不会有人记得回来补名单
+    #      ⇒ 于是又出现"某一族永远回收不了"（这正是上一次那个 bug 的成因）。
+    #   ⚠️ 只扫**产品代码**：判据那约 150 种前缀由套件的"当次运行根"整体覆盖
+    #      （见 `scripts/run_all_selftests.py` 里 `TEMP`/`TMP`/`TMPDIR` 的说明），不在本名单职责内。
+    import glob as _glob
+    import re as _re
+    _pat = _re.compile(r"mkdtemp\(\s*prefix\s*=\s*[\"']([^\"']+)[\"']")
+    _found = set()
+    _scanned = 0
+    for _sub in ("agent", "ui_qt"):
+        for _p in _glob.glob(os.path.join(ROOT, _sub, "**", "*.py"), recursive=True):
+            try:
+                with open(_p, encoding="utf-8", errors="ignore") as _fh:
+                    _s = _fh.read()
+            except Exception: # noqa: BLE001
+                continue
+            _scanned += 1
+            _found.update(_pat.findall(_s))
+    # ⛔ **前置断言（防空过）**：这条判据一旦"扫到 0 个文件"就会**静默通过** ——
+    #   我第一次写就踩了（漏了 `io` 导入 ⇒ 每份文件都读失败 → `continue` → `_found` 空 ⇒ 绿）。
+    #   ⛔ 空过的断言比红更坏：它给人"已经守住了"的错觉。
+    ok("⭐ 防漂前置：真的扫到了产品源码（否则下面那条会空过）",
+       _scanned >= 100 and len(_found) >= 3,
+       "扫了 %d 个 .py，找到 %d 种前缀" % (_scanned, len(_found)))
+    _uncovered = sorted(_x for _x in _found if not str(_x).startswith(HK.TEMP_PREFIXES))
+    ok("⭐ 防漂：产品代码里**所有** `mkdtemp` 前缀都在清扫名单里（实测源码 %d 种）" % len(_found),
+       not _uncovered,
+       "未覆盖：%s" % (_uncovered[:6] if _uncovered else "无 ✅"))
 
     # ── B. 刚出炉的不动 ─────────────────────────────────────────────────────
     sect("B. 刚出炉的不动（可能正在被发送）")
@@ -274,8 +314,13 @@ try:
     fp = HK.footprint()
     ok("footprint 有 dirs 与 temp 两块", "dirs" in fp and "temp" in fp)
     ok("footprint 的 temp 带 entries/files/mb/names", all(k in fp["temp"] for k in ("entries", "files", "mb", "names")))
-    ok("footprint 只统计我们前缀的条目（名字都带 pm-）",
-       all(n.startswith("pm-") for n in fp["temp"]["names"]), str(fp["temp"]["names"][:3]))
+    # ⛔ 断言**意图**（"只统计我们**名单里**的前缀"），不是字面 `pm-`：
+    #   这条走的是**真实临时目录**（`footprint(root=None)`）⇒ 字面锚会随本机残留而变化，
+    #   我一扩名单它就把真实的 `chgrab-*` 当成"违规"报红（那是判据脆弱，不是产品错）。
+    ok("footprint 只统计**我们自己名单里**前缀的条目（不是把整个临时目录算进来）",
+       all(str(n).startswith(HK.TEMP_PREFIXES) for n in fp["temp"]["names"]),
+       str(fp["temp"]["names"][:3]))
+    ok("名单**不许为空**（空串 ⇒ 等于把整个临时目录算成自己的）", bool(HK.TEMP_PREFIXES))
     # ⛔ tick 清的必须是**配置里的那个目录**（不是硬编码 `ROOT\media\tts`）
     _d_tick = os.path.join(tmp, "tick_media")
     os.makedirs(_d_tick, exist_ok=True)
@@ -330,6 +375,96 @@ try:
 finally:
     import shutil
     shutil.rmtree(tmp, ignore_errors=True)
+
+# ── H. 图库清理（`data/gen_images/`）────────────────────────────────────────
+#   守三件事：① **只删产品命名的图**（用户丢进来的绝不碰）② 双阈值都真生效
+#   ③ 台账 `index.jsonl` 与空目录处理对。
+#   ⛔ 全部在临时目录里造数据，**不碰真 `data/gen_images`**。
+sect("H. 图库清理（只删我们生成的图；阈值真生效；台账永不删）")
+_groot = os.path.join(tmp, "groot")
+_gdir = os.path.join(_groot, "data", "gen_images")
+_NOW = time.time()
+# 3 天前 / 40 天前 各造两张（形状同生产者：`<backend>_<n>_<%H%M%S>.jpg`）
+for _d, _age in (("20260905", 3 * 86400), ("20260730", 40 * 86400)):
+    for _i in range(2):
+        _p = os.path.join(_gdir, _d, "gen_%d_%06d.jpg" % (_i, 120000 + _i))
+        os.makedirs(os.path.dirname(_p), exist_ok=True)
+        with open(_p, "wb") as f:
+            f.write(b"J" * 300000)          # 300 KB/张 ⇒ 4 张共 1.2 MB
+        os.utime(_p, (_NOW - _age, _NOW - _age))
+# 台账 + 用户自己的图（两者都**不许删**）
+with open(os.path.join(_gdir, "index.jsonl"), "w", encoding="utf-8") as f:
+    f.write('{"path": "x"}\n')
+_uimg = os.path.join(_gdir, "20260905", "我的照片.jpg")
+with open(_uimg, "wb") as f:
+    f.write(b"U" * 500)
+os.utime(_uimg, (_NOW - 40 * 86400, _NOW - 40 * 86400))   # 又老又没形状
+
+ok("H1 分母守卫：图库夹具真的造出来了（否则下面测的是空气）",
+   len(os.listdir(os.path.join(_gdir, "20260905"))) + len(os.listdir(os.path.join(_gdir, "20260730"))) >= 4,
+   "总文件 %d" % sum(len(os.listdir(os.path.join(_gdir, x))) for x in ("20260905", "20260730")))
+ok("H1b 形状判据：产品命名认得出、用户命名认不出（含分母守卫）",
+   HK.is_our_gen_image_name("gen_0_120000.jpg")
+   and HK.is_our_gen_image_name("a1111_0_214548.png")
+   and not HK.is_our_gen_image_name("我的照片.jpg")
+   and not HK.is_our_gen_image_name("DSC_0042.JPG"),
+   "4 例")
+
+# 先按"只超时间"跑（max_mb 给大 ⇒ 只 `keep_days` 生效）
+_r1 = HK.prune_gen_images(root=_groot, max_mb=100000, keep_days=30, now=_NOW)
+ok("H2 ★`keep_days` 真生效（40 天前的删、3 天前的不删）",
+   _r1["removed"] == 2 and _r1["bytes"] == 600000, "removed=%d bytes=%d" % (_r1["removed"], _r1["bytes"]))
+ok("H3 ★用户自己的图**一个都不删**（名字不是产品形状）",
+   os.path.exists(_uimg), "还在" if os.path.exists(_uimg) else "被删了！")
+ok("H4 ★台账 `index.jsonl` 永不删",
+   os.path.exists(os.path.join(_gdir, "index.jsonl")))
+ok("H5 ★空掉的日期子目录被删掉（不留空目录噪声）",
+   not os.path.isdir(os.path.join(_gdir, "20260730")),
+   "目录数 = %d" % len([x for x in os.listdir(_gdir) if os.path.isdir(os.path.join(_gdir, x))]))
+# 再按"只超量"跑（keep_days 给大 ⇒ 只 `max_mb` 生效）
+# ⚠️ 此刻剩 2 张 × 300 KB = 600 KB；`max_mb=0.3` ＝ 314572.8 字节
+#    ⇒ 删 1 张后剩 300000 ≤ 314572.8 **已不超** ⇒ 只该删 1 张（这里曾把期望写成 2，是我的夹具算错）
+_r2 = HK.prune_gen_images(root=_groot, max_mb=0.3, keep_days=100000, now=_NOW)
+ok("H6 ★`max_mb` 真生效（超量时从最旧删到不超，够了就停）",
+   _r2["removed"] == 1 and _r2["bytes"] == 300000, "removed=%d bytes=%d" % (_r2["removed"], _r2["bytes"]))
+# `min_age_s` 保护：刚出的一律不动（先清空剩下的老图，只留一张刚造的）
+_old_left = os.path.join(_gdir, "20260905", "gen_0_120000.jpg")
+if os.path.exists(_old_left):
+    os.remove(_old_left)
+_p_new = os.path.join(_gdir, "20260905", "gen_9_235959.jpg")
+with open(_p_new, "wb") as f:
+    f.write(b"N" * 999999)
+os.utime(_p_new, (_NOW, _NOW))          # 明确"刚出炉"（mtime=now ⇒ 差 0 秒）
+_r3 = HK.prune_gen_images(root=_groot, max_mb=0.1, keep_days=100000, now=_NOW)
+ok("H7 ★刚出炉的不动（`min_age_s` 保护；哪怕它超量最大）",
+   _r3["removed"] == 0 and os.path.exists(_p_new),
+   "removed=%d 新图还在=%s" % (_r3["removed"], os.path.exists(_p_new)))
+# 台账必须真写了（可复核"删了什么"）
+_led = os.path.join(tmp, "gen_ledger.jsonl")
+_gdir2 = os.path.join(tmp, "groot2", "data", "gen_images")
+os.makedirs(os.path.join(_gdir2, "20260101"), exist_ok=True)
+for _i in range(2):
+    _p = os.path.join(_gdir2, "20260101", "gen_%d_120000.jpg" % _i)
+    with open(_p, "wb") as f:
+        f.write(b"L" * 1000)
+    os.utime(_p, (_NOW - 99 * 86400, _NOW - 99 * 86400))
+_r4 = HK.prune_gen_images(root=os.path.join(tmp, "groot2"), keep_days=30, ledger=_led, now=_NOW)
+ok("H8 ★删之前写了清单（`{at,path,size,mtime,kind}` 一行一条）",
+   os.path.isfile(_led) and _r4["ledger"] == _led
+   and all(k in open(_led, encoding="utf-8").read() for k in ("at", "path", "size", "mtime", "kind")),
+   "条目 %d" % (open(_led, encoding="utf-8").read().count("\n") if os.path.isfile(_led) else 0))
+# 反向锚：把形状判据放宽成"什么都认"⇒ H3 那条守卫的判据式会变红
+ok("H9 ★反向锚：若形状判据退化成'认所有 jpg' ⇒ 用户的图就会被删（证明 H3 在真守）",
+   (lambda: (not HK.is_our_gen_image_name("我的照片.jpg")) and HK.is_our_gen_image_name("gen_0_120000.jpg"))(),
+   "反向锚有效")
+# 接线：tick 里真调了
+_hk2 = open(os.path.join("agent", "housekeeping.py"), encoding="utf-8").read()
+ok("H10 接线：`tick()` 真的调了图库清理（不是只写了函数）",
+   "prune_gen_images(" in _hk2 and "gen_images" in _hk2)
+ok("H11 接线：`brief()` 会念出图库清了几张（没有数字不算做过）",
+   "图库清" in _hk2)
+ok("H12 接线：`footprint()`/`known_dirs()` 里的图库口径与清理用同一处真值",
+   "_gen_images_dir" in _hk2 and '"data/gen_images"' in _hk2)
 
 print("\n%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

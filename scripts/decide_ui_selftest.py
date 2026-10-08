@@ -19,6 +19,8 @@ import tempfile
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 同目录的 `_srcmatch`
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 os.chdir(ROOT)
 
 from agent import pending_decisions as PD # noqa: E402
@@ -55,7 +57,7 @@ ok("/api/status 暴露 pending_decisions", 'st["pending_decisions"]' in status_b
 ok("带 open 计数 / summary / needed / item 四个字段",
    all(k in status_blk for k in ('"open"', '"summary"', '"needed"', '"item"')))
 ok("只把**还开着**的单子给弹窗（已表态的不再弹）",
-   'if str(_pit.get("status")) == "open"' in status_blk)
+   _sm.has(status_blk, 'if str(_pit.get("status")) == "open"'))
 ok("开单走 version_gate.pending（幂等）", "_vg2.pending()" in status_blk)
 decide_blk = seg(W, 'elif path == "/api/decide"', "elif path ==", "decide 段")
 if "_vg5.decide(" not in decide_blk:
@@ -65,21 +67,21 @@ if "_vg5.decide(" not in decide_blk:
 ok("POST /api/decide 在位", bool(decide_blk))
 ok("表态走 version_gate.decide（落台账 + 写回矩阵）", "_vg5.decide(" in decide_blk)
 ok("读的是 JSON body 里的 id/choice", '"id"' in decide_blk and '"choice"' in decide_blk)
-ok("异常如实回 500 + error（不静默成功）", '"ok": False, "error": str(e)}, 500' in decide_blk)
+ok("异常如实回 500 + error（不静默成功）", _sm.has(decide_blk, '"ok": False, "error": str(e)}, 500'))
 ok("服务端不做任何安装/降级动作",
    all(k not in decide_blk for k in ("subprocess", "pip", "uninstall", "downgrade")))
 
 print("── B. 控制台：自绘多选一弹窗 + 数据驱动选项 ──")
-ok("choiceBox 已定义", "function choiceBox(" in H)
-# [2026-09-30 口径变更] 版本门默认 `_strict()=False`（未实测版本本来就**照发**）⇒ 默认**非模态**。
+ok("choiceBox 已定义", _sm.has(H, "function choiceBox("))
+# [口径变更] 版本门默认 `_strict()=False`（未实测版本本来就**照发**）⇒ 默认**非模态**。
 #   弹窗外壳因此分两档：`soft`（右下角浮卡，不挂 mask）与 `hard`（遮罩模态，只在 strict 下用）。
 #   判据改成守"两种模式都在、且 non-strict 不许挂遮罩"这条真红线。
 _cb = seg(H, "function choiceBox(", "/* 版本不匹配那张单", "choiceBox 全段")
 ok("弹窗外壳分两档 soft/hard（soft 不挂遮罩、hard 才挂）",
-   "const hard = (mode === 'hard')" in _cb and "hard ? 'mask' : 'choice-soft'" in _cb
-   and "if(hard) maskOpen(m)" in _cb)
+   _sm.has(_cb, "const hard = (mode === 'hard')") and _sm.has(_cb, "hard ? 'mask' : 'choice-soft'")
+   and _sm.has(_cb, "if(hard) maskOpen(m)"))
 ok("openDecision 按后端 `strict` 选模式（非严格⇒soft 不挡路）",
-   "const mode = item.strict ? 'hard' : 'soft'" in H and "mode)" in H)
+   _sm.has(H, "const mode = item.strict ? 'hard' : 'soft'") and "mode)" in H)
 ok("非模态卡片有样式（右下角浮卡，不铺满）", ".choice-soft{position:fixed;right:20px;bottom:20px" in H)
 ok("弹窗用的是既有的 mask/box/果冻图标（显示层自研）",
    "m.className" in _cb and "ICON" in _cb)
@@ -87,11 +89,11 @@ cb = seg(H, "function choiceBox(", "/* 版本不匹配那张单", "choiceBox 全
 ok("每个选项一个按钮、文案与说明都来自数据",
    "data-opt=" in cb and "o.key" in cb and "o.detail" in cb and "o.label" in cb)
 ok("「什么都不做」是可点的选项（data-opt 空值）", 'data-opt=""' in cb and "什么都不做" in cb)
-ok("模态下点遮罩也等于什么都不做", "if(hard) m.onclick" in cb and "fire('')" in cb)
-ok("同一张单只回调一次（防连点）", "if(fired) return; fired = true" in cb)
-# ⛔ 用户 2026-09-30 指正"其他都有 bug，只能选什么都不做" ⇒ 后端 `disabled` 必须落到按钮上
+ok("模态下点遮罩也等于什么都不做", _sm.has(cb, "if(hard) m.onclick") and "fire('')" in cb)
+ok("同一张单只回调一次（防连点）", _sm.has(cb, "if(fired) return; fired = true"))
+# ⛔ 用户 指正"其他都有 bug，只能选什么都不做" ⇒ 后端 `disabled` 必须落到按钮上
 ok("后端标了 disabled 的选项在页面上**真的置灰**并写明原因",
-   "o.disabled" in cb and "disabled title=" in cb and ("opacity:.5" in cb or "not-allowed" in cb))
+   "o.disabled" in cb and _sm.has(cb, "disabled title=") and ("opacity:.5" in cb or "not-allowed" in cb))
 # [⑦d 口径变更] 页面里现在**允许**出现 choice key 与选项中文名 —— 它们要用于两处**显示/触发**：
 #   ①「最近表态」把 key 翻成中文（nm 映射表）②面板按钮唤起对应动作（actUp→upgrade_adapter）。
 #   这两处不是"第二份选项表"⇒ 自检改成守真正的红线：**选项三件套（key+label+detail）仍只由后端给**，
@@ -101,11 +103,11 @@ _detail_marks = ("把微信适配层升到与本机微信版本配套的那个�
 ok("选项表仍由后端给（页面里没有第二份 key+label+detail 的选项对象）",
    not any(d in H for d in _detail_marks) and "o.detail" in cb)
 ok("页面里的 key 只用于两处：表态历史的中文映射 + 面板按钮触发",
-   "nm = {upgrade_adapter:" in H and "actBtn('actUp', 'upgrade_adapter'" in H
-   and "actBtn('actHeal', 'update_host'" in H)
+   _sm.has(H, "nm = {upgrade_adapter:") and _sm.has(H, "actBtn('actUp', 'upgrade_adapter'")
+   and _sm.has(H, "actBtn('actHeal', 'update_host'"))
 ok("后端确实带着这四个选项", len(PD.VERSION_OPTIONS) == 4 and
    [o["key"] for o in PD.VERSION_OPTIONS] == ["upgrade_adapter", "update_host", "allow_once", "wechat_side"])
-# ⛔ 文案铁律（用户 2026-09-30 当面指正）：两套 UI 的选项名必须**逐字一致**，且不许出现
+# ⛔ 文案铁律（用户 当面指正）：两套 UI 的选项名必须**逐字一致**，且不许出现
 #   "微信本身要处理"那种把「微信」当我家产品说的说法。
 _lbs = [o["label"] for o in PD.VERSION_OPTIONS]
 ok("选项名口径：四个 label 与页面映射表逐字一致",
@@ -114,18 +116,18 @@ ok("页面里没有旧说法（仅本次允许 / 微信本身要处理）",
    "仅本次允许" not in H and "微信本身要处理" not in H)
 
 print("── C. 自动弹一次 + 手动入口 ──")
-ok("openDecision 用 POST /api/decide 提交", "openDecision" in H and "'/api/decide'" in H and "JSON.stringify({id: item.id, choice" in H)
+ok("openDecision 用 POST /api/decide 提交", "openDecision" in H and "'/api/decide'" in H and _sm.has(H, "JSON.stringify({id: item.id, choice"))
 ok("同一张单本次运行只自动弹一次", "__pdShown" in H and "window.__pdShown[pd.item.id]" in H)
-ok("只有还开着的单子才自动弹", "pd.item && pd.item.id && !window.__pdShown" in H)
-ok("自动弹延后一点（不抢正在输入的那一下）", "setTimeout(function(){ openDecision(pd.item); }" in H)
+ok("只有还开着的单子才自动弹", _sm.has(H, "pd.item && pd.item.id && !window.__pdShown"))
+ok("自动弹延后一点（不抢正在输入的那一下）", _sm.has(H, "setTimeout(function(){ openDecision(pd.item); }"))
 ok("面板里有手动入口按钮", 'id="pdOpen"' in H and "版本不匹配怎么办" in H)
-ok("手动入口读 /api/status 拿当前这张单", "pdOpen" in H and "const pd = (s && s.pending_decisions) || {}" in H)
+ok("手动入口读 /api/status 拿当前这张单", "pdOpen" in H and _sm.has(H, "const pd = (s && s.pending_decisions) || {}"))
 ok("待状态行在位", 'id="pdStat"' in H and "待" in H)
 # [⑦d 口径变更] 「升级命令」不再只回显给用户抄：选这两项会**真去跑**（后台作业）。
-#   [2026-09-30 再改] 还要能**如实回执**：`ran:false`（依赖已齐全 / 拿不到命令）时不许说
-#   "已经在后台跑了" —— 那就是用户说的"点了没反应"。
-ok("选了能修的两项真去跑（postVersionAction）", "postVersionAction(key, item.id)" in H)
-ok("升级命令仍然看得见（从动作结果里回显）", "r2.cmd" in H or "result) || {}).cmd" in H)
+#   [再改] 还要能**如实回执**：`ran:false`（依赖已齐全 / 拿不到命令）时不许说
+#   "已经在后台跑了" —— 那就是**看起来点了没反应**（界面上没有任何可见反馈）。
+ok("选了能修的两项真去跑（postVersionAction）", _sm.has(H, "postVersionAction(key, item.id)"))
+ok("升级命令仍然看得见（从动作结果里回显）", "r2.cmd" in H or _sm.has(H, "result) || {}).cmd"))
 ok("★没真动手时如实说（ran:false ⇒ 不说「已经在后台跑了」）",
    "!r2.ran" in H and "这一项现在不用做" in H)
 

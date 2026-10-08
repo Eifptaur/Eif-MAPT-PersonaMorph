@@ -38,6 +38,11 @@ log = logging.getLogger("persona-morph")
 
 DEFAULT_RETRY = 3
 DEFAULT_RETRY_SLEEP = 0.5
+#: B7：每会话保留的"已见 mid"个数（环形）。与 `HISTORY_KEEP` 同量级。
+#: 溢出丢最旧的 —— 被丢的靠**位置水位**兜底（水位单调前进，天然是"很久以前的一定处理过"的粗证据）。
+SEEN_KEEP = 200
+#: B7：`seen` 在平铺表里的键后缀（与水位键共存一个 dict，靠值类型 int/list 分流）。
+_SEEN_SUFFIX = "::seen"
 _LOCKS: dict = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -74,6 +79,7 @@ class Watermark:
         self.fail_count = 0 # flush 真失败（或拒写）的累计次数
         self.last_error = ""
         self.data: dict = {}
+        self._seen: dict = {} # B7：{带账号前缀的键::seen: [已见 mid …]}，环形
         self.load()
 
     def set_account(self, account) -> str:
@@ -89,7 +95,7 @@ class Watermark:
         ⛔ 老写法"认不出账号 ⇒ 不加前缀、沿用老键名"，
         而老键名在多账号机器上的语义恰好是「**升级前两个号共用的那一格**」——`db_account()` 拿不到
         账号（新 adapter 还没开库 / 旧 adapter 的 `_db` 被 `_release_adapter` 置空）时就会塌回老键，
-        把 的原始症状（两号水位互相污染）重新拿出来用。
+        把原始症状（两号水位互相污染）重新拿出来用。
         ⇒ 现在**永远带前缀**，认不出账号就用保留名 `?`。代价是升级后第一枪（以及账号时有时无的
         机器）会走一次"水位 0 ⇒ 对齐到最新"（与账号可识别时的行为一致）——**不重放历史、不漏新消息**。
         """
@@ -115,6 +121,7 @@ class Watermark:
         self._refuse_overwrite = not ok_overwrite
         if d is _BAD:
             self.data = {}
+            self._seen = {}
         elif not isinstance(d, dict):
             kept = persist.quarantine(self.path)
             if not kept:
@@ -122,17 +129,35 @@ class Watermark:
             log.warning("水位表顶层不是对象（形状不对）⇒ %s",
                         ("已按坏档留证：%s" % kept) if kept else "**留证失败 ⇒ 原档保持原样、禁止覆盖**")
             self.data = {}
+            self._seen = {}
         else:
-            data, dropped = {}, 0
+            data, seen, dropped = {}, {}, 0
             for k, v in d.items():
+                ks = str(k)
+                # ── B7：`seen` 用**同表另一种值类型**（list）表示已见 mid 环 ──
+                #   键后缀固定 `::seen`，值是一个整数列表。这样：
+                #   · 不新开文件、不新开字段 ⇒ 老的 `{键: 整数}` 档照常读；
+                #   · 老的 `int(v)` 校验遇到 list 会当"坏条目"丢掉 ⇒ **所以必须先分流**。
+                if ks.endswith(_SEEN_SUFFIX):
+                    if isinstance(v, list):
+                        buf = []
+                        for x in v:
+                            m = self._mid_key(x)
+                            if m is not None:
+                                buf.append(m)
+                        seen[ks] = buf[-SEEN_KEEP:] if len(buf) > SEEN_KEEP else buf
+                    else:
+                        dropped += 1
+                    continue
                 try:
-                    data[str(k)] = int(v)
+                    data[ks] = int(v)
                 except (TypeError, ValueError):
                     dropped += 1 # 只丢这一条，**不**把整表归零
             if dropped:
                 log.warning("水位表有 %d 条坏条目（值不是整数）已丢弃、其余 %d 条保留：%s",
                             dropped, len(data), self.path)
             self.data = data
+            self._seen = seen
         self._dirty = False
         return self.data
 
@@ -165,6 +190,99 @@ class Watermark:
         self._dirty = True
         return s
 
+    # ---- B7：已见 mid 环（位置水位之外的**第二本账**）----
+    @staticmethod
+    def _mid_key(mid):
+        """把 mid 归一成**可哈希的稳定键**（int 原样；其它转字符串并挂牌）。
+
+        ⛔ 为什么不能只收 int：产品现在 `mid` 是 `local_id`（整数），但**没有契约保证**它永远是整数
+        （换库/换适配器可能给字符串 id，判据也在用 `"m5"` 这种）。老写法 `int(mid)` 对非数字
+        **静默丢弃** ⇒ 去重悄悄失效（而且看不出来）。现在：整数走整数键，其余走 `"s:" + str(mid)`，
+        两类**不会互相撞**（int 键 与 "s:…" 字符串键在同一个 list 里天然不同）。
+        """
+        if mid is None:
+            return None
+        if isinstance(mid, bool): # bool 是 int 子类，排除掉以免 True 被当成 1
+            return "s:" + str(mid)
+        if isinstance(mid, int):
+            return mid
+        try:
+            f = float(mid)
+        except (TypeError, ValueError):
+            return "s:" + str(mid)
+        # 数字型字符串归一到 int，避免 "123" 与 123 被当成两条
+        return int(f) if f == int(f) else ("s:" + str(mid))
+
+    def seen_for(self, chat_key: str) -> list:
+        """返回该会话已见 mid 列表（副本，调用方改它不影响本表）。"""
+        return list(self._seen.get(self._ns(chat_key) + _SEEN_SUFFIX, []))
+
+    def seen_has(self, chat_key: str, mid) -> bool:
+        """这条 mid 是否**已经被处理过**。
+
+        ⛔ 没有 mid（`None`）时**一律回 False**（＝"没见过"）——宁可让它再过一次
+        （重复可以接受），也绝不因为"取不到 id"就把它当成处理过（那会漏读）。
+        """
+        k = self._mid_key(mid)
+        if k is None:
+            return False
+        return k in self._seen.get(self._ns(chat_key) + _SEEN_SUFFIX, [])
+
+    def remember_seen(self, chat_key: str, mids) -> int:
+        """把一批 mid 记进已见环（去重 + 环形截断）。返回**本次新增**的条数。"""
+        k = self._ns(chat_key) + _SEEN_SUFFIX
+        buf = list(self._seen.get(k, []))
+        have = set(buf)
+        added = 0
+        for mid in (mids or []):
+            m = self._mid_key(mid)
+            if m is None or m in have:
+                continue
+            buf.append(m)
+            have.add(m)
+            added += 1
+        if added:
+            if len(buf) > SEEN_KEEP:
+                buf = buf[-SEEN_KEEP:]
+            self._seen[k] = buf
+            self._dirty = True
+        return added
+
+    def clear_seen(self, chat_key: str = "") -> int:
+        """清空已见环。**换库/清聊天记录后必须调它** ——
+
+        为什么：`local_id` 是**单库内**的行号；微信换库（清记录重建）后行号会**重排**，
+        旧 `seen` 里的 mid 会**撞上新行的行号** ⇒ 新消息被当成"见过" ⇒ **静默漏读**。
+        ⇒ 宁可清空重来（最多重判几条，符合的口径），绝不许误跳。
+
+        `chat_key` 为空 ⇒ 清**整个账号命名空间**下的全部会话。
+        """
+        if not chat_key:
+            pre = (self.account or "?") + "|"
+            gone = [k for k in self._seen if k.startswith(pre)]
+            for k in gone:
+                del self._seen[k]
+            if gone:
+                self._dirty = True
+            return len(gone)
+        k = self._ns(chat_key) + _SEEN_SUFFIX
+        if k in self._seen:
+            del self._seen[k]
+            self._dirty = True
+            return 1
+        return 0
+
+    def _snapshot(self) -> dict:
+        """落盘用快照：水位（int）与已见环（list）**合进同一张平铺表**。
+
+        ⛔ 必须每次现拼，不能缓存 —— 缓存会让 `_seen` 的改动漏进盘（重启即重读）。
+        """
+        snap = dict(self.data)
+        for k, v in self._seen.items():
+            if v:
+                snap[k] = list(v)
+        return snap
+
     def flush(self) -> bool:
         """原子落盘（`persist.atomic_write_json`：tmp 名带 pid+随机后缀 + `os.replace`）；没有变化就不写。
 
@@ -180,7 +298,7 @@ class Watermark:
             self.fail_count += 1
             self.last_error = "坏档留证失败 ⇒ 拒绝覆盖"
             return False
-        if persist.atomic_write_json(self.path, self.data, indent=1, sort_keys=True):
+        if persist.atomic_write_json(self.path, self._snapshot(), indent=1, sort_keys=True):
             self._dirty = False
             return True
         self.fail_count += 1
@@ -225,7 +343,8 @@ def flush_checked(wm: "Watermark", log=None, why: str = "", warn_gap: float = 60
                     log.warning("%s", _msg)
                 else: # process_batch 那种 (level, fmt, *args) 回调
                     log("warn", "%s", _msg)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return False
 
@@ -239,7 +358,8 @@ def dead_letter(path: str, record: dict) -> bool:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -252,6 +372,15 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
     handler(item) 返回真值＝这条已被下游接受（例如 append_incoming 返回了 entry）；
     抛异常或返回假值＝失败 ⇒ 重试至多 max_retry 次（线性退避）⇒ 仍失败写 dead-letter，
     水位**越过该条**（否则毒消息会让队列永远卡住），日志里明确写"已越过、不再重试"。
+
+    ★ **B7 根治**：判"处理过没有"从**纯位置比较**改为「**mid 命中已见环** 或 位置已越过」：
+      · **只看位置**的老实现在"同一 `sort_seq` 有多条"时会**一次性跳过其余条**（永久漏读，
+        现场见 `wechat.py:2415` 那段"机器人每两分钟自己念一句"的注释）——因为一个整数
+        表达不了"这一批处理过哪些"；
+      · 现在若 `mid` 命中 `wm.seen_has()` ⇒ 跳过（**精确**，不误跳同 seq 的其他条）；
+        否则按位置比较（老行为，作为 `mid` 缺失时的兜底）；
+      · 处理完（无论成功/失败/无关）都 `remember_seen(mid)` ⇒ 下次不重。
+      · ⛔ 无 `mid` 的行用**合成 id**（`"seq:%d" % seq`）参与判重，避免同 seq 的多条无 id 行互相顶掉。
 
     返回 {"processed": n, "retried": r, "failed": f, "skipped": s, "advanced_to": seq}
     """
@@ -271,11 +400,51 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
         except Exception:
             return None
 
+    def _has_seen_api():
+        return hasattr(wm, "seen_has") and hasattr(wm, "remember_seen")
+
+    def _seen_key(mid, seq, dup_i=0):
+        """判重与记账**共用**的键：有 mid 用 mid；无 mid 用**合成 id**。
+
+        ⛔ 两处必须用**同一个函数** —— 否则"记账用合成 id、判重用位置"，无 id 的行照样互相顶掉。
+        ⛔ 合成 id 必须把**同 seq 的第几条**（`dup_i`）算进去 —— 只用 `seq` 的话，
+           同 seq 下的多条无 id 行会得到**同一个键** ⇒ 第二条被当成"见过"跳过（＝漏读）。
+        """
+        if mid is not None:
+            return mid
+        try:
+            return int(hash("seq:%d#%d" % (int(seq or 0), int(dup_i))) & 0x7FFFFFFF)
+        except Exception:
+            return None
+
+    #: 批内"同一 seq 已出现几条无 id 行"的计数器（合成 id 的区分位）
+    _dup_no: dict = {}
+
     with chat_lock(chat_key): # 同一会话串行：并发调用者在这里排队
         for it in list(items or []):
             seq = _seq(it)
-            if seq and seq <= wm.get(chat_key):
-                stats["skipped"] += 1 # 已在处理过的范围内（重放保护）
+            mid = _mid(it)
+            if mid is None:
+                _dup_no[seq] = int(_dup_no.get(seq, 0)) + 1
+                skey = _seen_key(mid, seq, _dup_no[seq])
+            else:
+                skey = _seen_key(mid, seq)
+            # ── B7：先看这条有没有见过（精确账）──
+            if _has_seen_api() and skey is not None and wm.seen_has(chat_key, skey):
+                stats["skipped"] += 1 # 这条**确实处理过**（同 seq 的其他条不受影响）
+                continue
+            # ── 位置账（两条规则，合起来既防重放又不漏同 seq）──
+            #   · `seq < 水位` ⇒ **一定处理过**（水位是"已处理的最大 seq"）⇒ 跳过。
+            #   · `seq == 水位` ⇒ **交界格**，两种可能都真实存在：
+            #       - 它是"已处理过的那条"（mid 已在 seen）⇒ 上面那一关已经跳过它了；
+            #       - 它是"同 seq 但没处理过的条"（mid 不在 seen）⇒ **必须放行**（这就是 B7 的漏读修复）。
+            #   · `seq > 水位` ⇒ 新条，正常放行。
+            #   ⇒ 所以这里**只看 `<`**（不看 `==`）。老实现在这里是 `<=`，
+            #     正是"同 seq 的其余条被永久跳过"的元凶。
+            _waterline = wm.get(chat_key)
+            if seq and seq < _waterline:
+                stats["skipped"] += 1 # 明确在水位之前的重放 ⇒ 跳过（不重放）
+                continue
                 continue
             ok, last_err = False, ""
             for attempt in range(1, max(1, int(max_retry)) + 1):
@@ -289,7 +458,7 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
                 if attempt < max_retry:
                     stats["retried"] += 1
                     log("warn", "chat=%s mid=%s 第 %d/%d 次处理失败（%s），%.2fs 后重试",
-                        chat_key, _mid(it), attempt, max_retry, last_err, retry_sleep * attempt)
+                        chat_key, mid, attempt, max_retry, last_err, retry_sleep * attempt)
                     try:
                         sleep(retry_sleep * attempt)
                     except Exception:
@@ -297,24 +466,44 @@ def process_batch(chat_key: str, items, handler, wm: "Watermark", log=None,
             if ok:
                 stats["processed"] += 1
                 wm.set(chat_key, seq)
+                _mark_seen(wm, chat_key, skey, log)
                 flush_checked(wm, log=log, why="批内成功推进（chat=%s）" % chat_key)
             else:
                 stats["failed"] += 1
-                rec = {"ts": int(time.time() * 1000), "chat": chat_key, "mid": _mid(it),
+                rec = {"ts": int(time.time() * 1000), "chat": chat_key, "mid": mid,
                        "seq": seq, "attempts": max_retry, "error": last_err,
                        "note": "重试 %d 次仍失败，已越过；原始报文见本文件同名字段" % max_retry}
                 try:
                     rec["item"] = json.loads(json.dumps(it, ensure_ascii=False, default=str))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     rec["item"] = None
                 if deadletter_path:
                     dead_letter(deadletter_path, rec)
                 log("error", "chat=%s mid=%s seq=%s 重试 %d 次仍失败（%s）⇒ 已记入 %s 并**越过**该条",
-                    chat_key, _mid(it), seq, max_retry, last_err, deadletter_path or "(未配置 dead-letter)")
+                    chat_key, mid, seq, max_retry, last_err, deadletter_path or "(未配置 dead-letter)")
                 wm.set(chat_key, seq)
+                _mark_seen(wm, chat_key, skey, log)
                 flush_checked(wm, log=log, why="越过毒消息推进（chat=%s）" % chat_key)
         stats["advanced_to"] = wm.get(chat_key)
     return stats
+
+
+def _mark_seen(wm, chat_key: str, skey, log) -> None:
+    """把这条记进已见环（`skey` 已由 `_seen_key()` 算好，判重与记账共用同一个键）。
+
+    ⛔ 无 `mid` 的行也要记：同一 seq 下若有多条"归一化阶段被丢弃"的行（自己发的/系统/空内容），
+    不记就会**互相顶掉**（只有第一条被处理，其余被位置比较跳过）。
+    """
+    if skey is None or not hasattr(wm, "remember_seen"):
+        return
+    try:
+        wm.remember_seen(chat_key, [skey])
+    except Exception as e:
+        try:
+            log("warn", "记已见 mid 失败（不影响本条处理，重启后可能重读）：%s", e)
+        except Exception:
+            pass
 
 
 def make_log(logger):

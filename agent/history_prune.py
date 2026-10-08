@@ -52,7 +52,17 @@ def iso_to_ms(ts) -> int:
 
 def run_history_windows(all_entries, deleted, lookback_ms: int = _DEFAULT_LOOKBACK_MS,
                         slack_ms: int = _SLACK_MS) -> dict:
-    """算出"被删的那几轮"各自该覆盖的会话消息时间窗。**纯函数，可单测**。
+    """算"被删的那几轮"各自该覆盖的**会话消息时间窗**（上一条存活轮次之后 → 被删轮次时间）。
+
+    ⚠️ **【已证伪 / 仅作反向对照】** —— 这个方法**不要再拿去删数据**。
+      证伪理由：它按"**时间窗**"圈消息，而一轮对话的**回复往往落在下一个时间窗里**
+      （微信里"我删的那几轮"和"它那几轮回复"时间上互相交错）⇒ 照它删会把**存活轮次的回复**
+      一起删掉（实测：本应保留的那轮回复落在被删轮的 slack 窗口内 ⇒ 整条对话被清空）。
+      ⇒ 正确的路径是 `run_timeline` 的**轮次**粒度（按"轮"而不是"时间窗"判定），见那边。
+    ⚠️ 本函数**保留**是因为：
+      · `scripts/history_prune_selftest.py` 的「⓪ 反例存档」用它当**反向对照**
+        （断言"老方法确实会产生那个会误删的窗口"）—— 删了它，那条反向锚就没了对象；
+      · 它是**纯函数、可单测**，留着零风险（不在任何生产路径上被调用）。
 
     返回 `{chat_key: [(lo_ms, hi_ms), …]}`。
     """
@@ -244,9 +254,11 @@ def restore_history(trash_root: str, stamp: str) -> int:
                     f2.write(f1.read())
                 os.remove(src)
                 n += 1
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return n
 
@@ -256,5 +268,6 @@ def load_recent_entries(sessions_dir: str, limit: int = 100) -> list:
     try:
         from .session_log import SessionLog
         return SessionLog(os.path.dirname(sessions_dir)).recent(limit) or []
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []

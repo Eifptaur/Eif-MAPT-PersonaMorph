@@ -5,7 +5,7 @@
 跑法： runtime\\python\\python.exe scripts\\e5_replay_selftest.py   退出码 0=全过 / 1=有失败
 
 为什么（缺陷回顾）：
-  身份类拒发（"当前开着的很可能不是目标会话"）在发送层是**整批抛异常**——
+  身份类拒发在发送层是**整批抛异常**——
   `sender.Sender.send_text_batch`：`if failed and not sent: raise RuntimeError(...)`。
   调用方 `tools._exec_send_message` 因此**走 `except` 分支**，而"进重试队列
   （`send_retry.enqueue`）"原先只写在"部分失败"分支里 ⇒ 这类拒发**从不入队**

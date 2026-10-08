@@ -62,7 +62,8 @@ def out_dir() -> str:
     d = os.path.join(ROOT, "data", "gen_videos")
     try:
         os.makedirs(d, exist_ok=True)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return d
 
@@ -117,7 +118,8 @@ def online_allowed() -> bool:
 def _is_local(url: str) -> bool:
     try:
         h = urllib.parse.urlparse(url).hostname or ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     return h in ("127.0.0.1", "localhost", "::1") or h.startswith("192.168.") or h.startswith("10.")
 
@@ -188,7 +190,8 @@ def _get(url: str, timeout: int, allow_private: bool = None) -> bytes:
         try:
             if os.path.exists(_tmp):
                 os.remove(_tmp)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
 
@@ -206,7 +209,8 @@ def _is_local_url(url: str) -> bool:
     """本机后端（ComfyUI / a1111 那类）的地址 ⇒ 才允许连私网（与 `image_gen` 同一口径）。"""
     try:
         h = urllib.parse.urlsplit(str(url or "")).hostname or ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     return h in ("127.0.0.1", "localhost", "::1")
 
@@ -220,7 +224,8 @@ def _same_origin(a: str, b: str) -> bool:
     try:
         _a = urllib.parse.urlsplit(str(a or ""))
         _b = urllib.parse.urlsplit(str(b or ""))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     if not _a.hostname or not _b.hostname:
         return False
@@ -293,7 +298,7 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
       ① 直接回视频字节（Content-Type: video/*）——最省事；
       ② 回 JSON，里面有 `url`/`video_url`/`output` ⇒ 再 GET 下载；
       ③ 回 JSON，里面有 `files`/`path` ⇒ 当成**本地路径**收下（先检查存在）。
-    其它一律如实报错（"回的不是视频"），不落空文件。
+    其它一律如实报错，不落空文件。
     """
     if backend.get("proto") == "comfyui":
         return _comfy_generate(backend, prompt, seconds)
@@ -313,7 +318,8 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
     else:
         try:
             j = json.loads(raw.decode("utf-8", "replace") or "{}")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             j = {}
         u = ""
         for k in ("url", "video_url", "output", "video"):
@@ -355,7 +361,8 @@ def call_backend(backend: dict, prompt: str, seconds: int = 5):
 def _f_size(path: str, meta: dict):
     try:
         mb = os.path.getsize(path) / 1048576.0
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False, "文件读不到"
     if mb <= 0:
         return False, "空文件"
@@ -393,7 +400,8 @@ def _f_dup(path: str, meta: dict):
     try:
         with open(path, "rb") as f:
             md5 = hashlib.md5(f.read()).hexdigest()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False, "算不出指纹"
     meta["md5"] = md5
     seen = _load_seen()
@@ -412,7 +420,8 @@ def _load_seen() -> dict:
     try:
         with open(_seen_path(), encoding="utf-8") as f:
             return dict(json.load(f) or {})
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -421,7 +430,8 @@ def _save_seen(d: dict) -> None:
         items = sorted(d.items(), key=lambda kv: kv[1], reverse=True)[:500]
         with open(_seen_path(), "w", encoding="utf-8") as f:
             json.dump(dict(items), f, ensure_ascii=False)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -542,7 +552,8 @@ def generate(request_text: str, prompt: str = None):
         else:
             try:
                 os.remove(f) # 不过就删掉，绝不留在盘上
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass  # 清理型：静默合法
     if not kept:
         return {"ok": False, "files": [], "why": "生成的东西没过过滤链（原因见 notes）", "notes": notes}

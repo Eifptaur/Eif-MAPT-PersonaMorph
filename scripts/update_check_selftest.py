@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 
+import logging
+log = logging.getLogger("persona-morph")
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
@@ -63,7 +65,8 @@ try:
                 if isinstance(_d, dict) and "maxSeenVersion" in _d:
                     _d.pop("maxSeenVersion", None)
                     json.dump(_d, open(_p, "w", encoding="utf-8"), ensure_ascii=False)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return _orig_state(cfg, **kw)
 
@@ -288,7 +291,8 @@ UC._state_path = lambda: _nowp
 try:
     if os.path.exists(_nowp):
         os.remove(_nowp)
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     pass
 try:
     UC.fetch = _fake_first_dead
@@ -321,7 +325,8 @@ ok("def candidate_urls" in _UC_SRC and "candidate_urls" in _UA,
 _nowp2 = os.path.join(tmp, "u12state.json")
 try:
     os.remove(_nowp2)
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     pass  # 清理型：静默合法
 _real_state_path = UC._state_path
 UC._state_path = lambda: _nowp2
@@ -508,6 +513,8 @@ ok('out["stateSaved"]' in _ucsrc3 and "stateSaveError" in _ucsrc3,
 
 print("\n[U10] TUF 廉价两面：清单 `expires`（freeze）+ 单调版本（rollback）——")
 import json as _j27 # noqa: E402
+import logging
+
 _exp_man = mk_manifest(os.path.join(tmp, "expired.json"), "2026.10.1.1", ["要点"])
 _jd = _j27.load(open(_exp_man, encoding="utf-8"))
 _jd.setdefault("base", {})["expires"] = "2000-01-01T00:00:00Z"

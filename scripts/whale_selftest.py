@@ -56,6 +56,10 @@ def clean(s):
 
 
 H = CH.HTML
+# ⛔ 先剥掉 `<script>` 块再抽文案：**JS 里的字符串拼接不是"可见文案"**——
+#   实测它会把 `' + o.label + '' + det + '` 这种拼接片段当成一条待覆盖文案 ⇒ **假红**，
+#   而且会掩盖"真正没覆盖的那几条"。判据只该管**用户看得见的静态文本**。
+H = re.sub(r"<script\b.*?</script>", "", H, flags=re.S)
 print("── A. 覆盖：可见短文案必须都在字典里 ──")
 groups = {
     "h2": re.findall(r"<h2[^>]*>(.*?)</h2>", H, re.S),
@@ -63,6 +67,9 @@ groups = {
     "button": re.findall(r"<button[^>]*>(.*?)</button>", H, re.S),
     "th": re.findall(r"<th[^>]*>(.*?)</th>", H, re.S),
     "nav": re.findall(r'<span class="lb">(.*?)</span>', H, re.S),
+    # 功能项内部的**组标题**。原先不在覆盖里 ⇒ 这一层长期是"可见但没人管"的盲区，
+    # 切鲸语时组标题还是普通话（第三层索引越想用得多，越会露出来）。
+    "sub": re.findall(r'<div class="sub">(.*?)</div>', H, re.S),
 }
 total = 0
 gaps = []
@@ -70,7 +77,7 @@ for g, raw in groups.items():
     uniq = []
     for it in raw:
         t = clean(it)
-        # 纯 JS 拼接占位（'+x+'）、纯符号、以及带引号/花括号的动态文本不算文案
+        # 纯 JS 拼接占位、纯符号、以及带引号/花括号的动态文本不算文案
         if not t or len(t) > 30 or t in uniq:
             continue
         if t in SKIP or t.startswith("'+") or any(c in t for c in "{}"):

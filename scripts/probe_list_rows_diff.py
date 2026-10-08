@@ -18,7 +18,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples'
 BASE_JSON = os.path.join(os.path.dirname(__file__), 'list_rows_baseline.json')
 
 from agent import chat_ocr as co  # noqa: E402

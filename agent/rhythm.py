@@ -3,7 +3,7 @@
 
 为什么需要（来历）
 ------------------
-外部项目 `wechatauto-replica` 的 `rhythm.py`。它的作者 **2026-09-21 账号触发微信风控、
+外部项目 `wechatauto-replica` 的 `rhythm.py`。它的作者 **账号触发微信风控、
 被强制重新登录**，之后写了那一层。它的核心洞察（原文）：
 
     微信风控看到的**不是「点了哪里」，而是「动作的时间分布」**：每次都相同的间隔、
@@ -16,8 +16,8 @@
     `rhythm`        —— **判"多慢发"**：只 `sleep` ⇒ 消息**照发，只是晚一点**
 
 ⇒ 因此**两者默认值是相反的、而且都正确**：
-    · `risk.*` 节奏阈值**默认 0＝不限** —— 口径来自用户原话：
-      「全局节奏、会话节奏**应该可以交给用户自定义**，让他们自己把控账号的风险」
+    · `risk.*` 节奏阈值**默认 0＝不限** —— 频率/节奏类阈值默认全不限，
+      交给用户自己按需收紧（全局节奏、会话节奏都是可配旋钮）。
     · `rhythm` **默认开一个极温和档** —— 因为它**不改变"消息最终会发出"这个事实**，
       只改时间分布。用户把控的是"**发不发**"，不是"**以什么节奏发**" ⇒ **不越权**。
 
@@ -50,10 +50,13 @@ import os
 import random
 import threading
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 from .config import DATA_DIR
 from . import persist
+import logging
+
+log = logging.getLogger("persona-morph")
 
 #: 节流状态文件（跨进程）。放在 data/ 下，与其它运行态一致。
 STATE_PATH = os.path.join(DATA_DIR, "rhythm.json")
@@ -198,7 +201,7 @@ def nap(base: float) -> float:
 
     ★ 倍率**下限钉死 1.0**：本层只让等待更**长**。
     各处已有的 `time.sleep(x)` 都是在等微信把画面渲染完，
-    **缩短就是拿稳定性换抖动，不划算**（外部项目原话，照抄）。
+    **缩短就是拿稳定性换抖动，不划算**。
     """
     lo, hi = profile().nap
     k = _rng.uniform(max(1.0, lo), max(1.0, hi))
@@ -230,7 +233,8 @@ def _load_locked() -> None:
         win = max(profile().window, 60.0)
         _stamps = [float(s) for s in (data.get("stamps") or [])
                    if isinstance(s, (int, float)) and 0 <= now - float(s) <= win]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _last_write, _stamps = 0.0, []
 
 
@@ -248,7 +252,8 @@ def _save_locked() -> None:
                    "stamps": _stamps[-_MAX_STAMPS:], "profile": profile().name}
         # 热路径：换档预算压短，失败返回 False（原档一字不动），下一条再试
         persist.atomic_write_json(STATE_PATH, payload, replace_budget_s=0.6)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass   # 落盘失败不影响本次动作（下次仍会尝试）
 
 
@@ -310,7 +315,8 @@ def reset() -> None:
         try:
             if os.path.isfile(STATE_PATH):
                 os.remove(STATE_PATH)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
 

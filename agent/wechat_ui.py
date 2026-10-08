@@ -73,7 +73,8 @@ def _load_layout() -> dict:
             d = json.load(f)
         if isinstance(d, dict):
             return d
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {}
 
@@ -100,14 +101,15 @@ def _layout_stale(gui) -> bool:
         if ref_w <= 0:
             return False
         return abs(sw - ref_w) / max(1, ref_w) > 0.15
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
 def calibrate_ui(gui) -> dict:
     """在真实微信窗口上自动标定 UI 布局（像素聚类检测侧栏图标序列 + 搜索框）。
 
-    自动预检：窗口不可见/移位时自动恢复并置前台（无需用户手动操作）。
+    自动预检：窗口不可见/移位时自动恢复并置前台（无需操作）。
     结果写 data/ui_layout.json 并返回。流程：
       · 截图渲染区 → 侧栏列亮度聚类 → 图标 y 序列（头像/消息/联系人/收藏/相机/…）
       · 搜索框：顶部左区域白色高光行
@@ -160,7 +162,8 @@ def calibrate_ui(gui) -> dict:
             layout["sidebar_step_ratio"] = step / sh
         _save_layout(layout)
         return layout
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -196,7 +199,8 @@ def icon_pos(name: str, gui) -> tuple | None:
         top = layout.get("sidebar_top_ratio", _SIDEBAR["top_ratio"]) * sh
         step = layout.get("sidebar_step_ratio", _SIDEBAR["step_ratio"]) * sh
         return sx + int(50 * (sw / 1278)), sy + int(top + order * step)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
@@ -353,8 +357,9 @@ def _wechat_subwindows(main_hwnd) -> list:
 def close_subwindow(gui, hwnd, retries: int = 3) -> bool:
     """关闭一个微信子窗口：**只走投递，绝不真鼠标真键盘**。
 
-    ⛔ **用户实测报障的红线修复**（
-    而且是微信的那个截屏」）。录屏机械取证：每轮干完活那一刻**整屏被压暗 6.3 秒**
+    ⛔ **红线修复**（真因：本函数原来的两条兜底路径会**真发 Alt 键**，
+    而微信截屏是 Alt 系全局热键 ⇒ 当场弹出截图选区）。
+    录屏机械取证：每轮干完活那一刻**整屏被压暗 6.3 秒**
     （亮度中位数 172.9 → 123.8），正是微信截图选区界面。真因就是本函数原来的两条兜底路径：
 
       ① 第 319 行 `real_guard` 会把**真光标挪到子窗右上角**再 `mouse_event(LEFTDOWN/UP)` 真点一下 ——
@@ -413,6 +418,7 @@ def close_leftover_windows(gui) -> list:
             if close_subwindow(gui, hwnd):
                 closed.append(title[:30] or hex(hwnd & 0xFFFFFFFF))
             time.sleep(0.4)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return closed

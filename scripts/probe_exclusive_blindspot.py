@@ -31,7 +31,7 @@ if _ROOT not in sys.path:
 
 import agent.wechat as W  # noqa: E402
 
-A_ID = "49615732107@chatroom"   # 目标（在白名单）
+A_ID = "10000000001@chatroom"   # 目标（在白名单）
 C_ID = "66000000111@chatroom"   # ★ 名单外的野群（B2 的关键角色）
 _SAME = "这条消息两个会话一模一样逐字雷同"      # 与目标**逐字雷同**
 _OTHER = "野群说的完全是另外一句不相干的话"      # 与目标不同

@@ -15,6 +15,9 @@ import io
 import json
 import os
 import sys
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -46,7 +49,8 @@ def main():
                 continue
             try:
                 im = Image.open(p)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
             w, h = im.size
             if w < 900:                                    # 太窄的不好标

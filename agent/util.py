@@ -8,8 +8,54 @@ import random
 import re
 import time
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+class BoundedDict(dict):
+    """**有上限**的 dict（长期缓存专用）：超过 `maxsize` 就丢**最久未用**的那批。
+
+    ⛔ 为什么必须有它（PLAN 第 161 项）：长期驻留的缓存若用裸 `{}`，**键空间一旦随用户数据增长**
+    （字号 / 文件名 / 群名 / 会话 id…），内存就**无界地涨**，而且**不报错** ——
+    这类问题要跑几小时才现形，是最难查的一类。
+    口径：
+      · `get` / `__getitem__` 视为"用过"（LRU：把该键提到最新）；
+      · 超限时**批量**丢最老的 `maxsize // 4`（与 `meme_search` 既有的淘汰策略一致，避免每写一次就 evict）。
+    ⚠️ **不内置锁**：调用方按自己的并发口径加锁（本项目多数调用点本来就有 `threading.RLock`）。
+    ⚠️ 它**只保证"不会无界"**，不保证"一定命中" —— 所以只用在"丢了也能重算"的缓存上。
+    """
+    __slots__ = ("maxsize",)
+
+    def __init__(self, maxsize: int = 64, *a, **kw):
+        super().__init__(*a, **kw)
+        self.maxsize = max(1, int(maxsize or 1))
+
+    def _touch(self, k) -> None:
+        if k in self:
+            _v = super().pop(k)
+            super().__setitem__(k, _v)          # dict 保序：删了再塞 = 移到末尾（最新）
+
+    def _trim(self) -> None:
+        if len(self) > self.maxsize:
+            for k in list(self.keys())[:max(1, self.maxsize // 4)]:
+                super().pop(k, None)
+
+    def get(self, k, default=None):
+        if k in self:
+            self._touch(k)
+            return super().get(k, default)
+        return default
+
+    def __getitem__(self, k):
+        self._touch(k)
+        return super().__getitem__(k)
+
+    def __setitem__(self, k, v):
+        super().__setitem__(k, v)
+        self._trim()
 
 
 def sleep(ms: float) -> None:
@@ -102,13 +148,14 @@ def write_console_url(url: str, root: str = "") -> bool:
     try:
         p = console_url_path(root)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
+        tmp = persist.tmp_for(p)
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(url or ""))
         persist.replace_into(tmp, p)
         _tighten_console_url_acl(p) # 口令文件只许本人读
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -117,7 +164,8 @@ def read_console_url(root: str = "") -> str:
     try:
         with open(console_url_path(root), encoding="utf-8") as f:
             return (f.read() or "").strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -153,7 +201,8 @@ def _pid_alive(pid: int) -> bool:
             return code.value == 259 # STILL_ACTIVE
         finally:
             k.CloseHandle(h)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return True
 
 
@@ -165,7 +214,8 @@ def _read_lock(root: str = ""):
         t = float(parts[0]) if parts else 0.0
         pid = int(parts[1]) if len(parts) > 1 else 0
         return t, pid
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0.0, 0
 
 
@@ -175,7 +225,7 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
     这是"双窗口"那个 bug 的收口点——所有开窗入口都必须先拿这把锁。
 
     ⛔ "第一次有窗口，我关掉之后第二次点连窗口都不弹了"）：
-    锁原来只记时间、新鲜期 90 秒 ⇒ **写锁的那个机器人早已退出**（用户手动关窗 + 关进程）之后，
+    锁原来只记时间、新鲜期 90 秒 ⇒ **写锁的那个机器人早已退出**（关窗 + 关进程）之后，
     启动器仍判"机器人会开窗"（`console_lock_fresh` 为真），而新拉起的机器人
     `take_console_lock()` 又拿不到这把锁 ⇒ **两边都不开窗**，用户永远看不到窗口。
     ⇒ 锁文件改成"时间戳 + pid"，**写锁的进程已死就视为过期**（它不可能再开窗了）。
@@ -188,7 +238,8 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
                 return False # 别人刚开过，且那一方还活着
             try:
                 os.remove(mk) # 过期锁：清掉再抢
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass  # 清理型：静默合法
         fd = os.open(mk, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, ("%r %d" % (time.time(), os.getpid())).encode("ascii", "replace"))
@@ -196,7 +247,8 @@ def take_console_lock(seconds: float = CONSOLE_LOCK_SECONDS, root: str = "") -> 
         return True
     except FileExistsError:
         return False
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return True # 极端情况放开，避免"谁都不开"
 
 
@@ -246,7 +298,7 @@ def mask_url_token(url: str) -> str:
 
 
 def mask_secret(secret) -> str:
-    """sk-xxxx…后4位 的展示形式；非 sk 前缀也按首尾截断。"""
+    """sk-xxxx…后4位展示形式；非 sk 前缀也按首尾截断。"""
     s = str(secret or "")
     if not s:
         return ""
@@ -316,7 +368,8 @@ def unquote_json_string(value):
             parsed = json.loads(t)
             if isinstance(parsed, str):
                 return parsed
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     return value
 
@@ -331,7 +384,8 @@ def normalize_message_list(value):
                 parsed = json.loads(t)
                 if isinstance(parsed, list):
                     v = parsed
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         elif t.startswith('"'):
             uq = unquote_json_string(t)

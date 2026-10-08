@@ -2,7 +2,7 @@
 """微信窗口「借用 → 归还」。
 
 **要解决的矛盾**：`wechat._limit_wechat_window()` 为了不让驱动库的布局校准失效（窗口尺寸与校准
-差 >15% 时库会忽略校准、坐标漂移），每次取 GUI 都把主窗钉到 1160×900 —— 于是用户手动拉过的尺寸
+差 >15% 时库会忽略校准、坐标漂移），每次取 GUI 都把主窗钉到 1160×900 —— 于是拉过的尺寸
 会被我们改掉。他问。方案 A＝**借来用、用完还**。
 
 三条硬规矩（与最高目标「不打扰」一致）：
@@ -28,6 +28,7 @@ import threading
 import time
 
 from . import persist
+from . import task_owner as _owner
 
 log = logging.getLogger("persona-morph")
 
@@ -73,7 +74,8 @@ def _persist_path() -> str:
         d = os.path.join(ROOT, "data")
         os.makedirs(d, exist_ok=True)
         return os.path.join(d, "window_borrow.json")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -118,10 +120,12 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
     try:
         with open(p, encoding="utf-8") as f:
             d = json.load(f)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         try:
             os.remove(p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
         return False
     hwnd = int(d.get("hwnd") or 0)
@@ -130,7 +134,8 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
     if not hwnd or len(rect) != 4:
         try:
             os.remove(p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
         return False
     # ⛔ 用户第二次投诉「**启动的时候就调，这么大**」⇒ 陈旧记录不许再往用户窗口上套。
@@ -150,7 +155,8 @@ def recover(reason: str = "上次进程留下的借用") -> bool:
     if _stale:
         try:
             os.remove(p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
         log.info("窗口借用记录已陈旧，不套回用户窗口：%s", _stale)
         return False
@@ -170,7 +176,8 @@ def rect_of(hwnd: int):
         if not _api().GetWindowRect(ctypes.c_void_p(int(hwnd)), ctypes.byref(r)):
             return None
         return (int(r.left), int(r.top), int(r.right), int(r.bottom))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
@@ -236,7 +243,8 @@ def restore(reason: str = "idle") -> bool:
             u = _api()
             try:
                 alive = bool(u.IsWindow(ctypes.c_void_p(hwnd)))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 alive = True
             cur = rect_of(hwnd)
             if not alive:
@@ -266,11 +274,20 @@ def restore(reason: str = "idle") -> bool:
 
 
 def _start_watcher() -> None:
+    """起（或复用）空闲看门线程。
+
+    ★ P1-4：看门线程占一个**所有权槽位**。旧线程还活着时（极少数情形：`is_alive()` 判断
+      与线程真正退出之间有窗口）若又起了一个新的，两个看门线程会同时活着 ——
+      旧的那个到点也会 `restore()`，于是"刚借来又被旧线程还回去"。
+      拿令牌后：只有**当前主人**才会执行还原动作（旧线程下一轮醒来发现自己不是主人就退出）。
+    """
     global _watcher
     with _lock:
         if _watcher is not None and _watcher.is_alive():
             return
-        _watcher = threading.Thread(target=_watch, name="pm-window-borrow", daemon=True)
+        _tok = _owner.claim("window_borrow.watch")
+        _watcher = threading.Thread(target=_watch, args=(_tok,),
+                                    name="pm-window-borrow", daemon=True)
         _watcher.start()
     try:
         atexit.register(lambda: restore("exit"))
@@ -278,9 +295,16 @@ def _start_watcher() -> None:
         pass
 
 
-def _watch() -> None:
+def _watch(token=None) -> None:
+    """空闲看门循环。
+
+    `token` 是启动时认领的槽位令牌：**每轮先核对**自己还是不是主人 ——
+    换了主人（或有更新的一代看门线程）⇒ 本线程直接退出，不再动手（防两个看门线程互相抢还原）。
+    """
     while True:
         time.sleep(_POLL_S)
+        if token is not None and not _owner.is_owner("window_borrow.watch", token):
+            return
         with _lock:
             borrowed = bool(_state["borrowed"])
             idle = time.time() - float(_state["last_touch"] or 0)

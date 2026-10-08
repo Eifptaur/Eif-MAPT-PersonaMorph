@@ -188,7 +188,8 @@ def backends() -> list:
             b.setdefault("kind", "local")
             out.append(b)
             seen.add(str(b["id"]))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     try:
         for b in detect_local():
@@ -196,7 +197,8 @@ def backends() -> list:
                 continue
             out.append(b)
             seen.add(str(b["id"]))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if cfg().get("online_allowed") and ONLINE_FREE["id"] not in seen:
         out.append(dict(ONLINE_FREE)) # 免密钥在线（仍受"允许出网"这一档管）
@@ -389,14 +391,62 @@ def detect_local(timeout: float = 1.2, probes=None, ttl: float = 120.0) -> list:
     return out
 
 
+#: 新图落盘用的 **JPEG 画质**（PLAN 第 171 项 / 调研建议 R2）。
+#:
+#: 决策依据：用户看过 **q85 的「放大 300% 宫格对照」**后判定"人眼几乎看不出区别"⇒ **取最省那一档**。
+#: 实测口径（3 张不同内容的样本；`subsampling=0` ⇒ **不抽色度**，颜色不会偏）：
+#:   原 PNG 中位 **1.97 MB** ⇒ q85 中位 **364 KB（省 81%）**，PSNR 37.5~40.4 dB。
+#: ⛔ 只影响**新生成**的图；`data/gen_images/` 里既有的 PNG **一张不动**（那是历史数据，
+#:   要回收走"保留策略"，不靠重压一遍 —— 重压不可逆）。
+#: ⛔ **不要再往下压**（q<85）：用户**只**看过 85 这一档的对照，更低档没人看过 ⇒ 不擅自走。
+IMAGE_JPEG_QUALITY = 85
+
+
+def _to_jpeg_bytes(data: bytes, quality: int = None) -> tuple:
+    """把生图结果转成 JPEG 字节 ⇒ `(字节, 扩展名)`；**转不了就原样返回**（`(data, "png")`）。
+
+    ⛔ 为什么失败要"原样落盘"而不是抛：**宁可多占空间，也不能丢图** ——
+    生图是花钱的、且不可重放（种子/提示词不一定留）。
+    ⛔ 带透明通道的图**先合成到白底**再转：JPEG 没有 alpha，直接 `convert("RGB")` 会把
+    透明区**变成黑色**（那才是真的把图画坏了）。
+    """
+    try:
+        import io as _io
+
+        from PIL import Image as _Image
+        _im = _Image.open(_io.BytesIO(data))
+        if _im.mode in ("RGBA", "LA", "P"):
+            _rgba = _im.convert("RGBA")
+            _bg = _Image.new("RGB", _rgba.size, (255, 255, 255))
+            _bg.paste(_rgba, mask=_rgba.split()[-1])
+            _im = _bg
+        elif _im.mode not in ("RGB", "L"):
+            _im = _im.convert("RGB")
+        _buf = _io.BytesIO()
+        _im.save(_buf, "JPEG", quality=int(quality or IMAGE_JPEG_QUALITY),
+                 subsampling=0, optimize=True)
+        _out = _buf.getvalue()
+        # 兜底：万一"转完反而更大"（极小图/纯色图会这样）⇒ 留原图
+        if len(_out) >= len(data):
+            return data, "png"
+        return _out, "jpg"
+    except Exception as _e: # noqa: BLE001
+        log.warning("新图转 JPEG 失败，按原格式落盘（不影响出图）：%s", str(_e)[:80])
+        return data, "png"
+
+
 def _save_image_bytes(data: bytes, backend_id: str = "gen") -> str:
-    """把生图结果落盘到 `data/gen_images/<日期>/`（**只落盘，不写台账**——台账要在过滤通过之后写）。"""
+    """把生图结果落盘到 `data/gen_images/<日期>/`（**只落盘，不写台账**——台账要在过滤通过之后写）。
+
+    ⭐ 落盘格式见 `IMAGE_JPEG_QUALITY`：新图存 **JPEG**（省 ~81%），转不了则回退 PNG。
+    """
     day = time.strftime("%Y%m%d")
     d = os.path.join("data", "gen_images", day)
     os.makedirs(d, exist_ok=True)
-    p = os.path.join(d, "%s_%s.png" % (backend_id, time.strftime("%H%M%S")))
+    _data, _ext = _to_jpeg_bytes(data)
+    p = os.path.join(d, "%s_%s.%s" % (backend_id, time.strftime("%H%M%S"), _ext))
     with open(p, "wb") as f:
-        f.write(data)
+        f.write(_data)
     return p
 
 
@@ -416,7 +466,8 @@ def _note_generated(path: str, backend_id: str = "gen") -> str:
             f.write(json.dumps({"path": path, "sha256": h, "backend": backend_id,
                                 "when": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False) + "\n")
         return h
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -444,7 +495,7 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
     支持四种协议：`a1111`（SD WebUI / Fooocus / InvokeAI 兼容层，POST /sdapi/v1/txt2img）·
     `pollinations`（免密钥在线，GET 一个 URL 就出图）· **`openai_image`**（OpenAI 兼容出图：
     硅基流动 / 智谱 / 火山方舟 / 任何自建服务，POST {url}/images/generations）·
-    `generic`（用户自己填的 HTTP 端点，POST {prompt,n,size}）。
+    `generic`（的 HTTP 端点，POST {prompt,n,size}）。
     `comfyui` 目前只做**探测**：它要一份工作流 JSON，还没内置（探到会在面板里说明）。
 
     ⛔ 审计补的三处：①发请求前装"跨主机剥凭据"处理器
@@ -581,7 +632,8 @@ def call_backend(backend: dict, prompt: str, count: int = 1, size: str = "square
                     try:
                         if os.path.exists(_tmp):
                             os.remove(_tmp)
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass
     else: # generic：用户自填端点，约定返回 {"files":[...]}
         body = json.dumps({"prompt": prompt, "n": n, "size": size}).encode("utf-8")
@@ -618,6 +670,22 @@ def _f_blacklist(path: str, meta: dict):
             return False, "命中风格黑名单 %r" % w
     if al and not any(w in p for w in al):
         return False, "不在风格白名单内（白名单非空时只放行白名单风格）"
+    # ── IP 闸门（第 187 项）：**只看"具体的角色名/作品名"**，画风词一律放行 ──
+    #   判据＝可识别性（广州 (2024)粤0192民初113号），不是"风格接近"。
+    #   ⛔ 这一层与上面的 `style_block` **职责不同**：上面是**用户自填**的风格过滤，
+    #      这里是**内置**的严格维权方名单（只收五家，见 `agent/ip_guard.py`）。
+    try:
+        from . import ip_guard as _ipg
+        _v = _ipg.judge(str(meta.get("prompt") or ""))
+        if _v.get("action") == "block":
+            return False, "IP 闸门：%s（%s）" % (_v.get("hit") or "命中", _v.get("why") or "")
+        if _v.get("action") == "review":
+            meta["_ip_review"] = _v.get("why") or ""   # **留痕但不拦**（政策不明 ≠ 禁止）
+    except Exception as _e:  # noqa: BLE001
+        # 闸门自己出错 ⇒ **不因此把图拦下**（fail-open 在这一层是对的：它只是个"额外提醒"，
+        # 拦错了就是"画风词被误伤"，那正是这一项要治的病）。
+        log.debug("IP 闸门异常（放行并留痕）：%s", str(_e)[:80])
+        meta["_ip_review"] = "ip_guard 异常：%s" % str(_e)[:60]
     return True, "风格词检查通过"
 
 
@@ -632,14 +700,16 @@ def _f_dup(path: str, meta: dict):
     idx = os.path.join("data", "gen_images", "index.jsonl")
     try:
         if os.path.exists(idx):
-            with open(idx, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        if json.loads(line).get("sha256") == h:
-                            return False, "同一个文件之前已经生成过（sha256 相同）"
-                    except Exception:
-                        continue
-    except Exception:
+            # 台账是**只增不改的追加档**：最后一条写一半就会留下残行。
+            # 老写法 `except: continue`（单行跳过）会把"半份台账"当成"没重复"，
+            # 于是重复的图被**再生成一次**（正是这张台账要防的事）。改用核对式读：
+            # 台账不完整 ⇒ 抛错 ⇒ 下面按 fail-closed 处理（宁可拒绝也不猜）。
+            from . import verify_artifact as _va
+            for _row in _va.read_verified_jsonl(idx):
+                if isinstance(_row, dict) and _row.get("sha256") == h:
+                    return False, "同一个文件之前已经生成过（sha256 相同）"
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False, "去重台账读不了（按 fail-closed 处理）"
     meta["_sha256"] = h
     return True, "sha256 未重复"
@@ -696,7 +766,7 @@ CHAIN = (("size", _f_size), ("dup", _f_dup), ("blacklist", _f_blacklist),
 
 
 # 画质后缀：以前我们把**中文请求碎片**原样丢给模型（日志实录：`｜一 在窗台上看雨 猫`），
-# 而多数文生图模型是英文语料训的、且没有风格/构图/光线提示 ⇒ 出来就是"写意抽象图"（用户当场吐槽）。
+# 而多数文生图模型是英文语料训的、且没有风格/构图/光线提示 ⇒ 出来就是"写意抽象图"。
 # 这里只追加**中性**的质量词（不加"照片级"这种会和动漫风打架的定语，风格由用户/模型自己指定）。
 PROMPT_SUFFIX = ", highly detailed, sharp focus, well composed, natural lighting"
 _QUALITY_WORDS = ("detailed", "sharp", "4k", "8k", "photorealistic", "masterpiece", "best quality",

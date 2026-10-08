@@ -9,7 +9,7 @@
   **0/3 在第 1 行**，不能据此断定冒泡行为。
 
   ⇒ 本支要回答的就是这个欠账。语料里恰好有一段**连续操作的现场截图序列**：
-     `ocr-samples/local/local-017..035`（`ScreenShot_2026-09-29_2253xx~2258xx`，19 张，
+     `ocr-samples/local/local-017..035`（`ScreenShot__2253xx~2258xx`，19 张，
       mtime 22:53:28 ~ 22:58:14，来自 `%TEMP%/wx194_stage`，`kind=local-real`）
      —— 间隔几秒~几十秒，是**同一段操作过程**，正合"现场序列"的要求。
 
@@ -32,8 +32,8 @@ if _ROOT not in sys.path:
 from agent import chat_ocr as CO  # noqa: E402
 
 _SAMPLES = [
-    r"C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\local",
-    r"C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\wechat",
+    r"%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\local",
+    r"%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\wechat",
 ]
 
 
@@ -129,7 +129,7 @@ def main():
 
     # ── R3 ★绿底行**名字可读率**（决定 `_converge_by_highlight` 的实际可用率）──
     # 起因（§16.7 更正）：报告 §2.3 原结论是"绿底行名字永远读不出"（基于单张 `7bcf1579`），
-    #   但内容核查时发现 `local-022/023/024` **完整读出** `'aaa偷啃使用者'`、`local-025/026`
+    #   但内容核查时发现 `local-022/023/024` **完整读出** `'某会话'`、`local-025/026`
     #   读出 `'腾讯新闻'` ⇒ 那个结论**不普适**。这里把它量化：**读得出 / 读不出 各占多少**。
     # ⚠️ 只看"非空"是**上界指标**（没有真值，判不了"读错"）—— 但"非空率"直接决定
     #   `_converge_by_highlight`（要求名字非空）**有多少机会真的生效**。

@@ -94,7 +94,7 @@ ok("L8 校正量有上界（观测 99px 也只记到容差内 / 不记）",
 print("\n── L6/L7：安全锚（学习不许放松判定）＋ 只记通过校验的样本 ──")
 _SRC = io.open(os.path.join(ROOT, "agent", "ui_fingerprint.py"), encoding="utf-8").read()
 ok("L7 ★ 源码锚：记录样本的调用在「放行」分支内（对不上的样本不许污染学习）",
-   # 分支条件现在是 `d <= max_dist and not _too_close`（2026-09-29 加了最近邻归属判据）
+   # 分支条件现在是 `d <= max_dist and not _too_close`（加了最近邻归属判据）
    _sm.has(_SRC, "if d <= max_dist and not _too_close:") and _sm.has(_SRC, "learn_offset(rec, off)"))
 
 _real = {k: getattr(F, k) for k in ("key", "load", "save", "_grab")}

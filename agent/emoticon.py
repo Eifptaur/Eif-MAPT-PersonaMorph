@@ -121,7 +121,8 @@ def verify_key(key: bytes, sample_path: str = "") -> bool:
                 c0 = fh.read(16)
             if len(c0) == 16 and sniff(decrypt_bytes(key, c0)):
                 return True
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     return False
 
@@ -198,7 +199,8 @@ def load_cached_key(wxid: str) -> bytes:
         if str(d.get("wxid") or "") != str(wxid or ""):
             return b""
         return bytes.fromhex(str(d.get("key") or ""))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return b""
 
 
@@ -206,7 +208,7 @@ def save_cached_key(wxid: str, seed, key: bytes) -> None:
     try:
         p = _key_file()
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
+        tmp = persist.tmp_for(p)
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({"wxid": str(wxid or ""), "seed": str(seed), "key": key.hex(),
                        "at": int(time.time())}, fh, ensure_ascii=False)
@@ -222,7 +224,8 @@ def _weixin_pids() -> list:
                              capture_output=True, text=True, errors="replace",
                              creationflags=_NO_WINDOW).stdout or ""
         return [int(m) for m in re.findall(r'"[^"]+","(\d+)"', out) if int(m) > 100]
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
 
 
@@ -325,7 +328,8 @@ def to_viewable(plain: bytes, out_dir: str, stem: str) -> str:
                 im.seek(0)
                 im.convert("RGBA").save(png)
                 return png
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return p
     # wxgf：微信自研 HEVC 动图 ⇒ 提 HEVC 裸流取首帧
@@ -341,7 +345,8 @@ def to_viewable(plain: bytes, out_dir: str, stem: str) -> str:
                 with open(p, "wb") as fh:
                     fh.write(b)
                 return p
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
     return ""
 
@@ -393,7 +398,8 @@ def ffmpeg_exe() -> str:
     import shutil
     try:
         got = shutil.which("ffmpeg")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         got = None
     if got:
         return str(got)

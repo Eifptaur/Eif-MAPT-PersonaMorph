@@ -125,8 +125,11 @@ def main():
         ok("A2 源码里不再有固定临时名（`p + \".tmp\"` 那种写法）",
            not _sm.has(_cfg_src, 'tmp = p + ".tmp"'))
         _hits = _count_fixed_tmp()
-        ok("A3 全仓固定临时名实测 %d 处（基线曾 33；config.json 这一处被换掉 ⇒ 应 ≤ 32）" % len(_hits),
-           len(_hits) <= 32, "超基线的：%s" % _hits[32:36])
+        # 沿革：33 → 32（`config.json` 那一处换掉）→ **1**（批量改写：`X + ".tmp"` →
+        # `persist.tmp_for(X)`，共 38 处 / 33 文件；余下这 1 处是 `tree_snapshot.py` 的
+        # **临时文件后缀名单**，不是拼临时名 ⇒ 不算债）。
+        ok("A3 全仓固定临时名实测 %d 处（基线 1：只剩 tree_snapshot 的后缀名单）" % len(_hits),
+           len(_hits) <= 1, "超基线的：%s" % _hits[1:5])
 
         print("== B. 行为·并发：真并发写同一个 config.json，读侧读不到半截档 ==")
         p = os.path.join(tmpdir, "config.json")

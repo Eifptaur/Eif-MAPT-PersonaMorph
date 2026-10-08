@@ -4,8 +4,8 @@
 复现（改前，一行；只打印长度与布尔，不回显 URL 本体）：
     runtime\\python\\python.exe -c "import sys;sys.path.insert(0,'.');from agent import webui as W;
     from agent.config import get_config;c=get_config();m=W.WebUI.__new__(W.WebUI).masked_config();
-    u=str((c.get('feedback') or {}).get('webhook_url') or '');
-    v=str((m.get('feedback') or {}).get('webhook_url') or '');
+    u=str((c.get or {}).get or '');
+    v=str((m.get or {}).get or '');
     print('长度=%d 原样回显=%s'%(len(u),v==u))"
   ⇒ 改前：`长度=89 原样回显=True`（URL 里带 `?key=`，**URL 即凭据**）。
 

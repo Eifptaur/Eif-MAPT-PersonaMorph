@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """控制台「弹窗/关窗」判据
 
-`window.open('', '_self')` → `window.close()` → `location.replace('about:blank')`。
+`window.open('', '_self')` → `window.close()` → `location.replace`。
 在 WebView2 里 `window.open` 会**真的开一个新窗口**再被关掉 ⇒ 用户看到窗口一闪一闪，
 只有把整个应用关掉才停；而"点停止后弹窗不自动关"是因为停止分支又补了第二个模态、
 却把自动关闭定在了 4 秒后（是关窗口，不是关弹窗）。
 
 判据（静态 + 真起页面两条）：
-  A. 页面里**不许再出现**这三样自动关窗写法：`window.open('', '_self')`、`location.replace('about:blank')`、
+  A. 页面里**不许再出现**这三样自动关窗写法：`window.open('', '_self')`、`location.replace`、
      停止分支里的 `window.close()`。（别的 `window.open(url)` 打开新页面属正常，不算。）
   B. 「机器人已停止」必须走**可关横幅**（`.offline-bar` + 「知道了」按钮），不是全屏模态。
   C. 停止按钮的处理里**不许**再补第二个 `confirmBox('机器人已停止'…)`，也不许定时关窗口。
@@ -51,7 +51,7 @@ src = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="u
 
 
 def strip_js_comments(s):
-    """判据只看**代码**，不看注释——修复说明里会引用旧的坏写法（"旧实现是 window.open…"），
+    """判据只看**代码**，不看注释——修复说明里会引用旧的坏写法，
     不剥注释就会把注释当违规。"""
     s = re.sub(r"/\*.*?\*/", " ", s, flags=re.S)
     s = re.sub(r"//[^\n]*", " ", s)
@@ -87,7 +87,7 @@ print("\n── C. 停止分支：不补第二个模态、可由用户意图关�
 blk = code[code.index("$('stopBtn').onclick"):]
 blk = blk[:blk.index("$('restartBtn').onclick")] if "$('restartBtn').onclick" in blk else blk
 ok("停止分支里没有第二个 confirmBox('机器人已停止'…)", "confirmBox('机器人已停止'" not in blk)
-# 口径再更新（用户实测「点停止关不掉窗口」，根因就在这里）：
+# 口径再更新（「点停止关不掉窗口」，根因就在这里）：
 #   原来要求"关窗必须挂在成功分支（catch 之前）"—— 但 `/api/shutdown` 一执行**后端自己就关了**，
 #   响应很可能没读完连接就断 ⇒ `getJSON` 抛错 ⇒ 流程走 catch ⇒ 放在 `try` 里的关窗**永远执行不到**。
 #   新口径＝**用户点了「确认停止」就无条件关窗**（成功失败都关）⇒ 关窗必须在 `finally` 里，且只允许一处。

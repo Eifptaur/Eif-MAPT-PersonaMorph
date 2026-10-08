@@ -39,8 +39,21 @@ print("── A. 三级行为（先把版本强制成「读不到」，这样在
 # 🔴 
 #   **默认不拦发送** —— 读不到版本＝环境态；未实测版本＝告警但照发。只有用户显式开
 #   `version_gate.strict=true` 时，原来的"暂停自动发送 + 点本次允许发送"才生效。
+#
+# ⚠️ 修（本段原来会随"本机是否登记过实测"而变红，是**判据前提漏了事实键**）：
+#   `version_gate.check()` 现在是 **`gate(…, facts=fact_key)` 优先**（兼容性落地第 ⑦ 项：
+#   同一个版本号的 UI 可能已经变了，所以"这台机器的事实"比版本号更贴）。
+#   而本段只把 **版本号** 强制成空 —— **事实键照样命中**（主窗类名/DPI/适配层都在）
+#   ⇒ `measured=True` ⇒ 走 `level=ok` 分支 ⇒ 下面 7 条（期望 warn/strict 拦）全红。
+#   ⛔ 这不是"判据过时"，是**登记过实测之后真的换了分支**（我在 微信 4.1.15.13
+#      真机发送成功后把结论写回了矩阵）。A 段的本意是"读不到版本/locfit 没有记录时怎么表现"，
+#      所以**必须把事实键一并屏蔽**，否则本段测的就不是它自己声称的那个场景。
 _REAL_LOOKUP = vg.current_wechat_version
+_REAL_FACTKEY = None
+from agent import version_matrix as _vm # noqa: E402
+_REAL_FACTKEY = _vm.fact_key
 vg.current_wechat_version = lambda *a, **k: ""
+_vm.fact_key = lambda *a, **k: ""   # ← 屏蔽事实键，只看"按版本号查不到记录"这一支
 vg.clear_allow()
 a = vg.check()
 ok("默认（非 strict）：读不到版本 ⇒ **不拦**（allow=True）", a["allow"] is True, "level=%s allow=%s" % (a["level"], a["allow"]))
@@ -74,6 +87,7 @@ vg.current_wechat_version = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("
 ok("版本门异常 ⇒ fail-open（不拦发送）", vg.check()["allow"] is True)
 vg.current_wechat_version = _exc_real
 vg.current_wechat_version = _REAL_LOOKUP
+_vm.fact_key = _REAL_FACTKEY          # ← 恢复事实键（A 段结束，后面按真实环境跑）
 st = vg.status()
 ok("status() 带 allowed_session 字段", "allowed_session" in st, str(st.get("allowed_session")))
 
@@ -121,7 +135,7 @@ GD = open(os.path.join(ROOT, "agent", "guards.py"), encoding="utf-8", errors="re
 n = len(re.findall(r"from \.guards import version as _gate_version", W))
 ok("三个 send 入口都接了门（经唯一实现点）", n >= 3, "命中 %d 处" % n)
 #: ⭐ 真正要钉住的不变量：**版本号必须传进门**。
-#   踩过的坑：三处入口调 `check("send")` 都没传版本 ⇒ 门永远回"读不到微信版本"、
+#   踩过的坑：三处入口调 `check` 都没传版本 ⇒ 门永远回"读不到微信版本"、
 #   每一次自动发送都被拦。现在参数在唯一实现点里传，所以锚也钉在那里。
 ok("版本号传进了门（`wechat=wx_version_for_gate()` 在唯一实现点里，丢了就回到「每次都拦」）",
    "wechat=wx_version_for_gate()" in GD)

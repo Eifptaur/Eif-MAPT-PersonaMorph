@@ -115,7 +115,7 @@ function dshwvAudioIdleArm() {
   } catch (err) {}
 }
 // 音效是否被**显式**关掉（v753 的显式开关）。这里刻意用 typeof 保护：
-// 本文件经常被探针按片段切出来单独 eval（例如 _v752-check 只切「音频垫片 + applySoundSet」），
+// 本文件经常被离线自检按片段切出来单独 eval（例如只切「音频垫片 + applySoundSet」那段），
 // 那些沙箱里不一定声明了 soundOn —— typeof 对未声明的标识符是安全的，裸引用会直接抛
 // ReferenceError 把整段沙箱打断。真机上 soundOn 一定存在，行为不受影响。
 function dshwvSoundOff() {
@@ -196,6 +196,32 @@ function dshwvSoundStop(el) {
     try { node.onended = null } catch (err) {}
     try { node.stop() } catch (err) {}
   }
+}
+// v766：**试听名单** —— 供"停止试听"用。为什么要它：`dshwvSound()` 每次都返回一个全新元素，
+// 而任务结束音 / 片段 / 音效组三条试听路径都是**匿名调用**（外面拿不到句柄），播起来之后就停不掉了。
+// 这里只登记 `dshwvPreviewMark > 0` 期间创建的元素 —— 也就是**只登记试听**，绝不误伤真实事件音
+// （真实的任务结束音 / 提问授权提示音是用户要听的，不能在面板里被顺手掐掉）。
+var dshwvPreviewEls = []
+var dshwvPreviewMark = 0
+function dshwvPreviewOn() { dshwvPreviewMark++ }
+function dshwvPreviewOff() { dshwvPreviewMark = Math.max(0, dshwvPreviewMark - 1) }
+function dshwvPreviewTrack(el) {
+  if (!(dshwvPreviewMark > 0)) return
+  try {
+    dshwvPreviewEls.push(el)
+    if (dshwvPreviewEls.length > 12) {
+      // 播完的（_node 已清空）不再留着，避免名单无限增长
+      dshwvPreviewEls = dshwvPreviewEls.filter(function (x) { return x && x._node })
+    }
+  } catch (err) {}
+}
+function dshwvStopPreviews() {
+  try {
+    for (var i = 0; i < dshwvPreviewEls.length; i++) {
+      try { dshwvSoundStop(dshwvPreviewEls[i]) } catch (err) {}
+    }
+    dshwvPreviewEls = dshwvPreviewEls.filter(function (x) { return x && x._node })
+  } catch (err) {}
 }
 function dshwvSound(url) {
   var el = { preload: 'auto', volume: 1, onended: null, loop: false, _url: String(url || ''), _node: null, _gain: null, _offset: 0, _token: 0, _playingSince: 0 }
@@ -278,13 +304,32 @@ function dshwvSound(url) {
   el.pause = function () { dshwvSoundStop(el) }
   // v752：备用路由（首选失败时自动切过去）；由 applySoundSet/playTaskEndGroupClick 填
   el._alt = ''
+  dshwvPreviewTrack(el) // v766：只在试听期间登记（见上面的试听名单）
   return el
 }
 
 // 自动播放策略：AudioContext 初始是 suspended，要有一次用户手势才能出声；任务结束音不是手势触发的，
 // 所以挂一次性解锁（首次点击/按键后移除）。
+// v789（issue #179）：**输入法组字期间一律不做事**。用户实测"装了插件后微软拼音打字会自动上屏、
+//   光标跳到最前端"（0.3.16/0.3.17 均复现，卸载即恢复）。我们能做的、也是最有把握的一条，是
+//   让挂件在 composition 期间**完全不碰 DOM、不做重活**：往 document.body 挂节点会触发布局，
+//   而首次按键同步创建/预热 AudioContext 也会让组字被打断。所以：
+//   ① 记录 composition 状态，组字中的 keydown 不解锁音频；
+//   ② 组字期间所有 body 增删一律排队，等 compositionend 之后再补（见 dshwBodyAppend）。
+var dshwvComposing = false
+var dshwvDeferredBody = []
+function dshwvComposingNow() { return dshwvComposing === true }
 try {
-  var dshwvAudioUnlock = function () {
+  document.addEventListener('compositionstart', function () { dshwvComposing = true }, true)
+  document.addEventListener('compositionend', function () {
+    dshwvComposing = false
+    setTimeout(function () { try { dshwvFlushDeferredBody() } catch (err) {} }, 0)
+  }, true)
+} catch (err) {}
+try {
+  var dshwvAudioUnlock = function (ev) {
+    // v789（issue #179）：组字中的按键不做音频解锁（isComposing / keyCode 229 = IME 处理中）
+    try { if (dshwvComposing || (ev && (ev.isComposing === true || ev.keyCode === 229))) return } catch (err) {}
     // v753（issue #135）：音效关掉时**不预解锁** —— 否则一次普通点击就会把 context 转成 running，
     // 断言照挂。注意这里**不摘监听**：之后重新打开开关，下一次点击仍能完成解锁。
     if (dshwvSoundOff()) return
@@ -680,6 +725,9 @@ var css = [
   // 新增跑马灯:墨韵黑白 / 靛蓝夜曲(文字·内层文字·菜单)
   '.dshwv-trow.dshwv-rgb-ink,.dshwv-trowtx.dshwv-rgb-ink,.dshwv-qcolmenu .dshwv-rgbopt.opt-ink{background-image:linear-gradient(90deg,rgb(20,20,20),rgb(80,80,80),rgb(140,140,140),rgb(200,200,200),rgb(250,250,250),rgb(250,250,250),rgb(200,200,200),rgb(140,140,140),rgb(80,80,80),rgb(20,20,20))}',
   '.dshwv-trow.dshwv-rgb-indigo,.dshwv-trowtx.dshwv-rgb-indigo,.dshwv-qcolmenu .dshwv-rgbopt.opt-indigo{background-image:linear-gradient(90deg,rgb(32,49,112),rgb(52,76,146),rgb(74,102,180),rgb(100,126,210),rgb(130,132,224),rgb(130,132,224),rgb(100,126,210),rgb(74,102,180),rgb(52,76,146),rgb(32,49,112))}',
+  // v770 新增跑马灯:火红烈焰(深绯红→橙→白热芯) / 警示橙黄(高饱和橙→警示黄)
+  '.dshwv-trow.dshwv-rgb-blaze,.dshwv-trowtx.dshwv-rgb-blaze,.dshwv-qcolmenu .dshwv-rgbopt.opt-blaze{background-image:linear-gradient(90deg,rgb(150,15,25),rgb(200,30,30),rgb(240,70,25),rgb(255,130,30),rgb(255,200,60),rgb(255,240,170),rgb(255,200,60),rgb(255,130,30),rgb(240,70,25),rgb(200,30,30),rgb(150,15,25))}',
+  '.dshwv-trow.dshwv-rgb-amber,.dshwv-trowtx.dshwv-rgb-amber,.dshwv-qcolmenu .dshwv-rgbopt.opt-amber{background-image:linear-gradient(90deg,rgb(230,90,0),rgb(255,140,0),rgb(255,180,0),rgb(255,215,40),rgb(255,240,120),rgb(255,215,40),rgb(255,180,0),rgb(255,140,0),rgb(230,90,0))}',
   // 文字底色(圆角矩形底层):跑马灯底色与文字颜色/文字跑马灯不互相占用,底色铺在文字下方
   '.dshwv-trow.dshwv-bgrgb{text-shadow:none;background-size:200% auto;animation:dshwvRainbow 2.6s linear infinite}',
   '.dshwv-trow.dshwv-bgrgb-macaron{background-image:linear-gradient(90deg,rgb(255,180,200),rgb(255,205,170),rgb(255,225,165),rgb(245,240,180),rgb(190,240,210),rgb(180,230,245),rgb(190,215,250),rgb(220,200,245),rgb(240,200,230),rgb(255,180,200))}',
@@ -698,6 +746,9 @@ var css = [
   // 新增跑马灯底色:墨韵黑白 / 靛蓝夜曲
   '.dshwv-trow.dshwv-bgrgb-ink{background-image:linear-gradient(90deg,rgb(20,20,20),rgb(80,80,80),rgb(140,140,140),rgb(200,200,200),rgb(250,250,250),rgb(250,250,250),rgb(200,200,200),rgb(140,140,140),rgb(80,80,80),rgb(20,20,20))}',
   '.dshwv-trow.dshwv-bgrgb-indigo{background-image:linear-gradient(90deg,rgb(32,49,112),rgb(52,76,146),rgb(74,102,180),rgb(100,126,210),rgb(130,132,224),rgb(130,132,224),rgb(100,126,210),rgb(74,102,180),rgb(52,76,146),rgb(32,49,112))}',
+  // v770 新增跑马灯底色:火红烈焰 / 警示橙黄
+  '.dshwv-trow.dshwv-bgrgb-blaze{background-image:linear-gradient(90deg,rgb(150,15,25),rgb(200,30,30),rgb(240,70,25),rgb(255,130,30),rgb(255,200,60),rgb(255,240,170),rgb(255,200,60),rgb(255,130,30),rgb(240,70,25),rgb(200,30,30),rgb(150,15,25))}',
+  '.dshwv-trow.dshwv-bgrgb-amber{background-image:linear-gradient(90deg,rgb(230,90,0),rgb(255,140,0),rgb(255,180,0),rgb(255,215,40),rgb(255,240,120),rgb(255,215,40),rgb(255,180,0),rgb(255,140,0),rgb(230,90,0))}',
   // 内层文字(带底色时)也支持跑马灯文字颜色:与 .dshwv-trow 相同的 渐变裁字 规则
   '.dshwv-trowtx.dshwv-rgb{background-image:linear-gradient(90deg,rgb(255,180,200),rgb(255,205,170),rgb(255,225,165),rgb(245,240,180),rgb(190,240,210),rgb(180,230,245),rgb(190,215,250),rgb(220,200,245),rgb(240,200,230),rgb(255,180,200));background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;animation:dshwvRainbow 2.6s linear infinite;text-shadow:none}',
   '.dshwv-trowtx.dshwv-rgb-candy{background-image:linear-gradient(90deg,rgb(255,145,170),rgb(255,170,130),rgb(255,195,110),rgb(240,220,115),rgb(140,220,175),rgb(115,210,205),rgb(130,195,240),rgb(160,170,235),rgb(210,155,230),rgb(235,135,190),rgb(255,145,170))}',
@@ -860,9 +911,23 @@ document.head.appendChild(styleEl)
 // 所以这里统一登记：所有挂到 body 的节点都走 dshwBodyAppend()，守护时逐个补挂；
 // 主动移除（目前只有一处）走 dshwBodyDetach()，避免被守护逻辑"复活"。
 var dshwBodyNodes = []
+// v789（issue #179）：输入法组字期间把"往 body 挂节点"的请求排队 —— 改 document.body 的子节点会触发布局，
+//   在 composition 期间做这件事会让浏览器/输入法重置组字（用户实测：打字自动上屏、光标跳到最前端）。
+//   排队到 compositionend 之后再补挂（正常输入时行为完全不变：非组字状态下一律立即挂）。
+function dshwvFlushDeferredBody() {
+  try {
+    if (dshwvComposing || !dshwvDeferredBody.length) return
+    var list = dshwvDeferredBody.slice()
+    dshwvDeferredBody.length = 0
+    for (var i = 0; i < list.length; i++) {
+      try { if (list[i] && list[i].__detach) dshwBodyDetach(list[i].el); else dshwBodyAppend(list[i]) } catch (err) {}
+    }
+  } catch (err) {}
+}
 function dshwBodyAppend(el) {
   try {
     if (!el) return el
+    if (dshwvComposing && dshwvDeferredBody.indexOf(el) < 0) { dshwvDeferredBody.push(el); return el }
     // 注意：这里必须是**原始**的 document.body.appendChild —— 不能走 dshwBodyAppend 自己
     // （v743 批量改写时曾误替换成自我递归，被 try/catch 吞掉后表现为"登记了但从未挂上"）
     document.body.appendChild(el)
@@ -872,6 +937,8 @@ function dshwBodyAppend(el) {
 }
 function dshwBodyDetach(el) {
   try {
+    // v789（issue #179）：组字期间连"移除"也排队（同样是 body 子节点变更，会打断组字）
+    if (dshwvComposing) { dshwvDeferredBody.push({ __detach: true, el: el }); return }
     var i = dshwBodyNodes.indexOf(el)
     if (i >= 0) dshwBodyNodes.splice(i, 1)
     if (el && el.parentNode) el.parentNode.removeChild(el)
@@ -1007,6 +1074,8 @@ if (!window.__dshwCustBound) {
     dshwCustSelClose()
   }, true)
   document.addEventListener('keydown', function (e) {
+    // v789（issue #179）：组字中按 Esc 是输入法的「取消组字」，别抢
+    if (dshwvComposingNow()) return
     if (e.key === 'Escape') dshwCustCloseNow()
   }, true)
   window.addEventListener('resize', function () { dshwCustCloseNow() })
@@ -1123,7 +1192,7 @@ function dshwCustSel(sel, opts) {
     dshwCustSelOpen = { menu: menu, btn: btn }
   })
   sync()
-  return { sync: sync, refresh: function () { fill(); sync() } }
+  return { sync: sync, refresh: function () { fill(); sync() }, btn: btn, wrap: wrap }
 }
 // 用量:小鲸鱼记账为唯一记账方式;「用量记录」按钮打开历史用量子面板
 var usageRecBtn = document.createElement('button')
@@ -1167,13 +1236,21 @@ taskEndSel.addEventListener('change', function () {
   applyTaskEndLocal(undefined, taskEndSel.value)
   commitTaskEnd()
 })
-function fillTaskEndOptions(pref) {
-  // 排列:置顶项恒最前(按置顶先后) → 已导入片段 → 4 个预设单音 → 音效组置底;
-  // 组与组可同名,按 value 去重(不按显示名);其余按 value/显示名去重
+// v761（全局音效设置面板）：音效下拉的**通用填充**（任务结束音 / 提问 / 授权三处共用）。
+// 排列:置顶项恒最前(按置顶先后) → 已导入片段 → 4 个预设单音 → 音效组置底；
+// 组与组可同名,按 value 去重(不按显示名);其余按 value/显示名去重。
+// 只改 DOM 与（任务结束音原有的）兜底设置，不写任何新键 ——
+// 任务结束音（selectEl === taskEndSel）完全沿用原有语义，其它下拉找不到现值时保留原值显示。
+// v762：**删掉了原第一位的「静音」项**（value 为空串）——「不响」统一由音效行左边的 [✓] 表达
+// （提问/授权 = events.<kind>.soundOn，任务结束音 = taskEnd.on），一个开关就够了，不再有语义重叠。
+// 连带效应（正是我们要的）：空/失效的 sel 不再被「静音」项接住，于是重新走到下面的兜底分支
+// （任务结束音挑默认音并**写回 usageSet**），下拉里再也不会出现空值。
+function fillSoundSelect(selectEl, currentSel) {
+  if (!selectEl) return false
+  var isTaskEnd = selectEl === taskEndSel
   // 期望值优先取“持久化设置”,避免启动时被上一轮的临时默认值带偏
-  var prefSel = (usageSet && usageSet.taskEnd && usageSet.taskEnd.sel) || (pref && pref.sel) || ''
-  var cur = taskEndSel.value || prefSel || ''
-  taskEndSel.innerHTML = ''
+  var cur = String(currentSel == null ? '' : currentSel)
+  selectEl.innerHTML = ''
   var seen = {}
   var seenLbl = {}
   function add(v, lab) {
@@ -1182,7 +1259,7 @@ function fillTaskEndOptions(pref) {
     if (seenLbl[lab]) return
     seen[v] = 1
     seenLbl[lab] = 1
-    taskEndSel.appendChild(soundOpt(v, lab))
+    selectEl.appendChild(soundOpt(v, lab))
   }
   // 收集全部候选(片段+单音在前,组置底),返回 {v,lab,grp} 列表
   var grps = Array.isArray(audioGroups) ? audioGroups : []
@@ -1218,9 +1295,9 @@ function fillTaskEndOptions(pref) {
   var allCand = fragCand.concat(preCand, grpCand)
   var candByV = {}
   allCand.forEach(function (c) { candByV[c.v] = c })
-  // 置顶序列(仍存在的选项按 pin 顺序排最前)
+  // 置顶序列(仍存在的选项按 pin 顺序排最前)；置顶只属于任务结束音(值存 usageSet.taskEnd.pins)
   var pins = []
-  try { if (usageSet && usageSet.taskEnd && Array.isArray(usageSet.taskEnd.pins)) pins = usageSet.taskEnd.pins.slice() } catch (err) {}
+  if (isTaskEnd) { try { if (usageSet && usageSet.taskEnd && Array.isArray(usageSet.taskEnd.pins)) pins = usageSet.taskEnd.pins.slice() } catch (err) {} }
   var ordered = []
   var orderedSeen = {}
   pins.forEach(function (pv) {
@@ -1237,48 +1314,75 @@ function fillTaskEndOptions(pref) {
     if (c.grp) {
       if (seen[c.v]) return
       seen[c.v] = 1
-      taskEndSel.appendChild(soundOpt(c.v, c.lab))
+      selectEl.appendChild(soundOpt(c.v, c.lab))
     } else add(c.v, c.lab)
   })
   var fragN = 0
-  for (var fi = 0; fi < taskEndSel.options.length; fi++) if (String(taskEndSel.options[fi].value).indexOf('frag:') === 0) fragN++
+  for (var fi = 0; fi < selectEl.options.length; fi++) if (String(selectEl.options[fi].value).indexOf('frag:') === 0) fragN++
   var found = false
-  for (var i = 0; i < taskEndSel.options.length; i++) if (taskEndSel.options[i].value === cur) { taskEndSel.value = cur; found = true; break }
+  for (var i = 0; i < selectEl.options.length; i++) if (selectEl.options[i].value === cur) { selectEl.value = cur; found = true; break }
   if (!found) {
-    // 期望值是自导入片段,但片段列表尚未就绪(启动时音频还在加载):
-    // 先不落默认、不改写 usageSet,等片段就绪后的下一次 fill 再定,
-    // 避免把用户的片段选择悄悄覆盖成「小黄鸭·按下」并随后续保存持久化
-    if (cur && String(cur).indexOf('frag:') === 0 && fragN === 0) {
-      taskEndSel.value = ''
-      if (taskEndDrop) taskEndDrop.refresh()
-      return
+    if (isTaskEnd) {
+      // 期望值是自导入片段,但片段列表尚未就绪(启动时音频还在加载):
+      // 先不落默认、不改写 usageSet,等片段就绪后的下一次 fill 再定,
+      // 避免把用户的片段选择悄悄覆盖成「小黄鸭·按下」并随后续保存持久化。
+      // 注意:这里把 value 置空是**流程需要**（fillTaskEndOptions 靠 `taskEndSel.value || prefSel`
+      // 在下一轮重新取到真实值），与已删除的「静音」项无关 —— 置空后本次会显示为未选中，属预期。
+      if (cur && String(cur).indexOf('frag:') === 0 && fragN === 0) {
+        selectEl.value = ''
+        if (taskEndDrop) taskEndDrop.refresh()
+        return false
+      }
+      // 期望值是音效组,但组列表尚未就绪(启动时 audio.json 还在加载):
+      // 同样先不落默认、不改写 usageSet,等组就绪后的下一次 fill 再定
+      if (cur && String(cur).indexOf('grp:') === 0 && (!Array.isArray(audioGroups) || audioGroups.length === 0)) {
+        selectEl.value = ''
+        if (taskEndDrop) taskEndDrop.refresh()
+        return false
+      }
+      // 默认:优先 name==='entity',否则第一条已导入片段;都没有则选预设
+      var chosen = 'preset:duck:press'
+      for (var j = 0; j < selectEl.options.length; j++) {
+        var v = selectEl.options[j].value
+        if (v.indexOf('frag:') === 0) { chosen = v; if (String(selectEl.options[j].textContent || '') === 'entity') break }
+      }
+      selectEl.value = chosen
+      usageSet = usageSet || {}
+      usageSet.taskEnd = usageSet.taskEnd || { on: false, sel: '' }
+      usageSet.taskEnd.sel = chosen
+    } else if (cur) {
+      // 面板下拉：绑定的音效还没加载出来（如音频列表未就绪）——原样保留并显示，
+      // 不静默改成别的音效（否则用户一保存就把自己的选择丢了）
+      selectEl.appendChild(soundOpt(cur, cur + '（暂未加载）'))
+      selectEl.value = cur
+    } else {
+      // v762：「静音」项已删除，空值不再有任何含义。面板下拉（提问/授权）走到这里表示
+      // 「没有给值」，兜底选中第一项，保证下拉永远有一个**非空**值
+      // （pollWaitState 的 `on && sel` 门控因此仍然成立）。
+      // 任务结束音不会走到这里（上面 isTaskEnd 分支已处理过 cur 为空的情况）。
+      selectEl.selectedIndex = selectEl.options.length ? 0 : -1
     }
-    // 期望值是音效组,但组列表尚未就绪(启动时 audio.json 还在加载):
-    // 同样先不落默认、不改写 usageSet,等组就绪后的下一次 fill 再定
-    if (cur && String(cur).indexOf('grp:') === 0 && (!Array.isArray(audioGroups) || audioGroups.length === 0)) {
-      taskEndSel.value = ''
-      if (taskEndDrop) taskEndDrop.refresh()
-      return
-    }
-    // 默认:优先 name==='entity',否则第一条已导入片段;都没有则选预设
-    var chosen = 'preset:duck:press'
-    for (var j = 0; j < taskEndSel.options.length; j++) {
-      var v = taskEndSel.options[j].value
-      if (v.indexOf('frag:') === 0) { chosen = v; if (String(taskEndSel.options[j].textContent || '') === 'entity') break }
-    }
-    taskEndSel.value = chosen
-    usageSet = usageSet || {}
-    usageSet.taskEnd = usageSet.taskEnd || { on: false, sel: '' }
-    usageSet.taskEnd.sel = chosen
   }
-  if (pref && pref.sel) { for (var k = 0; k < taskEndSel.options.length; k++) if (taskEndSel.options[k].value === pref.sel) taskEndSel.value = pref.sel }
   // 兜底:按 value 从尾向前去重,确保绝无重复项
   var seen2 = {}
-  for (var di = taskEndSel.options.length - 1; di >= 0; di--) {
-    var dv = taskEndSel.options[di].value
-    if (seen2[dv]) { try { taskEndSel.remove(di) } catch (err) {} }
+  for (var di = selectEl.options.length - 1; di >= 0; di--) {
+    var dv = selectEl.options[di].value
+    if (seen2[dv]) { try { selectEl.remove(di) } catch (err) {} }
     else seen2[dv] = 1
   }
+  try {
+    if (isTaskEnd) { if (taskEndDrop) taskEndDrop.refresh() }
+    else if (selectEl.__dshwDrop) selectEl.__dshwDrop.refresh()
+  } catch (err) {}
+  return found
+}
+// 任务结束音下拉：入口与语义不变，内部改走通用 fillSoundSelect
+// （v762 起选项里**不再有「静音」**：不响由 taskEnd.on / 面板音效行的 [✓] 表达）
+function fillTaskEndOptions(pref) {
+  var prefSel = (usageSet && usageSet.taskEnd && usageSet.taskEnd.sel) || (pref && pref.sel) || ''
+  var cur = taskEndSel.value || prefSel || ''
+  fillSoundSelect(taskEndSel, cur)
+  if (pref && pref.sel) { for (var k = 0; k < taskEndSel.options.length; k++) if (taskEndSel.options[k].value === pref.sel) taskEndSel.value = pref.sel }
   if (taskEndDrop) taskEndDrop.refresh()
 }
 // 片段列表变化后刷新任务结束音下拉(保留用户当前选择)
@@ -1312,13 +1416,82 @@ function taskEndTogglePin(v) {
     fillTaskEndOptions((usageSet && usageSet.taskEnd) || null)
   } catch (err) {}
 }
-function playTaskEndSound() {
+// v761（全局音效设置）：**通用事件音效播放**。
+// 任务结束音 / 提问音 / 授权音三处共用；不改写 playTaskEndSound 里那段已验证的取值逻辑
+// （frag: 片段 / preset: 预设 / grp: 音效组 + 备用路由），而是**临时替换它读取的绑定与音量再还原**。
+// v761：音量取值统一走这里 —— **绝不能用 `Number(x) || 0.9`**：0 是合法音量，
+// 但 `||` 把它当假值 ⇒ 滑块拖到 0 会变成 0.9（用户真机实测到的 bug）。
+// 这里对 0 / NaN / 越界都给出确定行为：0 就是静音，NaN 才回落默认值。
+function soundVolClamped(fallback) {
+  var v = Number(soundVol)
+  if (!isFinite(v)) v = (typeof fallback === "number") ? fallback : 0.9
+  return Math.max(0, Math.min(1, v))
+}
+// v778：**音量解析器 = 音量的唯一真源**。所有播放入口都必须经过它取音量（禁止各自去读全局），
+//   优先级：① 显式 override（绑定事件 / 试听传进来的值）→ ② 该事件**用户显式调过**的音量
+//   （`cfg.volSet === true`）→ ③ ①区「按压音量」。
+//   为什么需要 volSet 这一层：出厂默认 `events.turnCost.vol = 1`，而面板每次保存都会把这个键写进磁盘
+//   ⇒ 只看"有没有值"无法区分「默认 100%」和「用户设了 100%」；若让每事件无条件优先，会把
+//   「只调过①区、没碰过②区」的老用户的任务结束音静默抬到 100%（见 SPEC §24）。
+//   ⚠️ 约定：本文件里 `soundVolClamped(` 只允许出现在本函数与它自己的定义处 —— 由 `_v778` 静态钉住。
+function soundVolumeOf(kind, override) {
   try {
-    if (!usageSet || !usageSet.taskEnd || !usageSet.taskEnd.on || soundOn === false) return
-    var sel = usageSet.taskEnd.sel || taskEndSel.value || ''
+    if (typeof override === 'number' && isFinite(override) && override >= 0) {
+      return Math.max(0, Math.min(1, override))
+    }
+    if (kind) {
+      var cfg = soundEventCfg(kind) || {}
+      if (cfg.volSet === true) {
+        var v = Number(cfg.vol)
+        if (isFinite(v) && v >= 0) return Math.max(0, Math.min(1, v))
+      }
+    }
+    return soundVolClamped(0.9)
+  } catch (err) { return soundVolClamped(0.9) }
+}
+// v778：绑定音（按压 / 提问 / 授权 / 试听）—— 把 `{sel, vol}` **显式传进去**。
+//   旧实现靠"临时把全局 soundVol / usageSet.taskEnd 改掉、finally 再改回来"来传值；那正是
+//   "每轮结束音读错音量"的同源隐患：任何新增播放入口忘了临时改一下，就会静默读全局（正是 0.3.16 的 bug）。
+function playBindingSound(bind, ev) {
+  try {
+    if (!bind || !bind.on || soundOn === false) return
+    var sel = bind.sel || ''
+    if (!sel) return // 防御：空选择不出声（v762 起下拉里已无「静音」项，正常不会再为空）
+    playTaskEndSound({ sel: sel, vol: (ev && typeof ev.vol === 'number') ? ev.vol : undefined })
+  } catch (err) {}
+}
+// v761：等待交互时的**会话名**（wait.json 每秒轮询回填）+ 超长截断（默认 12 字符 + …）
+var waitSessionName = ''
+var WAIT_SESSION_MAX = 12
+// v768：对话名的**统一取值**入口 —— 等待提示的 `{session}` 文案与「对话名」模块共用。
+// max <= 0 或非数 = 不截断；名字为空时回落「当前对话」。
+function bubbleSessionLabel(max) {
+  var s = String(waitSessionName || '').trim()
+  if (!s) s = '当前对话'
+  var n = Number(max)
+  if (!isFinite(n) || n <= 0) return s
+  n = Math.max(1, Math.min(120, Math.round(n)))
+  return s.length > n ? (s.slice(0, n) + '...') : s
+}
+function soundSessionLabel() { return bubbleSessionLabel(WAIT_SESSION_MAX) }
+// 对话名模块的显示文本：模块自己的「保留长度」（m.len）优先，缺省 12
+function bubbleSessionText(m) {
+  m = m || {}
+  return bubbleSessionLabel(m.len === undefined || m.len === null ? WAIT_SESSION_MAX : m.len)
+}
+// v778：`opts` = { sel?, vol? } —— 传入 sel 表示"播这个绑定音效"（绕过 taskEnd 开关，因为它自带 on）；
+//   不传 sel = 路径 A（每轮结束音），按 usageSet.taskEnd 的门控与选择。
+function playTaskEndSound(opts) {
+  try {
+    var o = opts || {}
+    if (soundOn === false) return
+    if (!o.sel) {
+      if (!usageSet || !usageSet.taskEnd || !usageSet.taskEnd.on) return
+    }
+    var sel = o.sel || usageSet.taskEnd.sel || taskEndSel.value || ''
     var url = ''
     var altUrl = ''
-    if (sel.indexOf('grp:') === 0) { playTaskEndGroupClick(sel.slice(4)); return }
+    if (sel.indexOf('grp:') === 0) { playTaskEndGroupClick(sel.slice(4), o.vol); return }
     if (sel.indexOf('frag:') === 0) url = '/dsh-whale/audio-fragment.wav?id=' + encodeURIComponent(sel.slice(5))
     else if (sel.indexOf('preset:') === 0) {
       // v752：预设片段也改走片段路由（与本体按压同一套选择逻辑 + 备用路由）
@@ -1330,13 +1503,14 @@ function playTaskEndSound() {
     if (!url) return
     var a = dshwvSound(url)
     if (altUrl) a._alt = altUrl
-    try { a.volume = Number(soundVol) || 0.9 } catch (err) {}
+    // v778：音量统一走解析器（②区「提示音量」显式设置过就用它，否则跟随①区「按压音量」）
+    try { a.volume = soundVolumeOf('turnCost', o.vol) } catch (err) {}
     a.play().catch(function () {})
   } catch (err) {}
 }
 // 任务结束音=音效组时:模拟点按一次该组——音1完整播放结束后立即接音2,
 // 即“按下到音1结束才松开”的无缝连续点按听感；槽位留空(该事件静音)时跳过对应音频
-function playTaskEndGroupClick(groupId) {
+function playTaskEndGroupClick(groupId, volOverride) {
   try {
     if (!groupId) return
     var g = null
@@ -1344,7 +1518,8 @@ function playTaskEndGroupClick(groupId) {
     var pressEmpty = !!(g && g.press === '') // 仅显式留空算静音;缺失字段(null)按旧数据回落预设
     var releaseEmpty = !!(g && g.release === '')
     if (pressEmpty && releaseEmpty) return
-    var vol = Number(soundVol) || 0.9
+    // v778：**"任务结束音 = 音效组"也必须走解析器**（第三方补丁只改了单片段那条路，音效组仍读①区 ⇒ 滑块照旧无效）
+    var vol = soundVolumeOf('turnCost', volOverride)
     // v752：任务结束音同样改走片段路由（与本体按压同一套 URL 选择 + 备用路由逻辑）——
     // 老路由 /dsh-whale/sound/*.mp3?set=… 在部分环境会被本机那层东西拦成空的 204，
     // 不改的话"点按有声、但每轮结束音没声"会变成同一个问题的另一半。
@@ -1435,34 +1610,40 @@ var row1 = menuRow()
 row1.appendChild(menuLabel('大小'))
 row1.appendChild(scaleInput)
 row1.appendChild(scaleNumber)
-var row2 = menuRow()
-row2.appendChild(menuLabel('音效'))
-row2.appendChild(audioGroupBtn)
-row2.appendChild(audioImportBtn)
+// —— 音量滑块与百分比（v761 起搬进「提示与音效设置」面板，主菜单不再占行）——
 var volInput = document.createElement('input')
 volInput.type = 'range'
 volInput.min = '0'
 volInput.max = '1'
 volInput.step = '0.05'
 volInput.className = 'dshwv-range'
-volInput.value = '0.9'
+volInput.value = '1'
 var volPct = document.createElement('span')
 volPct.className = 'dshwv-volpct'
-volPct.textContent = '90%'
+volPct.textContent = '100%'
 volInput.addEventListener('input', function () { setVol(volInput.value) })
-// v753（issue #135）：显式「音效开关」，放在「音量」右边。滑块是 flex:1、开关是 flex:0 0 auto(16px)，
-// 所以「滑块 + 开关」合起来仍占原来滑块那一条宽度（缩掉的正好是开关与行间距的宽度），行总宽不变。
+// 音效总开关（v753/issue #135 引入；v762 起只由「提示与音效设置」面板 ① 表头的同名开关驱动，
+// 主菜单「音效与提示」行不再放它 —— 但元素保留，因为 setSoundOn()/配置回填会同步它的 checked）
 var soundToggle = document.createElement('input')
 soundToggle.type = 'checkbox'
 soundToggle.className = 'dshwv-check'
 soundToggle.checked = true
 soundToggle.title = '音效总开关：关掉后不出声（含音效组试听），并立刻挂起音频上下文、把系统睡眠交还给你'
 soundToggle.addEventListener('change', function () { setSoundOn(soundToggle.checked) })
-var row3 = menuRow()
-row3.appendChild(menuLabel('音量'))
-row3.appendChild(soundToggle)
-row3.appendChild(volInput)
-row3.appendChild(volPct)
+// v762：「音效与提示」行 = 标签 + 面板入口（总开关搬进面板 ① 表头，本行不再放开关）。
+// 原「音效」行里的音效组/导入、原「音量」行的滑块，以及每轮消耗/提问/授权的音效，全部收进面板。
+// ⚠️ soundToggle 这个元素**仍然创建**（setSoundOn() 与配置回填都会 `soundToggle.checked = ...`），
+//    只是不再挂到本行上。删掉它的创建会让那两处抛 ReferenceError（本项目栽过整个挂件不出现）。
+var row2 = menuRow()
+row2.appendChild(menuLabel('音效与提示'))
+var soundPanelBtn = document.createElement('button')
+soundPanelBtn.type = 'button'
+soundPanelBtn.className = 'dshwv-roleimport'
+soundPanelBtn.style.flex = '1'
+soundPanelBtn.textContent = '全局设置'
+soundPanelBtn.title = '提示与音效设置：按压音量/音效组、每轮消耗提示、提问提示、授权提示'
+soundPanelBtn.addEventListener('click', function (e) { e.stopPropagation(); openSoundSettingsPanel() })
+row2.appendChild(soundPanelBtn)
 var row6 = menuRow()
 row6.appendChild(menuLabel('气泡全局开关'))
 row6.appendChild(bubbleToggle)
@@ -1471,8 +1652,8 @@ var bubbleCustomBtn = document.createElement('button')
 bubbleCustomBtn.type = 'button'
 bubbleCustomBtn.className = 'dshwv-roleimport'
 bubbleCustomBtn.style.flex = '1'
-bubbleCustomBtn.textContent = '自定义泡泡'
-bubbleCustomBtn.title = '打开“自定义泡泡”设置'
+bubbleCustomBtn.textContent = '按压泡泡设置'
+bubbleCustomBtn.title = '打开“按压泡泡设置”（按压时的泡泡内容与队列）'
 bubbleCustomBtn.addEventListener('click', function (e) { e.stopPropagation(); openBubbleEditor() })
 row6.appendChild(bubbleCustomBtn)
 var menuSep1 = document.createElement('div')
@@ -1525,9 +1706,12 @@ roleFileInput.addEventListener('change', function () { onRoleFileChosen(roleFile
 menuBox.appendChild(rowRole)
 menuBox.appendChild(row1)
 menuBox.appendChild(row2)
-menuBox.appendChild(row3)
 menuBox.appendChild(row6)
-menuBox.appendChild(row7)
+// v762：「每轮消耗提示」整行**不再挂到主菜单**（菜单里已再无此行，配置入口移进「全局设置」面板）。
+// ⚠️ row7 及其内部控件（turnCostToggle / turnCostCustomBtn）的创建**必须原样保留**：
+//    turnCostToggle 仍被 OPEN 时的状态同步与 setTurnCostOn() 引用，**取消挂载 ≠ 删除创建**。
+//    （本文件曾在「删了一行、别处还引用 rowN」上踩过：init 抛 TypeError 被外层 try 静默吞掉，
+//      表现就是挂件整个不出现。）
 // 「任务结束音效」不再占主菜单(v720):控件挂在一个不插入文档的宿主上,
 // 「自定义提示」窗口打开时再把它搬进窗口。需要宿主是因为 dshwCustSel 初始化要求 select 已有父节点。
 var taskEndRowHost = document.createElement('div')
@@ -1621,17 +1805,37 @@ function loadUsageSettings(cb) {
       .catch(function () { if (cb) cb() })
   } catch (err) { if (cb) cb() }
 }
-function saveUsageSettings(patch) {
-  try {
-    fetch(USAGE_SET_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch || {}),
+// v778：与 `configPut()` **同一套语义**（读响应 → 失败静默重试一次 → 仍失败才提示用户）。
+//   旧实现只 `fetch(...).then(r=>r.json()).then(d=>{...}).catch(function(){})`：**不查 HTTP 状态码、
+//   失败完全静默** ⇒ 用户点了「保存」、面板正常关闭，其实一个字节都没写进磁盘（第三方分析报告点出的
+//   现象是真的，只是它把归因写成了"消耗数据丢存"——这个接口存的是**设置**，消耗记录由宿主自己记账）。
+function usageSettingsPut(patch, retried) {
+  return fetch(USAGE_SET_URL, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch || {}),
+  })
+    .then(function (r) {
+      return r.json().catch(function () { return null }).then(function (d) { return { ok: r.ok, status: r.status, d: d } })
     })
-      .then(function (r) { return r.json() })
-      .then(function (d) { if (d && d.ok && d.settings) usageSet = d.settings })
-      .catch(function () {})
-  } catch (err) {}
+    .then(function (x) {
+      if (x.ok && (!x.d || x.d.ok !== false)) {
+        if (x.d && x.d.settings) usageSet = x.d.settings
+        return true
+      }
+      if (!retried) return new Promise(function (res) { setTimeout(function () { res(usageSettingsPut(patch, true)) }, 900) })
+      // 复用既有 toast（内部已对动态值做转义，见 v756/issue #143）
+      configSaveFailNotice((x.d && x.d.error) || ('HTTP ' + x.status))
+      return false
+    })
+    .catch(function (err) {
+      if (!retried) return new Promise(function (res) { setTimeout(function () { res(usageSettingsPut(patch, true)) }, 900) })
+      configSaveFailNotice((err && err.message) || err)
+      return false
+    })
+}
+function saveUsageSettings(patch) {
+  try { return usageSettingsPut(patch, false) } catch (err) { return null }
 }
 // 把主菜单已有行收进 menuRootView;用量记录作为 menuBox 内的子视图切换
 var menuRootView = document.createElement('div')
@@ -1865,19 +2069,807 @@ function buildUsageSubShell() {
   usagePanel.appendChild(usageMainEl)
 }
 // —— 预警/预算提醒内容编辑:直接复用 W2 模块编辑组件(可选模块入框/拖入、行内并排、拖动排序、按类型编辑、真实预览) ——
+// ===== v761（全局音效设置面板）：一个窗口里调四个事件 =====
+// 按压音效 / 每轮消耗提示 / 提问音效 / 授权音效，各自的音效 + 独立音量 + 自动关闭 + 冒泡。
+// 默认值必须与宿主 whale-balance.mjs 的 soundEventsDefaults() **逐字段一致**
+// （宿主 = 新用户默认；这里 = 面板的读回兜底与「恢复默认」的目标，改一处必须同步另一处）。
+function soundEventDefaults() {
+  return {
+    // 按压音效（按压 + 松开）：音量与音效组仍在 .dsh-size.json（vol / soundSet），这里只占位
+    press: { vol: 1 },
+    // ⚠️ turnCost **刻意不带** soundOn：它的「这个音效播不播」就是既有的 usageSet.taskEnd.on
+    //    （宿主 soundEventsDefaults() 的注释与实现完全一致）。
+    //    若给它加 soundOn: true 再同步写 taskEnd.on，会把老用户的任务结束音从「默认关」变成
+    //    「默认开」—— 这是不能悄悄发生的默认行为变更。
+    // ⚠️ v764：turnCost **也不再带** autoClose / ttlSec —— 它们从来没有消费方，而面板 ② 区
+    //    「自动关闭」的真实落点是 .dshw-size.json 的 turnCostCloseMs（见 openSoundSettingsPanel）。
+    //    给 turnCost 重新长出这两个键，会让同一个设置又变回两个来源（其中一个还是假的）。
+    turnCost: { vol: 1, volSet: false, bubbleOn: true },
+    // ⚠️ v778：`volSet` = "用户**显式**调过这一事件的音量"（默认 false）。它只表达"要不要覆盖①区"，
+    //    不是另一个音量来源 —— 取值永远看 `vol`。没有它就无法区分"默认 100%"与"用户设了 100%"，
+    //    会让"②区优先"静默改掉老用户的响度（详见 soundVolumeOf() 与 SPEC §24）。
+    //    ⚠️ 与宿主 soundEventsDefaults() 的同名字段**必须逐字段一致**（由探针 §⑥ 跨端一致钉住）。
+    // v774：出厂默认 = 作者当前用法：提问/授权**开着**（要冒泡），但音效**不响**（soundOn: false）。
+    // 要响就把音效行的 [✓] 勾上；不想冒泡就取消入口行的 [✓]。
+    question: { on: true, soundOn: false, sel: 'frag:exp_orb', vol: 1, autoClose: true, ttlSec: 180, bubbleOn: true },
+    approval: { on: true, soundOn: false, sel: 'frag:exp_orb', vol: 1, autoClose: true, ttlSec: 180, bubbleOn: true },
+  }
+}
+// 读某个事件的设置：缺字段/类型不对一律回落默认（只读 usageSet，不写）
+function soundEventCfg(kind) {
+  var def = soundEventDefaults()[kind] || {}
+  var src = (usageSet && usageSet.events && usageSet.events[kind]) || {}
+  var out = {}
+  for (var k in def) {
+    var v = src[k]
+    if (k === 'vol') { var n = Number(v); out.vol = (isFinite(n) && n >= 0 && n <= 1) ? n : def.vol }
+    else if (k === 'ttlSec') { var s = Number(v); out.ttlSec = (isFinite(s) && s >= 0) ? Math.round(s) : def.ttlSec }
+    else if (k === 'sel') out.sel = (typeof v === 'string') ? v : def.sel
+    else out[k] = (typeof v === 'boolean') ? v : def[k]
+  }
+  return out
+}
+// 事件的保存载荷（只带 schema 里的键：turnCost 没有 on/sel/autoClose/ttlSec，宿主那侧的 lines 等内容一律不动）
+function soundEventOut(cfg, withBind) {
+  var o = {
+    vol: Number(cfg.vol) || 0,
+    bubbleOn: cfg.bubbleOn !== false,
+  }
+  // v778：`volSet` 只属于 turnCost（= `withBind` 为假的那一个）。提问/授权的音量在"用户勾了音效开关"
+  //   时才出声，不存在"默认值 vs 显式值"的歧义，所以不需要这个键。
+  if (!withBind) o.volSet = cfg.volSet === true
+  if (withBind) {
+    // v764：autoClose / ttlSec 跟着 on/sel/soundOn 一起，只属于提问/授权。turnCost 的「自动关闭」
+    // 真实落点是 .dsh-size.json 的 turnCostCloseMs、**不走 events 载荷** —— 别再无条件塞进去，
+    // 否则每次保存都会给 turnCost 重新写回这两个死键。
+    o.autoClose = cfg.autoClose !== false
+    o.ttlSec = Math.max(0, Math.round(Number(cfg.ttlSec) || 0))
+    o.on = cfg.on !== false
+    o.sel = (typeof cfg.sel === 'string') ? cfg.sel : ''
+    // v762：音效行的「是否播这个音效」开关。**只有提问/授权**带这个键；
+    // turnCost 的同类开关走既有的 taskEnd.on，不进 events.turnCost（与宿主 schema 一致）。
+    o.soundOn = cfg.soundOn !== false
+  }
+  return o
+}
+// 提示与音效设置面板（主菜单「音效与提示」行 →「全局设置」按钮；v761 引入时叫「全局音效设置」）。
+// 保存语义与既有窗口一致：窗口期间的改动**只落内存缓冲**（sndBuf），点「保存」才一次 PUT
+// （events + taskEnd）；「取消」或点遮罩关闭 = 丢弃缓冲，并把**复用自主菜单的控件**
+// （音量滑块 volInput、按压总开关、每轮消耗开关 —— 它们的监听本来就是即时提交的）还原回打开时的快照。
+// v763（真机反馈修）：**「恢复默认」也必须守这条语义** —— 它只改内存缓冲与控件显示，一个字节都不落盘
+// （既不调 setVol/setSoundOn/setTurnCostOn，也不 saveUsageSettings）；那几项（按压音量/音效总开关/
+// 每轮消耗开关/自动关闭秒数，存在 .dsh-size.json）的真落盘统一由 saveAll() 负责，点「取消」则由
+// cleanup(true) 回滚（自动关闭走 setTurnCostClose，收秒、落 .dsh-size.json 的 turnCostCloseMs）。
+function openSoundSettingsPanel() {
+  try {
+    var DEF = soundEventDefaults()
+    // v764：② 区「自动关闭」的出厂默认（秒）。它**不属于** events schema —— 真实落点是 .dshw-size.json 的
+    // turnCostCloseMs（宿主 readSizeConfig() / 客户端 `var turnCostCloseMs = 5000` 的兜底值是 5 秒，
+    // 但面板按设计稿把「恢复默认」的目标定为 180 秒，与发布说明里「自动关闭默认 180 秒」一致）。
+    // 这个常量放在面板里，不再借（已摘除的）events.turnCost.ttlSec。
+    var TC_CLOSE_DEFAULT_SEC = 180
+    // 打开时的快照（只覆盖复用自菜单、会即时提交的那几个控件）
+    var snapVol = Number(soundVol) || 0
+    var snapSoundOn = soundOn !== false
+    var snapTurnCostOn = !!turnCostOn
+    // v763：面板 ②区「自动关闭」的真实落点是 .dsh-size.json 的 turnCostCloseMs（= 消耗泡泡的停留时长，
+    // 唯一消费点 sceneOpen('cost', …, turnCostCloseMs > 0 ? turnCostCloseMs : 0)），所以它也要进快照、
+    // 也要能随「取消」还原（否则面板那行「自动关闭」就是个死控件）。
+    var snapTurnCostCloseMs = Math.max(0, Math.round(Number(turnCostCloseMs) || 0))
+    // v777（用户要求）：底部新增「点按角色关闭提示气泡」——默认关（默认只有点泡泡能收起等待提示）。
+    //   存在 usage.json 的 settings.wait.charClose（宿主 usageSettingsDefaults() 里默认 false）；
+    //   窗口期间只改缓冲，保存才 PUT，取消按快照还原，与其它设置项同一套语义。
+    var bufWaitCharClose = !!(((usageSet || {}).wait || {}).charClose)
+    var snapWaitCharClose = bufWaitCharClose
+    // 内存缓冲：窗口期间只改这里
+    var sndBuf = {
+      turnCost: soundEventCfg('turnCost'),
+      question: soundEventCfg('question'),
+      approval: soundEventCfg('approval'),
+    }
+    // v764：② 区「自动关闭」自己的缓冲（不再是 events.turnCost 的一部分）。初值直接取**真实值**
+    // turnCostCloseMs —— 老实现显示的是 events.turnCost.ttlSec 里那个虚构的 180 秒，而消耗泡泡
+    // 实际一直按 .dshw-size.json 的值关闭，那一行等于在骗人。窗口期间只改这个缓冲，
+    // 真落盘仍由 saveAll() → setTurnCostClose() 负责（收「秒」）。
+    var tcCloseBuf = {
+      autoClose: snapTurnCostCloseMs > 0,
+      ttlSec: Math.round(snapTurnCostCloseMs / 1000),
+    }
+    var teOld = (usageSet && usageSet.taskEnd) || {}
+    var teOldSel = (typeof teOld.sel === 'string') ? teOld.sel : ''
+    // 任务结束音：缓冲里存**真实选择**（taskEnd.on 的开关已由本行左侧的 [✓] 单独表达，
+    // 不再像早期那样「on 为假就把下拉显示成静音」）。
+    // v762：「静音」项已从下拉里删除，所以这里直接沿用已保存的 sel；空/失效值由
+    // fillSoundSelect 按任务结束音原有的兜底逻辑挑一个默认音并写回 usageSet。
+    var bufTaskEndSel = teOldSel
+    var bufTaskEndKeep = teOldSel // 兜底：sel 万一被清空时保留原选择
+    // v762：② 音效行的 [✓] = 既有的 usageSet.taskEnd.on（宿主 usageSettingsDefaults() 里
+    // taskEnd 默认 { on: false } ⇒ 这里默认不勾）。**不引入 turnCost.soundOn**。
+    var bufTaskEndOn = (teOld.on === true)
+    // —— 窗口壳（与「提醒内容编辑器」同款卡片）——
+    var mask = document.createElement('div')
+    mask.className = 'dshwv-bubmask'
+    // 必须高于「模型子菜单/模型设置」(29000) 才能正常操作
+    mask.style.zIndex = '30000'
+    var card = document.createElement('div')
+    card.className = 'dshwv-bubcard'
+    card.style.width = 'min(440px,calc(100vw - 16px))'
+    card.style.maxHeight = '88vh'
+    card.style.overflow = 'hidden auto'
+    var title = document.createElement('div')
+    title.className = 'dshwv-bubtitle'
+    title.textContent = '提示与音效设置'
+    card.appendChild(title)
+    // 登记到运行时浮层表（issue #142 / CI 的 z 层审计）：面板内的自绘下拉靠 visibleTopZ()
+    // 抬层，不登记的话它们会算在遮罩下面（点开却看不见）
+    var unregMask = null
+    try { if (typeof window.dshwRegisterMask === 'function') unregMask = window.dshwRegisterMask(mask) } catch (err) {}
+    // —— 面板内的小工具 ——
+    // 分区表头：表头文字前一个开关（该事件总开关）。
+    // v762：右侧那条分隔线（─）**去掉了**，改成上下的留白 —— 用户要求「加一些间隔距离，
+    // 不加分割线了」；四个表头的 [✓] + 标题照旧保留。
+    // ⚠️ .dshwv-bubsec 是多个窗口共用的小节标题类（泡泡编辑器、预览区等），所以这里只用
+    //    行内样式覆盖本面板，绝不去改全局 CSS（否则会连带改掉别的窗口）。
+    // v765：面板改成「四个入口行 + 展开体」的手风琴 —— 入口行常驻（开关 + 区名 + 当前值摘要 + ▸/▾），
+    // 点入口行才展开该区的设置项，**可同时展开多个**；默认全部收起。
+    // v767：入口行/折叠体的实现抽到模块级 `dshwvFoldEntry()`（与资源管理窗口共用），这里只做一层包装。
+    // ⚠️ 四个区的控件**照旧全部创建**，只是藏在折叠体里：applyDefaults() / saveAll() 会逐个回填与读取，
+    //    懒创建会让「恢复默认」静默失效（那些回填都包在 try/catch 里，出错看不出来）。
+    var sndEntries = [] // [{ kind, summary, sel }]，供 refreshSummaries() 更新入口行右侧的当前值
+    function sndEntry(labelText, checked, onToggle, first) {
+      return dshwvFoldEntry(card, labelText, {
+        checked: checked,
+        onToggle: onToggle,
+        first: first,
+        onRowClick: function () {
+          // v766：点入口行（展开或收起）时，先把本面板可能开着的浮层收起来。为什么必须**显式**收：
+          //   · 「音效组」列表（.dshwv-audiolist）是 body 上的固定层，而全局 onDocPointerDown 见到
+          //     本面板的遮罩（.dshwv-bubmask）就直接 return（"面板内部交给面板自己处理"）⇒ 不主动收，
+          //     它就会一直飘在收起后的入口行上面（用户实测：收起设置项后已打开的下拉菜单没关）。
+          //   · 自绘音效下拉（.dshwv-custmenu）平时会被它自己的 document pointerdown 收掉，一起收更稳。
+          // 与既有约定一致：菜单里点到别处也会 closeRolePanel() + closeAudioGroupPanel()。
+          try { dshwCustSelClose() } catch (err) {}
+          try { closeAudioGroupPanel() } catch (err) {}
+          try { stopPanelPreview() } catch (err) {} // 正在试听的那一声也一起停（v766）
+        },
+      })
+    }
+    // 入口行右侧的「当前值摘要」：不展开也能看出这个事件现在是什么状态
+    function soundNameOf(sel) {
+      try {
+        if (!sel || !sel.options || sel.selectedIndex < 0) return ''
+        var o = sel.options[sel.selectedIndex]
+        return String((o && o.textContent) || '')
+      } catch (err) { return '' }
+    }
+    function sndPct(v) { var n = Number(v); if (!isFinite(n) || n < 0) n = 0; return Math.round(n * 100) + '%' }
+    function refreshSummaries() {
+      try {
+        for (var i = 0; i < sndEntries.length; i++) {
+          var e = sndEntries[i]
+          var txt = ''
+          if (e.kind === 'press') {
+            if (soundOn === false) txt = '已关闭'
+            else {
+              var g = ''
+              try { g = String(audioGroupBtnLabel.textContent || '') } catch (err) {}
+              txt = (g || '默认音效组') + ' · ' + sndPct(soundVol)
+            }
+          } else if (e.kind === 'turnCost') {
+            if (!turnCostOn) txt = '已关闭'
+            else {
+              var sec = Math.max(0, Math.round(Number(tcCloseBuf.ttlSec) || 0))
+              var pre = (tcCloseBuf.autoClose !== false && sec > 0) ? ('自动关 ' + sec + 's') : '不自动关'
+              // v768：静音时**不再显示已选的音效名**，直接告诉用户去哪儿改（用户要求的确切文案）
+              txt = pre + ' · ' + (bufTaskEndOn ? (soundNameOf(e.sel) || '—') : '当前为静音，在下拉设置中修改')
+              // v778：音量的两种状态写清楚 —— 没拖过 ②区滑块 = **跟随①区按压音量**；拖过 = 用这里的值。
+              if (bufTaskEndOn) {
+                if (sndBuf.turnCost.volSet === true) {
+                  if (sndPct(sndBuf.turnCost.vol) !== '100%') txt += ' · ' + sndPct(sndBuf.turnCost.vol)
+                } else {
+                  txt += ' · 跟随按压音量 ' + sndPct(soundVol)
+                }
+              }
+            }
+          } else {
+            var cfg = sndBuf[e.kind] || {}
+            if (cfg.on === false) txt = '已关闭'
+            else if (cfg.soundOn === false) txt = '当前为静音，在下拉设置中修改' // v768：静音时不显示已选音效
+            else {
+              txt = soundNameOf(e.sel) || '—'
+              if (sndPct(cfg.vol) !== '100%') txt += ' · ' + sndPct(cfg.vol)
+            }
+          }
+          try { if (e.summary) e.summary.textContent = txt } catch (err) {}
+        }
+        // v778：②区「提示音量」滑块在**未显式设置**时显示"实际生效的音量"（= ①区按压音量），
+        //   否则滑块停在 100% 而实际按 60% 播 —— 那就又变成"界面在骗人"（这次修的就是这类问题）。
+        try {
+          var tcCfg = sndBuf.turnCost || {}
+          if (tcVol && tcVol.input && tcCfg.volSet !== true) {
+            var eff = soundVolumeOf('turnCost')
+            tcVol.input.value = String(eff)
+            if (tcVol.pct) tcVol.pct.textContent = Math.round(eff * 100) + '%'
+          }
+        } catch (err) {}
+        // v773：摘要与"置灰状态"永远一起刷（所有既有刷新点都会走到这里：开面板 / 卡内 input·change /
+        // 点文档任意处 / 「恢复默认」末尾）—— 所以开关一动，相关设置立刻跟着灰/亮，不需要另挂监听。
+        applySndDisabled()
+      } catch (err) {}
+    }
+    // v773：**音效没开 ⇒ 该区"音效相关设置"置灰且不可编辑**（用户要求）。
+    //   · 只动**设置类**控件：音效下拉（自绘那颗按钮 + 原生 select）与音量滑块，以及它们那一行的标签；
+    //   · **开关自己**（入口行 [✓] / 音效行 [✓]）永远保持可点 —— 它是"开回来"的唯一入口，
+    //     置灰它就等于把用户锁死在外面；
+    //   · **试听 ▶ 也保持可用** —— 它正好用来"先听一下再决定开不开"（不是设置，是预览）；
+    //   · 与声音无关的行（冒泡提示 / 编辑提示内容 / 自动关闭）不动：它们归"事件总开关"管，各按各的。
+    // 判定条件由各区给（读的都是**实时**状态：模块级 soundOn / turnCostOn、缓冲里的 bufTaskEndOn / cfg.soundOn）。
+    var sndDisableGroups = []
+    function sndReg(off, items) { sndDisableGroups.push({ off: off, items: items || [] }) }
+    function sndDim(el, off) {
+      try { if (el && el.style) el.style.opacity = off ? '.4' : '' } catch (err) {}
+    }
+    function applySndDisabled() {
+      for (var i = 0; i < sndDisableGroups.length; i++) {
+        var g = sndDisableGroups[i]
+        var off = false
+        try { off = !!g.off() } catch (err) { off = false }
+        for (var j = 0; j < g.items.length; j++) {
+          var it = g.items[j] || {}
+          try { if (it.el) it.el.disabled = off } catch (err) {}
+          // 自绘下拉：原生 select 是隐藏的，看得见的是它自己那颗按钮 ⇒ 两者都要处理
+          try { if (it.drop && typeof it.drop.sync === 'function') it.drop.sync() } catch (err) {}
+          sndDim(it.drop && it.drop.btn ? it.drop.btn : it.el, off)
+          sndDim(it.label, off)
+        }
+      }
+    }
+    // 一行：标签 + 控件（控件由调用方 append 进来，沿用主菜单的行样式）
+    // v765：多一个 host 参数 —— 行挂到哪个容器（默认 card；手风琴里传该区的折叠体）
+    function row(labelText, host) {
+      var r = menuRow()
+      if (labelText) r.appendChild(menuLabel(labelText))
+      ;(host || card).appendChild(r)
+      return r
+    }
+    // 试听按钮（沿用各窗口里的行内小图标按钮 .dshwv-bubmini）
+    function playBtn(titleText, fn) {
+      var b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'dshwv-bubmini'
+      b.textContent = '▶'
+      b.title = titleText
+      b.addEventListener('click', function (e) { e.stopPropagation(); try { fn() } catch (err) {} })
+      return b
+    }
+    // 独立音量滑块 + 百分比（只改缓冲，点「保存」才落盘）
+    function volSlider(getV, setV) {
+      var inp = document.createElement('input')
+      inp.type = 'range'
+      inp.min = '0'
+      inp.max = '1'
+      inp.step = '0.05'
+      inp.className = 'dshwv-range'
+      inp.value = String(getV())
+      var pct = document.createElement('span')
+      pct.className = 'dshwv-volpct'
+      pct.textContent = Math.round(getV() * 100) + '%'
+      inp.addEventListener('input', function () {
+        var v = Number(inp.value)
+        if (!isFinite(v)) v = 0
+        setV(v)
+        pct.textContent = Math.round(v * 100) + '%'
+      })
+      return { input: inp, pct: pct }
+    }
+    // v766：试听包裹 —— 期间新建的音频元素会进"试听名单"（见 dshwvPreviewTrack），
+    // 收起设置项时由 stopPanelPreview() 一次停掉（片段/预设/音效组三条路都覆盖）。
+    function playPreview(fn) {
+      try { dshwvPreviewOn() } catch (err) {}
+      try { fn() } finally { try { dshwvPreviewOff() } catch (err) {} }
+    }
+    // v766：停掉本面板正在试听的声音。
+    //   · ① 的「试听按压音效」走的是**模块级** pressAudio / releaseAudio（复用本体那两个元素）⇒ 直接停；
+    //   · ②③④ 走 playBindingSound → playTaskEndSound（内部匿名新建元素）⇒ 靠试听名单停。
+    // ⚠️ 只停试听，**不碰**真实的任务结束音 / 提问授权提示音（那是用户要听的事件音）。
+    function stopPanelPreview() {
+      try { if (pressAudio) dshwvSoundStop(pressAudio) } catch (err) {}
+      try { if (releaseAudio) dshwvSoundStop(releaseAudio) } catch (err) {}
+      try { dshwvStopPreviews() } catch (err) {}
+    }
+    // 自动关闭：开关 + 秒数（0 = 不自动关闭）；host = 挂到哪个容器（手风琴的折叠体）
+    function autoCloseRow(cfg, host) {
+      var r = row('自动关闭', host)
+      var ck = document.createElement('input')
+      ck.type = 'checkbox'
+      ck.className = 'dshwv-check'
+      ck.checked = cfg.autoClose !== false
+      ck.title = '开启后泡泡到时间自动关闭'
+      ck.addEventListener('change', function () { cfg.autoClose = !!ck.checked })
+      var num = document.createElement('input')
+      num.type = 'number'
+      num.min = '0'
+      num.step = '1'
+      num.className = 'dshwv-winput'
+      num.value = String(Math.max(0, Math.round(Number(cfg.ttlSec) || 0)))
+      num.title = '自动关闭秒数（0 = 不自动关闭）'
+      num.addEventListener('input', function () { cfg.ttlSec = Math.max(0, Math.round(Number(num.value) || 0)) })
+      num.addEventListener('change', function () {
+        cfg.ttlSec = Math.max(0, Math.round(Number(num.value) || 0))
+        num.value = String(cfg.ttlSec)
+      })
+      r.appendChild(ck)
+      r.appendChild(num)
+      r.appendChild(menuLabel('秒'))
+      return { chk: ck, num: num }
+    }
+    // 冒泡提示：开关 + 编辑提示内容（editFn 为空时才置灰；提问/授权已接入各自的编辑器）
+    function bubbleRow(cfg, editFn, editTip, host) {
+      var r = row('冒泡提示', host)
+      var ck = document.createElement('input')
+      ck.type = 'checkbox'
+      ck.className = 'dshwv-check'
+      ck.checked = cfg.bubbleOn !== false
+      ck.title = '该事件是否用泡泡提示'
+      ck.addEventListener('change', function () { cfg.bubbleOn = !!ck.checked })
+      var btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'dshwv-roleimport'
+      btn.style.flex = '1'
+      btn.textContent = '编辑提示内容'
+      btn.title = editTip
+      if (editFn) {
+        btn.addEventListener('click', function (e) { e.stopPropagation(); try { editFn() } catch (err) {} })
+      } else {
+        btn.disabled = true
+        btn.style.opacity = '.5'
+        btn.style.cursor = 'not-allowed'
+      }
+      r.appendChild(ck)
+      r.appendChild(btn)
+      return ck
+    }
+    // —— ① 按压音效 ——
+    // v762 行序：音效组 → 音量（用户要求把「按压音效组」挪到「按压音量」**之前**）
+    var pressEnt = sndEntry('按压音效', soundOn !== false, function (b) {
+      // 与音效总开关同一个状态（setSoundOn 会同步那只保留但不再挂到菜单行的开关）
+      setSoundOn(b)
+    }, true)
+    var pressOnChk = pressEnt.chk
+    sndEntries.push({ kind: 'press', summary: pressEnt.summary, sel: null })
+    var rPressGrp = row('按压音效组', pressEnt.body)
+    rPressGrp.appendChild(audioGroupBtn) // 复用原「音效组」按钮
+    audioImportBtn.textContent = '新建音效组'
+    audioImportBtn.title = '新建/编辑音效组'
+    rPressGrp.appendChild(audioImportBtn)
+    // 这两个弹层是 body 上的固定层（.dshwv-audiolist / .dshwv-audiomask 都低于 30000），
+    // 从本面板打开时必须临时抬到面板之上，否则会被遮罩整层盖住（点了没反应）
+    try {
+      audioGroupBtn.addEventListener('click', function () { try { audioGroupPanel.style.zIndex = '31000' } catch (err) {} })
+      audioImportBtn.addEventListener('click', function () { try { audioEditMask.style.zIndex = '31000' } catch (err) {} })
+    } catch (err) {}
+    var rPressVol = row('按压音量', pressEnt.body)
+    rPressVol.appendChild(volInput) // 复用主菜单搬出来的滑块（input 事件已接 setVol；取消时按快照还原）
+    rPressVol.appendChild(volPct)
+    // 本区**只保留音量行这一个试听按钮**（音量行自己不加 ▶，避免一个模块两个入口）
+    rPressVol.appendChild(playBtn('试听按压音效', function () {
+      playPreview(function () {
+        playPress()
+        // 音效组把按压槽留空时 playPress() 只置状态不出声 → 补一次松开音，保证试听总能听到该组
+        if (!pressAudio) playRelease()
+      })
+    }))
+    // v773：① 的"音效没开"= 入口行 [✓]（soundOn）没勾 ⇒ 音效组 / 按压音量 置灰不可编辑
+    sndReg(function () { return soundOn === false }, [
+      { el: audioGroupBtn, label: rPressGrp.firstChild },
+      { el: audioImportBtn, label: null },
+      { el: volInput, label: rPressVol.firstChild },
+    ])
+    // —— ② 每轮消耗提示 ——
+    // v762 行序（与 ③④ 统一）：冒泡提示 → 自动关闭 → 音效行 → 提示音量
+    // （DOM 顺序 = 创建顺序，所以这里按目标顺序调用即完成重排）
+    // v763：② 表头的 [✓] 留个句柄，供 applyDefaults() 同步显示（直接改 .checked 不会触发 change ⇒ 不落盘）
+    var tcEnt = sndEntry('每轮消耗提示', !!turnCostOn, function (b) { setTurnCostOn(b) })
+    var tcOnChk = tcEnt.chk
+    var tcBub = bubbleRow(sndBuf.turnCost, function () { usageAlertBudgetEditor('cost', null) }, '编辑每轮消耗提示的泡泡内容（金额用 {cost}）', tcEnt.body)
+    var tcAc = autoCloseRow(tcCloseBuf, tcEnt.body)
+    var rTe = row('任务结束音', tcEnt.body)
+    // 音效行的 [✓] = 该事件是否播这个音效。② 直接绑**既有的** usageSet.taskEnd.on
+    //（宿主 usageSettingsDefaults() 里 taskEnd 默认 { on: false } ⇒ 这里默认不勾）。
+    var teSoundChk = document.createElement('input')
+    teSoundChk.type = 'checkbox'
+    teSoundChk.className = 'dshwv-check'
+    teSoundChk.checked = bufTaskEndOn
+    teSoundChk.title = '该事件是否播这个音效（关掉 = 不响；下拉里选的音效仍保留，下次勾上即用）'
+    teSoundChk.addEventListener('change', function () { bufTaskEndOn = !!teSoundChk.checked })
+    rTe.appendChild(teSoundChk)
+    var teSel = document.createElement('select')
+    teSel.className = 'dshwv-sound'
+    teSel.title = '任务结束音：音效组（点按整组）/ 单个音频；播不播由左边的 [✓] 决定'
+    teSel.addEventListener('change', function () { bufTaskEndSel = teSel.value })
+    rTe.appendChild(teSel)
+    rTe.appendChild(playBtn('试听任务结束音', function () {
+      playPreview(function () { playBindingSound({ on: true, sel: bufTaskEndSel }, { vol: sndBuf.turnCost.vol }) })
+    }))
+    var teDrop = dshwCustSel(teSel, { scrollNames: true })
+    try { teSel.__dshwDrop = teDrop } catch (err) {}
+    fillSoundSelect(teSel, bufTaskEndSel)
+    // 「静音」项删除后下拉不该留空：把兜底后的真实值回写缓冲（旧数据 sel 为空串时兜底成列表里的默认音）
+    if (teSel.value) bufTaskEndSel = teSel.value
+    // v778：②区「提示音量」—— 拖动即视为**用户显式设置**（volSet = true），此后该事件用自己的值；
+    //   没拖过则保持"跟随①区按压音量"（见 soundVolumeOf），摘要里会写明，避免再出现"滑块看着能调、其实无效"。
+    var tcVol = volSlider(function () { return sndBuf.turnCost.vol }, function (v) {
+      sndBuf.turnCost.vol = v
+      sndBuf.turnCost.volSet = true
+      try { refreshSummaries() } catch (err) {}
+    })
+    var rTcVol = row('提示音量', tcEnt.body)
+    rTcVol.appendChild(tcVol.input)
+    rTcVol.appendChild(tcVol.pct)
+    // v773：② 的"音效没开"= 音效行 [✓] 没勾（bufTaskEndOn）**或**整个事件关着（turnCostOn）⇒
+    //       音效下拉 + 提示音量置灰；只有"下拉 + 音量"灰，[✓] 与试听 ▶ 仍可用。
+    // v773b：**「任务结束音」这行字不置灰**（用户要求"这三行字不用变灰"）—— 行里还有可用的
+    //       [✓] 与 ▶，标签一起灰会让人以为整行都废了。label 传 null = 只灰控件、不动标签。
+    sndReg(function () { return !turnCostOn || !bufTaskEndOn }, [
+      { el: teSel, drop: teDrop, label: null },
+      { el: tcVol.input, label: rTcVol.firstChild },
+    ])
+    sndEntries.push({ kind: 'turnCost', summary: tcEnt.summary, sel: teSel })
+    // —— ③④ 提问提示 / 授权提示（结构完全相同）——
+    var waitUI = {}
+    function buildWait(kind, labelText, selLabel) {
+      var cfg = sndBuf[kind]
+      var wEnt = sndEntry(labelText, cfg.on !== false, function (b) { cfg.on = !!b })
+      var onChk = wEnt.chk
+      // v762 行序（与 ② 统一）：冒泡提示 → 自动关闭 → 音效行 → 提示音量
+      // v761（#161 C5）：提问/授权的内容编辑器已接入 —— usageAlertBudgetEditor 新增了
+      // 'question' / 'approval' 两个模式，内容落在 events.<kind>.lines。**不要**拿 'question'
+      // 去打开预警/预算编辑器（那会改错内容，正是上一轮把它置灰的原因）。
+      var bub = bubbleRow(cfg, function () { usageAlertBudgetEditor(kind, null) },
+        '编辑' + (kind === 'approval' ? '授权' : '提问') + '提示的泡泡内容（{session} = 当前对话名，超长自动截断）', wEnt.body)
+      // v764：**不再挂「自动关闭」那一行** —— 提问/授权的提示气泡是**常驻**的（宿主给的是挂起状态，
+      // 前端 whaleSysPush({kind:'wait', ttlMs: 0}) 不布自动关闭计时器），所以那行改了也没有任何消费方，
+      // 属于「看起来能设、其实什么都不做」的死控件。行序因此是：冒泡提示 → 音效行 → 提示音量。
+      var rSel = row(selLabel, wEnt.body)
+      // 音效行的 [✓] = 是否播这个音效，键 = events.<kind>.soundOn（v762 新增，默认 true）。
+      // 提问/授权本来就被表头总开关默认关着（on: false），所以默认 true 不带来任何行为变化。
+      // 位置：标签之后、下拉之前。
+      var soundChk = document.createElement('input')
+      soundChk.type = 'checkbox'
+      soundChk.className = 'dshwv-check'
+      soundChk.checked = cfg.soundOn !== false
+      soundChk.title = '该事件是否播这个音效（关掉 = 不响；下拉里选的音效仍保留，下次勾上即用）'
+      soundChk.addEventListener('change', function () { cfg.soundOn = !!soundChk.checked })
+      rSel.appendChild(soundChk)
+      var sel = document.createElement('select')
+      sel.className = 'dshwv-sound'
+      sel.title = selLabel + '：音效组（点按整组）/ 单个音频；播不播由左边的 [✓] 决定'
+      sel.addEventListener('change', function () { cfg.sel = sel.value })
+      rSel.appendChild(sel)
+      rSel.appendChild(playBtn('试听' + selLabel, function () {
+        playPreview(function () { playBindingSound({ on: true, sel: cfg.sel }, { vol: cfg.vol }) })
+      }))
+      var drop = dshwCustSel(sel, { scrollNames: true })
+      try { sel.__dshwDrop = drop } catch (err) {}
+      fillSoundSelect(sel, cfg.sel)
+      // 同 ②：「静音」项删除后下拉不该留空，把兜底后的真实值写回缓冲
+      if (sel.value) cfg.sel = sel.value
+      var vs = volSlider(function () { return cfg.vol }, function (v) { cfg.vol = v })
+      var rVol = row('提示音量', wEnt.body)
+      rVol.appendChild(vs.input)
+      rVol.appendChild(vs.pct)
+      // v773：③④ 的"音效没开"= 音效行 [✓]（cfg.soundOn）没勾**或**该事件总开关（cfg.on）关着
+      // v773b：**「提问提示音效」/「授权提示音」这两行字不置灰**（用户要求），只灰下拉与音量
+      sndReg(function () { return cfg.on === false || cfg.soundOn === false }, [
+        { el: sel, drop: drop, label: null },
+        { el: vs.input, label: rVol.firstChild },
+      ])
+      sndEntries.push({ kind: kind, summary: wEnt.summary, sel: sel })
+      waitUI[kind] = { on: onChk, sel: sel, drop: drop, vol: vs, bub: bub, sound: soundChk }
+    }
+    buildWait('question', '提问提示', '提问提示音效')
+    buildWait('approval', '授权提示', '授权提示音')
+    // v765：入口行右侧摘要的刷新 —— ① 打开面板时一次；② 卡片里任何 input/change 都刷新（控件都在卡内）；
+    // ③ 点文档任意处也刷新一次（覆盖「音效组」这种从 body 级子面板里改、不发卡内事件的路径），
+    //    该监听在 cleanup 里摘掉。摘要只写 textContent，成本很低。
+    function sndDocRefresh() { refreshSummaries() }
+    try { document.addEventListener('click', sndDocRefresh, true) } catch (err) {}
+    try { card.addEventListener('input', refreshSummaries) } catch (err) {}
+    try { card.addEventListener('change', refreshSummaries) } catch (err) {}
+    refreshSummaries()
+    // —— 底部按钮 ——
+    var closed = false
+    function cleanup(restore) {
+      if (closed) return
+      closed = true
+      try { dshwCustSelClose() } catch (err) {} // 收回可能还开着的自绘下拉（它是 body 上的固定层）
+      try { closeAudioGroupPanel() } catch (err) {}
+      try { stopPanelPreview() } catch (err) {} // v766：关窗时也停掉试听（别让声音跟着窗口一起"留在后台"）
+      if (restore) {
+        // 复用自菜单的控件在输入时就已提交 → 取消时按快照回滚
+        try { if (Math.abs(Number(soundVol) - snapVol) > 1e-9) setVol(snapVol) } catch (err) {}
+        try { if ((soundOn !== false) !== snapSoundOn) setSoundOn(snapSoundOn) } catch (err) {}
+        try { if (!!turnCostOn !== snapTurnCostOn) setTurnCostOn(snapTurnCostOn) } catch (err) {}
+        // v763：④「自动关闭」（turnCostCloseMs，存在 .dsh-size.json）同款处理 —— 回滚内存并写回磁盘。
+        // setTurnCostClose 收秒，且没有「值未变就跳过」的短路，所以这里自己按快照比较，没变就一个字节都不写。
+        try {
+          if (Math.abs(Number(turnCostCloseMs) - snapTurnCostCloseMs) > 1e-9) {
+            setTurnCostClose(Math.round(snapTurnCostCloseMs / 1000))
+          }
+        } catch (err) {}
+        // v777：底部「点按角色关闭提示气泡」——回滚缓冲与控件（它只活在缓冲里，没保存过就没落盘）
+        try { bufWaitCharClose = snapWaitCharClose } catch (err) {}
+        try { if (waitCharChk) waitCharChk.checked = snapWaitCharClose } catch (err) {}
+      }
+      try { audioGroupPanel.style.zIndex = '' } catch (err) {}
+      try { audioEditMask.style.zIndex = '' } catch (err) {}
+      try { document.removeEventListener('click', sndDocRefresh, true) } catch (err) {}
+      try { if (unregMask) unregMask() } catch (err) {}
+      dshwBodyDetach(mask) // 走 detach 注销登记，否则 DOM 守护会把这个刚关掉的面板补挂回来
+    }
+    // 本面板会写的那四个事件的载荷（只带 schema 里的键）
+    function eventsPayload() {
+      return {
+        // 按压音量仍在 .dsh-size.json（滑块已即时落盘），这里按宿主 schema 再记一份
+        press: { vol: Number(soundVol) || 0 },
+        turnCost: soundEventOut(sndBuf.turnCost, false),
+        question: soundEventOut(sndBuf.question, true),
+        approval: soundEventOut(sndBuf.approval, true),
+      }
+    }
+    // 本地合并一份（与既有编辑器一致：先乐观写内存，宿主返回后以宿主为准）——
+    // 逐字段合并不整块替换，免得把宿主那侧的 lines 等内容从内存里抹掉。
+    function mergeEventsLocal(ev) {
+      try {
+        usageSet = usageSet || {}
+        usageSet.events = usageSet.events || {}
+        for (var ek in ev) {
+          var m = {}
+          for (var mk in (usageSet.events[ek] || {})) m[mk] = usageSet.events[ek][mk]
+          for (var nk in ev[ek]) m[nk] = ev[ek][nk]
+          usageSet.events[ek] = m
+        }
+      } catch (err) {}
+    }
+    // v763：面板 ②区「自动关闭」→ 消耗泡泡停留时长（毫秒）。为什么要这根线：
+    //   · v764：events.turnCost 的 autoClose / ttlSec 已**摘除**（它们从来没有消费方，只有面板自己在
+    //     读写，等于同一件事有两个键）；现在 ② 区那行只改面板自己的 tcCloseBuf；
+    //   · 真正决定消耗泡泡停多久的是 .dsh-size.json 的 turnCostCloseMs（消费点见上面 sceneOpen）；
+    //   · 而唯一能改 turnCostCloseMs 的 turnCostCloseInput 已经不再挂到任何窗口（主菜单那行 v762 删了、
+    //     本面板这轮也没搬它）⇒ 不接这根线，面板上那行「自动关闭」就是个死控件。
+    // ⚠️ setTurnCostClose(v) 收的是**秒**（内部 n = round(v); turnCostCloseMs = n * 1000），
+    //    并且**没有**「值未变就跳过」的短路 —— 值没变也会 saveConfig() 写一次 .dsh-size.json（幂等）。
+    function closeMsFromBuf() {
+      // v764：读 ② 区自己的缓冲（tcCloseBuf），不再读 events.turnCost
+      var c = tcCloseBuf || {}
+      var s = Number(c.ttlSec)
+      if (!isFinite(s) || s < 0) s = 0
+      // 不勾「自动关闭」⇒ 0（= 不自动关闭），与既有 turnCostCloseMs > 0 的判定一致
+      return c.autoClose !== false ? Math.round(s) * 1000 : 0
+    }
+    function saveAll() {
+      try {
+        var ev = eventsPayload()
+        // 任务结束音：沿用既有绑定键 {on, sel}。v762 起「播不播」由 ② 音效行的 [✓]
+        // （= usageSet.taskEnd.on）表达，下拉只负责选**哪一个**音效（已无「静音」项）。
+        usageSet = usageSet || {}
+        var te = {}
+        try { for (var k in (usageSet.taskEnd || {})) te[k] = usageSet.taskEnd[k] } catch (err) {}
+        te.on = !!bufTaskEndOn
+        te.sel = bufTaskEndSel || bufTaskEndKeep
+        usageSet.taskEnd = te
+        try { applyTaskEndLocal(te.on, te.sel) } catch (err) {}
+        mergeEventsLocal(ev)
+        // v777：底部「点按角色关闭提示气泡」跟着同一次 PUT 落盘（键 = settings.wait.charClose）
+        try {
+          usageSet = usageSet || {}
+          usageSet.wait = Object.assign({}, usageSet.wait || {}, { charClose: !!bufWaitCharClose })
+        } catch (err) {}
+        saveUsageSettings({ events: ev, taskEnd: te, wait: { charClose: !!bufWaitCharClose } })
+        // v763：按压音量 / 音效总开关 / 每轮消耗提示开关这三项**不在**上面这次 PUT 的覆盖范围里
+        //（它们存在 .dsh-size.json，走 saveConfig()）⇒ 保存时必须各自按**当前内存值**提交一次，
+        // 否则「恢复默认」对它们不生效（用户会觉得恢复默认对音量/开关没作用）。
+        // 三个 setter 各自都有「值没变就写一遍同样的值」的幂等行为，无副作用。
+        try { setVol(soundVol) } catch (err) {}
+        try { setSoundOn(soundOn) } catch (err) {}
+        try { setTurnCostOn(turnCostOn) } catch (err) {}
+        // v763：② 的「自动关闭」同样按**当前内存值**提交 —— setTurnCostClose() 收秒、写的是
+        // .dsh-size.json 的 turnCostCloseMs（消耗泡泡停留时长）；0 = 不自动关闭。
+        try { setTurnCostClose(Math.round(closeMsFromBuf() / 1000)) } catch (err) {}
+      } catch (err) {}
+      cleanup(false)
+    }
+    function applyDefaults() {
+      try {
+        // v763（真机反馈修）：**本函数只改内存，绝不落盘** —— 与窗口里其它改动完全同语义。
+        // 旧实现调了 setVol/setSoundOn/setTurnCostOn（这三者都立即写 .dsh-size.json），又把
+        // 「取消快照」整体换成默认值、最后还 saveUsageSettings({resetEvents:true}) 立刻 PUT
+        // ⇒ 点「恢复默认」再点「取消」时磁盘上早已是默认值，取消等于没撤销（用户实测的 bug）。
+        // 现在：这里只改内存缓冲 + 控件显示（直接改 .value/.checked 不派发 input/change，
+        // 所以碰不到那三个落盘 setter）；点「保存」由 saveAll() 提交，「取消」由 cleanup(true)
+        // 按**打开面板时**的快照回滚（因此下面不再重写 snapVol/snapSoundOn/snapTurnCostOn）。
+        // ① 按压音量 + 按压音效总开关（都是内存标量）
+        var dPressVol = Number(DEF.press.vol)
+        dPressVol = isFinite(dPressVol) ? Math.round(Math.min(1, Math.max(0, dPressVol)) * 100) / 100 : 0
+        soundVol = dPressVol // 与 setVol() 同一套规范化（取消时的快照比较是 1e-9，精度必须一致）
+        var sndWasOff = (soundOn === false)
+        soundOn = true
+        try { volInput.value = String(soundVol) } catch (err) {}
+        try { volPct.textContent = Math.round(soundVol * 100) + '%' } catch (err) {}
+        try {
+          if (pressAudio) pressAudio.volume = soundVol
+          if (releaseAudio) releaseAudio.volume = soundVol
+        } catch (err) {}
+        // 由「关」到「开」时补上 setSoundOn(true) 的**非落盘**副作用（复位本轮播放状态 + 重新预热）：
+        // 否则音频上下文还停在 suspend，面板里的试听按钮会没声音（取消时 setSoundOn(快照) 会回去）。
+        if (sndWasOff) { try { applySoundSet() } catch (err) {} }
+        // ② 「每轮消耗提示」总开关（同样只改内存）
+        turnCostOn = true
+        try { tcOnChk.checked = true } catch (err) {}
+        try { turnCostToggle.checked = true } catch (err) {}
+        try { turnCostCloseInput.disabled = false } catch (err) {}
+        sndBuf.turnCost = JSON.parse(JSON.stringify(DEF.turnCost))
+        sndBuf.question = JSON.parse(JSON.stringify(DEF.question))
+        sndBuf.approval = JSON.parse(JSON.stringify(DEF.approval))
+        // v764：② 「自动关闭」的默认值 = 出厂值（5 秒 / 开，与 .dshw-size.json 的 turnCostCloseMs 出厂
+        // 默认一致）—— 它现在住在 tcCloseBuf 里，**不再**跟着 DEF.turnCost 走。同样只改内存
+        // （**不调 setTurnCostClose** ⇒ 不落盘），并把（已创建、未挂载的）秒数输入框显示同步好 ——
+        // 否则之后从本面板打开「自定义提示（每轮消耗）」窗口时，那个窗口的「保存」会按陈旧的输入框值
+        // 把 turnCostCloseMs 又写回去。
+        tcCloseBuf.autoClose = true
+        tcCloseBuf.ttlSec = TC_CLOSE_DEFAULT_SEC
+        turnCostCloseMs = closeMsFromBuf()
+        try { turnCostCloseInput.value = String(Math.round(turnCostCloseMs / 1000)) } catch (err) {}
+        // v762：「静音」项已删除 ⇒ 默认仍是「默认已选中内置音」。
+        // v774：「恢复默认」的目标 = 新的出厂默认（宿主 usageSettingsDefaults().taskEnd）：
+        //       on = **true**、sel = 内置 A（frag:end_a）。
+        bufTaskEndSel = 'frag:end_a' // = 宿主 usageSettingsDefaults().taskEnd.sel
+        bufTaskEndKeep = 'frag:end_a' // = 宿主 usageSettingsDefaults().taskEnd.sel
+        bufTaskEndOn = true // v774：② 音效行的 [✓] 复位（宿主 taskEnd.on 默认 true）
+        // v778：②区「提示音量」也复位成"跟随①区"（volSet=false；滑块显示由 refreshSummaries 同步成①区值）
+        try { sndBuf.turnCost.volSet = false } catch (err) {}
+        // v777：底部「点按角色关闭提示气泡」恢复出厂默认（false = 只有点泡泡能收）
+        bufWaitCharClose = false
+        try { if (waitCharChk) waitCharChk.checked = false } catch (err) {}
+        // 控件回填
+        try { pressOnChk.checked = true } catch (err) {}
+        try { soundToggle.checked = true } catch (err) {} // v763：与 setSoundOn() 同步的那只开关（只改内存显示）
+        try { teSoundChk.checked = true } catch (err) {} // v774：② 音效行 [✓] 复位（出厂默认已改成"开"）
+        try { tcAc.chk.checked = tcCloseBuf.autoClose !== false } catch (err) {}
+        try { tcAc.num.value = String(tcCloseBuf.ttlSec) } catch (err) {}
+        try { tcBub.checked = sndBuf.turnCost.bubbleOn !== false } catch (err) {}
+        try {
+          tcVol.input.value = String(sndBuf.turnCost.vol)
+          tcVol.pct.textContent = Math.round(sndBuf.turnCost.vol * 100) + '%'
+        } catch (err) {}
+        fillSoundSelect(teSel, bufTaskEndSel)
+        ;['question', 'approval'].forEach(function (kind) {
+          var u = waitUI[kind]
+          var cfg = sndBuf[kind]
+          if (!u) return
+          try { u.on.checked = cfg.on !== false } catch (err) {}
+          try {
+            u.vol.input.value = String(cfg.vol)
+            u.vol.pct.textContent = Math.round(cfg.vol * 100) + '%'
+          } catch (err) {}
+          try { u.bub.checked = cfg.bubbleOn !== false } catch (err) {}
+          // v762：③④ 音效行的 [✓] 复位（DEF 里 soundOn: true）
+          try { if (u.sound) u.sound.checked = cfg.soundOn !== false } catch (err) {}
+          fillSoundSelect(u.sel, cfg.sel)
+        })
+        // v765：入口行摘要也要跟着「恢复默认」刷新
+        refreshSummaries()
+        // v763：到这里结束 —— **不再写 usageSet、不调 applyTaskEndLocal、也绝不 PUT**。
+        // 旧实现在这里乐观写了内存镜像（events + taskEnd）并立刻发 resetEvents；而「取消」只能
+        // 回滚那三个标量 ⇒ 内存镜像停在默认值、磁盘却是旧值，表现为「取消后重新打开面板看到
+        // 的还是默认值」。现在整套动作都只是缓冲：
+        //   · 事件类键        = sndBuf（saveAll 里由 eventsPayload() 取，保存时 mergeEventsLocal + PUT）
+        //   · 任务结束音      = bufTaskEndOn / bufTaskEndSel（saveAll 里写回 usageSet.taskEnd + applyTaskEndLocal）
+        //   · 按压音量        = soundVol（saveAll 里 setVol() 落 .dsh-size.json，并按宿主 schema 记一份 press.vol）
+        //   · usageSet.events 的 lines（提问/授权提示内容）不再被「恢复默认」清空（与按钮 title 一致）
+      } catch (err) {}
+    }
+    // v777（用户要求）：「取消/恢复默认/保存」上面一行 —— 与「自定义泡泡」窗口的
+    // 「点按角色推进泡泡队列」同款排版（[✓] + 标签 + ? 圈圈），说明收进 ? 圈圈里（复用 v647 的 dshwvAskDot）。
+    var waitCharRow = document.createElement('div')
+    waitCharRow.className = 'dshwv-bubsec'
+    waitCharRow.style.display = 'flex'
+    waitCharRow.style.alignItems = 'center'
+    waitCharRow.style.flexWrap = 'wrap'
+    waitCharRow.style.gap = '4px 6px'
+    waitCharRow.style.color = '#203170'
+    waitCharRow.style.marginTop = '8px'
+    // v777c（2026-09-27 追加要求）：
+    //   ① 与上面那几行（入口行 `dshwvFoldEntry`，如「授权提示」）的复选框**左对齐** —— 入口行是
+    //      `rowEl.style.padding = '6px 6px'` 直接挂在 card 上 ⇒ 复选框在 6px 处；本行 `dshwv-bubsec`
+    //      没有左内边距（默认 0）⇒ 补 6px 即对齐。（⚠️ 注意区分：展开后**折叠体里**的行额外有
+    //      `body.style.paddingLeft = 10px`，在 10px 处；本行是全局开关、不属于任何折叠体，故按入口行对齐。）
+    //   ② 本行**不要鼠标悬浮提示**（原生 title）：问号圈圈自带的「查看说明」与复选框那句说明都清掉 ——
+    //      说明统一收进问号圈圈的弹层里（悬停/点击问号时才显示），避免两个入口说两遍。
+    waitCharRow.style.paddingLeft = '6px'
+    var waitCharAsk = dshwvAskDot(
+      '等待提问 / 授权的提示气泡：<b>默认点气泡就能收起来</b>（点一下收起，同一条挂起不会再自动弹回；' +
+      '你回答或批准之后、或下一次新的提问 / 授权到来时，照常冒泡并响铃）。<br><br>' +
+      '打开下面这个开关后，<b>点角色（鲸鱼）也能收掉提示气泡</b> —— 和「自定义泡泡」里的' +
+      '「点按角色推进泡泡队列」是同一类手感。<br><br>默认关闭。'
+    )
+    // v777b（2026-09-27 追加要求）：? 圈圈放到**文字后面**，并把与文字的间距收紧 ——
+    //   .dshwv-askq 自带 margin-right:5px，加上行的 column-gap 6px，放前面时离文字有 11px；
+    //   v777b 先用行内 margin-left:-3px 压到约 3px；
+    //   v777d（2026-09-27 追加要求「再稍稍右移」）：改成 0 ⇒ 间距回到行的自然列间距 6px（右移 3px）。
+    waitCharAsk.style.marginLeft = '0'
+    waitCharAsk.style.marginRight = '0'
+    waitCharAsk.title = '' // v777c：清掉 dshwvAskDot 自带的「查看说明」原生 tooltip（用户要求本行不要悬浮提示）
+    var waitCharChk = document.createElement('input')
+    waitCharChk.type = 'checkbox'
+    waitCharChk.className = 'dshwv-check'
+    waitCharChk.id = 'dshwv-waitcharclose'
+    waitCharChk.checked = bufWaitCharClose
+    // v777c：复选框也不挂原生 tooltip（原来那句"打开后：点角色也能收起…"已写进问号圈圈的说明里）
+    waitCharChk.title = ''
+    waitCharChk.addEventListener('change', function () { bufWaitCharClose = !!waitCharChk.checked })
+    waitCharRow.appendChild(waitCharChk)
+    var waitCharLab = document.createElement('label')
+    waitCharLab.setAttribute('for', 'dshwv-waitcharclose')
+    waitCharLab.style.cursor = 'pointer'
+    waitCharLab.style.fontSize = '12px'
+    waitCharLab.textContent = '点按角色关闭提示气泡'
+    waitCharRow.appendChild(waitCharLab)
+    waitCharRow.appendChild(waitCharAsk)
+    card.appendChild(waitCharRow)
+    var btns = document.createElement('div')
+    btns.className = 'dshwv-bubbtns'
+    var cancelBtn = document.createElement('button')
+    cancelBtn.type = 'button'
+    cancelBtn.className = 'dshwv-bubbtn dshwv-bubbtn-no'
+    cancelBtn.textContent = '取消'
+    cancelBtn.addEventListener('click', function () { cleanup(true) })
+    btns.appendChild(cancelBtn)
+    var resetBtn = document.createElement('button')
+    resetBtn.type = 'button'
+    resetBtn.className = 'dshwv-bubbtn dshwv-bubbtn-no'
+    resetBtn.textContent = '恢复默认'
+    resetBtn.title = '把四个事件的音量/自动关闭/冒泡/音效选择恢复为默认值（不动外观、位置、账本、角色与自定义泡泡）'
+    resetBtn.addEventListener('click', function () { applyDefaults() })
+    btns.appendChild(resetBtn)
+    var okBtn = document.createElement('button')
+    okBtn.type = 'button'
+    okBtn.className = 'dshwv-bubbtn dshwv-bubbtn-ok'
+    okBtn.textContent = '保存'
+    okBtn.addEventListener('click', function () { saveAll() })
+    btns.appendChild(okBtn)
+    card.appendChild(btns)
+    mask.appendChild(card)
+    mask.addEventListener('click', function (e) { if (e.target === mask) cleanup(true) })
+    dshwBodyAppend(mask)
+  } catch (err) {}
+}
 function usageAlertBudgetEditor(key, onSave) {
   try {
     var isAlert = key === 'alert'
     // v720:第三个模式 cost —— 主菜单「每轮消耗提示」后的「自定义提示」窗口。
     // 内容与预警/预算共用同一套模块机制;头部不是"触发条件"而是自动关闭秒数 + 任务结束音效(从主菜单搬来)。
     var isCost = key === 'cost'
+    // v761（#161 C5）：第四/第五个模式 question / approval —— 「全局音效设置」面板里
+    // 「提问音效 / 授权音效」两区的「编辑提示内容」入口。内容落在 usageSet.events.<kind>.lines
+    // （宿主 waitQuestion.content / waitApproval.content 那套键），与 alert/budget 的 lines 完全分开，
+    // 所以**绝不能**落到 isAlert/isBudget 分支去（那会改错内容 —— 上一轮就是因此把它置灰的）。
+    var isWait = (key === 'question' || key === 'approval')
+    var waitKind = isWait ? key : ''
     var costCommitted = false // 保存过就不再走"取消还原"
+    var waitCommitted = false // v761：等待提示内容"保存过就不再走取消还原"的旗标
+    var waitSnapLines = null // v761：等待提示内容打开窗口时的快照（取消/点遮罩关闭时还原缓冲）
     var cfg = isCost
       ? (((usageSet || {}).turnCost) || {})
-      : (((usageSet || {})[isAlert ? 'alert' : 'budget']) || {})
+      : (isWait ? ((((usageSet || {}).events || {})[waitKind]) || {}) : (((usageSet || {})[isAlert ? 'alert' : 'budget']) || {}))
     var numDef = isAlert ? 50 : 20
     var numInit = isAlert ? (cfg.below != null ? cfg.below : numDef) : (cfg.amount != null ? cfg.amount : numDef)
-    var step = { kind: 'custom', modules: JSON.parse(JSON.stringify(isCost ? usageTurnCostLines() : usageRemindLinesOf(cfg, isAlert))) }
+    // 三种自带内容各自取自己的默认模板；等待两模式取宿主 waitDefaultLines() 的逐字段一致版
+    var stepLines0 = isCost ? usageTurnCostLines() : (isWait ? usageWaitLinesOf(cfg, waitKind) : usageRemindLinesOf(cfg, isAlert))
+    if (isWait) {
+      try { waitSnapLines = stepLines0 ? JSON.parse(JSON.stringify(stepLines0)) : [] } catch (err) { waitSnapLines = [] }
+    }
+    var step = { kind: 'custom', modules: JSON.parse(JSON.stringify(stepLines0)) }
     // 备份被临时替换的全局状态/元素/函数,关闭后还原
     var bkEditItems = bubbleEditItems
     var bkEditorSnap = bubbleEditorSnap
@@ -1907,20 +2899,25 @@ function usageAlertBudgetEditor(key, onSave) {
     var title = document.createElement('div')
     title.className = 'dshwv-bubtitle'
     title.textContent = isCost
-      ? '自定义提示(每轮消耗 · 内容 / 自动关闭 / 任务结束音效)'
-      : ('编辑 ' + (isAlert ? '余额预警' : '今日预算') + '提醒内容(可拖动下方模块入框)')
+      ? '自定义提示（每轮消耗 · 内容）'
+      : (isWait
+        ? ('编辑 ' + (waitKind === 'approval' ? '授权' : '提问') + '提示内容(可拖动下方模块入框)')
+        : ('编辑 ' + (isAlert ? '余额预警' : '今日预算') + '提醒内容(可拖动下方模块入框)'))
     card.appendChild(title)
-    // —— 头部:预警/预算=触发条件;cost=自动关闭 + 任务结束音效 ——
+    // —— 头部:预警/预算=触发条件;cost=自动关闭 + 任务结束音效;wait=说明 + 占位符提示 ——
     var secCond = document.createElement('div')
     secCond.className = 'dshwv-bubsec dshwv-bubsec-first'
     secCond.textContent = isCost
       ? '每轮消耗提示(内容里用 {cost} 引用本轮消耗金额)'
-      : (isAlert ? '触发条件(余额低于该值时提醒)' : '触发条件(今日已用达到该值时提醒)')
+      : (isWait
+        ? ((waitKind === 'approval' ? '授权' : '提问') + '提示内容({session} = 对话名)')
+        : (isAlert ? '触发条件(余额低于该值时提醒)' : '触发条件(今日已用达到该值时提醒)'))
     card.appendChild(secCond)
     // 触发条件控件(启用 + 阈值):cost 模式没有触发条件,这两个控件不创建
+    // v761：wait 模式同样没有"触发条件"（挂起音效/开关/自动关闭/冒泡都在「全局音效设置」面板那一区里）
     var chk = null
     var numInp = null
-    if (!isCost) {
+    if (!isCost && !isWait) {
       chk = document.createElement('input')
       chk.type = 'checkbox'
       chk.className = 'dshwv-check'
@@ -1951,32 +2948,36 @@ function usageAlertBudgetEditor(key, onSave) {
       return s
     }
     if (isCost) {
-      // 自动关闭:复用主菜单原来那个秒数输入(0 = 不自动关闭);窗口内不受菜单"提示已关闭"禁用态影响
-      turnCostCloseInput.disabled = false
-      var gAcC = segCond()
-      gAcC.appendChild(qLabel('自动关闭'))
-      gAcC.appendChild(turnCostCloseInput)
-      var lSecC = qLabel('秒(0=不自动关闭)')
-      lSecC.style.opacity = '.75'
-      lSecC.style.fontSize = '11px'
-      gAcC.appendChild(lSecC)
-      condBox.appendChild(gAcC)
-      // 任务结束音效(从主菜单搬进来;窗口期间的改动先缓冲,点「保存」才落盘)
-      var cBrk = document.createElement('span')
-      cBrk.style.flex = '1 0 100%'
-      cBrk.style.height = '0'
-      cBrk.style.margin = '0'
-      condBox.appendChild(cBrk)
-      var gTe = segCond()
-      gTe.appendChild(qLabel('任务结束音效'))
-      gTe.appendChild(taskEndToggle)
-      gTe.appendChild(taskEndRowHost)
-      condBox.appendChild(gTe)
-      var teHint = qLabel('每轮回复完成时播放;这两项点「保存」后才生效')
-      teHint.style.opacity = '.75'
-      teHint.style.fontSize = '11px'
-      teHint.style.flex = '1 0 100%'
-      condBox.appendChild(teHint)
+      // v763（用户要求）：本窗口**不再挂这三行** —— 「自动关闭 [秒数] 秒(0=不自动关闭)」、
+      // 「任务结束音效 [音效名 ▾]」（含左边的 [✓]）以及下面的小字提示
+      // 「每轮回复完成时播放;这两项点「保存」后才生效」。它们现在都在「提示与音效设置」面板的
+      // 「每轮消耗提示」区里（那一区才是这两项的正式入口），留在本窗口属于重复。
+      // ⚠️ 这里**只是不 append**，元素的创建与相关缓冲/快照/取消还原一律原样保留：
+      //   · turnCostCloseInput：仍创建（见文件上方），仍走 turnCostCloseDefer / -Snap 那套
+      //     「窗口内只改内存 → 点「保存」才 setTurnCostClose 落 .dsh-size.json → 取消按快照还原」；
+      //   · taskEndSel：仍创建，并**继续留在他原本的宿主 taskEndRowHost 里**（那个宿主本来就不插入
+      //     文档；dshwCustSel 只要求 select 有父节点，所以自绘下拉的 refresh/fill/sync 照常工作，
+      //     不依赖是否挂进文档）；
+      //   · taskEndToggle（「每轮回复完成时播放」的 [✓]）：仍创建、仍被 applyTaskEndLocal 同步，
+      //     只是本窗口不再展示（面板 ② 区的 teSoundChk 是它的替代入口）。
+      // 保存/取消语义不变：本窗口的「保存」照样提交缓冲里的 taskEnd 与秒数，「取消」照样按快照还原。
+      turnCostCloseInput.disabled = false // 保留原有的「窗口内不受菜单禁用态影响」语义（取消路径也看它）
+    } else if (isWait) {
+      // v761（#161 C5）：等待提示没有触发条件。这里只放说明 —— 音效 / 音量 / 自动关闭 / 冒泡开关
+      // 都在「全局音效设置」面板里那一区，本窗口只管内容（改动仍遵循"保存才提交"）。
+      var wHint = qLabel(waitKind === 'approval'
+        ? '授权挂起时显示这条提示（开关与时长在「授权音效」那一区设置）'
+        : '提问挂起时显示这条提示（开关与时长在「提问音效」那一区设置）')
+      wHint.style.fontSize = '11px'
+      wHint.style.color = '#203170'
+      wHint.style.opacity = '.85'
+      condBox.appendChild(wHint)
+      condBox.appendChild(document.createElement('br'))
+      var wHint2 = qLabel('{session} 会替换为当前对话名，超长自动截断（读不到时显示「当前对话」）')
+      wHint2.style.fontSize = '11px'
+      wHint2.style.color = '#203170'
+      wHint2.style.opacity = '.75'
+      condBox.appendChild(wHint2)
     } else {
     // 启用提醒: 口 启用提醒 · 阈值: 余额 ≤ [数值] 元时提醒
     var gOn = segCond()
@@ -2020,7 +3021,8 @@ function usageAlertBudgetEditor(key, onSave) {
     gSec.appendChild(lSec)
     condBox.appendChild(gSec)
     }
-    card.appendChild(condBox)
+    // v761：wait 模式 condBox 里只有说明（上面那一支已直接挂进 card），不重复挂一个空的盒子
+    if (!isWait) card.appendChild(condBox)
     // —— 以下完全复用 W2 组件(仅换宿主元素与目标步骤) ——
     var secPal = document.createElement('div')
     secPal.className = 'dshwv-bubsec dshwv-bubsec-first dshwv-bubsec-withq'
@@ -2035,7 +3037,9 @@ function usageAlertBudgetEditor(key, onSave) {
       '<div>· 拖 ⠿ 手柄 = 整行排序</div>' +
       (isCost
         ? '<div style="margin-top:4px">{cost} 在触发时替换为本轮消耗金额(默认内容请保持 {cost})</div>'
-        : '<div style="margin-top:4px">{below} / {amount} 在触发时替换为实际数值</div>') +
+        : (isWait
+          ? '<div style="margin-top:4px">{session} 在挂起时替换为当前对话名（读不到显示「当前对话」，超长按 12 字符截断并追加 ...）</div>'
+          : '<div style="margin-top:4px">{below} / {amount} 在触发时替换为实际数值</div>')) +
       '<div style="margin-top:4px;opacity:.75">手机端:长按约 0.4 秒进入拖动</div>'
     ), secPal.firstChild)
     card.appendChild(secPal)
@@ -2044,7 +3048,9 @@ function usageAlertBudgetEditor(key, onSave) {
     card.appendChild(bubblePalEl)
     var secPv = document.createElement('div')
     secPv.className = 'dshwv-bubsec'
-    secPv.textContent = isCost ? '提示内容(每轮消耗)' : '提醒内容'
+    secPv.textContent = isCost
+      ? '提示内容(每轮消耗)'
+      : (isWait ? ('提示内容(' + (waitKind === 'approval' ? '授权' : '提问') + ')') : '提醒内容')
     card.appendChild(secPv)
     bubblePvEl = document.createElement('div')
     bubblePvEl.className = 'dshwv-bubpvbox'
@@ -2085,7 +3091,10 @@ function usageAlertBudgetEditor(key, onSave) {
           var snap = taskEndDeferSnap || { on: false, sel: '' }
           usageSet = usageSet || {}
           usageSet.taskEnd = { on: !!snap.on, sel: String(snap.sel || '') }
-          applyTaskEndLocal(usageSet.taskEnd.on, usageSet.taskEnd.sel)
+          // v763：v762 起 taskEndSel 不再挂进任何窗口（它留在不插入文档的宿主 taskEndRowHost 里），
+          // 所以这里对它的同步改成与下一行同款的 try 包裹 —— 万一自绘下拉在未挂载状态下出问题，
+          // 也不能把后面「秒数还原」和 dshwBodyDetach(mask)（关窗）一起带崩（本文件踩过静默 TypeError）。
+          try { applyTaskEndLocal(usageSet.taskEnd.on, usageSet.taskEnd.sel) } catch (err) {}
           try { fillTaskEndOptions(usageSet.taskEnd) } catch (err) {}
           // 秒数:窗口内没落盘,还原内存与输入框即可
           turnCostCloseMs = turnCostCloseDeferSnap
@@ -2096,6 +3105,14 @@ function usageAlertBudgetEditor(key, onSave) {
           taskEndDeferSnap = null
           turnCostCloseDefer = false
           turnCostCloseInput.disabled = !turnCostOn // 回到菜单态的禁用逻辑
+        }
+        // v761（#161 C5）：wait 模式收尾 —— 没点「保存」就把缓冲还原（取消语义）。
+        // 窗口期间用户拖入/删除的模块只改 step.modules（缓冲），内存里的 events.<kind>.lines 一直没动，
+        // 所以这里只需把缓冲还原回打开时的快照，再把预览重画一次。
+        if (isWait && !waitCommitted) {
+          var wsnap = Array.isArray(waitSnapLines) ? waitSnapLines : []
+          step.modules = JSON.parse(JSON.stringify(wsnap))
+          try { renderBubblePv() } catch (err) {}
         }
         dshwBodyDetach(mask) // v744：走 detach 注销登记，否则 DOM 守护会把这个刚关掉的编辑器补挂回来
         bubbleEditItems = bkEditItems
@@ -2124,9 +3141,16 @@ function usageAlertBudgetEditor(key, onSave) {
     resBtn.type = 'button'
     resBtn.className = 'dshwv-bubbtn dshwv-bubbtn-no'
     resBtn.textContent = '恢复默认'
-    resBtn.title = isCost ? '恢复为默认提示内容(自动关闭与任务结束音效保持不变)' : '恢复为默认提醒内容(触发条件保持不变)'
+    resBtn.title = isCost
+      ? '恢复为默认提示内容(自动关闭与任务结束音效保持不变)'
+      : (isWait
+        ? ('恢复为默认' + (waitKind === 'approval' ? '授权' : '提问') + '提示内容(音效/音量/自动关闭/冒泡开关保持不变)')
+        : '恢复为默认提醒内容(触发条件保持不变)')
     resBtn.addEventListener('click', function () {
-      step.modules = JSON.parse(JSON.stringify(isCost ? usageTurnCostDefaultLines() : usageRemindDefaultLines(isAlert)))
+      // v761：wait 模式的默认模板 = 宿主 waitDefaultLines() 的逐字段一致版
+      step.modules = JSON.parse(JSON.stringify(isCost
+        ? usageTurnCostDefaultLines()
+        : (isWait ? usageWaitDefaultLines(waitKind) : usageRemindDefaultLines(isAlert))))
       renderBubblePv()
     })
     btns.appendChild(resBtn)
@@ -2153,6 +3177,26 @@ function usageAlertBudgetEditor(key, onSave) {
         var oCost = { lines: lines, autoClose: turnCostCloseMs > 0, ttlSec: Math.round(turnCostCloseMs / 1000) }
         cleanup()
         if (onSave) onSave(oCost)
+        return
+      }
+      // v761（#161 C5）：等待提示内容保存 —— 落在 usageSet.events.<kind>.lines（宿主 waitQuestion.content /
+      // waitApproval.content 的那套键），**只**发 { events: { <kind>: { lines } } }，
+      // 不碰 alert/budget/turnCost 的任何键（宿主那侧是逐键合并，其余字段原样保留）。
+      if (isWait) {
+        waitCommitted = true
+        usageSet = usageSet || {}
+        usageSet.events = usageSet.events || {}
+        var prevEv = usageSet.events[waitKind] || {}
+        var evNext = {}
+        try { for (var pk in prevEv) evNext[pk] = prevEv[pk] } catch (err) {}
+        evNext.lines = lines
+        usageSet.events[waitKind] = evNext
+        var patchEv = {}
+        patchEv[waitKind] = { lines: lines }
+        saveUsageSettings({ events: patchEv })
+        var oWait = { lines: lines }
+        cleanup()
+        if (onSave) onSave(oWait)
         return
       }
       var o = { on: chk.checked, lines: lines, autoClose: acChk.checked, ttlSec: Math.max(0, Number(secInp.value) || 0) }
@@ -2184,17 +3228,20 @@ function usageAlertBudgetEditor(key, onSave) {
       return el
     }
     try { if (qeditEl) qeditEl.style.zIndex = '31000' } catch (err) {}
-    // 包装 renderBubblePv:列表/预览刷新后,鲸鱼预览里的占位符用实际数值实时替换
-    // ({below} 余额阈值 / {amount} 预算阈值 / {cost} 本轮消耗金额)
+    // 包装 renderBubblePv:列表/预览后,鲸鱼预览里的占位符用实际值实时替换
+    // ({below} 余额阈值 / {amount} 预算阈值 / {cost} 本轮消耗金额 / {session} 当前对话名)
     var renderPvSuper = bkRenderPv
     renderBubblePv = function () {
       try { renderPvSuper() } catch (err) {}
       try {
         var it = bubbleEditTarget()
         var below = (isAlert && numInp) ? Math.max(0, Number(numInp.value) || 0) : null
-        var amount = (!isAlert && !isCost && numInp) ? Math.max(0, Number(numInp.value) || 0) : null
+        var amount = (!isAlert && !isCost && !isWait && numInp) ? Math.max(0, Number(numInp.value) || 0) : null
         var cost = isCost ? '0.00' : null // 预览用示例金额(与 usageCostValue 的格式一致)
-        if (it && Array.isArray(it.modules) && bubblePvPrevEl) bubblePreviewInto(bubblePvPrevEl, usageAlertModsResolved(it.modules, below, amount, cost))
+        // v761（#161 C5）：{session} 要在这里就换成对话名（读不到显示「当前对话」，超长按 12 字符截断），
+        // 这样编辑器预览与真实泡泡看到的完全一致，而不是原样显示 `{session}`。
+        var sess = isWait ? soundSessionLabel() : null
+        if (it && Array.isArray(it.modules) && bubblePvPrevEl) bubblePreviewInto(bubblePvPrevEl, usageAlertModsResolved(it.modules, below, amount, cost, sess))
       } catch (err) {}
     }
     if (numInp) {
@@ -2207,7 +3254,9 @@ function usageAlertBudgetEditor(key, onSave) {
       taskEndDefer = true
       var teCur = (usageSet && usageSet.taskEnd) || { on: false, sel: '' }
       taskEndDeferSnap = JSON.parse(JSON.stringify({ on: !!teCur.on, sel: String(teCur.sel || '') }))
-      applyTaskEndLocal(!!teCur.on, String(teCur.sel || ''))
+      // v763：taskEndSel 现在不挂进本窗口了（留在不插入文档的宿主里）⇒ 这两处同步都包 try，
+      // 免得自绘下拉在未挂载状态下万一抛错，把整个窗口的渲染（mask.appendChild 等）一起带崩。
+      try { applyTaskEndLocal(!!teCur.on, String(teCur.sel || '')) } catch (err) {}
       try { fillTaskEndOptions(teCur) } catch (err) {}
       turnCostCloseDefer = true
       turnCostCloseDeferSnap = turnCostCloseMs
@@ -2565,6 +3614,33 @@ function openApiModelPanel(modelId) {
     var authInp = apiTextInput(bal.auth == null ? 'Bearer {key}' : bal.auth, '请求头模板，{key} 会被替换成密钥')
     var authRow = apiPanelRow('请求头', authInp)
     card.appendChild(authRow)
+    // v789（issue #190）：余额接口不再只能是 GET —— 可选 POST/PUT… + JSON 请求体。
+    //   请求体支持 {key}（密钥）、{base}（Base URL）、{uuid}（下面「请求参数」里的键）
+    var balMethod = apiSelectEl([['GET', 'GET（默认）'], ['POST', 'POST'], ['PUT', 'PUT'], ['PATCH', 'PATCH']],
+      String(bal.method || 'GET').toUpperCase() === 'POST' ? 'POST' : String(bal.method || 'GET').toUpperCase() === 'PUT' ? 'PUT' : String(bal.method || 'GET').toUpperCase() === 'PATCH' ? 'PATCH' : 'GET')
+    var balMethodRow = apiPanelRow('请求方法', balMethod)
+    card.appendChild(balMethodRow)
+    var balBody = apiTextInput(bal.body || '', '如 {"uuid":"{uuid}"}（非 GET 时以 JSON 发送）')
+    var balBodyRow = apiPanelRow('请求体', balBody)
+    card.appendChild(balBodyRow)
+    var prm = (m && m.params) || {}
+    var prmInp = apiTextInput(Object.keys(prm).map(function (k) { return k + '=' + prm[k] }).join(','), '请求体占位符，如 uuid=abc123（逗号分隔）')
+    var prmRow = apiPanelRow('请求参数', prmInp)
+    card.appendChild(prmRow)
+    // v789（issue #189）：0.3.15 起的"凭据目的地白名单"唯一例外必须能在界面上勾 ——
+    //   宿主侧 model.allowCustomHost 一直是齐的，缺的就是这个入口（README/FAQ 都在指引用户来勾）。
+    //   勾选/取消都**显式**传 true/false（宿主按 === true / === false 分支，缺省表示"不改动"）。
+    var allowHost = document.createElement('input')
+    allowHost.type = 'checkbox'
+    allowHost.checked = !!(m && m.balanceDesc && m.balanceDesc.allowCustomHost === true) || !!(m && m.allowCustomHost === true)
+    var allowHostRow = apiPanelRow('允许把凭据发送到自定义地址', allowHost)
+    card.appendChild(allowHostRow)
+    var allowHint = document.createElement('div')
+    allowHint.className = 'dshwv-bubhint'
+    allowHint.style.margin = '0 0 6px'
+    allowHint.textContent = '默认不勾：地址不是该厂商内置端点时，插件会拒绝把密钥发出去。自建网关（New API / 自托管 / Ollama 等）确认是自己的服务后再勾。' +
+      '该开关只能由本机（回环）来源的写请求置位，远端会话改不了它。'
+    card.appendChild(allowHint)
     var jr = (bal.json || {})
     var jRem = apiTextInput(jr.remaining || '', '如 balance_infos[0].total_balance')
     var jTot = apiTextInput(jr.total || '', '如 data.total_credits')
@@ -2637,8 +3713,24 @@ function openApiModelPanel(modelId) {
           balance: {
             url: (balUrl.value || '').trim(),
             auth: (authInp.value || '').trim(),
+            // v789：显式带上方法/请求体（GET + 空体 = 老行为；宿主侧空值不覆盖模板）
+            method: (balMethod.value || 'GET').toUpperCase(),
+            body: (balBody.value || '').trim(),
             json: json,
           },
+          // v789（issue #189）：显式 true/false（不是"仅 true 才传"）—— 用户要能**取消**勾选
+          allowCustomHost: !!allowHost.checked,
+          params: (function () {
+            var o = {}
+            String(prmInp.value || '').split(',').forEach(function (kv) {
+              var i = kv.indexOf('=')
+              if (i <= 0) return
+              var k = kv.slice(0, i).trim()
+              var v = kv.slice(i + 1).trim()
+              if (/^[A-Za-z_][A-Za-z0-9_]{0,30}$/.test(k)) o[k] = v
+            })
+            return o
+          })(),
           matchIds: (matchInp.value || '').split(',').map(function (s) { return s.trim() }).filter(function (s) { return s.length > 0 }),
           price: { hit: (pHit.value || '').trim(), miss: (pMiss.value || '').trim(), out: (pOut.value || '').trim(), cur: pCur.value, rate: (pRate.value || '').trim() },
         },
@@ -3765,6 +4857,100 @@ function openUsageRecordsWindow() {
     .catch(function () { usageMoreCard.innerHTML = '<div style="padding:10px;color:#203170">加载失败</div>' })
 }
 function closeUsageRecordsWindow() { usageMoreMask.style.display = 'none' }
+// ===== v767：通用「入口行 + 可折叠体」组件（提示与音效设置面板 / 资源管理窗口共用）=====
+// 入口行常驻：可选 [✓] 开关 + 区名 + 当前值摘要 + ▸/▾；点整行才展开它下面的折叠体，可同时展开多个。
+// 折叠用 max-height 过渡（与「自定义提示」窗口里的 advBox 同一套路），展开动画结束后置 'none' —— 之后
+// 窗口缩放换行也不会被截断；flexShrink:0 是坑 14 的规矩（flex 容器里的折叠框必须给）。
+// ⚠️ 折叠体里的控件**照旧全部创建**（只是藏起来）：懒创建会让「恢复默认」这类逐个回填的逻辑静默失效。
+// instant = true 时不做过渡、直接到位（资源窗口重渲染时用它保持用户已展开的区，别闪动画）。
+function collapseSet(body, open, instant) {
+  try {
+    var arrow = body.__dshwArrow
+    if (open) {
+      body.setAttribute('data-open', '1')
+      body.style.maxHeight = instant ? 'none' : (body.scrollHeight + 'px')
+      body.style.opacity = '1'
+      if (arrow) arrow.textContent = '▾'
+      if (!instant) {
+        setTimeout(function () { try { if (body.getAttribute('data-open') === '1') body.style.maxHeight = 'none' } catch (err) {} }, 260)
+      }
+    } else {
+      body.setAttribute('data-open', '0')
+      body.style.maxHeight = body.scrollHeight + 'px' // 先给起始值，才收得回去
+      if (!instant) { try { void body.offsetHeight } catch (err) {} }
+      body.style.maxHeight = '0px'
+      body.style.opacity = '0'
+      if (arrow) arrow.textContent = '▸'
+    }
+  } catch (err) {}
+}
+// 建一个入口行 + 它下面的折叠体，都挂进 host；返回 { row, body, summary, arrow, chk }
+// opts: { checked, onToggle, first, summary, titleTail, onRowClick(willOpen) }
+function dshwvFoldEntry(host, labelText, opts) {
+  opts = opts || {}
+  var rowEl = document.createElement('div')
+  rowEl.className = 'dshwv-menu-row' // 与主菜单/设置面板入口行同款排版
+  rowEl.style.cursor = 'pointer'
+  rowEl.style.margin = opts.first ? '12px 0 2px' : '10px 0 2px'
+  rowEl.style.padding = '6px 6px'
+  rowEl.style.borderRadius = '6px'
+  rowEl.style.background = 'rgba(32,49,112,.05)' // 常驻淡底：与折叠体里的内容行区分开
+  rowEl.title = '点这一行展开 / 收起「' + labelText + '」' + String(opts.titleTail || '')
+  var ck = null
+  if (typeof opts.onToggle === 'function') {
+    ck = document.createElement('input')
+    ck.type = 'checkbox'
+    ck.className = 'dshwv-check'
+    ck.checked = !!opts.checked
+    ck.title = labelText + '开关（只管开不开；下面的设置项不受影响）'
+    // 点开关**不**展开/收起（否则想关掉该事件时会顺手把区拉开）
+    ck.addEventListener('click', function (e) { try { e.stopPropagation() } catch (err) {} })
+    ck.addEventListener('change', function () { try { opts.onToggle(!!ck.checked) } catch (err) {} })
+    rowEl.appendChild(ck)
+  }
+  var tx = document.createElement('span')
+  tx.textContent = labelText
+  rowEl.appendChild(tx)
+  var sp = document.createElement('span') // 撑开，把摘要与箭头推到右侧
+  sp.style.flex = '1'
+  rowEl.appendChild(sp)
+  var sum = document.createElement('span')
+  sum.style.fontSize = '11px'
+  sum.style.color = '#203170'
+  sum.style.opacity = '.7'
+  sum.style.whiteSpace = 'nowrap'
+  sum.style.overflow = 'hidden'
+  sum.style.textOverflow = 'ellipsis'
+  sum.style.maxWidth = '46%'
+  sum.textContent = String(opts.summary == null ? '' : opts.summary)
+  rowEl.appendChild(sum)
+  var arrow = document.createElement('span')
+  arrow.textContent = '▸'
+  arrow.style.opacity = '.6'
+  arrow.style.marginLeft = '2px'
+  rowEl.appendChild(arrow)
+  host.appendChild(rowEl)
+  var body = document.createElement('div')
+  body.style.overflow = 'hidden'
+  body.style.maxHeight = '0px'
+  body.style.opacity = '0'
+  body.style.transition = 'max-height .24s ease, opacity .18s ease'
+  body.style.flexShrink = '0'
+  body.style.paddingLeft = '10px' // 轻微缩进：看得出下面这些行属于上面那个入口
+  body.setAttribute('data-open', '0')
+  body.__dshwArrow = arrow
+  host.appendChild(body)
+  rowEl.addEventListener('click', function () {
+    var willOpen = body.getAttribute('data-open') !== '1'
+    // onRowClick 先跑：调用方要在"切换"之前收掉自己的浮层 / 停掉试听（见坑 53）
+    try { if (typeof opts.onRowClick === 'function') opts.onRowClick(willOpen) } catch (err) {}
+    collapseSet(body, willOpen)
+  })
+  // 悬停反馈：本项目约定「只用行内样式、不动全局 CSS」，所以用两个监听器代替 :hover
+  rowEl.addEventListener('mouseenter', function () { try { rowEl.style.background = 'rgba(32,49,112,.09)' } catch (err) {} })
+  rowEl.addEventListener('mouseleave', function () { try { rowEl.style.background = 'rgba(32,49,112,.05)' } catch (err) {} })
+  return { row: rowEl, body: body, summary: sum, arrow: arrow, chk: ck }
+}
 // —— 资源管理窗口:集中查看/删除已导入插件的图片与音频 ——
 var resMaskEl = null
 var resCardEl = null
@@ -3787,9 +4973,7 @@ function resMaskOpen() {
 function resManagerClose() {
   try { if (resMaskEl) resMaskEl.style.display = 'none' } catch (err) {}
   // 窗口消失时结束正在预览的音频,避免后台继续响
-  try {
-    if (resAudEl) { resAudEl.pause(); resAudEl = null }
-  } catch (err) {}
+  try { resStopPreview() } catch (err) {}
 }
 function openResManager() { resMaskOpen() }
 function resMkTag(text, built) {
@@ -3883,12 +5067,16 @@ function resMkBtn(cls, label, disabled, fn) {
   return b
 }
 var resAudEl = null // 资源窗口音频片段试听元素(复用,避免并发)
+function resStopPreview() {
+  try { if (resAudEl) { resAudEl.pause(); resAudEl = null } } catch (err) {}
+}
 function resPlayFragment(fid) {
   try {
     if (!fid) return
     if (resAudEl) { try { resAudEl.pause() } catch (err) {} resAudEl = null }
     var a = dshwvSound('/dsh-whale/audio-fragment.wav?id=' + encodeURIComponent(fid))
-    try { a.volume = Number(soundVol) || 0.9 } catch (err) {}
+    // v778：资源窗口的片段试听也走音量解析器（它是"这一条片段本身的试听"，与按压音量同源）
+    try { a.volume = soundVolumeOf('press') } catch (err) {}
     a.onended = function () { resAudEl = null }
     resAudEl = a
     a.play().catch(function () { resAudEl = null })
@@ -4037,43 +5225,58 @@ function resDelAudioFrag(id) {
     } catch (err) {}
   })
 }
+// v767：资源窗口的两个分区（图片 / 音频）改成与「提示与音效设置」同一套折叠入口（`dshwvFoldEntry`）。
+// 折叠态**跨重渲染保留** —— 删一张图 / 导一段音频后本窗口会整窗重渲染，不能让用户刚展开的区自己收回去。
+var resFoldOpen = { img: false, audio: false }
+function resFoldEntry(wrap, key, labelText, summaryText, first) {
+  var e = dshwvFoldEntry(wrap, labelText, {
+    first: first,
+    summary: summaryText,
+    titleTail: '的资源',
+    onRowClick: function (willOpen) {
+      resFoldOpen[key] = !!willOpen
+      resStopPreview() // 收起/展开时停掉正在试听的那一段（与设置面板同一约定）
+    },
+  })
+  if (resFoldOpen[key]) collapseSet(e.body, true, true) // 直接到位不播动画：重渲染时保持用户已展开的区
+  return e
+}
 function resRenderData(wrap, roles, bubbleImgs, audio) {
   try {
     wrap.innerHTML = ''
-    // —— 图片组 ——
-    var catImg = document.createElement('div')
-    catImg.className = 'dshwv-rescat'
-    catImg.textContent = '图片'
-    wrap.appendChild(catImg)
+    var groups = (audio && Array.isArray(audio.groups)) ? audio.groups : []
+    var fragsAll = (audio && Array.isArray(audio.fragments)) ? audio.fragments : []
+    var frags = fragsAll.filter(function (f) { return f && !f.preset })
+    // —— 图片（入口行 + 折叠体；摘要 = 数量，不展开也知道有多少）——
+    var imgEnt = resFoldEntry(wrap, 'img', '图片', '角色 ' + roles.length + ' · 泡泡图 ' + bubbleImgs.length, true)
     var anyImg = false
     // 角色图(默认角色只读展示)
     roles.forEach(function (r) {
       anyImg = true
       var isDefault = r.id === 'default'
       var tag = resMkTag(isDefault ? '默认角色' : '自定义角色', isDefault)
-      wrap.appendChild(resImgRow(r.url, r.name || r.id, '', [tag, resMkDel('删除', isDefault, function () { resDelRole(r.id) })]))
+      imgEnt.body.appendChild(resImgRow(r.url, r.name || r.id, '', [tag, resMkDel('删除', isDefault, function () { resDelRole(r.id) })]))
     })
     bubbleImgs.forEach(function (im) {
       anyImg = true
       var tag = resMkTag(im.builtin ? '内置图' : '泡泡图', !!im.builtin)
-      wrap.appendChild(resImgRow('/dsh-whale/bubble-img.png?id=' + encodeURIComponent(im.id), im.name || im.id, '', [tag, resMkDel('删除', !!im.builtin, function () { resDelBubbleImg(im.id) })]))
+      imgEnt.body.appendChild(resImgRow('/dsh-whale/bubble-img.png?id=' + encodeURIComponent(im.id), im.name || im.id, '', [tag, resMkDel('删除', !!im.builtin, function () { resDelBubbleImg(im.id) })]))
     })
     if (!anyImg) {
       var empty = document.createElement('div')
       empty.className = 'dshwv-resempty'
       empty.textContent = '暂无自定义图片(角色/泡泡图)'
-      wrap.appendChild(empty)
+      imgEnt.body.appendChild(empty)
     }
-    // —— 音频组 ——
-    var catAu = document.createElement('div')
-    catAu.className = 'dshwv-rescat'
-    catAu.textContent = '音频'
+    // —— 音频（入口行 + 折叠体；「导入片段」放进折叠体第一行，免得入口行太挤）——
+    var auEnt = resFoldEntry(wrap, 'audio', '音频', '音效组 ' + groups.length + ' · 片段 ' + frags.length)
+    var impRow = document.createElement('div')
+    impRow.className = 'dshwv-resrow'
     var catAuBtn = resMkBtn('dshwv-resimp', '导入片段', false, resImportAudioFragment)
     catAuBtn.title = '导入并裁剪一段音频到片段库(可被音效组引用)'
-    catAu.appendChild(catAuBtn)
-    wrap.appendChild(catAu)
+    impRow.appendChild(catAuBtn)
+    auEnt.body.appendChild(impRow)
     var anyAu = false
-    var groups = (audio && Array.isArray(audio.groups)) ? audio.groups : []
     groups.forEach(function (g) {
       anyAu = true
       var preset = !!g.preset
@@ -4081,22 +5284,20 @@ function resRenderData(wrap, roles, bubbleImgs, audio) {
       var meta = ''
       if (!preset && g.press && g.release) meta = '按压:' + g.press + ' 松开:' + g.release
       // 音效组不提供播放(按整组点按发声,需与点按动作绑定),只展示/删除
-      wrap.appendChild(resIconRow(preset ? '🎧' : '🎵', g.name || g.id, meta, [tag, resMkDel('删除', preset, function () { resDelAudioGroup(g.id) })]))
+      auEnt.body.appendChild(resIconRow(preset ? '🎧' : '🎵', g.name || g.id, meta, [tag, resMkDel('删除', preset, function () { resDelAudioGroup(g.id) })]))
     })
-    var frags = (audio && Array.isArray(audio.fragments)) ? audio.fragments : []
     frags.forEach(function (f) {
-      if (f.preset) return
       anyAu = true
       var tag = resMkTag('音频片段', false)
       var play = resMkBtn('dshwv-resplay', '播放', false, function () { resPlayFragment(f.id) })
       play.title = '试听该音频片段'
-      wrap.appendChild(resIconRow('🎶', f.name || f.id, '', [tag, play, resMkDel('删除', false, function () { resDelAudioFrag(f.id) })]))
+      auEnt.body.appendChild(resIconRow('🎶', f.name || f.id, '', [tag, play, resMkDel('删除', false, function () { resDelAudioFrag(f.id) })]))
     })
     if (!anyAu) {
       var empty2 = document.createElement('div')
       empty2.className = 'dshwv-resempty'
       empty2.textContent = '暂无自定义音频(片段/音效组)'
-      wrap.appendChild(empty2)
+      auEnt.body.appendChild(empty2)
     }
   } catch (err) {}
 }
@@ -4165,12 +5366,32 @@ function usageRemindLinesOf(cfg, isAlert) {
   if (Array.isArray(cfg.lines) && cfg.lines.length) return cfg.lines
   return usageRemindDefaultLines(isAlert)
 }
+// —— 等待交互（提问 / 授权）提示内容（v761 / #161 C5）——
+// 默认内容必须与宿主 whale-balance.mjs 的 waitDefaultLines(kind) **逐字段一致**
+// （宿主 = 新用户默认；这里 = 编辑器「恢复默认」的目标，改一处必须同步另一处）。
+function usageWaitDefaultLines(kind) {
+  // v774：出厂默认内容 = 作者当前实际使用的那一套（对话名模块「[ 对话名 ]」+ 一句提示语，都带跑马灯配色）
+  var isApproval = (kind === 'approval')
+  return [
+    { type: 'session', size: 10, bold: true, tpl: '[ {session} ]', len: 5, rgb: 'champagne', color: '' },
+    { type: 'text', text: (isApproval ? '正在等待老大授权' : '正在等待老大回答'), size: 7, bold: true, bgRgb: '', bg: '', rgb: 'indigo', color: '' },
+  ]
+}
+// 等待提示内容读取:events.<kind>.lines[] 优先;缺失/空 → 默认模板
+function usageWaitLinesOf(cfg, kind) {
+  cfg = cfg || {}
+  if (Array.isArray(cfg.lines) && cfg.lines.length) return cfg.lines
+  return usageWaitDefaultLines(kind)
+}
 // 占位替换:{below} 余额预警阈值 / {amount} 今日预算阈值 / {cost} 本轮消耗金额
-function usageFillText(txt, below, amount, cost) {
+function usageFillText(txt, below, amount, cost, session) {
   return String(txt || '')
     .replace(/\{below\}/g, below != null ? String(below) : '')
     .replace(/\{amount\}/g, amount != null ? String(amount) : '')
     .replace(/\{cost\}/g, cost != null ? String(cost) : '')
+  // v761：{session} = 当前对话名（wait.json 轮询回填；读不到显示「当前对话」；超长截断）
+  .replace(/\{session\}/g, session != null ? String(session) : soundSessionLabel())
+
 }
 function usageLineFontPx(level) {
   var n = Math.max(1, Math.min(50, Math.round(Number(level) || 7)))
@@ -4319,14 +5540,18 @@ function runApiModelAlerts() {
   } catch (err) {}
 }
 // 占位替换后的展示模块列表(深拷贝,不改配置)
-function usageAlertModsResolved(mods, below, amount, cost) {
+// v761（#161 C5）：第 5 个参数 session 原样透传给 usageFillText —— 等待交互的提示内容里有
+// `{session}`，要在这里（渲染/预览时）就换成对话名，否则真实泡泡与编辑器预览都会**原样显示 `{session}`**。
+// 不传（既有 alert / budget / cost 三处调用）时 usageFillText 会自己回落 soundSessionLabel()，
+// 因此这三处的行为逐字未变（它们的 lines 里本来就没有 {session}）。
+function usageAlertModsResolved(mods, below, amount, cost, session) {
   var out = []
   try {
     for (var i = 0; i < mods.length; i++) {
       var m0 = mods[i] || {}
       var cp = JSON.parse(JSON.stringify(m0))
       var raw = String(m0.text != null ? m0.text : '')
-      cp.text = raw.length ? usageFillText(raw, below, amount, cost) : raw
+      cp.text = raw.length ? usageFillText(raw, below, amount, cost, session) : raw
       out.push(cp)
     }
   } catch (err) {}
@@ -4383,6 +5608,29 @@ function usagePopupCard(title, content, below, amount) {
 }
 var USAGE_PALETTE = ['#203170', '#e0433f', '#2fa24c', '#b060c8', '#e89a2e', '#3aa6c8', '#d06a8a', '#7a8b2f', '#6a6ad0', '#c84a8a']
 // 统计一组天数里的模型合计(输入 days:[{models:[{model,cost}]}])
+// v776（issue #163）：换/删 API key 后，宿主按密钥指纹分本记账（换 key = 换一本）。
+// 界面侧给一句说明：否则旧账本的日期看起来像"丢了"（数据其实一直在 .dshw-usage.json 里）。
+// 宿主在 daySummary() 上补了 bookCount / historyHint / source='balance-observed-other-account'，
+// 这里只负责把话讲清楚 —— **不做相加**（无法判断两次是不是同一个账户）。
+function usageMultiBookNote(allDays, today) {
+  try {
+    var maxCount = 0, maxHint = '', otherDays = 0, todayCount = 0
+    for (var i = 0; i < (allDays || []).length; i++) {
+      var dx = allDays[i] || {}
+      var n = Number(dx.bookCount) || 0
+      if (n > maxCount) { maxCount = n; maxHint = String(dx.historyHint || '') }
+      if (dx.source === 'balance-observed-other-account') otherDays++
+    }
+    todayCount = Number(today && today.bookCount) || 0
+    if (maxCount <= 1 && !otherDays) return ''
+    var parts = []
+    if (maxCount > 1 || todayCount > 1) {
+      parts.push('检测到 ' + Math.max(maxCount, todayCount) + ' 个记账本（换过 API key）：' + (maxHint || '同一天在多个本里都有观测'))
+    }
+    if (otherDays > 0) parts.push('另有 ' + otherDays + ' 天来自历史记账本，已按「已观测消费 · 历史账户」显示，未与当前账户相加')
+    return parts.join('；')
+  } catch (err) { return '' }
+}
 function usageAggModels(daysArr) {
   var map = {}
   ;(daysArr || []).forEach(function (day) {
@@ -4706,6 +5954,15 @@ function fillUsageRecordsWindow(d) {
   sourceNote.className = 'dshwv-usage-hint'
   sourceNote.textContent = '按各日标注口径汇总；本机模型明细为估算，与账户消费覆盖范围不同。'
   ov.appendChild(sourceNote)
+  // v776（issue #163）：多记账本（换过 API key）时补一句说明，让旧账本的记录有入口可查
+  var bookNote = usageMultiBookNote(allDays, d.today)
+  if (bookNote) {
+    var bn = document.createElement('div')
+    bn.className = 'dshwv-usage-hint'
+    bn.style.marginTop = '2px'
+    bn.textContent = bookNote
+    ov.appendChild(bn)
+  }
   body.appendChild(ov)
   var detailBox = null
   // ② 统计图表(默认折叠,懒渲染)
@@ -4774,7 +6031,9 @@ function fillUsageRecordsWindow(d) {
       if ((dayV === undefined || dayV === 0) && day === todayKeyStr2 && d.today && isFinite(Number(d.today.total))) dayV = Number(d.today.total)
       if (dayV === undefined || dayV === null) dayV = evs.reduce(function (a, x) { return a + (Number(x.cost) || 0) }, 0)
       c.textContent = usageMoney(dayV, dayMeta[day] && dayMeta[day].currency)
-      name.title = (dayMeta[day] && dayMeta[day].label) || '本地估算'
+      // v776（issue #163）：悬停提示带上"历史记账本"说明（旧 key 的记账不再看着像丢了）
+      var dayM = dayMeta[day] || {}
+      name.title = (dayM.label || '本地估算') + (dayM.historyHint ? ' · ' + dayM.historyHint : '')
       row.appendChild(c)
       var chev = document.createElement('span')
       chev.className = 'dshwv-usage-chev'
@@ -5309,7 +6568,7 @@ var bubbleMoreListEl = null
 var bubbleFirstChipEl = null
 var BUBBLE_KIND_LABEL = { normal: '余额内容', random: '随机语句', custom: '自定义内容' }
 // v209 默认泡泡内容 = 与开发者当前线上生效配置一致(全新安装/恢复默认时即此体验)
-// —— 首次点击:标题文本 + 余额数值 + 今日已用 + 峰谷时段
+// —— 首次点击:标题文本 + 总余额 + 今日已用 + 峰谷时段
 function bubbleDefaultFirstModules() {
   // v630:normal/首次 兜底默认 = v615 冻结出厂默认第 1 泡(靛蓝余额卡 5 模块),与「恢复默认」一致;
   // 以下旧体(macaron 版)仅在常量缺失时作兜底参照,不再作为默认内容
@@ -6140,6 +7399,13 @@ var BUBBLE_DEFAULT_ITEMS = [
                                                                                "rgb":  "macaron",
                                                                                "italic":  true,
                                                                                "ul":  false
+                                                                           },
+                                                                           {
+                                                                               "t":  "token 来!",
+                                                                               "w":  3,
+                                                                               "size":  16,
+                                                                               "rgb":  "candy",
+                                                                               "color":  ""
                                                                            }
                                                                        ],
                                                              "size":  8
@@ -6432,8 +7698,12 @@ function bubbleDefaultModules(kind) {
 }
 function bubbleModuleSummary(m) {
   m = m || {}
-  if (m.type === 'balance') return bubbleIsModelMod(m) ? ('余额·' + ((apiModelBalanceInfo(m.modelId) || {}).name || m.modelId)) : '余额数值'
+  if (m.type === 'balance') return bubbleIsModelMod(m) ? ('余额·' + ((apiModelBalanceInfo(m.modelId) || {}).name || m.modelId)) : '总余额(充值金额+赠金)'
+  // v782：赠金 / 充值余额（均为内置数值模块，无 modelId）；v787 按用户要求改显示文案
+  if (m.type === 'bonus') return '赠金'
+  if (m.type === 'recharge') return '充值余额'
   if (m.type === 'today') return bubbleIsModelMod(m) ? ('今日已用·' + ((apiModelBalanceInfo(m.modelId) || {}).name || m.modelId)) : '今日已用'
+  if (m.type === 'session') return '对话名' + (Number(m.len) > 0 ? '(保留 ' + Math.round(Number(m.len)) + ' 字)' : '(不截断)')
   if (m.type === 'quota') return '额度·' + ((apiModelById(m.modelId) || {}).name || m.modelId)
   if (m.type === 'plan') return bubblePlanModuleLabel(m)
   if (m.type === 'peak' || m.type === 'nextpeak') return bubblePeakModuleLabel(m)
@@ -6449,8 +7719,12 @@ function bubbleModuleListLabel(m) {
   if (m.type === 'text') return '文本: ' + (String(m.text || '').slice(0, 24) || '(空)')
   if (m.type === 'link') return '超链接: ' + (String(m.text || '').slice(0, 24) || '打开链接')
   if (m.type === 'random') return m.name || '随机语句' // 只显示模块名,不展示内部句子
-  if (m.type === 'balance') return bubbleIsModelMod(m) ? ('余额·' + ((apiModelBalanceInfo(m.modelId) || {}).name || m.modelId)) : '余额数值'
+  if (m.type === 'balance') return bubbleIsModelMod(m) ? ('余额·' + ((apiModelBalanceInfo(m.modelId) || {}).name || m.modelId)) : '总余额(充值金额+赠金)'
+  // v782：赠金 / 充值余额（v787 改显示文案）
+  if (m.type === 'bonus') return '赠金'
+  if (m.type === 'recharge') return '充值余额'
   if (m.type === 'today') return bubbleIsModelMod(m) ? ('今日已用·' + ((apiModelBalanceInfo(m.modelId) || {}).name || m.modelId)) : '今日已用'
+  if (m.type === 'session') return '对话名' + (Number(m.len) > 0 ? '(保留 ' + Math.round(Number(m.len)) + ' 字)' : '(不截断)')
   if (m.type === 'quota') return '额度·' + ((apiModelById(m.modelId) || {}).name || m.modelId)
   if (m.type === 'plan') return bubblePlanModuleLabel(m)
   if (m.type === 'peak' || m.type === 'nextpeak') return bubblePeakModuleLabel(m)
@@ -6988,7 +8262,31 @@ function bubbleEditorDirty() {
     return bubbleEditorSnap !== JSON.stringify([bubbleEditItems, bubbleLib, bubbleTapAdvChk.checked])
   } catch (err) { return true }
 }
+// v783：打开编辑器前**先从宿主重读一遍配置**。为什么必须重读：泡泡配置只在页面加载时取一次
+//   （loadBubbleCfg），之后一直用内存里的 bubbleCfg 副本；而桌面端 + 网页端（或两个标签页）会**各持一份**，
+//   谁最后点「保存」谁就把自己那份写回去 ⇒ 在 A 里删掉的模块（或模块库条目）会被 B 的过期副本**写回来**，
+//   表现就是"删了很久的自定义模块又冒出来了"。读失败时保持原值（离线/接口异常行为不变）。
+function refreshBubbleCfgFromHost(cb) {
+  var done = function () { try { cb() } catch (err) {} }
+  try {
+    fetch(BUBBLE_URL, { cache: 'no-store' })
+      .then(function (r) { return r.json() })
+      .then(function (d) {
+        if (d && d.ok && d.config) {
+          bubbleCfg = d.config
+          bubbleLib = (d.config.lib && Array.isArray(d.config.lib)) ? JSON.parse(JSON.stringify(d.config.lib)) : []
+          bubbleTapAdvance = d.config.tapAdvance === true // v727
+          try { applyBubbleCfgSeq() } catch (err) {}
+        }
+      })
+      .catch(function () {})
+      .then(done, done)
+  } catch (err) { done() }
+}
 function openBubbleEditor() {
+  refreshBubbleCfgFromHost(function () { openBubbleEditorWithCache() })
+}
+function openBubbleEditorWithCache() {
   try {
     closeRolePanel()
     closeAudioGroupPanel()
@@ -7150,6 +8448,7 @@ var QC_SCHEMES = [
   ['macaron', '马卡龙'], ['candy', '糖果'], ['rouge', '酒红'], ['bamboo', '翠青'], ['aurora', '极光幻彩'],
   ['deepsea', '深海蓝调'], ['sunset', '落日熔金'], ['forest', '森林秘语'], ['champagne', '香槟鎏金'],
   ['lavender', '薰衣草梦境'], ['mint', '薄荷汽水'], ['lava', '岩浆熔岩'], ['galaxy', '银河星紫'], ['ink', '墨韵黑白'], ['indigo', '靛蓝夜曲'],
+  ['blaze', '火红烈焰'], ['amber', '警示橙黄'],
 ]
 function qeditEnsure() {
   if (qeditEl) return qeditEl
@@ -7174,6 +8473,8 @@ function qeditEnsure() {
       qeditClose()
     }, true)
     document.addEventListener('keydown', function (e) {
+      // v789（issue #179）：组字中按 Esc 是输入法的事，别抢
+      if (dshwvComposingNow()) return
       if (e.key === 'Escape') qeditClose()
     })
   }
@@ -7423,6 +8724,38 @@ function openQuickTextEditor(m, anchorBtn) {
   } catch (err) { qeditPlace({ left: 40, right: 360, top: 200, bottom: 300, width: 320 }, 320, false) }
 }
 // —— 特殊内容模块(balance/today/peak/nextpeak):悬浮编辑,内容与原先编辑窗口一致 ——
+// v769：对话名模块的「保留长度」行 —— 悬浮编辑器（qRow/qLabel）与整窗编辑器（.dshwv-audiorow/span）
+// **共用同一份实现**，只有外层行/标签的构造方式不同（各自的样式才一致）。
+// rowFactory() 造一行、labelFactory(text) 造标签；changed() 在输入时回调（悬浮窗用它做实时预览）。
+function sessionLenRowBuild(rowFactory, labelFactory, m, changed) {
+  var r = rowFactory()
+  r.appendChild(labelFactory('保留长度'))
+  var inp = document.createElement('input')
+  inp.type = 'number'
+  inp.min = '0'
+  inp.max = '120'
+  inp.step = '1'
+  inp.className = 'dshwv-winput'
+  if (m.len === undefined || m.len === null) m.len = WAIT_SESSION_MAX
+  inp.value = String(Math.max(0, Math.round(Number(m.len) || 0)))
+  inp.title = '对话名超过这个长度时截断成「前N字...」；0 = 不截断'
+  inp.addEventListener('input', function () {
+    var n = Math.round(Number(inp.value) || 0)
+    m.len = Math.max(0, Math.min(120, n))
+    try { if (typeof changed === 'function') changed() } catch (err) {}
+  })
+  inp.addEventListener('change', function () {
+    inp.value = String(Math.max(0, Math.round(Number(m.len) || 0)))
+  })
+  r.appendChild(inp)
+  var tail = labelFactory('字，超出截断为 ...（0 = 不截断）')
+  try {
+    tail.style.opacity = '.75'
+    tail.style.fontSize = '11px'
+  } catch (err) {}
+  r.appendChild(tail)
+  return r
+}
 function openQuickModuleEditor(m, anchorBtn) {
   if (!m || bubbleIsImgMod(m) || m.type === 'random' || m.type === 'text') return
   if (qeditToggleClose(anchorBtn)) return // v723:同一按钮再点 = 关闭
@@ -7463,8 +8796,8 @@ function openQuickModuleEditor(m, anchorBtn) {
     var isModelBal = bubbleIsModelMod(m) && (m.type === 'balance' || m.type === 'today')
     var isModelQuota = bubbleIsModelMod(m) && m.type === 'quota'
     var isModelPlan = bubbleIsModelMod(m) && m.type === 'plan'
-    inp.placeholder = isModelPlan ? '例: {plan} 额度 · {plan_reset} 刷新时间' : (isModelQuota ? '例: 额度 {quota} · 剩 {quota_left}' : (isModelBal ? '例: {balance} 或 今日 {today}' : (m.type === 'balance' ? '例: {balance_ds}' : (m.type === 'today' ? '例: 今日已用 {expense_ds}' : (bubbleIsPeakCount(m) ? '例: 距空闲 {countdown}' : '例: 当前 {status}')))))
-    inp.title = '可用占位符(英文): ' + (isModelPlan ? '{plan} 额度 / {plan_left} 剩余 / {plan_reset} 刷新时间（多窗口时随「显示样式」所选窗口变化）' : (isModelQuota ? '{quota} / {quota_used} / {quota_left} / {quota_total} / {quota_reset}' : (isModelBal ? '{balance} / {today}' : (m.type === 'peak' || m.type === 'nextpeak' ? '{status} / {countdown}' : (m.type === 'balance' ? '{balance_ds}' : '{expense_ds}')))))
+    inp.placeholder = isModelPlan ? '例: {plan} 额度 · {plan_reset} 刷新时间' : (isModelQuota ? '例: 额度 {quota} · 剩 {quota_left}' : (isModelBal ? '例: {balance} 或 今日 {today}' : (m.type === 'balance' ? '例: {balance_ds}' : (m.type === 'bonus' ? '例: {bonus_ds} 或 赠金 {bonus_ds}' : (m.type === 'recharge' ? '例: {recharge_ds} 或 余额 {recharge_ds}' : (m.type === 'today' ? '例: 今日已用 {expense_ds}' : (m.type === 'session' ? '例: {session} 或 当前对话 {session}' : (bubbleIsPeakCount(m) ? '例: 距空闲 {countdown}' : '例: 当前 {status}'))))))))
+    inp.title = '可用占位符(英文): ' + (isModelPlan ? '{plan} 额度 / {plan_left} 剩余 / {plan_reset} 刷新时间（多窗口时随「显示样式」所选窗口变化）' : (isModelQuota ? '{quota} / {quota_used} / {quota_left} / {quota_total} / {quota_reset}' : (isModelBal ? '{balance} / {today}' : (m.type === 'peak' || m.type === 'nextpeak' ? '{status} / {countdown}' : (m.type === 'balance' ? '{balance_ds}' : (m.type === 'bonus' ? '{bonus_ds}' : (m.type === 'recharge' ? '{recharge_ds}' : (m.type === 'today' ? '{expense_ds}' : (m.type === 'session' ? '{session} 当前对话名（按「保留长度」截断）' : '{expense_ds}')))))))))
     inp.addEventListener('input', function () { m.tpl = inp.value; changed() })
     r.appendChild(inp)
     var qb2 = document.createElement('button')
@@ -7478,6 +8811,8 @@ function openQuickModuleEditor(m, anchorBtn) {
     box.appendChild(r)
   }
   tplRow()
+  // v769：对话名模块的「保留长度」（与整窗编辑器共用同一份实现；这里改了会实时刷新预览）
+  if (m.type === 'session') box.appendChild(sessionLenRowBuild(qRow, qLabel, m, changed))
   // 订阅额度模块的「显示样式」= 选时间窗口（多窗口厂商，如 OpenCode Go 的 5h / 周 / 月）
   if (m.type === 'plan' && (apiPlanMultiWin(m.modelId) || apiPlanWinList(m.modelId))) {
     var wrow = qRow()
@@ -7659,10 +8994,17 @@ function renderBubblePal() {
   bubblePalEl.innerHTML = ''
   var defs = [
     { key: 'text', label: '文本', cb: function () { bubbleModuleAdd({ type: 'text', text: '新内容', size: 6, bold: true }) } },
-    { key: 'balance', label: '余额数值', pin: true, cb: function () { bubbleModuleAdd({ type: 'balance', size: 11, tpl: '{balance_ds}' }) } },
+    { key: 'balance', label: '总余额(充值金额+赠金)', pin: true, cb: function () { bubbleModuleAdd({ type: 'balance', size: 11, tpl: '{balance_ds}' }) } },
+    // v782：把「总余额」拆出的两个分量各自做成模块 —— 赠金（未过期赠送余额）与充值余额。
+    //   ⚠️ 上面那条 `balance` / `{balance_ds}` 的**代码名字与行为一律不动**（历史泡泡与已保存的模块里
+    //   存的是 type/tpl 字面量，改代码名会让老内容显示不出来）；v787 只按用户要求改了**显示文案**。
+    { key: 'bonus', label: '赠金', pin: true, cb: function () { bubbleModuleAdd({ type: 'bonus', size: 11, tpl: '{bonus_ds}' }) } },
+    { key: 'recharge', label: '充值余额', pin: true, cb: function () { bubbleModuleAdd({ type: 'recharge', size: 11, tpl: '{recharge_ds}' }) } },
     { key: 'today', label: '今日已用', pin: true, cb: function () { bubbleModuleAdd({ type: 'today', size: 1, tpl: '今日已用 {expense_ds}' }) } },
     { key: 'peak', label: '峰谷时段', pin: true, cb: function () { bubbleModuleAdd({ type: 'peak', size: 4, peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{status}' }) } },
     { key: 'nextpeak', label: '时段倒计时', pin: true, cb: function () { bubbleModuleAdd({ type: 'peak', size: 6, bold: true, peakStyle: 'count', peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{countdown}' }) } },
+    // v768：对话名模块（内容 = 当前对话标题；「保留长度」可在模块编辑器里改）
+    { key: 'session', label: '对话名', pin: true, cb: function () { bubbleModuleAdd({ type: 'session', size: 4, bold: true, tpl: '{session}', len: WAIT_SESSION_MAX }) } },
     { key: 'random', label: '随机语句', cb: function () { bubbleModuleAdd(bubbleCloneModule(bubbleDefaultSecondModules()[0])) } },
     { key: 'link', label: '超链接', cb: function () { bubbleModuleAdd(bubblePaletteModule('link')) } },
     { key: 'image', label: '图片/动图', cb: function () { bubblePickImageToAdd() } },
@@ -7880,7 +9222,9 @@ function bubblePvRowCommit(rows) {
 function bubbleModuleEdit(m, anchorBtn) {
   try {
     if (m && (m.type === 'text' || m.type === 'link')) { openQuickTextEditor(m, anchorBtn); return }
-    if (m && (m.type === 'balance' || m.type === 'today' || m.type === 'peak' || m.type === 'nextpeak')) { openQuickModuleEditor(m, anchorBtn); return }
+    // v769：对话名也走悬浮编辑（像文本那样边改边看效果），不再开整窗编辑器
+    // v782：赠金 / 充值余额同样是内置数值模块 ⇒ 也走悬浮编辑（内容锁定，只调字号/颜色/模板）
+    if (m && (m.type === 'balance' || m.type === 'bonus' || m.type === 'recharge' || m.type === 'today' || m.type === 'peak' || m.type === 'nextpeak' || m.type === 'session')) { openQuickModuleEditor(m, anchorBtn); return }
     openModuleEditor(m, function (saved) { if (saved) renderBubblePv() })
   } catch (err) {}
 }
@@ -7979,9 +9323,13 @@ function bubblePvPaletteToRow(key, ri) {
 function bubblePaletteModule(key) {
   if (key === 'text') return { type: 'text', text: '新内容', size: 6, bold: true }
   if (key === 'balance') return { type: 'balance', size: 11, tpl: '{balance_ds}' }
+  // v782：赠金 / 充值余额（拖拽路径；与上面「总余额(充值金额+赠金)」并列的两个内置数值模块）
+  if (key === 'bonus') return { type: 'bonus', size: 11, tpl: '{bonus_ds}' }
+  if (key === 'recharge') return { type: 'recharge', size: 11, tpl: '{recharge_ds}' }
   if (key === 'today') return { type: 'today', size: 1, tpl: '今日已用 {expense_ds}' }
   if (key === 'peak') return { type: 'peak', size: 4, peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{status}' }
   if (key === 'nextpeak') return { type: 'peak', size: 6, bold: true, peakStyle: 'count', peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{countdown}' }
+  if (key === 'session') return { type: 'session', size: 4, bold: true, tpl: '{session}', len: WAIT_SESSION_MAX }
   if (key === 'link') return { type: 'link', text: '打开链接', url: '', size: 6, color: '#2f4488' }
   if (key === 'randimg') return { type: 'randimg', imgs: [], imgScale: 1 }
   // 自定义 API 模型的余额模块（palette key = bal:<modelId>）
@@ -8444,19 +9792,31 @@ var bubbleTapAdvChk = document.createElement('input')
 bubbleTapAdvChk.type = 'checkbox'
 bubbleTapAdvChk.className = 'dshwv-check'
 bubbleTapAdvChk.id = 'dshwv-tapadv'
-bubbleTapAdvChk.title = '开启后：点一下角色=往后推进一项（不再回到首次点击泡泡）；走到最后一项再点=收起泡泡'
+// v777e（2026-09-27 用户要求）：本行复选框**不再挂原生 tooltip**（原来那句"开启后：点一下角色=往后推进一项…"
+// 与问号圈圈里的说明重复）。说明统一收进 ? 圈圈的弹层里（与「提示与音效设置」面板底部那行一致）。
+bubbleTapAdvChk.title = ''
 var bubbleTapAdvLab = document.createElement('label')
 bubbleTapAdvLab.setAttribute('for', 'dshwv-tapadv')
 bubbleTapAdvLab.style.cursor = 'pointer'
 bubbleTapAdvLab.style.fontSize = '12px'
 bubbleTapAdvLab.textContent = '点按角色推进泡泡队列'
-var bubbleTapAdvHint = document.createElement('span')
-bubbleTapAdvHint.className = 'dshwv-bubhint'
-bubbleTapAdvHint.style.margin = '0'
-bubbleTapAdvHint.textContent = '（关闭＝点角色回到第 1 个泡泡；开启＝点一下往后一个）'
+// v777（用户要求）：原来跟在标签后面的那一行说明字（「关闭＝点角色回到第 1 个泡泡；开启＝点一下往后一个」）
+// 收进问号圈圈里 —— 复用 v647 的 dshwvAskDot（悬停即显示、点击固定、触摸端点按开关），与
+// 「提示与音效设置」面板底部那一行同款。说明里顺带把原来 title 里的完整描述也写进去。
+// v777b（2026-09-27 追加要求）：? 圈圈放在**文字后面**，并把与文字的间距收紧（同面板那处）。
+// v777d：「再稍稍右移」⇒ margin-left 由 -3px 改成 0（间距 = 行的自然列间距 6px）。
+var bubbleTapAdvAsk = dshwvAskDot(
+  '关闭（默认）：<b>点角色</b>＝回到第 1 个泡泡（点泡泡才是往后推进）。<br><br>' +
+  '开启：<b>点一下角色 = 往后推进一项</b>（不再回到首次点击泡泡）；走到最后一项再点＝收起泡泡。'
+)
+bubbleTapAdvAsk.style.marginLeft = '0'
+bubbleTapAdvAsk.style.marginRight = '0'
+// v777e：与面板底部那行同款处理 —— 清掉问号圈圈自带的「查看说明」原生 tooltip，
+//        说明只在悬停/点击问号时以自绘弹层出现（本行鼠标悬浮不再出现浏览器小黄条）。
+bubbleTapAdvAsk.title = ''
 bubbleTapAdvRow.appendChild(bubbleTapAdvChk)
 bubbleTapAdvRow.appendChild(bubbleTapAdvLab)
-bubbleTapAdvRow.appendChild(bubbleTapAdvHint)
+bubbleTapAdvRow.appendChild(bubbleTapAdvAsk)
 bubbleCard.appendChild(bubbleTapAdvRow)
 // 按钮行
 var bubbleBtns = document.createElement('div')
@@ -8871,6 +10231,8 @@ function bubbleRgbSelect(current, cb) {
     ['galaxy', '银河星紫'],
     ['ink', '墨韵黑白'],
     ['indigo', '靛蓝夜曲'],
+    ['blaze', '火红烈焰'],
+    ['amber', '警示橙黄'],
   ]
   function labelOf(v) {
     for (var i = 0; i < opts.length; i++) if (opts[i][0] === v) return opts[i][1]
@@ -9045,8 +10407,12 @@ function bubbleFontEditRow(getVal, setVal) {
   return row
 }
 function moduleTypeName(t, m) {
-  if (t === 'balance') return '余额数值'
+  if (t === 'balance') return '总余额(充值金额+赠金)'
+  // v782：赠金 / 充值余额两个数值模块的类型名（v787 改显示文案）
+  if (t === 'bonus') return '赠金'
+  if (t === 'recharge') return '充值余额'
   if (t === 'today') return '今日已用'
+  if (t === 'session') return '对话名'
   if (t === 'peak' || t === 'nextpeak') {
     // 峰谷模块按显示样式给名(倒计时/简洁等);无模块对象时退回通用名
     if (m) return bubblePeakModuleLabel(m)
@@ -9092,7 +10458,10 @@ function renderModuleEditor() {
     inp.value = m.tpl || ''
     function hintOf() {
       if (m.type === 'balance') return '例: {balance_ds}'
+      if (m.type === 'bonus') return '例: {bonus_ds} 或 赠金 {bonus_ds}'
+      if (m.type === 'recharge') return '例: {recharge_ds} 或 余额 {recharge_ds}'
       if (m.type === 'today') return '例: 今日已用 {expense_ds}'
+      if (m.type === 'session') return '例: {session} 或 当前对话 {session}'
       if (bubbleIsPeakCount(m)) return '例: 距空闲 {countdown}'
       return '例: 当前 {status}'
     }
@@ -9669,10 +11038,26 @@ function renderModuleEditor() {
     } else {
       var note = document.createElement('div')
       note.className = 'dshwv-bubhint'
-      note.textContent = '该模块为内置数值,内容自动获取,可调下方颜色/字号'
+      note.textContent = m.type === 'session'
+        ? '该模块自动显示**当前对话名**（占位符 {session}），可调下方颜色 / 字号'
+        : '该模块为内置数值,内容自动获取,可调下方颜色/字号'
       moduleBodyEl.appendChild(note)
       // F1:整句文案模板(如「今日已用 {值}」;留空=默认)
       moduleTplRow()
+      // v768/v769：对话名模块额外给「保留长度」（与悬浮编辑器共用同一份实现；
+      // 悬浮窗改了会实时刷新预览，这里点保存才落盘）
+      if (m.type === 'session') {
+        moduleBodyEl.appendChild(sessionLenRowBuild(function () {
+          var d = document.createElement('div')
+          d.className = 'dshwv-audiorow'
+          return d
+        }, function (t) {
+          var s = document.createElement('span')
+          s.textContent = t
+          s.style.flex = '0 0 auto'
+          return s
+        }, m, null))
+      }
     }
   }
   // 公共样式区(图片/动图、随机语句模块不显示:随机语句样式在每句单独编辑中设置)
@@ -10477,6 +11862,42 @@ bubbleBox.addEventListener('click', function (e) {
   bubbleNext()
 })
 
+// ===== v785：桌面客户端「窗口控件带」不进入挂件的可移动范围 =====
+// 背景（用户 2026-10-02 反馈）：客户端右上角的最小化/最大化/关闭会盖在泡泡上方。
+// 查证：DSH 桌面端产品窗口用 Electron `titleBarStyle:'hidden'` + **`titleBarOverlay`**
+//   （主进程写死 height:40；macOS 是 `hiddenInset` + 左上 traffic light）—— 那三个键由**浏览器引擎**
+//   画在所有页面内容之上 ⇒ **CSS/z-index 永远盖不过去**（不是我们层级写低了）。
+// 修法（用户指定）：不做层级对抗、也不平移泡泡，而是**把整条顶带排除在挂件的可移动范围之外**：
+//   挂件顶边（root.top）一律 ≥ 叠层下沿 ⇒ 画在 root 内部的泡泡自然也在带下，
+//   而鲸鱼与泡泡的相对位置**完全不变**（比"泡泡自己下移"更干净）。
+var DESKTOP_TITLEBAR_FALLBACK = 44 // 主进程 titleBarOverlay.height = 40，+4 余量
+function desktopTitlebarBottom() {
+  var wco = null
+  try { wco = navigator.windowControlsOverlay } catch (err) { wco = null }
+  // 没有叠层对象（普通浏览器 / 手机浏览器）或叠层不可见 ⇒ 不需要排除
+  if (!wco || wco.visible === false) return 0
+  // 有叠层：优先用官方矩形；取不到（旧内核/异常）就退回主进程里那个高度，**不能返回 0**
+  try {
+    if (typeof wco.getTitlebarAreaRect === 'function') {
+      var r = wco.getTitlebarAreaRect()
+      if (r && isFinite(r.y) && isFinite(r.height) && r.height > 0) return Math.max(0, Math.round(r.y + r.height))
+    }
+  } catch (err) {}
+  return DESKTOP_TITLEBAR_FALLBACK
+}
+// 挂件顶边的**下限**（0 = 不限制，普通浏览器就是 0）
+function widgetTopMin() {
+  try { return Math.max(0, desktopTitlebarBottom()) } catch (err) { return 0 }
+}
+// 把「挂件顶边」夹进可移动范围：[顶带下沿, 视口内上限]
+function clampWidgetTop(v, maxT) {
+  var min = widgetTopMin()
+  var t = Number(v)
+  if (!isFinite(t)) t = min
+  var hi = Infinity
+  if (maxT !== undefined && isFinite(Number(maxT))) hi = Math.max(min, Number(maxT))
+  return Math.max(min, Math.min(t, hi))
+}
 var body = document.createElement('div')
 body.className = 'dshwv-body'
 body.appendChild(img)
@@ -10577,6 +11998,10 @@ var state = {
   top: 0,
   balance: null,
   currency: null,
+  // v781：余额的两个分量（赠金 / 充值余额）。宿主在 API key 路与 DSH 账号路都会下发；
+  //   取不到时保持 null ⇒ 模块显示 `—`（见 bubbleBonusText/bubbleRechargeText）。
+  bonusBalance: null,
+  rechargeBalance: null,
   todayUsage: null,
   todayUsageCurrency: 'CNY',
   usageLabel: '本地估算',
@@ -10829,6 +12254,32 @@ function restoreBubbleLines() {
 // 消耗=showCostBubble)独立触发, 消耗优先级最高可顶掉当前并暂停手动轮。
 var costBubbleTimer = null // 旧版计时器保留声明(新版 bubbleClearAll 仍清理)
 var bubbleTtlTimer = null
+// v789（issue #188/#172）：泡泡的自动收起**不能只靠 setTimeout** —— 页面被遮挡 / 最小化 / 切到后台时，
+// 浏览器会把定时器节流甚至挂起，于是"5 秒后收起"变成几十秒甚至永远不收（用户实测：点击泡一直不消失、
+// 刷新即恢复）。所以同时记一个**截止时刻**，在页面重新可见 / 拿到焦点时结算一次；再配一个每秒巡检兜底。
+var bubbleTtlDeadline = 0
+function bubbleTtlArmed(ttlMs) {
+  try { if (ttlMs > 0) bubbleTtlDeadline = Date.now() + ttlMs; else bubbleTtlDeadline = 0 } catch (err) { bubbleTtlDeadline = 0 }
+}
+function bubbleTtlClear() { bubbleTtlDeadline = 0 }
+// 巡检：只在"本该已经到期"且计时器已经不在了（被节流/挂起）时补收一次
+function bubbleTtlSweep() {
+  try {
+    if (bubbleTtlTimer || !bubbleTtlDeadline) return
+    if (!bubbleScene || !(bubbleScene.ttlMs > 0)) { bubbleTtlDeadline = 0; return }
+    if (Date.now() < bubbleTtlDeadline) return
+    bubbleTtlDeadline = 0
+    bubbleAutoClose()
+  } catch (err) {}
+}
+// 三条触发路径：页面重新可见（切标签回来）、窗口重新拿到焦点（最小化还原）、以及每秒一次的兜底巡检。
+// 正常前台运行时计时器按时收敛，巡检永远提前返回（不会误收下一个泡泡）。
+try {
+  document.addEventListener('visibilitychange', function () { try { if (!document.hidden) bubbleTtlSweep() } catch (err) {} })
+  window.addEventListener('focus', function () { bubbleTtlSweep() })
+  window.addEventListener('pageshow', function () { bubbleTtlSweep() })
+  setInterval(bubbleTtlSweep, 1000)
+} catch (err) {}
 var bubbleScene = null // { kind:'normal'|'random'|'cost', ttlMs }
 var bubbleSeq = bubbleDefaultQueue() // 默认序列 = 与开发者线上生效一致(首次=余额,再次=随机语句);有配置后由 applyBubbleCfgSeq 覆盖
 var bubbleSeqIdx = 0 // 下一项下标(手动轮内推进)
@@ -11050,6 +12501,12 @@ function bubbleClearAll() {
   try { if (settleTimer) { clearTimeout(settleTimer); settleTimer = null } } catch (err) {}
 }
 function bubbleCloseVisual() {
+  // v789（issue #188）：视觉收起是"泡泡真的收掉了"的唯一出口 ⇒ 顺带把截止时刻清零（三处对齐之二）
+  bubbleTtlClear()
+  // v771：泡泡一旦真的收起，等待标记必须一起复位。`waitShown` 平时由 bubbleRenderModules 按场景重算，
+  // 但"整泡关闭"（hideBubble/hideCostBubble/hideWaitBubble…）不走渲染 ⇒ 不复位就会残留成 true，
+  // 之后 showWaitBubble 会误判"已经在显示等待泡泡"（历史上正是这类不同步把等待泡泡卡死的）。
+  waitShown = false
   try { bubbleBox.classList.remove('dshwv-pop-open') } catch (err) {}
   try { textBox.style.transition = ''; textBox.style.opacity = '' } catch (err) {}
   try { hintEl.style.transition = ''; hintEl.style.opacity = '' } catch (err) {}
@@ -11094,7 +12551,8 @@ function sceneOpen(kind, renderFn, ttlMs) {
         }, 180)
       } catch (err) {}
     }
-    if (ttlMs > 0) bubbleTtlTimer = setTimeout(bubbleAutoClose, ttlMs)
+    if (ttlMs > 0) { bubbleTtlArmed(ttlMs); bubbleTtlTimer = setTimeout(bubbleAutoClose, ttlMs) }
+    else bubbleTtlClear()
   }
   if (wasOpen) {
     // 内容切换:旧内容先淡出,再换新内容并淡入(可被新场景/关闭随时打断)
@@ -11114,14 +12572,21 @@ function sceneOpen(kind, renderFn, ttlMs) {
 }
 function bubbleAutoClose() {
   bubbleTtlTimer = null
+  // v789：走完这条就说明本次 TTL 已经结算，截止时刻必须清零，否则巡检会误收下一个泡泡
+  bubbleTtlClear()
   if (bubbleScene && bubbleScene.kind === 'cost') { if (whaleSysSwapNext()) return; hideCostBubble(); return }
   if (bubbleScene && bubbleScene.kind === 'alert') { if (whaleSysSwapNext()) return; hideUsageAlertBubble(); return }
+  // v761（#161 C5）：等待交互泡泡是**常驻**的（sceneOpen 收到 ttl 0 不布计时器），正常永远走不到这里；
+  // 这一支是防御性的（例如用户先点开等待泡泡再改设置导致 ttl 被重新布上），语义仍与其他系统泡泡一致。
+  if (bubbleScene && bubbleScene.kind === 'wait') { if (whaleSysSwapNext()) return; hideWaitBubble(); return }
   hideBubble()
 }
 // 重置当前泡泡的留存计时(点鲸鱼给第 1 泡续时,不清内容)
 function bubbleResetTtl() {
   try { if (bubbleTtlTimer) { clearTimeout(bubbleTtlTimer); bubbleTtlTimer = null } } catch (err) {}
-  if (bubbleScene && bubbleScene.ttlMs > 0) bubbleTtlTimer = setTimeout(bubbleAutoClose, bubbleScene.ttlMs)
+  // v789：续时也要同步截止时刻，否则巡检会在"刚续过"的泡泡上提前动作（issue #188 提醒的三处对齐之一）
+  if (bubbleScene && bubbleScene.ttlMs > 0) { bubbleTtlArmed(bubbleScene.ttlMs); bubbleTtlTimer = setTimeout(bubbleAutoClose, bubbleScene.ttlMs) }
+  else bubbleTtlClear()
 }
 // 默认内容视图 = 现在待机内容(余额/今日已用),由 render/restore 维护
 function bubbleRenderDefault() { restoreBubbleLines() }
@@ -11144,6 +12609,15 @@ function bubbleRenderRandom(lines) {
 // 旧版是写死的三段(label/amount/hint),现在的默认内容(usageTurnCostDefaultLines)复刻它的观感。
 function bubbleRenderCostMods(amount) {
   bubbleRenderModules(usageAlertModsResolved(usageTurnCostLines(), null, null, usageCostValue(amount)))
+}
+// 等待交互提示（v761 / #161 C5）：内容取 events.<kind>.lines（缺失/空 → 默认模板），
+// 走与预警/预算/消耗同一条模块渲染链路。`{session}` 在这里就替换成当前对话名
+// （usageAlertModsResolved → usageFillText 的会话名回落），所以真实泡泡显示的是对话名而不是 `{session}`。
+function bubbleRenderWaitMods(kind) {
+  var k = (kind === 'approval') ? 'approval' : 'question'
+  var cfg = {}
+  try { cfg = ((usageSet || {}).events || {})[k] || {} } catch (err) { cfg = {} }
+  bubbleRenderModules(usageAlertModsResolved(usageWaitLinesOf(cfg, k), null, null, null))
 }
 // 并列步骤:每轮到这一步时独立按权重抽一个候选泡(不记忆上次,允许连续几轮同泡)
 function bubblePickChoiceStep(step) {
@@ -11177,8 +12651,11 @@ function bubbleShowSeqNext() {
   }
 }
 // ===== 模块渲染引擎(B1) =====
-// 模块:{type:'text'|'balance'|'today'|'peak'|'image'|'random', text?, imgId?, color?, size?(1..8 档),
-//        lines?:[{t,w}] (random 自带句子列表)}
+// 模块:{type:'text'|'balance'|'bonus'|'recharge'|'today'|'peak'|'session'|'image'|'random', text?, imgId?, color?, size?(1..8 档),
+//        lines?:[{t,w}] (random 自带句子列表), tpl?(占位符模板), len?(session 的「保留长度」，0=不截断)}
+//   v782 新增 'bonus'（赠金）与 'recharge'（充值余额）：与 'balance' 并列的内置数值模块，
+//   分别用占位符 {bonus_ds} / {recharge_ds}；**'balance' / '{balance_ds}' 的名字与行为一律不动**
+//   （历史泡泡里存的是这些字面量，改名会让老内容显示不出来）。
 // 字号档位 1..50,线性细分(1→40u … 50→240u,相对 --dshw-u 的倍数)
 function bubbleModuleFontU(level) {
   var n = Number(level) || 6
@@ -11192,6 +12669,19 @@ function bubbleAmountText() {
 }
 function bubbleTodayText() {
   return (state.usageLabel || '今日已用') + ' ' + (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
+}
+// v782：赠金 / 充值余额两个数值模块的取数（与「总余额(充值金额+赠金)」同源：宿主余额返回体）。
+//   ⚠️ 两个数字**可能拿不到**（厂商没有该字段、或未登录账号）⇒ 显示 `—`，**不显示 0**
+//   —— 0 的意思是"确实没有了"，与"读不到"是两件事（记账也依赖这个区分）。
+function bubbleBonusText() {
+  var v = state.bonusBalance
+  if (v === null || v === undefined || !isFinite(Number(v))) return '—'
+  return fmt(Number(v), state.currency)
+}
+function bubbleRechargeText() {
+  var v = state.rechargeBalance
+  if (v === null || v === undefined || !isFinite(Number(v))) return '—'
+  return fmt(Number(v), state.currency)
 }
 // 模块「内容」模板:占位符统一英文(便于兼容其他模型 API 时区分来源/字段):
 //   {expense_ds} 今日已用金额 · {balance_ds} 余额 · {status} 高峰/空闲状态字 · {countdown} 倒计时
@@ -11562,9 +13052,18 @@ function bubbleContentTokenMap(m) {
   if (m.type === 'balance') {
     v = bubbleAmountText()
     map['balance_ds'] = v
+  } else if (m.type === 'bonus') {
+    // v782：赠金模块（{bonus_ds}）。取不到数 = '—'，不显示 0。
+    map['bonus_ds'] = bubbleBonusText()
+  } else if (m.type === 'recharge') {
+    // v782：充值余额模块（{recharge_ds}）。
+    map['recharge_ds'] = bubbleRechargeText()
   } else if (m.type === 'today') {
     v = (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
     map['expense_ds'] = v
+  } else if (m.type === 'session') {
+    // v768：对话名模块 —— {session} = 当前对话标题（按模块的「保留长度」截断）
+    map['session'] = bubbleSessionText(m)
   } else if (bubbleIsPeakCount(m)) {
     v = bubbleCountdownText()
     map['countdown'] = v
@@ -11596,8 +13095,11 @@ function bubbleTplHelpItems(m) {
     add('plan_reset', '订阅额度刷新倒计时（同上；全部窗口时为紧凑倒计时）')
     return arr
   }
-  if (m.type === 'balance') add('balance_ds', '余额数值')
+  if (m.type === 'balance') add('balance_ds', '总余额(充值金额+赠金)')
+  if (m.type === 'bonus') add('bonus_ds', '赠金余额（未过期的赠送余额；取不到显示 —）')
+  if (m.type === 'recharge') add('recharge_ds', '充值余额（不含赠金；取不到显示 —）')
   else if (m.type === 'today') add('expense_ds', '今日已用金额')
+  else if (m.type === 'session') add('session', '当前对话名（超过「保留长度」会截断为 前N字...）')
   else if (m.type === 'peak' || m.type === 'nextpeak') {
     if (bubbleIsPeakCount(m)) add('countdown', '距下一时段倒计时 (HH:MM:SS)')
     else add('status', '高峰/空闲 状态文字(随显示样式变化)')
@@ -11618,7 +13120,7 @@ function bubbleTplHelpToggle(m, anchor) {
         } catch (err) {}
         dshwvTplHelpEl.style.display = 'none'
       }, true)
-      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') dshwvTplHelpEl.style.display = 'none' })
+      document.addEventListener('keydown', function (e) { if (dshwvComposingNow()) return; if (e.key === 'Escape') dshwvTplHelpEl.style.display = 'none' })
     }
     if (dshwvTplHelpEl.style.display === 'block') { dshwvTplHelpEl.style.display = 'none'; return }
     var items = bubbleTplHelpItems(m)
@@ -11662,7 +13164,7 @@ function dshwvHintEnsure() {
     } catch (err) {}
     dshwvHintHide()
   }, true)
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') dshwvHintHide() })
+  document.addEventListener('keydown', function (e) { if (dshwvComposingNow()) return; if (e.key === 'Escape') dshwvHintHide() })
   return dshwvHintEl
 }
 function dshwvHintShow(html, anchor, pinned) {
@@ -11872,7 +13374,7 @@ function bubbleCountdownApplyStyle(el, mod, peak) {
     if (rgb) {
       var scheme = rgb === true ? 'macaron' : String(rgb || 'macaron')
       el.classList.add('dshwv-rgb')
-      if (scheme === 'candy' || scheme === 'rouge' || scheme === 'bamboo' || scheme === 'aurora' || scheme === 'deepsea' || scheme === 'sunset' || scheme === 'forest' || scheme === 'champagne' || scheme === 'lavender' || scheme === 'mint' || scheme === 'lava' || scheme === 'galaxy' || scheme === 'ink' || scheme === 'indigo') el.classList.add('dshwv-rgb-' + scheme)
+      if (bubbleRgbSchemeOk(scheme)) el.classList.add('dshwv-rgb-' + scheme)
     } else if (col) {
       el.style.color = col
     }
@@ -11934,10 +13436,12 @@ function bubblePeakRowRegister(row, tx, mod, peakNow) {
   } catch (err) {}
 }
 // 跑马灯配色方案白名单（与 blockOf() / bubbleCountdownApplyStyle 用的那套一致）
+// v770：新增配色时**只改这一处**（其余调用点已改成调它，不再各自维护一串 || 判断）
 function bubbleRgbSchemeOk(s) {
   return s === 'candy' || s === 'rouge' || s === 'bamboo' || s === 'aurora' || s === 'deepsea' ||
     s === 'sunset' || s === 'forest' || s === 'champagne' || s === 'lavender' || s === 'mint' ||
-    s === 'lava' || s === 'galaxy' || s === 'ink' || s === 'indigo'
+    s === 'lava' || s === 'galaxy' || s === 'ink' || s === 'indigo' ||
+    s === 'blaze' || s === 'amber'
 }
 function bubblePeakRowClearClass(el, prefix) {
   try {
@@ -11991,9 +13495,16 @@ function bubbleRowContentOf(mod) {
     var bv = bubbleIsModelMod(mod) ? apiModelBalanceText(mod.modelId) : bubbleAmountText()
     return { txt: bubbleContentText(mod, bv), line: null }
   }
+  // v782：赠金 / 充值余额两个数值模块（与「总余额(充值金额+赠金)」并列，取不到数时自动文案是 —）
+  if (mod.type === 'bonus') return { txt: bubbleContentText(mod, bubbleBonusText()), line: null }
+  if (mod.type === 'recharge') return { txt: bubbleContentText(mod, bubbleRechargeText()), line: null }
   if (mod.type === 'today') {
     var tv2 = bubbleIsModelMod(mod) ? apiModelTodayText(mod.modelId) : (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
     return { txt: bubbleContentText(mod, '今日已用 ' + tv2), line: null }
+  }
+  if (mod.type === 'session') {
+    // v768：对话名模块（自动内容 = 截断后的对话名；留空 tpl 时直接用自动内容）
+    return { txt: bubbleContentText(mod, bubbleSessionText(mod)), line: null }
   }
   if (mod.type === 'quota') {
     var qi = apiQuotaInfo(mod.modelId)
@@ -12110,7 +13621,7 @@ function bubbleRowsTo(parentEl, mods) {
       // 跑马灯渐变:true 兼容旧数据=马卡龙;支持 macaron/candy/rouge/bamboo…
       target.classList.add('dshwv-rgb')
       var scheme = g === true ? 'macaron' : String(g || 'macaron')
-      if (scheme === 'candy' || scheme === 'rouge' || scheme === 'bamboo' || scheme === 'aurora' || scheme === 'deepsea' || scheme === 'sunset' || scheme === 'forest' || scheme === 'champagne' || scheme === 'lavender' || scheme === 'mint' || scheme === 'lava' || scheme === 'galaxy' || scheme === 'ink' || scheme === 'indigo') target.classList.add('dshwv-rgb-' + scheme)
+      if (bubbleRgbSchemeOk(scheme)) target.classList.add('dshwv-rgb-' + scheme)
     }
     if (marquee) {
       // 文字跑马灯装在内层 span(有底色时)或行上;底色在 row 层,两者可叠加;
@@ -12129,7 +13640,7 @@ function bubbleRowsTo(parentEl, mods) {
     if (needBg) {
       if (effBgRgb) {
         row.classList.add('dshwv-bgrgb')
-        if (effBgRgb === 'candy' || effBgRgb === 'rouge' || effBgRgb === 'bamboo' || effBgRgb === 'aurora' || effBgRgb === 'deepsea' || effBgRgb === 'sunset' || effBgRgb === 'forest' || effBgRgb === 'champagne' || effBgRgb === 'lavender' || effBgRgb === 'mint' || effBgRgb === 'lava' || effBgRgb === 'galaxy' || effBgRgb === 'ink' || effBgRgb === 'indigo' || effBgRgb === 'macaron') row.classList.add('dshwv-bgrgb-' + effBgRgb)
+        if (bubbleRgbSchemeOk(effBgRgb) || effBgRgb === 'macaron') row.classList.add('dshwv-bgrgb-' + effBgRgb)
         row.style.animationDuration = bubbleMarqueeDur()
       } else if (effBg) {
         row.style.background = effBg
@@ -12287,8 +13798,15 @@ function bubbleRowsTo(parentEl, mods) {
 // 当前泡泡正在显示的模块列表(供场景切换时记录;显示期间不再即时整泡重绘,
 // 避免用户观看时内容被刷新打断——更新统一在“泡泡消失→下一次显示”的渲染采用最新 state)
 var bubbleLiveMods = null
+// v761（#161 C5）：当前是否正显示「等待交互」的常驻泡泡。只有真正渲染出等待内容时才置位，
+// 因此拿它做幂等判断（同名再次入队直接丢弃）不会把"排了队但还没轮到"的项误判成已显示。
+var waitShown = false
 function bubbleRenderModules(mods) {
   try {
+    // v761（#161 C5）：等待交互泡泡（kind:'wait'）从布场景到渲染都是同步完成的，所以真正的
+    // "已显示"标记放在这里取；其它场景/关闭路径会把 bubbleScene 置空或换 kind，因此
+    // 该标记不可能残留成"其实没显示却以为在显示"。
+    waitShown = !!(bubbleScene && bubbleScene.kind === 'wait')
     bubbleLiveMods = Array.isArray(mods) ? mods.slice() : null
     // 清掉旧模块行,隐藏老三行与 gif(它们仍保留在 DOM 供普通场景使用)
     gifEl.style.display = 'none'
@@ -12372,6 +13890,12 @@ function whaleClick() {
       bubbleShowSeqNext()
       return
     }
+    // v777：等待交互提示期间点角色 —— 开关「点按角色关闭提示气泡」打开时，点角色＝收起这条等待提示
+    //（默认关：保持"点角色不动等待提示"，只有点泡泡才关）。收起来后 pollWaitState 不会把它弹回来。
+    if (bubbleScene && bubbleScene.kind === 'wait') {
+      if (waitCharCloseOn()) dismissWaitBubble()
+      return
+    }
     // v727：开启「点按角色推进泡泡队列」→ 点角色＝往后推进一项（不再回到第 1 项）；
     // 已是最后一项时与「点泡泡」一致：收起泡泡，下次点按从第 1 项开始。
     if (bubbleTapAdvance) { bubbleNext(); return }
@@ -12392,6 +13916,12 @@ function bubbleNext() {
     if (!bubbleShown) return
     if (bubbleScene && bubbleScene.kind === 'cost') { hideCostBubble(); return }
     if (bubbleScene && bubbleScene.kind === 'alert') { hideUsageAlertBubble(); return }
+    // v777：等待交互泡泡**可以点掉**（用户反馈「无法点击关闭」）。原来的实现在这里是 `return`
+    //（设计意图是"别让误点把'正在等待你回答'收掉"），但真机上用户就是想把它点掉 ⇒ 改成：
+    // 点泡泡 = 收起，并记住"这条挂起已被点掉"，pollWaitState 不再自动弹回（回答/批准或下一次新挂起照常）。
+    if (bubbleScene && bubbleScene.kind === 'wait') { dismissWaitBubble(); return }
+    // v761（#161 C5）曾在此处"等待交互泡泡点它不关"（必须等被回答/批准）——
+    // v777 按用户反馈改成"可点关"，语义与实现见上面的 dismissWaitBubble()；这里不再拦截。
     if (bubbleRoundOn && bubbleSeqIdx < bubbleSeq.length) { bubbleShowSeqNext(); return }
     hideBubble()
   } catch (err) {}
@@ -12418,6 +13948,13 @@ function hideBubble() {
 }
 function showCostBubble(amount) {
   if (!bubbleOn || !turnCostOn) return
+  // v778：②区「冒泡提示」勾选框（events.turnCost.bubbleOn）以前**只写不读** —— 取消勾选照样弹。
+  //   同类问题（"控件有值、没有消费方"）与本次修的音量滑块同源，一并接上：
+  //   缺省（未设置/旧数据）= 照常冒泡，只有**显式**取消勾选才不弹 ⇒ 老用户行为不变。
+  try {
+    var tcCfg = soundEventCfg('turnCost') || {}
+    if (tcCfg.bubbleOn === false) return
+  } catch (err) {}
   // 进入系统泡泡队列(等级3):若同批有预警/预算,则排在它们之后展示
   whaleSysPush({ kind: 'cost', amount: amount, rank: 3 })
 }
@@ -12439,20 +13976,71 @@ var USAGE_ALERT_TTL = 6500 // 提醒泡泡停留毫秒数
 var whaleSysQueue = []
 var whaleSysItem = null // 当前正展示的 {kind, mods/amount, rank}
 var whaleSysTimer = null
+// 队列插入（v772 起抽成函数，供 push / 抢占退回 共用）：
+//   rank 小的先出（1 今日预算 / 2 余额预警 / 3 每轮消耗 / 4 等待交互）；
+//   **同档的「每轮消耗」后入先出** —— 新的一轮消耗插到已有消耗项之前 ⇒ 新的置顶，旧的排队；
+//   其它档位保持先入先出（预警/预算按发生顺序看更合理），等待交互项永远排在最前。
+function whaleSysQueueInsert(item) {
+  var rank = Number(item.rank)
+  if (!(rank >= 1)) rank = 2
+  item.rank = rank
+  var pos = whaleSysQueue.length
+  for (var i = 0; i < whaleSysQueue.length; i++) {
+    var q = whaleSysQueue[i] || {}
+    var qr = Number(q.rank)
+    if (!(qr >= 1)) qr = 2
+    if (qr > rank || (item.kind === 'cost' && q.kind === 'cost' && qr === rank)) { pos = i; break }
+  }
+  whaleSysQueue.splice(pos, 0, item)
+  return pos
+}
+// 展示一项（v772 抽成函数：tick / 淡切下一项 / 抢占都走这一份，避免三处各写一遍又不一致）
+function whaleSysOpenItem(item) {
+  whaleSysItem = item
+  if (item.kind === 'cost') {
+    sceneOpen('cost', function () { bubbleRenderCostMods(item.amount) }, turnCostCloseMs > 0 ? turnCostCloseMs : 0)
+  } else if (item.kind === 'wait') {
+    // 等待交互：常驻（ttl 0 = sceneOpen 不布自动关闭计时器），内容在渲染时按当前设置取
+    sceneOpen('wait', function () { bubbleRenderWaitMods(item.waitKind) }, 0)
+  } else {
+    sceneOpen('alert', function () { bubbleRenderModules(item.mods || []) }, (item && item.ttlMs != null) ? item.ttlMs : USAGE_ALERT_TTL)
+  }
+}
 function whaleSysPush(item) {
   try {
     if (!bubbleOn || !bubbleBox || !textBox) return false
+    if (!item || !item.kind) return false
+    // v772：**等待交互（授权/提问）享有最高优先级，永远不会被"消耗泡泡正开着"挡住**。
+    // 整轮对话都卡在等你回答/批准，它必须立刻可见；正在展示的其它系统泡泡（消耗/预警）退回队列，
+    // 等挂起解除后照旧继续 —— 用户真机反馈「已有每轮消耗提示时，授权与提问不会显示」。
+    // 顺带兜住历史上的一个坑：`costBubbleActive` 万一残留成 true 而 `whaleSysItem` 为空，
+    // 下面的 `costBubbleActive && !whaleSysItem` 早退会把所有入队都吃掉（等待泡泡一起被丢）。
+    if (item.kind === 'wait') {
+      if (whaleSysItem && whaleSysItem.kind === 'wait') {
+        if (whaleSysItem.waitKind === item.waitKind) return true // 已在显示同一类：内容无需重渲染
+        whaleSysItem = item
+        sceneOpen('wait', function () { bubbleRenderWaitMods(item.waitKind) }, 0)
+        return true
+      }
+      if (whaleSysItem) {
+        var pre = whaleSysItem
+        whaleSysItem = null
+        whaleSysQueueInsert(pre) // 退回队列（按 rank + 消耗 LIFO 规则就位）
+      }
+      whaleSysOpenItem(item)
+      return true
+    }
     // 正在展示消耗泡泡时,新提醒退化为居中卡片(避免与消耗内容抢层);排队中的则按序等
     if (costBubbleActive && !whaleSysItem) return false
-    if (!item || !item.kind) return false
-    var rank = Number(item.rank)
-    if (!(rank >= 1)) rank = 2
-    item.rank = rank
-    var pos = whaleSysQueue.length
-    for (var i = 0; i < whaleSysQueue.length; i++) {
-      if (whaleSysQueue[i].rank > rank) { pos = i; break }
+    // v772：**每轮消耗改后入先出** —— 新一轮消耗直接置顶，原来那条退回队列（点击时按"新→旧"回看）。
+    if (item.kind === 'cost' && whaleSysItem && whaleSysItem.kind === 'cost') {
+      var pre2 = whaleSysItem
+      whaleSysItem = null
+      whaleSysQueueInsert(pre2)
+      whaleSysOpenItem(item)
+      return true
     }
-    whaleSysQueue.splice(pos, 0, item)
+    whaleSysQueueInsert(item)
     if (whaleSysTimer) { clearTimeout(whaleSysTimer); whaleSysTimer = null }
     whaleSysTimer = setTimeout(whaleSysTick, 30)
     return true
@@ -12465,15 +14053,12 @@ function whaleSysTick() {
     if (whaleSysItem) return
     if (!whaleSysQueue.length) return
     // 存在尚未入队的正展示系统泡?仅在鲸鱼空闲且无我们自己队列项时取下一个
-    if (costBubbleActive || (bubbleScene && bubbleScene.kind === 'alert')) return
+    // v761（#161 C5）：waitShown 也必须算"正被占着"——等待泡泡是常驻的（whaleSysItem 会一直是它），
+    // 正常走不到这里；但万一 item 被别的路径清掉而场景还停在等待内容上，也不能抢它的层。
+    if (costBubbleActive || waitShown || (bubbleScene && bubbleScene.kind === 'alert')) return
     var item = whaleSysQueue.shift()
     if (!item) return
-    whaleSysItem = item
-    if (item.kind === 'cost') {
-      sceneOpen('cost', function () { bubbleRenderCostMods(item.amount) }, turnCostCloseMs > 0 ? turnCostCloseMs : 0)
-    } else {
-      sceneOpen('alert', function () { bubbleRenderModules(item.mods || []) }, (item && item.ttlMs != null) ? item.ttlMs : USAGE_ALERT_TTL)
-    }
+    whaleSysOpenItem(item) // v772：展示逻辑抽成一份（tick / 淡切 / 抢占共用）
   } catch (err) {}
 }
 function whaleSysDone() {
@@ -12489,12 +14074,7 @@ function whaleSysSwapNext() {
     if (!whaleSysQueue.length || !bubbleOn || !bubbleShown) return false
     var item = whaleSysQueue.shift()
     if (!item) return false
-    whaleSysItem = item
-    if (item.kind === 'cost') {
-      sceneOpen('cost', function () { bubbleRenderCostMods(item.amount) }, turnCostCloseMs > 0 ? turnCostCloseMs : 0)
-    } else {
-      sceneOpen('alert', function () { bubbleRenderModules(item.mods || []) }, (item && item.ttlMs != null) ? item.ttlMs : USAGE_ALERT_TTL)
-    }
+    whaleSysOpenItem(item) // v772：与 tick / 抢占同一份展示逻辑
     return true
   } catch (err) { return false }
 }
@@ -12510,7 +14090,105 @@ function hideUsageAlertBubble() {
   bubbleCloseVisual()
   whaleSysDone()
 }
-
+// ===== v761（#161 C5）：等待交互的**常驻**泡泡（提问 / 授权）=====
+// 语义与消耗(3)/预警(2)/预算(1)三档系统泡泡不同：那几档是"显示 N 秒自动关"，而挂起泡泡要
+// **在挂起存在期间一直显示**，直到宿主在 wait.json 里说挂起解除了 → pollWaitState() 调 hideWaitBubble()。
+// 复核后的实现方式（改动面最小的那一版）：
+//   · 复用既有系统泡泡链路（whaleSysPush / whaleSysTick / whaleSysSwapNext / whaleSysDone），
+//     不另造浮层；新增第四档 rank = 4（排在消耗之后，理由见 showWaitBubble 注释）；
+//   · 常驻 = **ttlMs 传 0**。sceneOpen 里 `if (ttlMs > 0) bubbleTtlTimer = setTimeout(...)`，
+//     所以 0 天然"不布自动关闭计时器"；bubbleResetTtl 也带 `ttlMs > 0` 守卫，不会给它补上计时器。
+//     既有 cost/alert 的取值（turnCostCloseMs / usageRemindTtlMs）完全没动。
+//   · 队列项 kind = 'cost' | 'alert' | 'wait'；'wait' 这一支只出现在 whaleSysTick /
+//     whaleSysSwapNext / bubbleAutoClose / bubbleNext 的**新增分支**里，alert/budget/cost 路径逐字未改。
+// 幂等 + 换类型（**v771 修掉真机卡死**）：等待泡泡**永远只有一条**，内容 = 宿主当前上报的那一条挂起。
+// 依据：宿主 `waitState` 也只有一个槽位（`notePendingEvent` 里每次 `waitState.pending = {...}` 覆盖），
+// 所以客户端"镜像最新一条"就与宿主同口径，不需要（也不能）排队多条常驻泡泡。
+// ⚠️ 旧实现遇到"正在显示 A 类、又来了 B 类"时：把 `whaleSysItem` 置空 → 把 A 项 `unshift` 回队首 → 再 push B。
+//    可屏幕上**仍在显示等待场景**（`waitShown` 依旧 true）⇒
+//      ① `whaleSysTick` 的 `if (waitShown) return` 守卫**永远**拦住队列（B 永不上屏、A 也不换）；
+//      ② `whaleSysItem` 已是 null ⇒ `hideWaitBubble()` 的 `if (whaleSysItem && kind==='wait')` 分支走不到
+//         ⇒ 之后宿主说"没有挂起了"也**关不掉** ⇒ 泡泡一直停在 A，直到刷新页面。
+//    真机复现：先授权、再提问（1 秒轮询很可能错过中间"无挂起"的那一瞬）⇒ 泡泡停在授权、提问泡泡不出现、
+//    对话结束也不消失。
+function showWaitBubble(kind, p) {
+  try {
+    if (!bubbleOn) return false // 全局「泡泡总开关」为假 → 一律不显示
+    var k = (kind === 'approval') ? 'approval' : 'question'
+    var cfg = waitEventCfg(k)
+    // 门控：该事件总开关 + 该事件「冒泡提示」开关（任一为假都不冒泡）；pollWaitState 也会先判一次
+    if (cfg.on === false || cfg.bubbleOn === false) return false
+    if (!bubbleBox || !textBox) return false
+    var pid = (p && p.id) ? String(p.id) : ''
+    // "正显示等待泡泡"看**场景**（权威）或已占位的队列项（次之）—— 二者取或，避免状态半同步时漏判
+    var showingWait = !!((bubbleScene && bubbleScene.kind === 'wait') || (whaleSysItem && whaleSysItem.kind === 'wait'))
+    if (showingWait) {
+      // 同一类：幂等丢弃（内容一样）。只是 pendingId 变了就顺手更新，便于排查。
+      if (whaleSysItem && whaleSysItem.kind === 'wait' && whaleSysItem.waitKind === k) {
+        if (pid) whaleSysItem.pendingId = pid
+        return false
+      }
+      // 不同类（或状态半同步）：**原地替换** —— 不动 waitShown、不置空 whaleSysItem、不往队列塞，
+      // 直接复用 sceneOpen 的内容淡切把这一条常驻泡泡换成新的挂起内容。
+      whaleSysQueue = whaleSysQueue.filter(function (q) { return !(q && q.kind === 'wait') })
+      whaleSysItem = { kind: 'wait', waitKind: k, rank: 4, ttlMs: 0, pendingId: pid }
+      sceneOpen('wait', function () { bubbleRenderWaitMods(k) }, 0)
+      return true
+    }
+    // 还没在显示等待泡泡（可能正在放消耗/预警，或压根没泡泡）：队列里只保留"最新一条"等待项
+    whaleSysQueue = whaleSysQueue.filter(function (q) { return !(q && q.kind === 'wait') })
+    // rank 4：1 今日预算 / 2 余额预警 / 3 每轮消耗 / 4 等待交互。挂在消耗之后是刻意的 ——
+    // 等待泡泡一旦显示就**常驻**（不会自己让位），所以必须让"来了就要看、会自己消失"的消耗泡泡先走完；
+    // 否则一次消耗提醒会被常驻的等待泡泡永久挡在队里。既有 30ms 合批排序逻辑不用改。
+    return whaleSysPush({ kind: 'wait', waitKind: k, rank: 4, ttlMs: 0, pendingId: pid })
+  } catch (err) { return false }
+}
+// 挂起解除（被回答 / 被批准 / 切换对话）：收起等待泡泡。
+// 队列里还有别的项时保持打开、淡切到下一项 —— 与 hideCostBubble / hideUsageAlertBubble 同语义，
+// 复用它们的做法：**不**把正在显示的那一项摘掉，交给 whaleSysSwapNext() 去换或去清场。
+function hideWaitBubble() {
+  try {
+    // v771：判断"当前是不是正显示等待泡泡"必须**同时看场景与队列项**。历史上只看 whaleSysItem，
+    // 一旦它与场景不同步（showWaitBubble 换类型的旧实现就会造成）就永远走不到关闭分支 ⇒ 泡泡卡死。
+    var showingWait = !!((bubbleScene && bubbleScene.kind === 'wait') || (whaleSysItem && whaleSysItem.kind === 'wait') || waitShown)
+    var beforeLen = whaleSysQueue.length
+    // 排队中但还没轮到的等待项作废（等待项永远只保留最新一条，见 showWaitBubble）
+    whaleSysQueue = whaleSysQueue.filter(function (q) { return !(q && q.kind === 'wait') })
+    if (showingWait) {
+      if (whaleSysSwapNext()) return // 队列里还有别的项 → 淡切过去（waitShown 由渲染侧重算）
+      waitShown = false
+      whaleSysItem = null
+      bubbleClearAll()
+      bubbleScene = null
+      bubbleShown = false
+      bubbleRandomActive = false
+      bubbleRandomLines = null
+      bubbleLiveMods = null
+      bubbleCloseVisual()
+      whaleSysDone()
+      return
+    }
+    // 没在显示等待泡泡：只清掉了排队中的等待项 → 补一次 tick，让别的项继续走
+    if (whaleSysQueue.length !== beforeLen) whaleSysTick()
+  } catch (err) {}
+}
+// v777（用户反馈「授权提示/提问提示无法点击关闭」）：
+//   · 默认：**点泡泡**即可关掉等待气泡（点角色不管，除非打开下面的开关）；
+//   · 开关「点按角色关闭提示气泡」打开后：**点角色**也能关；
+//   · 关掉的是"这条挂起"——宿主每秒还会下发同一条挂起（pollWaitState 是每分钟…不是，是每秒对齐一次），
+//     所以必须记住"用户把这条点掉了、别再自动弹回"，否则关掉后 1 秒内又回来 = 看起来根本关不掉。
+var waitDismissedId = '' // 被用户点掉的挂起 id（'' = 没有）
+var waitPendingId = '' // 宿主最近一次上报的挂起 id（用于"点掉的就是当前这条"）
+function waitCharCloseOn() {
+  try { return !!(((usageSet || {}).wait || {}).charClose) } catch (err) { return false }
+}
+// 用户主动收起等待气泡：记住这条挂起已被点掉，然后收起
+function dismissWaitBubble() {
+  try {
+    if (waitPendingId) waitDismissedId = waitPendingId
+    hideWaitBubble()
+  } catch (err) {}
+}
 function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v) }
 function viewport() {
   return {
@@ -12588,6 +14266,10 @@ function express() {
   root.style.right = 'auto'
   root.style.bottom = 'auto'
   root.style.left = state.left + 'px'
+  // v785：最后一道保险 —— 所有"写 state.top"的路径最终都会走到这里，统一把顶边夹出"窗口控件带"
+  // （拖动/吸附/settle 各自也夹了一次；这里兜住启动、自愈、外部直接改 state 等路径）。
+  // 见 clampWidgetTop：下限 = 叠层下沿（普通浏览器为 0 ⇒ 与以前完全一致）。
+  state.top = clampWidgetTop(state.top)
   root.style.top = state.top + 'px'
   root.classList.toggle('dshwv-left', !!state.flip)
 }
@@ -12598,7 +14280,7 @@ function settle() {
   if (drag && drag.active) {
     // mid-drag resize: keep the pointer-follow position, just clamp into view
     state.left = clamp(state.left, 0, Math.max(0, vp.w - w - rightGap()))
-    state.top = clamp(state.top, 0, Math.max(0, vp.h - h))
+    state.top = clampWidgetTop(state.top, Math.max(0, vp.h - h))
     express()
     return
   }
@@ -12622,22 +14304,22 @@ function settle() {
   }
   if (state.v === 'bottom') {
     var rawB = vp.h - h - state.vOff
-    state.top = clamp(rawB, 0, maxT)
+    state.top = clampWidgetTop(rawB, maxT)
     if (state.top !== rawB) outOfRange = true
   } else if (state.v === 'top') {
     var rawT = state.vOff
-    state.top = clamp(rawT, 0, maxT)
+    state.top = clampWidgetTop(rawT, maxT)
     if (state.top !== rawT) outOfRange = true
   } else {
-    state.top = clamp(state.top, 0, maxT)
+    state.top = clampWidgetTop(state.top, maxT)
   }
   // 偏移确实越界（脏数据 / 视口变小）：先把偏移夹回合法范围再落盘，下次启动不再复现。
   // 只在真的越界时写，正常 resize 不会产生额外的 localStorage 写入。
   if (outOfRange) {
     if (state.h === 'right') state.hOff = clamp(state.hOff, 0, Math.max(0, vp.w - w - rightGap()))
     else if (state.h === 'left') state.hOff = clamp(state.hOff, 0, maxLAnchor)
-    if (state.v === 'bottom') state.vOff = clamp(state.vOff, 0, maxT)
-    else if (state.v === 'top') state.vOff = clamp(state.vOff, 0, maxT)
+    if (state.v === 'bottom') state.vOff = clamp(state.vOff, 0, Math.max(0, maxT - widgetTopMin()))
+    else if (state.v === 'top') state.vOff = clamp(state.vOff, widgetTopMin(), maxT)
     try { saveAnchorPos() } catch (err) {}
   }
   refreshFlip()
@@ -12745,6 +14427,9 @@ function refresh(manual) {
         balanceRetryLeft = 2
         state.todayUsage = data.todayUsage !== undefined ? data.todayUsage : null
         state.todayUsageCurrency = data.todayUsageCurrency || data.currency || 'CNY'
+        // v781：赠金 / 充值余额（宿主两条路都下发；缺失给 null ⇒ 模块显示 —）
+        state.bonusBalance = isFinite(Number(data.bonusBalance)) ? Number(data.bonusBalance) : null
+        state.rechargeBalance = isFinite(Number(data.rechargeBalance)) ? Number(data.rechargeBalance) : null
         state.usageLabel = data.usageLabel || '本地估算'
         if (data.stale) state.usageLabel += ' · 余额未刷新'
         state.isPeak = !!data.isPeak
@@ -12779,6 +14464,9 @@ function refresh(manual) {
       } else {
         state.status = 'error'
         state.message = (data && data.error) ? String(data.error) : '获取失败'
+        // v781：把宿主的错误码也打到控制台 —— "只登录客户端读不到余额"这类反馈里，
+        //   界面只显示一句人类可读的文案，而 code（NO_KEY / BOTH_FAILED / SHAPE …）才是排查入口。
+        try { console.warn('[dsh-whale] 余额读取失败', (data && data.code) || '', state.message) } catch (err) {}
         render()
         balanceRetryLater()
       }
@@ -13034,7 +14722,7 @@ function setScale(v) {
   } else {
     state.left = Math.min(Math.max(fx - r2.width, 0), Math.max(0, vp.w - r2.width))
   }
-  state.top = Math.min(Math.max(fy - r2.height, 0), Math.max(0, vp.h - r2.height))
+  state.top = clampWidgetTop(Math.min(Math.max(fy - r2.height, 0), Math.max(0, vp.h - r2.height)))
   express()
   // 恢复过渡必须延迟到下一帧：本帧 left/top 已在 none 下设置并提交，
   // 立即恢复会让浏览器对「刚改过的 left/top」重新评估并播放过渡动画
@@ -15045,7 +16733,8 @@ function onDocPointerMove(e) {
   // were); on release endDrag() recomputes the anchors and settle() flips the
   // class with a smooth transition instead of reverting instantly.
   state.left = clamp(drag.origLeft + dx, 0, Math.max(0, drag.vp.w - drag.w))
-  state.top = clamp(drag.origTop + dy, 0, Math.max(0, drag.vp.h - drag.h))
+  // v785：拖拽时就把"桌面端窗口控件带"排除在可移动范围外（顶边下限 = 叠层下沿）
+  state.top = clampWidgetTop(drag.origTop + dy, Math.max(0, drag.vp.h - drag.h))
   express()
 }
 function onDocPointerUp(e) {
@@ -15297,7 +16986,8 @@ function endDrag(e, clickAllowed, cancelled) {
   var dx = e.clientX - drag.startX
   var dy = e.clientY - drag.startY
   var left = clamp(drag.origLeft + dx, 0, Math.max(0, drag.vp.w - drag.w))
-  var top = clamp(drag.origTop + dy, 0, Math.max(0, drag.vp.h - drag.h))
+  // v785：落位计算也要先排除"窗口控件带"（否则吸附判定点会用到带内的 top）
+  var top = clampWidgetTop(drag.origTop + dy, Math.max(0, drag.vp.h - drag.h))
   // 自定义吸附区（比例/绝对/关闭）。判定点：左右吸附/翻转 = 图像中心 x，
   // 下吸附 = 图像中心 y，上吸附 = 挂件盒中心 y。
   // 解析计算，避免拖动结束过渡期强制布局。
@@ -15353,7 +17043,8 @@ function applyAnchorPos() {
     var l = a.hAnchor === 'left' ? hDist : vp.w - effectiveRightDist - w
     var t = a.vAnchor === 'top' ? vDist : vp.h - vDist - h
     state.left = clamp(l, 0, maxOffH)
-    state.top = clamp(t, 0, maxOffV)
+    // v785：锚点自愈/恢复也要排除"窗口控件带"（这条路径不一定紧跟 express，所以就地夹）
+    state.top = clampWidgetTop(clamp(t, 0, maxOffV), maxOffV)
     state.h = a.hAnchor
     // 净距离直接还给 hOff/vOff：settle() 对锚定状态从偏移量重算，
     // 若置 0 会把刚恢复的距离覆盖成贴边（issue #43）
@@ -15503,6 +17194,66 @@ try {
   var lastCostStored = Number(localStorage.getItem('dshw-last-seq') || 0)
   if (isFinite(lastCostStored) && lastCostStored >= 0) lastCostSeq = lastCostStored
 } catch (err) {}
+// v761（issue #161 / 全局音效设置）：**等待用户交互**的轮询。
+// 并入既有的每秒周期（不新增 interval）；宿主 wait.json 给出「有没有挂起 / 哪一类 / 对话名」。这里负责：
+//   ① 记住对话名，供提示内容里的 {session} 占位符使用；
+//   ② 挂起**首次出现**时播对应音效（提问音 / 授权音），并在开启「冒泡提示」时弹泡泡；
+//   ③ 用 localStorage 记住已响过的挂起 id ⇒ **刷新页面不会为同一个未回答的提问重复响**。
+var WAIT_URL = '/dsh-whale/wait.json'
+var WAIT_SOUND_KEY = 'dshw-wait-sound'
+var waitSeenId = ''
+function waitEventCfg(kind) {
+  try { return ((usageSet || {}).events || {})[kind] || {} } catch (err) { return {} }
+}
+function pollWaitState() {
+  try {
+    fetch(WAIT_URL, { cache: 'no-store' })
+      .then(function (r) { return r.json() })
+      .then(function (d) {
+        if (!d || !d.ok) return
+        if (typeof d.sessionName === 'string') waitSessionName = d.sessionName
+        var p = d.pending || null
+        if (!p || !p.kind) {
+          // 挂起已解除：收起泡泡，并允许下一次挂起照常响
+          waitSeenId = ''
+          waitPendingId = '' // v777：挂起解除 ⇒ "被点掉"的标记一并作废（下一次挂起照常冒泡）
+          waitDismissedId = ''
+          if (typeof hideWaitBubble === 'function') hideWaitBubble()
+          return
+        }
+        var kind = p.kind === 'approval' ? 'approval' : 'question'
+        var ev = waitEventCfg(kind)
+        // v777：这条挂起已经被用户点掉了 ⇒ 不再自动弹回（但仍然照常响铃判定与去重；回答/批准后
+        // 上面的 !p 分支会把标记清掉，所以"下一次新的提问/授权"照常冒泡）。
+        waitPendingId = String(p.id || '')
+        if (waitPendingId && waitPendingId === waitDismissedId) {
+          // 什么都不做：既不显示，也不清 waitSeenId（同一挂起不重复响）
+        } else {
+          if (ev.bubbleOn !== false && typeof showWaitBubble === 'function') showWaitBubble(kind, p)
+        }
+        // v771：**每秒都把泡泡与宿主的挂起状态对齐一次**（showWaitBubble 幂等：同类直接返回 false，
+        // 不会重渲染）。旧实现只在"新 id"时才调显示，于是一旦出现瞬时不同步（换类型 / 泡泡被别的
+        // 场景顶掉 / 某次渲染失败），泡泡就会卡在那个状态再也回不来 —— 这正是真机那次卡死的另一半原因。
+        // 现在任何不同步都会在 1 秒内自愈：该换内容就换、该收就收（收在下面 !p 分支）。
+        // 门控照旧：该事件的「冒泡提示」关掉就不冒泡（与声音各自独立判）。
+        // v777：显示那一步已上移到"被点掉的挂起"判定里（见上面的 waitDismissedId 分支），这里不再重复调用。
+        // 声音：同一个未回答的挂起只响一次（刷新页面也不重复响）
+        var key = kind + ':' + String(p.id || '')
+        var remembered = ''
+        try { remembered = localStorage.getItem(WAIT_SOUND_KEY) || '' } catch (err) {}
+        if (key === waitSeenId || key === remembered) return
+        waitSeenId = key
+        try { localStorage.setItem(WAIT_SOUND_KEY, key) } catch (err) {}
+        var on = ev.on !== false
+        var sel = ev.sel || ''
+        // v762：音效行新增的「是否播这个音效」开关（events.<kind>.soundOn，缺省视为开）。
+        // 门控 = 该事件总开关 on + 选了音效 sel（下拉已无「静音」，正常不为空）+ soundOn。
+        // 任务结束音的播放判定不在这里，仍读既有的 usageSet.taskEnd.on（见 playTaskEndSound）。
+        if (on && sel && ev.soundOn !== false) playBindingSound({ on: true, sel: sel }, ev)
+      })
+      .catch(function () {})
+  } catch (err) {}
+}
 function pollLastTurn() {
   try {
     fetch(LAST_TURN_URL, { cache: 'no-store' })
@@ -15538,7 +17289,7 @@ function pollLastTurn() {
       .catch(function () {})
   } catch (err) {}
 }
-setInterval(pollLastTurn, 1000)
+setInterval(function () { pollLastTurn(); pollWaitState() }, 1000)
 }
 // 主界面检测通过（或稍后由 MutationObserver 检测到）后执行挂件初始化；非主界面不启动
 try { dshwTryStart(true) } catch (err) {}

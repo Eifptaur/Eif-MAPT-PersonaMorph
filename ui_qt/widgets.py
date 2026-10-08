@@ -19,6 +19,7 @@ from __future__ import annotations
 from PySide6.QtCore import (
     Property,
     QEasingCurve,
+    QPointF,
     QPropertyAnimation,
     QRect,
     QRectF,
@@ -27,7 +28,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap, QPen
+from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPixmap, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QBoxLayout,
@@ -49,6 +50,8 @@ from icons import CHEVRON, svg_pixmap
 from stylekit_qt import (
     FIELD_CHEVRON_W,
     Tokens,
+    bevel,
+    bevel_edges,
     field_qss,
     mix,
     pill,
@@ -239,6 +242,27 @@ class Card(QFrame):
 # ---------------------------------------------------------------- 主按钮
 
 
+#: 可点目标最小高度的兜底值（读不到配置时用）。34 ＝桌面行级标准高度。
+_TAP_MIN_DEFAULT = 34
+#: 触摸可用的通行下限。用户把 `ui.tap_min` 调大于它也没有额外收益（再大就开始撑散布局）。
+_TAP_MIN_MAX = 44
+
+
+def _tap_min_from_config() -> int:
+    """从配置读"可点目标最小高度"（`ui.tap_min`），**任何异常都回退到默认**。
+
+    ⚠️ 这里必须 fail-safe：按钮构造是界面初始化的必经之路，
+    配置读不到（首次启动/档被占）绝不能让它抛出去 —— 那会整个界面起不来。
+    越界值一律夹到 `[默认, 上限]`，防止一个 999 把界面撑散。
+    """
+    try:
+        from agent import config as _cfg
+        v = int((_cfg.get_config().get("ui") or {}).get("tap_min") or _TAP_MIN_DEFAULT)
+    except Exception: # noqa: BLE001
+        return _TAP_MIN_DEFAULT
+    return max(_TAP_MIN_DEFAULT, min(_TAP_MIN_MAX, v))
+
+
 class Btn(QPushButton):
     """`RoundButton` 的 Qt 版。
 
@@ -266,18 +290,39 @@ class Btn(QPushButton):
         role: str = "ghost",
         parent: QWidget | None = None,
         shape: str = "pill",
+        ink: str = "",
+        tiny: bool = False,
     ):
         super().__init__(text, parent)
         self.t = t
         self.role = role
         self.shape = shape
+        # 非空 = **深色文字档**：给"浅色底"上的按钮用（whale 的顶栏底色是浅蓝）。
+        # 底色 / 描边 / hover / 按下全部由 `ink` 派生 —— 不能读 `t.tx`，
+        # 否则浅字压在浅底上读不出来（顶栏那排按钮就是这个场景）。
+        self._ink = ink
+        # tiny 档（web `button.tiny{padding:3px 10px;font-size:12px}`）：
+        # 卡头右上角那一排工具按钮用的规格 —— 它们是"次要操作"，用常规尺寸会把卡片
+        # 标题行撑得很重（web 侧同样是 tiny，不是普通 ghost）。
+        self._tiny = bool(tiny)
         self._rad = 0
         self._fixed_w = 0   # set_button_size 登记的显式尺寸（0 = 未登记，走布局）
         self._fixed_h = 0
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFont(qfont(t, t.body_size, 500 if role != "primary" else 600))
-        # 高度：胶囊要 ≥2×半径才画得出半圆头，34 是行级标准高度（与下拉/输入行齐平）
-        self.setMinimumHeight(34)
+        # 屏幕阅读器读的是**可访问名**，不是控件上画的那串字（图标按钮更要靠它）。
+        # 有文字时用文字兜底，保证"没显式设过"的按钮至少有一个能读的名字。
+        try:
+            if text:
+                self.setAccessibleName(str(text))
+        except Exception: # noqa: BLE001
+            pass  # 无障碍信息缺失不影响功能，静默即可
+        self.setFont(qfont(t, 12 if self._tiny else t.body_size,
+                           500 if role != "primary" else 600))
+        # 高度：胶囊要 ≥2×半径才画得出半圆头。标准高＝`ui.tap_min`（默认 34，与下拉/输入行齐平；
+        # 触摸设备可调到 44）；tiny 档固定压到 24 —— 它要跟卡片标题同处一行，
+        # 那一行的高度由标题定，按钮再高就把卡片头撑起来（这一档不改，理由见类 docstring）。
+        _tap = _tap_min_from_config()
+        self.setMinimumHeight(24 if self._tiny else max(34, _tap))
         # ⚠️ 宽度策略关乎**文字会不会被压烂**：
         #    · 横向 Minimum ⇒ 允许被父布局压到 minimumSizeHint 以下，文字直接溢出/
         #      叠字。人设卡那排按钮挤在小卡片里就是这样糊掉的。
@@ -288,12 +333,66 @@ class Btn(QPushButton):
         if text:
             self.setMinimumWidth(self._text_width_hint())
         self._sync_radius()
-        if role == "primary" and t.glass:
-            g = QGraphicsDropShadowEffect(self)
-            g.setBlurRadius(18)
-            g.setOffset(0, 3)
-            g.setColor(rgba(t.q("blue"), 90))
-            self.setGraphicsEffect(g)
+        # ── 实体感（一）：外投影 ──
+        # QSS 没有 box-shadow，只能走 QGraphicsEffect。它作用在**渲染后的 pixmap** 上，
+        # 所以样式表画的圆角轮廓会被原样投出来（不会投成方角）。
+        # 主按钮用**强调色的光晕**（"它在发光" ⇒ 视觉上最靠前），其余用中性投影。
+        _sh = QGraphicsDropShadowEffect(self)
+        _sh.setColor(rgba(t.q("blue"), 96) if role == "primary" else rgba(QColor(0, 0, 0), 105))
+        _sh.setOffset(0, 2)
+        _sh.setBlurRadius(8 if role != "primary" else 14)
+        self._shadow = _sh
+        self.setGraphicsEffect(_sh)
+
+        # ── 特效：hover 浮起 / 按下沉下 / 松开回弹 ──
+        # QSS 没有 transform，位移只能靠**投影的变化**来"演"：
+        # 投影变大变远 = 它离开了纸面（浮起）；变小贴近 = 被按下去。
+        # 这是"这按钮按得动"最直接的反馈 —— 只换底色是不够的。
+        self._sh_rest = (8.0, 2.0) if role != "primary" else (14.0, 2.0)
+        self._sh_hover = (14.0, 4.0) if role != "primary" else (20.0, 5.0)
+        self._sh_down = (3.0, 1.0)
+        self._anim_blur = QPropertyAnimation(_sh, b"blurRadius", self)
+        self._anim_off = QPropertyAnimation(_sh, b"offset", self)
+        for _a in (self._anim_blur, self._anim_off):
+            _a.setDuration(130)
+            _a.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.pressed.connect(lambda: self._fx(self._sh_down))
+        # 松开时鼠标通常还在按钮上 ⇒ 回到 hover 档；真移出去了由 leaveEvent 兜底
+        self.released.connect(lambda: self._fx(self._sh_hover))
+
+    def setToolTip(self, tip: str) -> None: # noqa: N802 (Qt 的命名)
+        """**同一个字符串也当可访问名** —— 图标按钮（`shape="circle"` 的 ×、−、+）没有文字，
+        屏幕阅读器**只读 `accessibleName`、不读 tooltip** ⇒ 不同步的话它在读屏里就是个"按钮"。
+
+        ⛔ 只对**没有文字**的按钮补名（有文字的按钮在 `__init__` 里已经用文字当名字了），
+        也不覆盖显式设过的名字。
+        """
+        super().setToolTip(tip)
+        try:
+            if tip and not self.text():
+                self.setAccessibleName(str(tip))
+        except Exception: # noqa: BLE001
+            pass  # 无障碍信息缺失不影响功能，静默即可
+
+    def _fx(self, target: tuple[float, float]) -> None:
+        """把投影动画到目标档位（常态 / hover / 按下）。"""
+        blur, dy = target
+        self._anim_blur.stop()
+        self._anim_blur.setStartValue(float(self._shadow.blurRadius()))
+        self._anim_blur.setEndValue(float(blur))
+        self._anim_blur.start()
+        self._anim_off.stop()
+        self._anim_off.setStartValue(self._shadow.offset())
+        self._anim_off.setEndValue(QPointF(0.0, float(dy)))
+        self._anim_off.start()
+
+    def enterEvent(self, e): # noqa: N802
+        self._fx(self._sh_hover)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e): # noqa: N802
+        self._fx(self._sh_rest)
+        super().leaveEvent(e)
 
     def set_shape(self, shape: str) -> None:
         """换形状并重算半径。
@@ -377,12 +476,81 @@ class Btn(QPushButton):
         # 暗主题=提亮一档，都是暗色 UI 的标准按压惯例），描边同步加深。
         # web 侧 translateY(1px) scale(.975) 在 QSS 里没有 transform 等价物，
         # 压字 1px（padding 上+1 下-1）保持，靠底/边双深化补足可辨度。
+        # ── 实体感（二）：垂直渐变 ──
+        # QSS 没有 box-shadow / inset-shadow，做厚度只有两条路：渐变与分段边框。
+        # 这里把"纯色底"换成**上亮下暗**的垂直渐变 —— 上方受光、下方背光，
+        # 一眼就有"这是一块有厚度的东西"。三套主题各按自己的底色推导，不各配一套色。
+        def _vgrad(base: QColor, k_up: float = 0.17, k_dn: float = 0.13,
+                   invert: bool = False) -> str:
+            """纯色 → 垂直渐变。`invert=True` ⇒ **上暗下亮**。
+
+            ★ 反向渐变 ＝ **凹陷**：常态是"上亮下暗"（光从上方来、上沿受光），
+              按下时把明暗翻过来（受光跑到下沿）⇒ 读起来就是"这块被压进去了"。
+              **只把底色调深是不够的** —— 那只是"变暗"，不是"凹下去"；
+              凹陷的本质是**受光面翻转**。
+            """
+            hi = mix(base, QColor(255, 255, 255), k_up)
+            lo = mix(base, QColor(0, 0, 0), k_dn)
+            if invert:
+                hi, lo = lo, hi
+            return ("qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %s,stop:1 %s)"
+                    % (qss(hi), qss(lo)))
+
+        def _vgrad2(top: QColor, bottom: QColor) -> str:
+            """两点垂直渐变（上 → 下）。给"显式指定两端色"的场景用。
+
+            与 `_vgrad` 的分工：`_vgrad` 从**一个基色**推两端（快，但两端都被
+            基色约束）；这里直接给两端，用于必须照搬 web 渐变配方的地方
+            （web `.pri` = `linear-gradient(160deg,var(--blue),var(--blue2))`）。
+            """
+            return ("qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %s,stop:1 %s)"
+                    % (qss(top), qss(bottom)))
+
+        def _rel_lum(*cols: QColor) -> float:
+            """一组取色里的**最高** WCAG 相对亮度（供对比度判定用）。"""
+            best = 0.0
+            for c in cols:
+                f = []
+                for v in (c.redF(), c.greenF(), c.blueF()):
+                    f.append(v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4)
+                best = max(best, 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2])
+            return best
+
+        def _contrast(fg: QColor, bg_col: QColor) -> float:
+            """WCAG 对比度 (L1+0.05)/(L2+0.05)。"""
+            a, b = _rel_lum(fg), _rel_lum(bg_col)
+            if a < b:
+                a, b = b, a
+            return (a + 0.05) / (b + 0.05)
+
         press_border = ""
         if r == "primary":
-            bg, bg_h = t.blue, t.blue2
-            fg = "#0A1B2E" if t.key == "whale" else "#FFFFFF"
-            bd = "transparent"
-            bg_p = qss(mix(t.q("blue2"), t.q("tx"), 0.22))
+            _edge = t.q("blue")
+            # ⛔ 渐变**必须向下走暗**（强调色 → blue2），不许向上提亮。
+            #    web `.pri` 是 `linear-gradient(160deg,var(--blue),var(--blue2))`，
+            #    blue2 就是 blue 的**更暗一档**；此前这里用 `mix(blue, 白, .17)`
+            #    把上沿提亮 17%，方向与 web 相反 —— 上沿因此比 blue 还亮，
+            #    压在其上的字色对比度被吃掉一截（实测 dark 上沿 #949AF6 ≈ 2.3:1）。
+            #    向下走暗的另一个好处：两端的对比度里，"更暗"那端只会更安全。
+            bg = _vgrad2(t.q("blue"), t.q("blue2"))
+            bg_h = _vgrad2(mix(t.q("blue"), QColor(255, 255, 255), 0.08), t.q("blue2"))
+            # ★ 主按钮的字色**用两种候选各算一次对比度、取高的那个**，
+            #   不按主题名硬编码、也不拿亮度阈值猜。
+            #   三套主题的实测：whale 亮青蓝(#6FCFFF) 深字 6.66 / 白字 1.74；
+            #   dark 中亮度紫蓝(#8B93FF) 深字 5.17 / 白字 2.72；
+            #   light 深蓝(#0866FF) 白字 4.82 / 深字 2.4x ⇒ 只有 light 该用白字。
+            #   渐变两端各判一次，**取更差的那端**当结论（字要压在整个渐变上）。
+            _white = QColor(255, 255, 255)
+            _dark_ink = QColor("#0A1B2E") if t.key == "whale" else QColor("#0A0B0C")
+            _ends = (t.q("blue"), t.q("blue2"))
+            _white_worst = min(_contrast(_white, c) for c in _ends)
+            _ink_worst = min(_contrast(_dark_ink, c) for c in _ends)
+            fg = qss(_dark_ink) if _ink_worst > _white_worst else qss(_white)
+            # 浅底上的主按钮：**实心、自己的颜色**（web `.pri` 同义），
+            # 外加一圈白色高光边 —— web `.pri` 就有
+            # `border:1px solid rgba(255,255,255,.72)`，深底上看不出、浅底上是关键分层。
+            bd = qss(rgba(QColor(255, 255, 255), 170)) if self._ink else "transparent"
+            bg_p = _vgrad2(mix(t.q("blue2"), QColor(0, 0, 0), 0.16), mix(t.q("blue2"), QColor(0, 0, 0), 0.28))
             press_border = qss(mix(t.q("blue2"), t.q("tx"), 0.45))
         elif r == "danger":
             # ⚠️ rgba() 返回的是 QColor 对象 —— 直接插进 QSS f-string 会变成
@@ -390,15 +558,50 @@ class Btn(QPushButton):
             #    整条 QPushButton 规则解析失败 → 回落默认样式（黑字沉底，
             # 这才是"黑色跟深色背景混在一起"的真根因，取证实锤）。
             #    QSS 只认字符串 ⇒ 一律 .name(HexArgb) 落成 #AARRGGBB。
-            fg = (getattr(t, "err_tx", "") or t.err)
-            bg = qss(rgba(t.q("err"), 20))
-            bg_h = qss(rgba(t.q("err"), 34))
-            bg_p = qss(rgba(t.q("err"), 46))
-            bd = qss(rgba(t.q("err"), 110))
-            press_border = qss(rgba(t.q("err"), 170))
-        else: # ghost —— web: hover 染描边+染字+hover-bg；active 落 blue_soft
-            bg = qss(mix(t.q("bg"), t.q("tx"), 0.05))
-            bg_h = qss(mix(t.q("bg"), t.q("tx"), 0.10))
+            if self._ink:
+                # 浅底上的危险钮 = **实心暗红块 + 白字**。
+                # 红必须压得住浅蓝底：低 alpha 的浅红混进蓝里会变浊紫
+                # （既不像红、也不像"危险"）⇒ 底色取 `mix(err, 黑, .5)` 的暗红，
+                # 再上高 alpha；白字压在其上 ≈ 6.4:1。
+                _edge = t.q("err")
+                _dk = mix(t.q("err"), QColor(0, 0, 0), 0.42)
+                bg = _vgrad(_dk)
+                bg_h = _vgrad(mix(_dk, QColor(255, 255, 255), 0.16))
+                bg_p = _vgrad(mix(_dk, QColor(0, 0, 0), 0.22), invert=True)
+                fg = "#FFFFFF"
+                bd = qss(rgba(_dk, 255))
+                press_border = qss(rgba(mix(t.q("err"), QColor(0, 0, 0), 0.70), 255))
+            else:
+                _edge = t.q("err")
+                fg = (getattr(t, "err_tx", "") or t.err)
+                bg = qss(rgba(t.q("err"), 20))
+                bg_h = qss(rgba(t.q("err"), 34))
+                bg_p = qss(rgba(t.q("err"), 46))
+                bd = qss(rgba(t.q("err"), 110))
+                press_border = qss(rgba(t.q("err"), 170))
+        elif self._ink: # ghost·浅底档 —— 与顶栏胶囊同一套：**更深的一层 + 白字**
+            # web 侧 `button.ghost{background:var(--card)}` **本来就有底色**，
+            # 不是"描边框住字"；原来这里给 `rgba(ink, 0)`（全透）⇒ 只剩一圈线。
+            # 按钮层用**半透深色**：在彩色浅底（天蓝顶栏）上，深块与底的明度差
+            # 比白块大得多（实测 2.6:1 vs 1.3:1）⇒ 按钮才像"独立的一块"；
+            # 字随之走白（`ink` 由调用方传白），对比度 8:1 以上。
+            # ⚠️ 这一档只在 whale 的顶栏用（浅色底）⇒ 底可以取**固定实色**：
+            #   半透在这层是反效果（"实体感"要求它不透）。取比顶栏胶囊再深一档，
+            #   于是"顶栏 ＜ 胶囊 ＜ 按钮"三层由浅到深，一眼分得开。
+            _edge = QColor("#1E4460")
+            bg = _vgrad(QColor("#2E6183"))
+            bg_h = _vgrad(QColor("#3A6F92"))
+            bg_p = _vgrad(QColor("#1A3A55"), invert=True)
+            fg = self._ink
+            bd = qss(rgba(QColor(8, 24, 40), 118))
+            press_border = qss(rgba(QColor(8, 24, 40), 190))
+        else: # ghost —— web `.ghost{background:var(--card)}`：**有实心底**，不是透明框
+            # 三层色差：面板底 ＜ 按钮层 ＞ 字(t.tx)。
+            # 原来给 `mix(bg,tx,.05)`（5% 白）—— 在深面板上几乎看不出，
+            # 按钮和它所在的卡片就糊成一片、只剩描边。
+            _edge = mix(t.q("bg"), t.q("tx"), 0.12)
+            bg = _vgrad(_edge, 0.12, 0.18)
+            bg_h = _vgrad(mix(t.q("bg"), t.q("tx"), 0.19), 0.12, 0.18)
             fg = t.tx
             bd = t.bd
             bg_p = t.blue_soft
@@ -406,18 +609,37 @@ class Btn(QPushButton):
         hover_extra = ""
         pressed_extra = ""
         if r == "ghost":
-            hover_extra = f"color:{t.blue};border:1px solid {t.blue};"
-            pressed_extra = f"color:{t.blue};border:1px solid {press_border};"
+            if self._ink:
+                # 深块档：hover 让块再沉一档（白边压在彩色浅底上会"溢出来"）
+                hover_extra = f"border:1px solid {qss(rgba(QColor(8, 24, 40), 158))};"
+                pressed_extra = f"color:{self._ink};border:1px solid {press_border};"
+            else:
+                hover_extra = (f"color:{t.blue};border:1px solid {t.blue};"
+                                f"border-top:1px solid {qss(mix(t.q('blue'), QColor(255, 255, 255), 0.45))};"
+                                f"border-bottom:1px solid {qss(mix(t.q('blue'), QColor(0, 0, 0), 0.32))};")
+                pressed_extra = f"color:{t.blue};border:1px solid {press_border};"
         elif r == "primary":
             pressed_extra = f"border:1px solid {press_border};"
         else:
             pressed_extra = f"border:1px solid {press_border};"
+        # ── 实体感（三）：受光面 / 背光面 ──
+        # 四边同一条线，平面设计里那是"贴纸"；把**顶边提亮、底边压暗**才有厚度
+        # （等价于"光从上方来"）。QSS 的 `border-top/bottom` 写在 `border` 之后会覆盖它。
+        _up = qss(mix(_edge, QColor(255, 255, 255), 0.45))
+        _dn = qss(mix(_edge, QColor(0, 0, 0), 0.32))
+        _box = (f"border:1px solid {bd};"
+                f"border-top:1px solid {_up};"
+                f"border-bottom:1px solid {_dn};")
         return (
-            f"QPushButton{{background:{bg};color:{fg};border:1px solid {bd};"
-            f"border-radius:{rad}px;padding:7px 16px;}}"
+            f"QPushButton{{background:{bg};color:{fg};{_box}"
+            f"border-radius:{rad}px;padding:{'3px 10px' if self._tiny else '7px 16px'};}}"
             f"QPushButton:hover{{background:{bg_h};{hover_extra}}}"
             f"QPushButton:pressed{{background:{bg_p};"
-            f"padding-top:8px;padding-bottom:6px;{pressed_extra}}}"
+            f"padding-top:{'4px' if self._tiny else '8px'};"
+            f"padding-bottom:{'2px' if self._tiny else '6px'};{pressed_extra}"
+            # 受光面翻转：常态顶亮底暗，按下时**顶暗底亮** —— 与背景的反向渐变同向，
+            # 两者一致才读得出"这块凹进去了"。写在 pressed_extra 之后以覆盖它的整圈 border。
+            f"border-top:1px solid {_dn};border-bottom:1px solid {_up};}}"
             f"QPushButton:disabled{{color:{t.tx3};background:transparent;}}"
         )
 
@@ -631,9 +853,16 @@ class Badge(QLabel):
         self.level = level # P0-A⑤：探针/selftest 可断言当前态
         self.setText(text)
         self.setToolTip(tip or text)
+        # 立体感走公共实现（`stylekit.bevel*`）—— 与胶囊、按钮**同一支明暗规则**。
+        # ⚠️ `keep_alpha=True` 必须开：状态色是**带透明度**的（半透底叠在顶栏天蓝上），
+        #    当实心处理会把六态的颜色整个变掉。
+        # ⚠️ `floor=96` 是给边框抬的底：半透底若边框也跟着半透，棱就看不见了。
+        _e_up, _e_dn = bevel_edges(bg, 0.55, 0.42, floor=96)
         self.setStyleSheet(
-            f"QLabel{{background:{bg.name(QColor.NameFormat.HexArgb)};"
-            f"color:{fg.name()};border:1px solid {bd.name(QColor.NameFormat.HexArgb)};"
+            f"QLabel{{background:{bevel(bg, 0.30, 0.22, keep_alpha=True)};"
+            f"color:{fg.name()};"
+            f"border:1px solid {bd.name(QColor.NameFormat.HexArgb)};"
+            f"border-top:1px solid {_e_up};border-bottom:1px solid {_e_dn};"
             f"border-radius:{pill(22)}px;padding:2px 11px;}}"
         )
         self.adjustSize()
@@ -743,6 +972,22 @@ class NavItem(QPushButton):
         from PySide6.QtCore import QSize # noqa: PLC0415
 
         self.setIconSize(QSize(16, 16))
+
+        # ── 选中时"立起来"（平时是平的）──
+        # ⚠️ 投影**常驻但默认禁用**：侧栏有二十多个导航项，各挂一个活跃 effect
+        #    会让每次重绘都多走一遍离屏渲染。只在选中时 `setEnabled(True)`，
+        #    取消时**先动画降到 0 再禁用** —— 「立体 → 平面」那一段过渡正是靠它保住的，
+        #    先禁用会让选中态"啪"地掉回平面、没有过程。
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setOffset(0, 2)
+        self._shadow.setBlurRadius(0) # 0 = 看不见（常态是平的）
+        self._shadow.setColor(rgba(QColor(0, 0, 0), 135))
+        self._shadow.setEnabled(False)
+        self.setGraphicsEffect(self._shadow)
+        self._nav_anim = QPropertyAnimation(self._shadow, b"blurRadius", self)
+        self._nav_anim.setDuration(170)
+        self._nav_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
         if hint:
             self.setToolTip(hint)
         self._restyle()
@@ -778,9 +1023,52 @@ class NavItem(QPushButton):
             self.setFixedHeight(30)
         self._tight = tight
 
+    def _lift(self, blur: float) -> None:
+        """把投影动画到指定虚化半径（选中＝抬起，非选中＝压平）。"""
+        self._nav_anim.stop()
+        self._nav_anim.setStartValue(float(self._shadow.blurRadius()))
+        self._nav_anim.setEndValue(float(blur))
+        self._nav_anim.start()
+
+    def _settle_flat(self) -> None:
+        """动画落定后收起 effect（仍处于非选中才收；防快速切换时误收）。"""
+        if not self.active:
+            self._shadow.setEnabled(False)
+        try:
+            self._nav_anim.finished.disconnect(self._settle_flat)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _lower(self) -> None:
+        """非选中：先动画压平，落定后再禁用 effect。"""
+        if not self._shadow.isEnabled():
+            return
+        try:
+            self._nav_anim.finished.connect(self._settle_flat)
+        except (RuntimeError, TypeError):
+            pass
+        self._lift(0.0)
+
     def set_active(self, on: bool) -> None:
         self.active = on
         self._restyle()
+
+    def paintEvent(self, ev): # noqa: N802
+        """选中时在左缘画一截**短**色条（web `.nav a.on::before` 的原样复刻）。
+
+        ⚠️ 不能用 `border-left` 代替：边框**贯穿整个高度**，顶边/底边是硬切的直角，
+           看上去就是"一块被截断的矩形"—— 而 web 那条是 `top:12px;bottom:12px`
+           的一段短条，圆头、上下都收口。
+        """
+        super().paintEvent(ev)
+        if not self.active:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(self.t.blue))
+        _pad = 12 if self.height() >= 32 else 8 # 窄栏行高 34、常规 30，留白同比缩
+        p.drawRoundedRect(QRectF(0, _pad, 3, max(4, self.height() - 2 * _pad)), 1.5, 1.5)
 
     def enterEvent(self, e): # noqa: N802
         self._hover = True
@@ -796,25 +1084,40 @@ class NavItem(QPushButton):
         t = self.t
         self._refresh_icon()
         if self.active:
-            bg = t.blue_soft if t.key != "whale" else rgba(t.q("blue"), 30)
-            fg = t.blue if t.key != "whale" else t.tx
+            # 选中＝"一块浮起来的板"：垂直渐变（上亮下暗）＋ 顶受光/底背光边 ＋ 投影。
+            # 与胶囊、按钮同一套做法 —— 立体的规则在整个界面上是**同一支**，
+            # 换个控件就换一套明暗关系，用户会读成"两种材质"。
+            _base = t.q("blue")
+            _grad = ("qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %s,stop:1 %s)"
+                     % (qss(rgba(_base, 54)), qss(rgba(_base, 26))))
+            fg = t.tx if t.key == "whale" else t.blue
             self.setFont(qfont(t, t.nav_size, t.nav_active_weight))
             self.setStyleSheet(
-                f"QPushButton{{background:{bg if isinstance(bg,str) else bg.name(QColor.NameFormat.HexArgb)};"
-                f"color:{fg};border:none;border-left:2px solid {t.blue};"
-                f"border-radius:0 {t.radius_btn}px {t.radius_btn}px 0;"
-                f"text-align:left;padding:0 10px 0 12px;}}"
+                f"QPushButton{{background:{_grad};color:{fg};"
+                f"border:none;"
+                f"border-top:1px solid {qss(rgba(QColor(255, 255, 255), 48))};"
+                f"border-bottom:1px solid {qss(rgba(QColor(0, 0, 0), 62))};"
+                # 四角同半径 ＋ 左右内缩：让选中项是一块**四边都收口**的小板。
+                # ⚠️ 别再退回"左直角 + 右圆角"：左右不对称，左边像是被切掉的；
+                #    也别退回 web 那种撑满全宽（`.nav a.on` 没有圆角）——
+                #    在 Qt 侧那看着就是"一块矩形从左右两边断掉"。
+                f"border-radius:6px;margin:0 6px;"
+                f"text-align:left;padding:0 10px 0 15px;}}"
             )
+            self._shadow.setEnabled(True) # 抬起：见 __init__ 的说明
+            self._lift(13.0)
         else:
             self.setFont(qfont(t, t.nav_size, t.nav_weight))
             self.setStyleSheet(
                 f"QPushButton{{background:transparent;color:{t.tx2};"
-                f"border:none;border-left:2px solid transparent;"
-                f"border-radius:0 {t.radius_btn}px {t.radius_btn}px 0;"
-                f"text-align:left;padding:0 10px 0 12px;}}"
+                f"border:none;"
+                # 与选中态同一套几何（圆角 6 / 左右 6）：hover 时块不会突然变宽
+                f"border-radius:6px;margin:0 6px;"
+                f"text-align:left;padding:0 10px 0 15px;}}"
                 f"QPushButton:hover{{background:{rgba(t.q('tx'), 14).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}"
                 f"QPushButton:pressed{{background:{rgba(t.q('tx'), 26).name(QColor.NameFormat.HexArgb)};color:{t.tx};}}" # L 按压加深
             )
+            self._lower() # 压平（带过渡，落定后才禁用 effect）
 
 
 # ---------------------------------------------------------------- 设置行
@@ -824,7 +1127,7 @@ class Field(QWidget):
     """一张设置卡里的一行 —— 左标签（+说明），右侧控件。
 
     可用性要点（原任务里点名要的三条之一）：
-      · 每行有**一句话说明**，不用术语（"不改后端，改完立刻生效"）
+      · 每行有**一句话说明**，不用术语
       · 右侧控件永远有**可见的当前值**，不存在"点了没反应"
 
     宽度自适应（对齐 web 真值 `.row{flex-wrap:wrap}` + `.row .grow{flex:1;min-width:220px}`
@@ -884,7 +1187,7 @@ class Field(QWidget):
         # 左侧标签区**不吃 stretch**（0）：它的宽由内容/`_LEFT_MIN` 决定，
         # 多出来的宽全部给右侧控件（web 侧 `label` 是行内宽、`.grow` 才是 flex:1）。
         # 旧实现给左侧 stretch=1，Qt 会在两列间平分 ⇒ 标签列被撑宽、输入框反而变短，
-        # 正是用户「胶囊太短」的一条来源。
+        # 正是的一条来源。
         self._root.addWidget(self._left_w, 0)
         # #7：最小行高按 QFontMetrics 实测 —— 标签+说明永不重叠。
         # （根治在页面级：Shell._wrap_scroll 给每页套了滚动容器，压缩不再发生；
@@ -1047,8 +1350,35 @@ class FieldCombo(QComboBox):
         p.end()
 
 
-def h2(t: Tokens, text: str, badge: Badge | None = None) -> QWidget:
+def emboss(lab: QLabel, alpha: int = 115, blur: float = 1.6, on_light: bool = False) -> QLabel:
+    """给文字加一圈**描边式**暗边（或亮边），让它从底上"浮"起来（文字的立体感）。
+
+    ⚠️ QSS **没有** `text-shadow`（写了会被静默丢弃）⇒ 只能走 `QGraphicsDropShadowEffect`。
+    ⚠️ **0 偏移 ＋ 小 blur** 才是描边：四周一圈均匀暗边把笔画从背景里"垫"出来；
+       带偏移就变成投影了，那是另一回事。
+    ⚠️ `on_light=True` 用于**深色字压在浅色底**上（如侧栏天蓝卡片里的深蓝标题）：
+       这时暗边只会把字糊进底里，得反过来描**亮边**才对。
+
+    ⛔ **嵌套限制（务必先确认父链）**：Qt 里父控件若已有 graphics effect，
+       子控件再挂 effect **不生效** —— 整棵子树被并进父的那一遍离屏合成。
+       所以**卡片内的文字加不了**（whale 的 `Card` 自己就挂了投影）。
+       调用点只应是"父链上没有 effect"的位置：顶栏标题、侧栏状态卡标题。
+    """
+    eff = QGraphicsDropShadowEffect(lab)
+    eff.setBlurRadius(float(blur))
+    eff.setOffset(0.0, 0.0)
+    eff.setColor(rgba(QColor(255, 255, 255) if on_light else QColor(0, 0, 0), alpha))
+    lab.setGraphicsEffect(eff)
+    return lab
+
+
+def h2(t: Tokens, text: str, badge: Badge | None = None,
+       extra: QWidget | None = None) -> QWidget:
     """面板头 —— 标题 + 状态徽章同一行（对齐 web 侧 `.sec-hd`）。
+
+    `extra` 是**右端附加区**：承载 web 侧 `.ov-tools`（概览卡右上角那排工具按钮，
+    `position:absolute;top:14px;right:16px`）。Qt 没有绝对定位，
+    用"标题 → 徽章 → 弹簧 → extra"落到同一视觉位置。
 
     ⚠️ 玻璃卡坑：
        whale 卡挂了 QGraphicsDropShadowEffect，整棵卡子树走**离屏合成**；
@@ -1069,7 +1399,9 @@ def h2(t: Tokens, text: str, badge: Badge | None = None) -> QWidget:
     lay.addWidget(lb)
     if badge is not None:
         lay.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
-    lay.addStretch(1)
+    lay.addStretch(1) # 弹簧：把后面的 extra 顶到最右
+    if extra is not None:
+        lay.addWidget(extra, 0, Qt.AlignmentFlag.AlignVCenter)
     return w
 
 
@@ -1099,6 +1431,9 @@ def desc(t: Tokens, text: str) -> QLabel:
     lb = QLabel(text)
     lb.setFont(qfont(t, t.body_size - 0.5))
     lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    # 标记：面板装配层靠它认出"哪一项是说明行"，从而把组锚点条插在它之后
+    # （不靠下标猜 —— 说明行有无由 sec.desc 决定）。
+    lb.setProperty("c8_desc", True)
     return _wrap_capable(lb)
 
 
@@ -1132,7 +1467,7 @@ def row_label(t: Tokens, text: str, min_w: int = 120) -> QWidget:
 class IconBtn(QAbstractButton):
     """无边框自绘图标按钮。
 
-    然后稍微粗一点」。旧形态是 Btn("—")/Btn("□") ghost 方块（带边框带底）；
+    然后稍微粗一点」。旧形态是 Btn/Btn ghost 方块（带边框带底）；
     新形态对齐微信/系统惯例：
       · 最小化 = 一条粗横线
       · 最大化（未最大化态）= 一个直角方框
@@ -1141,10 +1476,13 @@ class IconBtn(QAbstractButton):
     只管绘制 —— WM_NCHITTEST 拖拽/resize 分支一行不动。
     """
 
-    def __init__(self, t: Tokens, kind: str, parent: QWidget | None = None):
+    def __init__(self, t: Tokens, kind: str, parent: QWidget | None = None, ink: str = ""):
         super().__init__(parent)
         self.t = t
         self.kind = kind # "min" | "max"（max 的画法随 isMaximized 态切换）
+        # 非空 = 指定笔画色：给"浅色底"用（whale 的顶栏底色是浅蓝，浅笔画看不清）；
+        # 空则照旧随主题的两级字色。
+        self._ink_ov = ink
         self._hover = False
         self.setFixedSize(44, 34)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1160,6 +1498,8 @@ class IconBtn(QAbstractButton):
         super().leaveEvent(e)
 
     def _ink(self) -> QColor:
+        if self._ink_ov:
+            return QColor(self._ink_ov)
         return self.t.q("tx") if self._hover else self.t.q("tx2")
 
     def paintEvent(self, _e): # noqa: N802
@@ -1167,9 +1507,22 @@ class IconBtn(QAbstractButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
         if self._hover:
+            # hover 底也做成"一块有厚度的板"：渐变 ＋ 顶受光/底背光边，
+            # 与界面其它控件同一支明暗规则（自绘控件直接用 QLinearGradient，不必绕 QSS）。
+            _base = QColor(self._ink_ov) if self._ink_ov else self.t.q("tx")
+            _r = QRectF(2, 1, w - 4, h - 2)
+            _g = QLinearGradient(_r.topLeft(), _r.bottomLeft())
+            _g.setColorAt(0.0, rgba(mix(_base, QColor(255, 255, 255), 0.32), 42))
+            _g.setColorAt(1.0, rgba(mix(_base, QColor(0, 0, 0), 0.45), 24))
             path = QPainterPath()
-            path.addRoundedRect(QRectF(2, 1, w - 4, h - 2), 7, 7)
-            p.fillPath(path, rgba(self.t.q("tx"), 16))
+            path.addRoundedRect(_r, 7, 7)
+            p.fillPath(path, QBrush(_g))
+            p.save()
+            p.setPen(QPen(rgba(mix(_base, QColor(255, 255, 255), 0.58), 72), 1.0))
+            p.drawLine(int(_r.left()) + 3, int(_r.top()), int(_r.right()) - 3, int(_r.top()))
+            p.setPen(QPen(rgba(mix(_base, QColor(0, 0, 0), 0.48), 72), 1.0))
+            p.drawLine(int(_r.left()) + 3, int(_r.bottom()), int(_r.right()) - 3, int(_r.bottom()))
+            p.restore()
         ink = self._ink()
         pen = QPen(ink)
         pen.setWidthF(2.0)
@@ -1237,6 +1590,16 @@ class WhaleBadge(QLabel):
         self._home_timer.setInterval(120)
         self._home_timer.timeout.connect(lambda: self._set_jstep(6))
         self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+        # 徽章方块从顶栏上"浮"起来（三层里最外面那一层）：QSS 没有 box-shadow，
+        # 走 QGraphicsEffect —— 它作用在**渲染后的 pixmap** 上，所以 paintEvent 画的
+        # 圆角轮廓会被原样投出来，不会投成方角。
+        # ⚠️ 只作用在本体：拖拽时的浮层是**独立控件**（挂在 Shell 窗口层），不受它影响。
+        _sh = QGraphicsDropShadowEffect(self)
+        _sh.setBlurRadius(14)
+        _sh.setOffset(0, 3)
+        _sh.setColor(rgba(QColor(0, 0, 0), 135))
+        self.setGraphicsEffect(_sh)
 
     # -- 悬停果冻：QPropertyAnimation 逐帧驱动 jelly_step（7 帧真值见 whale_anim.JELLY_POSES）--
     def _get_jstep(self) -> int:
@@ -1349,18 +1712,38 @@ class WhaleBadge(QLabel):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # ── **三层分明**：顶栏（底）＜ 徽章方块（浮起）＜ 鲸鱼（再浮起）──
+        # ① 徽章底：纯黑 → **垂直渐变**。纯色是一块"贴纸"，上亮下暗才有厚度
+        #    （与按钮/胶囊同一支规则：光从上方来）。
+        _r = QRectF(0, 0, 52, 52)
+        _g = QLinearGradient(_r.topLeft(), _r.bottomLeft())
+        _g.setColorAt(0.0, QColor("#232A33"))
+        _g.setColorAt(1.0, QColor("#050608"))
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, 52, 52), 13, 13)
-        p.fillPath(path, QColor("#14161a"))
+        path.addRoundedRect(_r, 13, 13)
+        p.fillPath(path, QBrush(_g))
+        # ② 受光棱：沿**圆角矩形的顶边**画一条高光（只画直线段，两端让开圆角 ∓13）。
+        #    ⚠️ 别用 `drawArc` 画圆：圆的曲率与 13px 圆角的矩形不一致，弧会**悬在方块内部**，
+        #       看着是"里面浮着一根线"而不是"上沿有一道棱"。
+        p.save()
+        p.setPen(QPen(QColor(255, 255, 255, 58), 1.2))
+        p.drawLine(QPointF(13.0, 0.8), QPointF(39.0, 0.8))
+        p.restore()
         if self._pm.isNull():
             return
-        # hero：36×36 @ (8,10)，transform-origin bottom-center —— 果冻/回弹只作用在鲸图上
+        # ③ 鲸鱼**原样画**，不加任何"围着它"的层。
+        #    这张图本身是 3D 渲染的（白身 ＋ 灰蓝腹部渐变 ＋ 眼睛高光 ＋ 尾鳍浅蓝轮廓），
+        #    自己的层次已经够了。
+        # ⚠️ 别想着"先铺一圈放大一点的白影当外发光"：图片上下各有 **20% 透明带**
+        #    （非透明 bbox 是 y 52..204 / 256），按矩形放大等于**连透明带一起描边** ——
+        #    看上去就是"把那张图片凸显出来了"，而且那层白影压在鱼身上会把鱼糊掉。
+        #    要加轮廓类的效果，只能用 alpha 当遮罩，绝不能用"图片矩形"。
         p.save()
-        p.setOpacity(self._hero_op)
         p.translate(26, 46)
         sy, sx = self._pose
         p.scale(sx, sy)
-        p.drawPixmap(-18, -36, 36, 36, self._pm)
+        p.setOpacity(self._hero_op)
+        p.drawPixmap(-18, -36, 36, 36, self._pm) # 本体：36×36 @ (8,10)
         p.restore()
 
 

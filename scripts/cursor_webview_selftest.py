@@ -24,7 +24,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ⛔ 隔离：判据不许写产品 data/ 与 logs/（更新状态快照 / 暂停标记 / 探针的窗口几何）。
 #   ⚠️ 第一版这段写在 `sys.path.insert(0, ROOT)` **之前** ⇒ ImportError 被静默吞掉、隔离没生效。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # scripts\（见 `_iso14` 文件头）
+import _srcmatch as _sm # noqa: E402 空白容忍的源码断言
 import _iso14 # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 _iso14.update_state()
 _iso14.control()
 sys.path.insert(0, ROOT)
@@ -57,13 +61,13 @@ ck("A2 180ms 后换回默认帧", re.search(r"nodTimer = setTimeout\(apply, 180\
 ck("A3 光标样式同时覆盖 html 与所有元素（否则子元素还是系统箭头）",
    "html.whale-cursor,html.whale-cursor*{cursor:url(" in SRC_C.replace(" ", ""))
 ck("A4 光标图带热点 (8 8) 与 auto 兜底",
-   '") 8 8, auto!important' in SRC_C)
+   _sm.has(SRC_C, '") 8 8, auto!important'))
 ck("A5 挂件 iframe 也注入光标（CSS 穿不透同源 iframe）", "injectFrames" in SRC_C)
 for f in ("assets/cursor.png", "assets/cursor-nod.png"):
     ck("A6 素材存在：%s" % f, os.path.exists(os.path.join(ROOT, f)))
-ck("A7 启动器有 --cursorprobe 入口", '"--cursorprobe"' in SRC_L and "public static string CursorProbe(" in SRC_L)
+ck("A7 启动器有 --cursorprobe 入口", '"--cursorprobe"' in SRC_L and _sm.has(SRC_L, "public static string CursorProbe("))
 ck("A8 探针窗口屏外 + 不激活（不抢前台、屏幕上看不见）",
-   "-4000, -4000" in SRC_L and "WS_EX_NOACTIVATE" in SRC_L)
+   _sm.has(SRC_L, "-4000, -4000") and "WS_EX_NOACTIVATE" in SRC_L)
 ck("A9 探针读回「前台是否未变」当作判据", "foreground_unchanged=" in SRC_L)
 # ── 中键（滚轮键）特效：鲸鱼转一圈 360°──
 # ⚠️ 取样窗口**必须收紧到 spin() 函数体**（原来取"后面 900 字符"，越界扫进 setCustom() 里那句
@@ -71,11 +75,11 @@ ck("A9 探针读回「前台是否未变」当作判据", "foreground_unchanged=
 _i_spin, _i_spin_end = SRC_C.find("function spin()"), SRC_C.find("// 点击时点头")
 _SPIN = SRC_C[_i_spin:_i_spin_end] if (_i_spin >= 0 and _i_spin_end > _i_spin) else ""
 ck("A10 中键会转一圈：12 帧 canvas 预转（不新增素材文件）",
-   "ev.button === 1" in SRC_C and "i * 2 * Math.PI / SPIN_FRAMES" in SRC_C and "toDataURL('image/png')" in SRC_C)
+   _sm.has(SRC_C, "ev.button === 1") and _sm.has(SRC_C, "i * 2 * Math.PI / SPIN_FRAMES") and "toDataURL('image/png')" in SRC_C)
 ck("A11 帧走 dataURL，**不拼 ?v=Date.now()**（每帧换 URL 会让光标闪回系统箭头）",
    "setStyle(frames[" in _SPIN and "Date.now()" not in _SPIN, _SPIN[:0] or "spin() 内无 Date.now")
-ck("A12 转完一圈回到默认帧", "clearInterval(spinTimer); spinTimer = null; apply(); return;" in SRC_C)
-ck("A13 帧没备好时退回「点头」（不许按了没反应）", "if(spin()) return;" in SRC_C and "applyNod();" in SRC_C)
+ck("A12 转完一圈回到默认帧", _sm.has(SRC_C, "clearInterval(spinTimer); spinTimer = null; apply(); return;"))
+ck("A13 帧没备好时退回「点头」（不许按了没反应）", _sm.has(SRC_C, "if(spin()) return;") and "applyNod();" in SRC_C)
 # ⛔ 只钉**行为**（中键分支里真的调了 `preventDefault`），**不钉注释文案**：
 #   这半句原来还要求源码里出现「原生自动滚动」这句注释 —— 注释是随时会被改写的说明文字，
 #   钉它＝给判据绑一个会自然漂移的量（实测就是这么红的：`ev.preventDefault()` 一直都在，
@@ -83,29 +87,29 @@ ck("A13 帧没备好时退回「点头」（不许按了没反应）", "if(spin(
 ck("A14 中键**吃掉浏览器原生行为**（否则光标被浏览器接管，只看得到「闪」）",
    "ev.preventDefault()" in SRC_C)
 ck("A15 帧备好没有对外可读（判据/探针要能等到它，否则假红）",
-   "framesReady: ()=>frames.length > 0" in SRC_C and "frameIdx: ()=>lastSpinIdx" in SRC_C)
-# ── 自研「滚轮模式」：中键要**真的滚**（
-#    上一版只做了"转"、把原生滚动 preventDefault 掉了 ⇒ 用户实测「它是旋转了，但是也滚不动啊」）──
+   _sm.has(SRC_C, "framesReady: ()=>frames.length > 0") and _sm.has(SRC_C, "frameIdx: ()=>lastSpinIdx"))
+# ── 自研「滚轮模式」：中键要**真的滚**
+#    上一版只做了"转"、把原生滚动 preventDefault 掉了 ⇒ 「它是旋转了，但是也滚不动啊」）──
 ck("A16 中键＝**自研滚轮**（基础匀速 + rAF 持续滚 + 自绘徽标），不是只转一下",
-   "PM_WHEEL" in SRC_C and "requestAnimationFrame(tick)" in SRC_C and "BASE + (off - DEAD) * GAIN" in SRC_C)
+   "PM_WHEEL" in SRC_C and "requestAnimationFrame(tick)" in SRC_C and _sm.has(SRC_C, "BASE + (off - DEAD) * GAIN"))
 ck("A17 滚轮只在「鲸鱼光标开着」时接管（关掉光标就把原生行为原样留给用户）",
-   "if(!WHALE_CURSOR.enabled()) return;" in SRC_C)
+   _sm.has(SRC_C, "if(!WHALE_CURSOR.enabled()) return;"))
 ck("A18 退出路径齐：再按中键 / 按任意其它键 / 滚真实滚轮 / Esc / 失焦",
-   "document.addEventListener('wheel'" in SRC_C and "ev.keyCode === 27" in SRC_C
-   and "window.addEventListener('blur'" in SRC_C and "if(on){ stop(); return; }" in SRC_C)
+   "document.addEventListener('wheel'" in SRC_C and _sm.has(SRC_C, "ev.keyCode === 27")
+   and "window.addEventListener('blur'" in SRC_C and _sm.has(SRC_C, "if(on){ stop(); return; }"))
 ck("A19 滚动目标现算（从落点往上找真能滚的祖先；找不到就整页滚）",
-   "scrollHeight - n.clientHeight > 8" in SRC_C and "document.scrollingElement" in SRC_C)
+   _sm.has(SRC_C, "scrollHeight - n.clientHeight > 8") and "document.scrollingElement" in SRC_C)
 ck("A20 滚的是**光标上那只鱼**（滚轮模式驱动 WHALE_CURSOR.spinTo；徽标里不再画第二条鱼）",
-   "WHALE_CURSOR.spinTo(phase)" in SRC_C and "function spinTo(deg)" in SRC_C and "#pmWheel img" not in SRC_C
-   and "'<i class=\"u\"></i><i class=\"d\"></i>'" in SRC_C)
+   "WHALE_CURSOR.spinTo(phase)" in SRC_C and _sm.has(SRC_C, "function spinTo(deg)") and (not _sm.has(SRC_C, "#pmWheel img"))
+   and _sm.has(SRC_C, "'<i class=\"u\"></i><i class=\"d\"></i>'"))
 ck("A22 转速跟着滚动速度（JS 累加相位 + 封顶）· 帧只在变化时才写 style · 退出回默认帧",
-   "Math.min(SPIN_CAP, Math.abs(v) * SPIN_K)" in SRC_C and "if(idx === lastSpinIdx) return;" in SRC_C
+   _sm.has(SRC_C, "Math.min(SPIN_CAP, Math.abs(v) * SPIN_K)") and _sm.has(SRC_C, "if(idx === lastSpinIdx) return;")
    and "WHALE_CURSOR.restore()" in SRC_C)
 ck("A23 滚轮模式期间暂停装饰性背景动画（整屏动画会让滚动每帧重绘 ⇒ 卡卡感）",
    "animation-play-state:paused" in SRC_C and "pm-wheel-on" in SRC_C)
 ck("A21 左导航跟着指示条滚（激活项滚出可视区就滚回来：平滑、不越界）",
-   "function revealInd(a)" in SRC_C and "behavior: 'smooth'" in SRC_C and "revealInd(a);" in SRC_C
-   and "const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;" in SRC_C)
+   _sm.has(SRC_C, "function revealInd(a)") and _sm.has(SRC_C, "behavior: 'smooth'") and "revealInd(a);" in SRC_C
+   and _sm.has(SRC_C, "const top = navEl.scrollTop, vh = navEl.clientHeight, PAD = 8;"))
 
 _EXE = os.path.join(ROOT, "一键启动.exe")
 # ⛔ `--cursorprobe` 会走 `GeoFile()`＝**exe 同级目录 + data/**，也就是产品的
@@ -212,7 +216,8 @@ else:
                 _d1 = float(_w1[1]) - float(_t0)
                 _d2 = float(_w2[1]) - float(_w1[1])
                 _d4 = abs(float(_w4[1]) - float(_w3[1]))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _d1 = _d2 = _d4 = -999.0
             ck("B13 中键进入滚轮模式", _w1[:1] == ["true"], field("wheel_1"))
             ck("B14 **它真的在滚**（0.7 秒内往下滚 >20px）", _d1 > 20, "滚了 %.0fpx" % _d1)
@@ -236,11 +241,13 @@ else:
                 p = (field(k) or "").split("|")
                 try:
                     fi = int(p[1])
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     fi = None
                 try:
                     sp = float(p[2])
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     sp = None
                 return (p[0].lower() if p else "", fi, sp)
 

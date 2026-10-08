@@ -130,7 +130,8 @@ def _extract(raw: bytes, ctype: str, cfg: dict):
     field = str(cfg.get("http_json_field") or "").strip()
     try:
         obj = json.loads(raw.decode("utf-8", "replace"))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return b"", "端点返回的既不是音频、也不是 JSON（响应前 40 字节：%r）" % raw[:40]
     if not field:
         return b"", "端点回的是 JSON，但没配 voice_reply.http_json_field（不知道该取哪个字段）"
@@ -184,7 +185,8 @@ def _vc_params(cfg: dict) -> dict:
     try:
         obj = json.loads(str(raw or "{}"))
         return dict(obj) if isinstance(obj, dict) else {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -369,7 +371,8 @@ def status(cfg: dict | None = None) -> dict:
             out["ok"] = True
             out["why"] = "edge-tts（免费神经语音，需要联网；失败会%s）" % (
                 "按 edge_fallback 退回系统声音" if c.get("edge_fallback", True) else "如实报错、不静默")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             out["ok"] = False
             out["why"] = "选了 edge-tts 但本机没装它（py -3 -m pip install edge-tts）"
         return out
@@ -477,7 +480,8 @@ def _concat_wavs(paths, timeout: int, fast_flags=None):
     d = _out_dir()
     try:
         os.makedirs(d, exist_ok=True)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     stamp = time.strftime("%H%M%S") + ("%03d" % (int(time.time() * 1000) % 1000))
     #: **只给"快段"剪掉两端静音**：edge 每段自带约 0.3s 留白，快段两头留着就成了"顿一下再快念"；
@@ -525,7 +529,8 @@ def _concat_wavs(paths, timeout: int, fast_flags=None):
     for n in norm + [lst]:
         try:
             os.remove(n)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
     return out, ""
 
@@ -533,8 +538,8 @@ def _concat_wavs(paths, timeout: int, fast_flags=None):
 def _make_segmented(text: str, c: dict, timeout: int):
     """**语气段处理**：句子里有"连续同字"（语气偏快的连读）时，分段合成 + **快段加速** + 无停顿拼接。
 
-    为什么这么做：他说的「行行行」是**一口气快连读**，不是三个字一顿。
-    插标点＝一字一顿（我上一版的错法）；而 edge 档**没有音素/停顿入口**（官方定论）⇒ 我们唯一能控的
+    为什么这么做：连续同字（如「行行行」）是**一口气快连读**，不是一个字一顿。
+    插标点会造成一字一顿（错法）；而 edge 档**没有音素/停顿入口**（官方定论）⇒ 我们唯一能控的
     就是**语速**：把快段单独合成、语速加 `voice_reply.run_boost`（默认 +25%），其余照常，再拼回一句。
     返回 `(路径 或 None, 说明, info)`；`None` 表示"这条路没走成，交给原来的单段路径"（绝不半途而废）。
     """

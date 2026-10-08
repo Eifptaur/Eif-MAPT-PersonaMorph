@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""**向群友请教**：低置信度表情的语义，靠"问"补全（用户 2026-10-02 提的方案）。
+"""**向群友请教**：低置信度表情的语义，靠"问"补全。
 
 ## 为什么需要它
 自定义表情里有一批**疑似梗图**（`confidence: low`）—— 看图读不出、检索也常搜不到
@@ -32,15 +32,48 @@ import os
 import time
 
 from . import persist  # noqa: PLC0415 — 换档必须走唯一实现点（带退避重试）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _STATE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data", "emoji_ask_state.json")
 
-#: 应答窗口（秒）：超过这么久才回的，**不算**对这次提问的回答
+#: 应答窗口（秒）：超过这么久才回的，**不算**对这次提问的回答。
+#: ⚠️ 它是**兜底默认**（配置读不到时用它）——生效值请看 `cfg()` 的 `answer_window_s`。
 ANSWER_WINDOW_S = 120.0
-#: 同一条表情的提问冷却（秒）：避免反复问同一张
+#: 同一条表情的提问冷却（秒）：避免反复问同一张。同上，它是兜底默认，生效值在 `cfg()`。
 ASK_COOLDOWN_S = 6 * 3600.0
+
+
+def cfg() -> dict:
+    """「向群友请教」的生效配置（`emoji.curiosity`，键与默认值见 `config.py::DEFAULT_CONFIG`）。
+
+    返回 `{enabled, probability, cooldown_s, answer_window_s}`。
+
+    ⛔ 为什么保留上面两个模块常量而不是直接删：配置模块异常/读不到时要有**确定的兜底**
+    （退回加配置之前的行为），而不是"读不到就完全不问"或抛异常。
+    ⛔ `probability` 的兜底是 **0.0**（最保守：配置缺失时一次都不问）——它没有历史常量可退，
+    而"多问一句"的代价（像刷屏）比"少问一句"大得多。
+    """
+    try:
+        from .config import get_config
+        c = ((get_config() or {}).get("emoji") or {}).get("curiosity") or {}
+    except Exception: # noqa: BLE001
+        c = {}
+
+    def _f(key, dflt):
+        v = c.get(key, dflt)
+        try:
+            return float(dflt) if v is None else float(v)
+        except Exception: # noqa: BLE001
+            return float(dflt)
+
+    return {"enabled": bool(c.get("enabled", False)),
+            "probability": _f("probability", 0.0),
+            "cooldown_s": _f("cooldown_s", ASK_COOLDOWN_S),
+            "answer_window_s": _f("answer_window_s", ANSWER_WINDOW_S)}
 
 
 def _load() -> dict:
@@ -48,23 +81,29 @@ def _load() -> dict:
         with open(_STATE_PATH, "r", encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
 def _save(d: dict) -> None:
     try:
-        os.makedirs(os.path.dirname(_STATE_PATH), exist_ok=True)
-        with open(_STATE_PATH + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        persist.replace_into(_STATE_PATH + ".tmp", _STATE_PATH)
+        # 走**唯一收口**：临时名带 pid + 随机后缀（原来固定 `_STATE_PATH + ".tmp"` ——
+        # 两个写者会打开同一个临时档、内容互相穿插），同时拿到 `fsync` 与 `os.replace` 的退避重试。
+        persist.atomic_write_json(_STATE_PATH, d, indent=1)
     except Exception:
         pass
 
 
 def pick_low(exclude=None) -> int | None:
-    """挑一条**低置信度、且不在冷却期**的表情用于提问 ⇒ 返回 id；没有则 None。"""
+    """挑一条**低置信度、且不在冷却期**的表情用于提问 ⇒ 返回 id；没有则 None。
+
+    ⛔ 总开关关着 ⇒ 一律返回 None（**在最小面拦住**，不依赖每个调用方自己记得先查配置）。
+    """
     from . import emoji_index as ei
+    c = cfg()
+    if not c["enabled"]:
+        return None
     st = _load()
     asked = st.get("asked_at") or {}
     now = time.time()
@@ -73,7 +112,7 @@ def pick_low(exclude=None) -> int | None:
         i = e["id"]
         if i in exclude:
             continue
-        if now - float(asked.get(str(i), 0) or 0) < ASK_COOLDOWN_S:
+        if now - float(asked.get(str(i), 0) or 0) < c["cooldown_s"]:
             continue
         return i
     return None
@@ -105,7 +144,7 @@ def pending(chat_key: str = "", *, now: float | None = None) -> dict | None:
     if chat_key and str(p.get("chat_key") or "") != str(chat_key):
         return None
     now = time.time() if now is None else float(now)
-    if now - float(p.get("asked_at") or 0) > ANSWER_WINDOW_S:
+    if now - float(p.get("asked_at") or 0) > cfg()["answer_window_s"]:
         st["pending"] = None
         _save(st)
         return None
@@ -158,7 +197,8 @@ def parse_verdict(raw: str) -> dict:
         s = s[i:j + 1]
     try:
         d = json.loads(s)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return out
     if not isinstance(d, dict):
         return out
@@ -191,16 +231,31 @@ def apply_verdict(emoji_id: int, verdict: dict) -> dict:
     ok = ei.learn(emoji_id, caption=v["caption"], situation=v.get("situation") or "",
                   moods=v.get("moods") or None, confidence="high",
                   meme="（由群友在对话中解释后回填）")
-    # 清待答状态
+    # 清待答状态；学到就顺手留一条"回填记录"（面板要显示「从群友那儿学到了什么」）
     st = _load()
     st["pending"] = None
+    if ok:
+        st.setdefault("learned", []).append(
+            {"at": time.time(), "id": int(emoji_id),
+             "caption": str(v["caption"])[:60],
+             "situation": str(v.get("situation") or "")[:40]})
+        st["learned"] = st["learned"][-20:] # 只留最近 20 条，防状态文件越滚越长
     _save(st)
     return {"learned": bool(ok), "why": "已回填并升为 high" if ok else "回填失败（编号找不到）"}
 
 
 def stats() -> dict:
+    """面板要看的全量口径：生效配置 ＋ 待答状态 ＋ 已问数 ＋ 最近学到的几条。"""
     from . import emoji_index as ei
     st = _load()
-    return {"low_total": len(ei.need_web()),
-            "pending": bool(st.get("pending")),
-            "asked_count": len(st.get("asked_at") or {})}
+    c = cfg()
+    pend = st.get("pending") or None
+    return {"enabled": c["enabled"],
+            "probability": c["probability"],
+            "cooldown_s": c["cooldown_s"],
+            "answer_window_s": c["answer_window_s"],
+            "low_total": len(ei.need_web()),
+            "pending": bool(pend),
+            "pending_detail": pend,
+            "asked_count": len(st.get("asked_at") or {}),
+            "learned": list(st.get("learned") or [])[-5:]}

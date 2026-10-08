@@ -3,7 +3,7 @@
 
 ⛔ 背景：`BAND_PX = (10, 38, 340, 56)` 的 `y0=38` 是**绝对像素常量**，实测已过期
   （深色帧里标题上沿在 y≈58，浅色在 y≈79；而框给 38 ⇒ 压在字的上边缘 ⇒ 字被切掉 ⇒ 读不出）。
-  用户提示"绿条不能直接推搜索/标题的下沿" ⇒ 也对（绿底行 y=120~217，比标题低 60px）。
+  索/标题的下沿" ⇒ 也对（绿底行 y=120~217，比标题低 60px）。
 
 本探针试一条**不依赖任何常量**的路：
   **"标题是聊天区左半段里，从上往下第一段有'墨'的行"** ——
@@ -22,6 +22,10 @@ from collections import Counter
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+from agent.chat_header import detect_title_band_y  # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 def title_band_y(img, pl, x_lo_off=15, x_hi_frac=0.42,
@@ -64,90 +68,6 @@ def title_band_y(img, pl, x_lo_off=15, x_hi_frac=0.42,
     return None
 
 
-def _row_bg_and_ink(img, y, xs):
-    """该行的 (背景色众数, 墨点数)。背景＝众数（文字只占少数像素）。"""
-    px = img.load()
-    c = Counter()
-    for x in xs:
-        r, g, b = px[x, y][:3]
-        c[(r // 16 * 16, g // 16 * 16, b // 16 * 16)] += 1
-    bg = c.most_common(1)[0][0]
-    ink = 0
-    for x in xs:
-        r, g, b = px[x, y][:3]
-        if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) > 90:
-            ink += 1
-    return bg, ink
-
-
-def detect_title_band_y(img, pl, x_lo_off=5, x_hi_frac=0.22,
-                        ink_min_pts=2, pad=6, h_frac=0.075):
-    """**当帧实测**标题带的 y 范围 ⇒ `(y0, y1)`；定不出给 None。
-
-    ⛔ 为什么不靠"绝对墨量"（2026-09-30 两次实测教训）：
-      深色帧的标题可能是**单字母 `E`** ⇒ 全行只有 2~5 个墨点。
-      "墨占比 ≥0.02"、"连续 4 行 ≥3 点"这类**绝对阈值判据必然失败**
-      （实测都抓到了 y≈128~219 的**消息区第一条消息**）。
-      ⇒ 改用「**先限定范围，再在范围内找第一个有墨的行**」。
-
-    范围怎么定（**色差**，用户提示的方向）：
-      · 逐行算聊天区左半段的**背景色众数**，找从上往下**第一个明显变化**的 y = `y_edge`；
-      · `y_edge` **上方很暗**（亮度 < 80）⇒ 深色主题：上方就是标题带 ⇒ 范围 = `[0, y_edge]`；
-      · `y_edge` **上方是中等灰**（80~210）⇒ 浅色主题：上方是**窗口控制区** ⇒
-        范围 = `[y_edge, y_edge + h_frac*h]`（控制区下面是标题带；下界只能估，故给得宽松）。
-    """
-    w, h = img.size
-    x0 = max(0, min(w - 1, pl + x_lo_off))
-    x1 = min(w, pl + int(w * x_hi_frac))
-    if x1 - x0 < 30:
-        return None
-    # ⛔ 扫描区**必须收窄**（2026-09-30 实测）：取到 0.42w 时会把**聊天区右上角的图标**
-    #   （x≈890，y=16~32）圈进来 ⇒ "第一个墨行"命中的是图标而不是标题（标题在 x≈470、y=76~88）。
-    #   标题的**左端**紧贴面板左沿（实测 pl+27）⇒ 只需扫 `[pl+5, pl+0.22w]`。
-    step = max(1, (x1 - x0) // 110)          # 密采样：单字母标题只有十几个像素宽
-    xs = list(range(x0, x1, step))
-    # ⛔ y 扫描上限从 0.30h 放宽到 **0.45h**：实测有一批帧（942x1358、1419x1109、
-    #   1721x1109…）的"色差边"落在 0.30h **之外** ⇒ 整段背景同色（跨度 0）⇒ 判不出。
-    #   而标题带不可能占到窗口一半 ⇒ 0.45h 足够且不会误吞消息区（后面还有范围+首个墨行两道约束）。
-    y_scan = min(h, int(h * 0.45))
-    seq = []
-    for y in range(0, y_scan):
-        bg, ink = _row_bg_and_ink(img, y, xs)
-        seq.append((y, bg, ink))
-    if len(seq) < 20:
-        return None
-
-    # ① 找第一个"背景色明显变化"的 y（用亮度差，避免逐通道比较被噪声带偏）
-    def _lum(c):
-        return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
-    # ⛔ 阈值必须降到 **12**：实测**深色主题的标题带与消息区只差 16 个亮度单位**
-    #   （背景 (32,32,32) → (48,48,48)），原来写 18 ⇒ **深色帧全部判不出**（返回 None）；
-    #   而浅色差 112（(112,112,120) → (248,248,248)）⇒ 降到 12 后两边都能检出。
-    y_edge, bg_above = None, None
-    for i in range(3, len(seq) - 3):
-        a = _lum(seq[i - 3][1])
-        b = _lum(seq[i + 3][1])
-        if abs(b - a) > 12:
-            y_edge, bg_above = seq[i][0], seq[i - 3][1]
-            break
-
-    # ② 定范围
-    if y_edge is None:
-        y_lo, y_hi = 0, int(h * 0.16)        # 找不到边 ⇒ 保守取顶部一小段（标题必然在窗口顶部那一带）
-    elif _lum(bg_above) < 80:
-        y_lo, y_hi = 0, y_edge               # 深色：上方＝标题带
-    else:
-        y_lo, y_hi = y_edge, min(h, y_edge + int(h * h_frac))  # 浅色：上方＝控制区
-
-    # ③ 范围内从上往下找**第一个有墨的行** ⇒ 标题
-    for y, bg, ink in seq:
-        if y < y_lo or y > y_hi:
-            continue
-        if ink >= ink_min_pts:
-            return (max(y_lo, y - pad), min(h, y + pad + max(8, int(h * 0.018))))
-    return None
-
-
 def main():
     """**量化验证**：新方法（色差定范围＋范围内首个墨行）vs 旧常量 `BAND_PX` 的
     标题 OCR 非空率 —— 命中标题的判据就是"裁出来的带能 OCR 出东西"（与目标直接相关）。"""
@@ -172,7 +92,8 @@ def main():
                 continue
             try:
                 img = Image.open(p).convert("RGB")
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 continue
             w, h = img.size
             if w < 500:

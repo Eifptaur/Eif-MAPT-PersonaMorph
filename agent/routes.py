@@ -34,6 +34,8 @@ ROUTES = {
     "/api/archive/delete": ("POST",),
     "/api/archive/unblock": ("POST",),
     "/api/autostart": ("GET", "POST"),   # 开机自启：GET 看状态 / POST {enable: bool} 开关（用户可选）
+    "/api/backup/export": ("POST",),     # 一键备份：config.json + data/ 打包成 zip 下载
+    "/api/backup/import": ("POST",),     # 一键恢复：上传备份 zip（body=原始字节）
     "/api/balance": ("GET",),
     "/api/briefs": ("GET", "POST"),
     "/api/cloud/test": ("POST",),
@@ -47,6 +49,13 @@ ROUTES = {
     "/api/data/export": ("POST",),
     "/api/data/import": ("POST",),
     "/api/decide": ("POST",),
+    # Emoji 库（`agent/emoji_codes.py`）：169 个微信表情码 ＋ 462 个 Unicode ＋ 20 个情绪组。
+    # 只读端点 —— 给"写人设/群指令"的人查「哪些 `[名]` 能用」。
+    "/api/emoji_codes": ("GET",),
+    # 自定义表情的**语义索引**（`data/emoji_index.json`）——与上面的收藏夹（`data/emojis/`）
+    # 是两套存储：收藏夹管"有没有这个文件"，这里管"这张图是什么意思"。
+    # GET 取清单/统计 / POST 回填语义（learn）或重扫目录（refresh）。
+    "/api/emoji_index": ("GET", "POST"),
     "/api/emojis": ("GET",),
     "/api/emojis/delete": ("POST",),
     "/api/feedback": ("GET",),
@@ -88,6 +97,12 @@ ROUTES = {
     "/api/prompt/preview": ("GET", "POST"),
     "/api/restart": ("POST",),
     "/api/resume": ("POST",),
+    # 拟人节奏层（`agent/rhythm.py`）：只读 —— 面板要显示"当前是哪一档、间隔多少秒、
+    # 生效值有没有被单项覆盖"。改档位/间隔走普通的配置写入（`rhythm.*`）。
+    "/api/rhythm": ("GET",),
+    # 会话列表行高缓存（`data/row_geometry.json`）：GET 看当前记住的值 / POST {action:"forget"} 清掉重测。
+    # 它决定"算第几行"对不对，用户改了系统缩放或微信字号之后就靠"重新测量"回到正轨。
+    "/api/row_geometry": ("GET", "POST"),
     "/api/risk": ("POST",),
     "/api/scoring/import": ("POST",),
     "/api/scoring/stats": ("POST",),
@@ -101,7 +116,10 @@ ROUTES = {
     "/api/stats/cal_clear": ("POST",),
     "/api/stats/cal_delete": ("POST",),
     "/api/stats/cal_list": ("POST",),
+    "/api/wordcloud": ("POST",),
     "/api/status": ("GET",),
+    # 群名片名录（第 148 项）：GET 列成员+别名 / POST 起别名（空别名＝去掉）
+    "/api/member_book": ("GET", "POST"),
     "/api/test-api": ("POST",),
     "/api/tools/export": ("GET",),
     "/api/tools/import": ("POST",),
@@ -129,6 +147,7 @@ ROUTES = {
     "/api/version": ("GET",),
     "/api/version/action": ("POST",),
     "/api/version/allow": ("GET",),
+    "/api/version/job/cancel": ("POST",),
     "/api/voice/probe": ("GET",),
     "/api/voice/test": ("GET",),
     "/api/voice/vc-probe": ("GET",),
@@ -136,12 +155,13 @@ ROUTES = {
     "/api/voice/vc-models": ("GET",),
     "/api/watermark/reset": ("POST",),
     "/api/wechat-groups": ("GET", "POST"),
+    "/api/wechat-privates": ("GET",),
     "/api/wechat/dir": ("GET", "POST"),
     "/api/wechat/recheck": ("GET",),
     # ── 挂件（鲸鱼）的端点 ────────────────────────────────────────────────
     # ⚠️ 挂件面由**两条**链应答，判据必须两条都扫（否则整块在覆盖之外 —— 曾经就是这样，
     #    表里只登记了 3 条、真值 19 条而判据一条都不报）：
-    #      · GET：`WebUI._whale_get`（`do_GET` 按 `path.startswith("/dsh-whale/")` 转交过去，
+    #      · GET：`WebUI._whale_get`（`do_GET` 按 `path.startswith` 转交过去，
     #        那一支是非字面分支、登记在下方 `PATTERNS`）；
     #      · POST：`Handler._handle_body_request` 里的字面分支。
     #    两条都接的写 ("GET", "POST")。
@@ -168,6 +188,7 @@ ROUTES = {
     "/dsh-whale/sound/release.mp3": ("GET",),
     "/dsh-whale/usage-records.json": ("GET",),
     "/dsh-whale/usage-settings.json": ("GET", "POST"),
+    "/dsh-whale/wait.json": ("GET",), # 上游 0.3.14 新增：等待交互轮询（本移植版如实回不支持，见 whale._UNSUPPORTED）
     "/dsh-whale/widget.js": ("GET",), # 上游 widget 脚本（页面靠它跑）
     "/index.html": ("GET",),
 }
@@ -189,6 +210,12 @@ HANDLERS = {
     },
     "/api/balance": {
         "GET": "_rapi_balance",
+    },
+    "/api/backup/export": {
+        "POST": "_rapi_backup_export_post",
+    },
+    "/api/backup/import": {
+        "POST": "_rapi_backup_import_post",
     },
     "/api/briefs": {
         "GET": "_rapi_briefs",
@@ -227,6 +254,13 @@ HANDLERS = {
     },
     "/api/decide": {
         "POST": "_rapi_decide_post",
+    },
+    "/api/emoji_codes": {
+        "GET": "_rapi_emoji_codes",
+    },
+    "/api/emoji_index": {
+        "GET": "_rapi_emoji_index",
+        "POST": "_rapi_emoji_index_post",
     },
     "/api/emojis": {
         "GET": "_rapi_emojis",
@@ -362,6 +396,13 @@ HANDLERS = {
     "/api/resume": {
         "POST": "_rapi_resume_post",
     },
+    "/api/rhythm": {
+        "GET": "_rapi_rhythm",
+    },
+    "/api/row_geometry": {
+        "GET": "_rapi_row_geometry",
+        "POST": "_rapi_row_geometry_post",
+    },
     "/api/risk": {
         "POST": "_rapi_risk_post",
     },
@@ -405,6 +446,13 @@ HANDLERS = {
     },
     "/api/status": {
         "GET": "_rapi_status",
+    },
+    "/api/wordcloud": {
+        "POST": "_rapi_wordcloud",
+    },
+    "/api/member_book": {
+        "GET": "_rapi_member_book",
+        "POST": "_rapi_member_book",
     },
     "/api/test-api": {
         "POST": "_rapi_test_api_post",
@@ -487,6 +535,9 @@ HANDLERS = {
     "/api/version/allow": {
         "GET": "_rapi_version_allow",
     },
+    "/api/version/job/cancel": {
+        "POST": "_rapi_version_job_cancel_post",
+    },
     "/api/voice/probe": {
         "GET": "_rapi_voice_probe",
     },
@@ -508,6 +559,9 @@ HANDLERS = {
     "/api/wechat-groups": {
         "GET": "_rapi_wechat_groups",
         "POST": "_rapi_wechat_groups_post",
+    },
+    "/api/wechat-privates": {
+        "GET": "_rapi_wechat_privates",
     },
     "/api/wechat/dir": {
         "GET": "_rapi_wechat_dir",

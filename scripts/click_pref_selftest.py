@@ -105,6 +105,9 @@ ok("没有残留 .tmp（temp + os.replace）", not os.path.exists(TMP + ".tmp"))
 # ⛔ 并发写**丢更新**是这个模块上一条真缺陷（实测 3 线程×150 次只剩 6 次）。
 #   单线程写一遍是"空判"——这里真的并发写，断言"次数不丢、文件不坏"。
 import threading as _th # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 CP.clear("并发前清空") if hasattr(CP, "clear") else None
 if os.path.exists(TMP):
     os.remove(TMP)
@@ -147,7 +150,8 @@ CP.PATH = _KEEP
 try:
     if os.path.exists(TMP):
         os.remove(TMP)
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     pass
 shutil.rmtree(os.path.join(tempfile.gettempdir(), "_click_pref_selftest"), ignore_errors=True)
 

@@ -44,6 +44,9 @@ except Exception:
     pass
 
 from agent import safe_fetch as SF # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 PASS, FAIL = 0, 0
 
@@ -627,7 +630,12 @@ def _section_L27():
     import http.server as _hs # noqa: E402
     import threading as _th # noqa: E402
 
-    _body27 = b"PM-R11-PINNED-BODY" * 200
+    # ⛔ 夹具必须喂**像样的容器头**：`bilibili._download` 落盘后会校验文件头
+    #    （`media_magic_ok`：`ftyp`/`styp`/`free`/`skip`/`ID3`）——
+    #    原来这里是 `b"PM-R11-PINNED-BODY"`，它**不是**合法容器 ⇒ 下载被当成"风控/错误页"丢弃、
+    #    返回字节数 0 ⇒ L27a 的"字节数 == 夹具长度"那半**恒红**（连接目标那半其实是对的）。
+    #    夹具过期 ≠ 守备失效：补一个真头（`ID3`）就把这条判据恢复成"只测连接目标"。
+    _body27 = b"ID3" + b"PM-R11-PINNED-BODY" * 200
     _REQ27 = {"n": 0}
 
     class _H27(_hs.BaseHTTPRequestHandler):
@@ -653,9 +661,9 @@ def _section_L27():
     # ⛔ **判据钉在"连接的目标是谁"上，而不是"解析了几次"**。
     #   旧写法（DNS 翻转 + 预置计数）被审计实测否掉：真实调用点退回 `urlopen` 后，老写法只消耗
     #   **2 次解析**（闸门 1 次 + 连接 1 次）⇒ 落在我的"第 3 次起才坏"之外 ⇒ L27a/L27b 全绿
-    #   （"灵敏度是造出来的"）。现在改成**连接层直接取证**：
-    #     · 钉 IP 的实现 ⇒ `socket.create_connection` 拿到的是**IP 字面量**（"127.0.0.1"）；
-    #     · `urlopen` 老写法 ⇒ `http.client` 传进来的是**主机名**（"pinned.test"）⇒ 当场判否。
+    #   。现在改成**连接层直接取证**：
+    #     · 钉 IP 的实现 ⇒ `socket.create_connection` 拿到的是**IP 字面量**；
+    #     · `urlopen` 老写法 ⇒ `http.client` 传进来的是**主机名**⇒ 当场判否。
     #   这条判据不依赖任何"预置计数"，退回老写法**必红**。
     _conn27 = []
 
@@ -721,7 +729,8 @@ def _section_L27():
         try:
             _req = urllib.request.Request("http://pinned.test:%d/a.mp3" % _port27)
             urllib.request.urlopen(_req, timeout=5).read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             _old_ok27 = False # 连接层拿到的是 "pinned.test" ⇒ 夹具拒 ⇒ 老写法必失败
         _old_targets = [str(a[0]) for a in _conn27]
         # ⚠️ 灵敏度只看"**同一夹具下老写法必失败**"（`_old_ok27 is False`）。
@@ -991,7 +1000,8 @@ def _section_L():
     try:
         if os.path.exists(dest):
             os.remove(dest)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
     # ══ L15：闸门拒了 ⇒ 抛 `FetchError` 且**不留半截文件**（流式下载的失败路径）══
@@ -1138,7 +1148,8 @@ def _section_L():
     try:
         if check_exists:
             os.remove(_dest23)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     ok("L23 闸门把「解析到环回」的域名拒了（`_cnt=0` + 如实原因），且**一个字节都没落盘**",
        _cnt == 0 and not check_exists and bool(_why23),

@@ -10,6 +10,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import logging
+
+log = logging.getLogger("persona-morph")
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -63,7 +66,8 @@ _tmp = os.path.join(tempfile.gettempdir(), "pm_close_probe.txt")
 try:
     if os.path.exists(_tmp):
         os.remove(_tmp)
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     pass
 try:
     subprocess.run([EXE, "--probe", _tmp], timeout=60,
@@ -74,7 +78,8 @@ _lines = []
 try:
     with open(_tmp, encoding="utf-8", errors="replace") as fh:
         _lines = [ln.strip() for ln in fh if ln.strip()]
-except Exception:
+except Exception as _e:
+    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
     _lines = []
 ok("--probe 真的写出了清单（winexe 不接控制台 ⇒ 必须落文件）", bool(_lines), str(len(_lines)))
 _names = []

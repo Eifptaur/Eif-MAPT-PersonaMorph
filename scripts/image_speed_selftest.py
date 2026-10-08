@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """「要图」速度纪律判据。
 
-起因（用户实测）：在拍摄现场，说一句要图到停下来**过了一分多钟**。查下来三个独立病因：
+起因：在拍摄现场，说一句要图到停下来**过了一分多钟**。查下来三个独立病因：
   ① `_get()` 用一次阻塞 `read()` —— `urlopen(timeout=)` 只管**单次 recv**，慢速代理能涓流几分钟
      （实测一张 4.26MB 的图在 `i.pixiv.re` 上拖了 **160 秒**）；
   ② 图源按顺序问，四个死源（SSL/403/DNS/超时）每次白等 **27 秒**；
@@ -24,6 +24,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import logging
+log = logging.getLogger("persona-morph")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -80,7 +82,8 @@ class _Slow(BaseHTTPRequestHandler):
                 self.wfile.write(b"x" * 4096)
                 self.wfile.flush()
                 time.sleep(0.05) # 合计约 20 秒，每块都不慢
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
 
@@ -185,6 +188,8 @@ ok("兜底池有上限（不会无限长胖）", len([f for f in os.listdir(cach
 
 _srv.shutdown()
 import shutil # noqa: E402
+import logging
+
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n要图速度纪律判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

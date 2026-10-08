@@ -11,6 +11,9 @@ import ctypes
 import io
 import os
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 CF_TEXT, CF_DIB, CF_HDROP, CF_UNICODETEXT = 1, 8, 15, 13
 GMEM_MOVEABLE, GMEM_ZEROINIT = 0x0002, 0x0040
@@ -70,7 +73,8 @@ def _set_raw(fmt: int, data: bytes) -> tuple:
         if h:
             try:
                 _k32.GlobalFree(ctypes.c_void_p(h))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
 
 
@@ -139,7 +143,8 @@ def get_text() -> str:
                 _k32.GlobalUnlock(ctypes.c_void_p(h))
         finally:
             _u32.CloseClipboard()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
 
 
@@ -150,7 +155,7 @@ def get_text() -> str:
 def snapshot() -> dict:
     """记录剪贴板当前内容 ⇒ 供 `restore()` 还原。
 
-    ⛔ 为什么需要它（2026-10-01，T20）：微信发图片/文件要走「剪贴板 + `WM_PASTE`」，
+    ⛔ 为什么需要它（T20）：微信发图片/文件要走「剪贴板 + `WM_PASTE`」，
     这会**覆盖用户的剪贴板**。当天已实际发生一次冲突 —— 用户当时正在复制粘贴，
     结果"粘出来的是我们的测试文字"。**发东西不能把用户复制的内容弄丢。**
 
@@ -175,6 +180,23 @@ def snapshot() -> dict:
                     break
                 snap["formats"].append(int(fmt))
             snap["has_image"] = CF_DIB in snap["formats"]
+            # ★ 文件列表（CF_HDROP）：**可可靠还原**（用 set_files 放回去）
+            #   ⇒ 值得备份：用户剪贴板里经常是"复制的文件"，被我们覆盖后要能放回。
+            if CF_HDROP in snap["formats"]:
+                try:
+                    h = _u32.GetClipboardData(CF_HDROP)
+                    if h:
+                        _sh = ctypes.windll.shell32
+                        n = int(_sh.DragQueryFileW(ctypes.c_void_p(h), 0xFFFFFFFF, None, 0))
+                        buf = ctypes.create_unicode_buffer(1024)
+                        fs = []
+                        for _i in range(max(0, min(int(n), 64))):
+                            if _sh.DragQueryFileW(ctypes.c_void_p(h), _i, buf, 1024):
+                                fs.append(buf.value)
+                        snap["files"] = fs
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                    pass
             if CF_UNICODETEXT in snap["formats"]:
                 h = _u32.GetClipboardData(CF_UNICODETEXT)
                 if h:
@@ -187,7 +209,8 @@ def snapshot() -> dict:
                             _k32.GlobalUnlock(ctypes.c_void_p(h))
         finally:
             _u32.CloseClipboard()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return snap
 
@@ -203,10 +226,17 @@ def restore(snap: dict) -> tuple:
     if snap.get("has_text"):
         r = set_text(snap.get("text") or "")
         return (bool(r and r[0]), "已还原原剪贴板文本" if (r and r[0]) else "还原文本失败")
+    if snap.get("files"):
+        # ★ 文件列表可可靠还原（用 CF_HDROP 放回）
+        try:
+            r = set_files(list(snap["files"]))
+            if r and r[0]:
+                return True, "已还原原剪贴板文件列表（%d 项）" % len(snap["files"])
+            return False, "还原文件列表失败：%s" % str(r[1])[:50]
+        except Exception as e:
+            return False, "还原文件列表异常：%s" % str(e)[:50]
     if snap.get("has_image"):
         return False, "原剪贴板是图片 ⇒ 未还原（避免重建出错）"
-    if snap.get("files"):
-        return False, "原剪贴板是文件列表 ⇒ 未还原"
     return True, "原剪贴板为空 ⇒ 无需还原"
 
 
@@ -236,4 +266,41 @@ class clipboard_guard:
         except Exception as e:
             self.result = (False, "还原异常：%s" % str(e)[:60])
         return False   # 不吞异常
+
+
+def clipboard_safe(fn):
+    """装饰器：**进函数先备份用户剪贴板，出函数（含异常）再放回**。
+
+    ⛔ 为什么必须：发图/表情要走「剪贴板 + 粘贴」⇒ **会覆盖用户剪贴板**
+      （实测发生过：用户正在复制粘贴，粘出来的却是我们的测试内容）。
+    ⚠️ 能力边界：`restore()` **只可靠还原文本**；图片/文件列表**不重建**
+      （避免把别人的位图数据搞坏）⇒ 别指望它把剪贴板"还原成原样"。
+    ⚠️ **剪贴板生命期跨函数的链条不许直接套在写剪贴板那个函数上**：
+      若在 A 里写、到 B 才粘贴，装饰 A 会在 A 返回时就把用户的剪贴板还回去 ⇒ B 粘到的是用户那份。
+      ⇒ 这种链条要装饰**拥有整段生命期的那个函数**（例如 prepare→fire 的编排入口）。
+      判据口径同为"写剪贴板的那个函数，或它的上层拥有者，必须带保护"。
+    """
+    import functools
+
+    @functools.wraps(fn)
+    def _wrap(*args, **kwargs):
+        _snap, _r = None, None
+        try:
+            _snap = snapshot()
+        except Exception:  # noqa: BLE001 — 备份失败不阻断主流程（宁可不动剪贴板也要把消息发出去）
+            _snap = None
+        try:
+            _r = fn(*args, **kwargs)
+        finally:
+            if _snap is not None:
+                try:
+                    _ok, _why = restore(_snap)
+                    if isinstance(_r, dict):
+                        _r["clipboard_restored"] = bool(_ok)
+                        _r["clipboard_restore_why"] = str(_why)
+                except Exception:  # noqa: BLE001 — 还原失败不改返回值语义
+                    pass
+        return _r
+
+    return _wrap
 

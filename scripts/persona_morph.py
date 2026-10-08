@@ -207,7 +207,8 @@ def _parse_inline_calls(text: str) -> list:
         if body:
             try:
                 args = json.loads(body)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 args = {}
         calls.append({"name": name, "args": args})
     if calls:
@@ -229,7 +230,8 @@ def _parse_inline_calls(text: str) -> list:
         try:
             obj = json.loads(text[start:end])
             calls.append({"name": name, "args": obj.get("arguments") or {}})
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     return calls
 
@@ -252,7 +254,8 @@ class Orchestrator:
         #   现在读回来：状态一致，且**预先放好 `data/paused.flag` 就能让它"起来即暂停"**（安全重启用）。
         try:
             self.paused = os.path.exists(os.path.join(ROOT, "data", "paused.flag"))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             self.paused = False
         if self.paused:
             log.info("启动即处于「暂停」状态（data/paused.flag 存在）——需要收信息请在控制台点「恢复」")
@@ -354,7 +357,8 @@ class Orchestrator:
                 note_feedback(text, positive=True, weight=min(2.0, 0.5 + len(replies) * 0.5))
             else:
                 note_feedback(text, positive=False, weight=0.5)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     # ── 主动开话题（proactive，默认关）──────────────────────────────────
@@ -477,7 +481,7 @@ class Orchestrator:
 
     def _maybe_human_behaviors(self, chat_key: str, pending):
         """人性化行为（纯本地规则，零 token）：
-        · 收到 [表情]/[图片] → 用户明确要求（艾特文本含「收藏/发同款」）→ 强制收藏；
+        · 收到 [表情]/[图片] → 要求（艾特文本含「收藏/发同款」）→ 强制收藏；
           否则按概率收藏（collect_emoji 截图/下载）
         · 群里有表情且收藏夹非空 → 概率回发一个（send_emoji）
         · 新对话时机 → 概率 @ 活跃成员（at_member）
@@ -492,7 +496,7 @@ class Orchestrator:
             #   修法＝改成绝对导入（与文件里其它 `from agent import ...` 一致）。
             from agent import behavior as bh
             kind, chat_id = chat_key.split(":", 1)
-            # 0) 用户明确指令关键词（艾特文本里出现 → 本次强制执行该行为）
+            # 0) 指令关键词（艾特文本里出现 → 本次强制执行该行为）
             force_collect = force_send = False
             for m in pending:
                 t = str(m.get("text") or "")
@@ -538,7 +542,8 @@ class Orchestrator:
                                 "chat_wxid": chat_id, # W-1：同上
                                 "trigger": "人性化:回发表情", "reasoning": "", "tools": [{"name": "send_emoji", "args": {"name": pick["name"]}}],
                                 "status": "ok", "ok": True})
-                        except Exception:
+                        except Exception as _e:
+                            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                             pass
                     except Exception as e:
                         log.debug("回发表情失败：%s", e)
@@ -615,7 +620,8 @@ class Orchestrator:
                                   % (float(_feed.get("oldest_age_min") or 0),
                                      _st_cfg.get("feed_window_min", 10)),
                               src="时间窗", snippet=str((pending[-1] or {}).get("text") or "")[:80])
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
                 return
             pending = _feed["keep"]
@@ -643,7 +649,8 @@ class Orchestrator:
                          chat_key, len(pending))
                 return
             self._last_trigger[chat_key] = (fp, now, False)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
         # ⚠️ 这里原来**没传 chat_key/group_name** ⇒ 每群独立档位、
@@ -661,7 +668,8 @@ class Orchestrator:
             _snip = ""
             try:
                 _snip = str((pending[-1] or {}).get("text") or "")[:80]
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _snip = ""
             # ⛔ （反馈「艾特它 它不会回复」）：把**这批消息里出现的 @ 名字**与
             #   **它以为自己的名字**一起留痕 —— 微信群里 @ 用的是「群昵称」，可能既不是配置里的
@@ -677,7 +685,8 @@ class Orchestrator:
                      should=bool(tier_result.get("should_respond")),
                      why=tier_result.get("reason"), src=tier_result.get("tier_source"), snippet=_snip,
                      at="、".join(_ats[:3]), known=_known)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         if not tier_result["should_respond"]:
             # ⛔ **不再 `mark_all_read`** —— 上面把"喂模型的"与
@@ -735,14 +744,16 @@ class Orchestrator:
                     "chat_wxid": (chat_key.split(":", 1)[1] if ":" in chat_key else ""), # W-1
                     "trigger": "", "reasoning": "", "tools": [], "status": "error", "ok": False,
                     "error": str(getattr(last_error, "message", last_error))[:300]})
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         else:
             # 处理成功：记录触发指纹，供 5 分钟去重判断
             try:
                 self._last_trigger[chat_key] = (self._last_trigger.get(chat_key, ((), 0, False))[0],
                                                 time.time(), True)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
 
     def run_agent(self, chat_key: str, trigger, tier_result, session: dict, proactive: bool = False):
@@ -808,7 +819,7 @@ class Orchestrator:
 
         max_rounds = max(1, int(cfg.get("api", {}).get("max_rounds") or 12))
         # ⭐ （S1）：**一轮的时间预算**。以前只有"轮次上限"，而一次模型调用最坏 180s、
-        #   一次失败发送最坏 20~40s ⇒ 用户实测 76~152 秒一轮、还常落到 noreply。
+        #   一次失败发送最坏 20~40s ⇒  76~152 秒一轮、还常落到 noreply。
         #   现在到点就不再发起新的模型调用，直接收口（`sent` 非空仍算 done）。
         _budget_ms = int(cfg.get("api", {}).get("round_budget_ms") or 45000)
         _t_deadline = time.time() + max(5.0, _budget_ms / 1000.0)
@@ -826,13 +837,14 @@ class Orchestrator:
             session["model"] = response.get("model") or session["model"]
             add_usage(session["usage"], response.get("usage"))
             # ⚠️ 不要在这里再 +1：add_usage() 内部已经 target["calls"] += 1（agent/llm.py:338）。
-            # （token 调研第 1 轮 C9）：这一行让 calls 长期虚高一倍
+            # 这一行让 calls 长期虚高一倍
             #    ⇒ usage_stats.json 的 "calls": 248 实际只有 ≈124 步，控制台"调用次数"看着是双倍。
             #    自检：scripts/whale_selftest.py 的「calls 单点来源」（连调两次 add_usage ⇒ calls==2，
             #    且本文件里不得再出现 usage["calls"] += 1）。
             try:
                 self.whale.note_call(session["model"], response.get("usage"))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             session["activity"] = ""
 
@@ -845,7 +857,8 @@ class Orchestrator:
                 try:
                     from agent import thought_trace as _tt2
                     _tt2.note(chat_key, "reasoning", think=str(_reason)[:400])
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
             assistant_entry = {"role": "assistant", "content": msg.get("content")}
             if msg.get("tool_calls"):
@@ -966,7 +979,8 @@ class Orchestrator:
         try:
             _cost = float(estimate_cost(session["usage"], session["model"])["cost"])
             self.stats["cost"] += _cost
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         # 持久化用量（累计保留 + 按周期重置）与运行明细
         # 三分口径：`fresh`＝未命中（全价）、`cached`＝缓存读（1/30 价）、`output`＝输出。
@@ -1110,7 +1124,7 @@ class Orchestrator:
     def _background_api(self) -> dict:
         """**后台任务**（记忆整理/摘要）用的模型档位。
 
-        ⛔ 口径更正（2026-09-29，降 Token 报告 P0-3）：`chat_completion(overrides=…)` 里的 `overrides`
+        ⛔ 口径更正（降 Token 报告 P0-3）：`chat_completion(overrides=…)` 里的 `overrides`
           是**整份 api 配置**（实现是 `api = overrides or effective_api()`），**不是"只覆盖模型"的增量**
           —— 传 `{"model": "x"}` 会直接报"Base URL 未配置"。所以这里必须**先取整份、再改 model**。
         配置了 `memory.consolidate_model` 就用便宜档；留空则与主模型一致（零行为变化）。
@@ -1221,9 +1235,11 @@ def _kill_watchdog(fast: bool = False):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 os.remove(wp)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass  # 清理型：静默合法
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if fast:
         return # 重启路径：慢枚举留给下一次启动/新看门狗，别挡住 spawn
@@ -1242,9 +1258,11 @@ def _kill_watchdog(fast: bool = False):
                         subprocess.run(["taskkill", "/F", "/PID", v],
                                        creationflags=0x08000000, timeout=10,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass  # 清理型：静默合法
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     # wmic 在新版 Windows（11 24H2 起）**已被移除**，上面那条会静默失败 ⇒ 再补一条 PowerShell 兜底
     # 
@@ -1260,9 +1278,11 @@ def _kill_watchdog(fast: bool = False):
                     subprocess.run(["taskkill", "/F", "/PID", tok],
                                    creationflags=0x08000000, timeout=10,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass  # 清理型：静默合法
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -1386,7 +1406,8 @@ def _version_issues() -> list:
             if r[0] == "wechatauto-replica":
                 continue
             issues.append("%s 版本偏旧（已装 %s，需 ≥ %s）" % (r[0], r[1] or "未安装", r[2]))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return issues
 
@@ -1513,6 +1534,47 @@ def _attach_wechat(cfg):
         if os.environ.get("WXAGENT_NO_WECHAT") == "1":
             raise RuntimeError("WXAGENT_NO_WECHAT（测试开关）")
         wc = WeChatAdapter(cfg)
+        # ⭐ 屏幕度量预热（接线）：趁"刚接上微信"时**现测一次**缩放倍率 + 窗口边框，
+        #   写进档案供后续"距右缘像素"落点算式用（`voice_strip` 等）。
+        #   · 为什么必须在启动时测：缩放/边框**随窗口所在显示器与 DPI 变**，
+        #     运行中每次用都现测一遍＝白花采样；启动一次、之后读档案即可。
+        #   · ⛔ **不碰用户的窗口、也不建界面**：
+        #     句柄用 `input_backend.find_main_window()`（**只查主窗句柄**，不构造 GUI）；
+        #     `measure_scale` 只读 `GetDpiForWindow`／`GetDpiForSystem`、
+        #     `measure_frame` 只读 `GetWindowRect`/`GetClientRect` ⇒ **不抓图、不显示、不置前**，
+        #     两条判据（不影响观看 / 不影响操作）都成立。
+        #   · 拿不到主窗句柄 ⇒ 传 0，退到系统级 DPI（照样有用，且不报错）。
+        #   · 整段 try 罩住：预热失败**绝不影响启动**（行为与接线前一致）。
+        try:
+            from agent import display_metrics as _dm
+            _hw = 0
+            try:
+                from agent import input_backend as _ib
+                _hw = int(_ib.find_main_window() or 0)
+            except Exception:
+                _hw = 0
+            _dm.warmup(_hw)
+            # ★ 落点也实测一遍（有独立窗就量、量到就记住）：
+            #   落点是"距客户区右缘的逻辑像素"折算出来的，微信版本 / 聊天字号一变就会偏
+            #   ⇒ 开机先量一次，别等第一次发送才发现偏。没有独立窗 ⇒ 如实跳过（不编造），
+            #   真正的补测会在第一次抓得到帧时自动发生（`_remember_anchor_from_client`）。
+            try:
+                from agent import voice_strip as _vs
+                from agent import wechat_windows as _ww
+                _pop = 0
+                for _w in (_ww.list_wechat_windows() or []):
+                    _h2 = int((_w or {}).get("hwnd") or 0)
+                    if _h2 and _h2 != _hw:
+                        _pop = _h2
+                        break
+                if _pop:
+                    log.info("落点实测（开机）：%s", _vs.measure_landing_points(_pop))
+                else:
+                    log.info("落点实测（开机）：当前没有独立窗 ⇒ 跳过；第一次抓到帧时会自动量并记住")
+            except Exception as _e2:
+                log.debug("落点实测跳过（不影响启动）：%s", str(_e2)[:80])
+        except Exception as _e:
+            log.debug("屏幕度量预热跳过（不影响启动）：%s", str(_e)[:80])
         _ATTACH["err"] = ""
         _ATTACH["diag"] = None
         return wc
@@ -1614,7 +1676,8 @@ def _wechat_watchdog(get_wc):
                 subprocess.run(["taskkill", "/F", "/IM", "Weixin.exe"],
                                creationflags=0x08000000, timeout=15,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             time.sleep(2)
             try:
@@ -1662,7 +1725,8 @@ def persona_llm_score(card, name=""):
                     _ls.append(_seg[:160])
             if _ls:
                 _wn = "\n".join("· " + l for l in _ls[:8])
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         prompt = (
             "你是角色设定严格评审员。按细则给分（细则如下），每维 0~100.00（精确 0.01）。\n"
@@ -1752,7 +1816,8 @@ def _collect_targets(wc):
             _why = ("（群列表这次**没读到**：%s）" % _read_failed) if _read_failed else ""
             log.warning("⚠️ 监听目标 0 个 ⇒ **群里 @ 它也不会回**：去控制台「微信」面板勾选要听的群，"
                         "或把「群名白名单」留空＝监听所有群。%s", _why)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         _p2 = [] if _mode == "off" else (wc.list_private_targets() or [])
@@ -1783,7 +1848,8 @@ def _tool_llm_count(usage, system=""):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 d = _json.load(f)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             d = {}
         if not d.get("base_cost"):
             # 首次记账（本进程启动后第一条）→ 基准=这条之前的值（0）
@@ -1795,7 +1861,8 @@ def _tool_llm_count(usage, system=""):
         d["last"] = time.strftime("%Y-%m-%d %H:%M:%S")
         with open(p, "w", encoding="utf-8") as f:
             _json.dump(d, f, ensure_ascii=False, indent=1)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -1838,7 +1905,8 @@ def persona_scores_fn():
             import json as _json
             with open(os.path.join(ROOT, "data", "persona_ratings.json"), "r", encoding="utf-8") as f:
                 ratings = _json.load(f)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             ratings = {}
         rows = []
         for k, c in PERSONAS.items():
@@ -1870,7 +1938,8 @@ def persona_rate_fn(key, score, note=""):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 ratings = _json.load(f)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             ratings = {}
         try:
             s = int(score) if score not in (None, "") else None
@@ -1919,12 +1988,14 @@ def community_export_fn(kind="holyshits"):
                         for line in f:
                             try:
                                 j = json.loads(line)
-                            except Exception:
+                            except Exception as _e:
+                                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                                 continue
                             if j.get("feedbacks"):
                                 rows.append({"ts": j.get("ts"), "chat": j.get("chat_name"),
                                              "feedbacks": j.get("feedbacks")})
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(rows, f, ensure_ascii=False, indent=1)
@@ -1934,7 +2005,8 @@ def community_export_fn(kind="holyshits"):
             try:
                 with open(os.path.join(ROOT, "data", "persona_ratings.json"), "r", encoding="utf-8") as f:
                     ratings = json.load(f)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 ratings = {}
             try:
                 from scripts import persona_check
@@ -1945,7 +2017,8 @@ def community_export_fn(kind="holyshits"):
                     u = ratings.get(k) or {}
                     rows.append({"key": k, "name": c.get("name") or k, "sys": r["score"],
                                  "user": u.get("score"), "note": u.get("note", "")})
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 rows = []
             path = os.path.join(out_dir, "persona_ratings-%s.json" % ts)
             with open(path, "w", encoding="utf-8") as f:
@@ -1966,7 +2039,8 @@ def community_export_fn(kind="holyshits"):
                         export_chats[str(d.get("chat_key") or os.path.basename(fp))] = d.get("messages")
                 except Exception:
                     continue
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         with open(path, "w", encoding="utf-8") as f:
             json.dump(export_chats, f, ensure_ascii=False, indent=1)
@@ -2061,7 +2135,8 @@ def persona_score_custom_fn(text, llm=False):
                 try:
                     with open(_rp, "r", encoding="utf-8") as f:
                         _rts = _j2.load(f)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     _rts = {}
                 _cur = dict(_rts.get("__custom__") or {})
                 _cur["model"] = score
@@ -2069,7 +2144,8 @@ def persona_score_custom_fn(text, llm=False):
                 _rts["__custom__"] = _cur
                 with open(_rp, "w", encoding="utf-8") as f:
                     _j2.dump(_rts, f, ensure_ascii=False, indent=1)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             return {"ok": True, "score": score, "reason": reason,
                     "dims": sc["dims"], "via": "llm"}
@@ -2111,7 +2187,8 @@ def persona_ai_enrich_fn(name, text="", rounds=1):
             _lines = _lines[:12]
             if _lines:
                 web_notes = "\n".join("· " + l for l in _lines)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         web_block = ("\n【真实资料（联网检索结果原文摘录，作为唯一事实来源）】\n"
                      + (web_notes or "（未检索到该角色第一手资料——补足时严禁编造台词/事迹，只能按口吻写并标注（拟））")
@@ -2184,8 +2261,25 @@ def persona_ai_enrich_fn(name, text="", rounds=1):
         return {"ok": False, "error": str(e)}
 
 
+def _popup_help():
+    """「开独立窗失败，请你帮一把」（第 225 项收尾）。**只读**：把后端记的那条拿出来，没有就是空。"""
+    try:
+        from agent import wechat_windows as _ww
+        return _ww.popup_help_now()
+    except Exception as e:  # noqa: BLE001
+        return {}
+
+def _env_hint():
+    """运行环境提示（第 150 项）。**只读**：不改设置、不动微信；出错 ⇒ 返回"没测到"，不抛。"""
+    try:
+        from agent import env_hint as _eh
+        return _eh.check()
+    except Exception as e:  # noqa: BLE001
+        return {"level": "partial", "ok": False, "title": "运行环境",
+                "text": "环境没测到（%s）" % str(e)[:60], "items": [], "detail": {}}
+
 def main():
-    # 注意：不要在 pythonw 下调用 os.system("chcp")——会弹出控制台窗口（闪窗）。
+    # 注意：不要在 pythonw 下调用 os.system——会弹出控制台窗口（闪窗）。
     # 代码已用 UTF-8 模式运行（-X utf8 / 编码头），无需 chcp。
 
     # ── 单实例锁：防止旧进程/多实例并存（根治「旧版本界面/接口 not found」）──
@@ -2228,7 +2322,8 @@ def main():
         _old = 0.0
         try:
             _old = time.time() - os.path.getmtime(_bot_lock_path)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             _old = 0.0
         _alive_port = False
         try:
@@ -2262,7 +2357,7 @@ def main():
     if _lock_res.note:
         log.warning("单实例锁：%s", _lock_res.note)
 
-    # ── 磁盘收尾：清系统临时目录里我们自己的残留 + 收 TTS 产物（用户 问
+    # ── 磁盘收尾：清系统临时目录里我们自己的残留 + 收 TTS 产物（
     #    「下载下来不占用户存储空间吗？有没有做好删除措施」后落地；只清 `pm-` 前缀，
     #    十分钟内的文件一律不动，删了几个/回收多少 MB 都记日志）。失败不影响启动。──
     try:
@@ -2271,6 +2366,14 @@ def main():
         log.info(_hk.brief(_rep))
     except Exception as _e:
         log.warning("磁盘收尾跳过（不影响启动）：%s", str(_e)[:80])
+    # ── 内存水位日志：每 15 min 记一行 "RSS + 已知计数器"（
+    #    「运存涨了但看不出是哪块」的解法：事后翻日志就能看出哪个计数在跟内存一起涨。
+    #    只**观测**、不清理 —— 一个"看到就删"的水位线会分不清缓存与用户数据。失败不影响启动。──
+    try:
+        from agent import memwatch as _mw
+        _mw.start()
+    except Exception as _e:
+        log.warning("内存水位日志跳过（不影响启动）：%s", str(_e)[:80])
     atexit.register(_bot_lock.release)
 
     # 启动自动体检：版本不匹配（微信/适配层/依赖）→ 弹窗询问是否立即修正
@@ -2284,7 +2387,8 @@ def main():
             _f.write(str(os.getpid()))
         import atexit
         atexit.register(lambda: os.path.exists(_pid_file) and os.remove(_pid_file))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
     cfg = get_config()
@@ -2310,7 +2414,8 @@ def main():
     try:
         _wv = wechat_version_info()
         log.info("微信版本：%s", _wv["detail"])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
     _groups_read_failed = ""
@@ -2358,7 +2463,8 @@ def main():
                     "或把「群名白名单」留空＝监听所有群。%s", _tz_hint)
         try:
             _ATTACH["targets_zero"] = True
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     # 私聊目标：
     # 群那份逻辑一个字不动，这里是**追加**；档位见 config 的 wechat.private_chat。
@@ -2478,9 +2584,11 @@ def main():
                                 t = int(row.get("tokens") or 0)
                                 if c > 0 or t > 0:
                                     costs.append((c, t))
-                            except Exception:
+                            except Exception as _e:
+                                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                                 pass
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
             recent = costs[-5:]
             st["recent5_cost"] = round(sum(c[0] for c in recent), 4)
@@ -2488,7 +2596,8 @@ def main():
             st["avg_cost"] = round(sum(c[0] for c in costs) / len(costs), 4) if costs else 0.0
             st["sessions_n"] = len(costs)
             st["extra_cost"] = round(max(0.0, st.get("cost", 0.0) - sum(c[0] for c in costs)), 4)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             st.setdefault("recent5_cost", 0.0)
             st.setdefault("avg_cost", 0.0)
             st.setdefault("extra_cost", 0.0)
@@ -2499,7 +2608,8 @@ def main():
             try:
                 with open(os.path.join(ROOT, "data", "tool_usage.json"), "r", encoding="utf-8") as f:
                     tu = _json.load(f)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 tu = {}
             total_cost = float(tu.get("cost") or 0)
             total_tok = int(tu.get("tokens") or 0)
@@ -2509,7 +2619,8 @@ def main():
             st["extra_now_tokens"] = max(0, total_tok - base_tok)
             st["extra_total_cost"] = round(total_cost, 4)
             st["extra_total_tokens"] = total_tok
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return {
             "paused": orch.paused,
@@ -2528,6 +2639,13 @@ def main():
             "running_chats": sorted(orch.running_chats),
             "stats": st,
             "usage": orch.stats_store.snapshot(),
+            # 运行环境提示（第 150 项）：**能真读到的那几项**（缩放/OCR 就绪）现读，
+            # 主题/字号读不到就如实标"没测到"（**不许当成达标**）。
+            # ⛔ 只读：不改任何设置、不动微信；提示"不改也能用"。
+            "env_hint": _env_hint(),
+            # 「开独立窗失败，请你帮一把」（第 225 项收尾）：开独立窗是唯一的发送入口，
+            # 卡住＝机器人什么都不发了 ⇒ 必须让用户**看得见**（前端弹一次窗）。
+            "popup_help": _popup_help(),
             "tools": _tools_status(),
             # （用户看到「启动于 21:13」其实是**状态刷新时间**，被当成进程启动时间误解）：
             # 用模块导入时记下的真启动时刻。
@@ -2654,7 +2772,8 @@ def main():
 
                 ref = CB(cb)
                 u.EnumWindows(ref, 0)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 overlays["n"] = 0
             add("适配·系统叠加层", "warn" if overlays["n"] else "ok",
                 ("发现 %d 个输入叠加层（手写画布/输入体验）" % overlays["n"]) if overlays["n"] else "无（正常）",
@@ -2723,7 +2842,8 @@ def main():
                     try:
                         if wechat.latest_seq(g["wxid"]) > wechat.latest_seq(best[0]):
                             best = cand
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass
             if best is None:
                 return {"ok": False, "error": "这些群里暂时没有群友的消息记录（让对方在群里说句话即可，不需要存档）"}
@@ -2802,7 +2922,8 @@ def main():
                     try:
                         if ":" in ck:
                             gname = wechat.group_name(ck.split(":", 1)[1])
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass
                     chats.append({"chat_key": ck, "name": str(gname), "count": len(mems)})
                 members = []
@@ -2842,13 +2963,15 @@ def main():
                     for fp in _glob.glob(os.path.join(ROOT, "data", "sessions", "*.jsonl")):
                         try:
                             os.remove(fp); removed += 1
-                        except Exception:
+                        except Exception as _e:
+                            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                             pass
                     try:
                         _cl = os.path.join(ROOT, "data", "session_log.jsonl")
                         if os.path.exists(_cl):
                             os.remove(_cl); removed += 1
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass
                     if clear_err:
                         return {"ok": False, "error": "部分印象档读不动、没敢删：%s" % clear_err,
@@ -2864,13 +2987,15 @@ def main():
                 for fp in _glob.glob(os.path.join(ROOT, "data", "sessions", "*.jsonl")):
                     try:
                         os.remove(fp); removed += 1
-                    except Exception:
+                    except Exception as _e:
+                        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                         pass
                 try:
                     _cl = os.path.join(ROOT, "data", "session_log.jsonl")
                     if os.path.exists(_cl):
                         os.remove(_cl); removed += 1
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
                 return {"ok": True, "note": "已清除 %d 个会话日志文件" % removed}
             if action == "delete":
@@ -2926,7 +3051,8 @@ def main():
                             txt = str(n["text"])[:60]
                             recent.append((nm, txt))
                             by_group.setdefault(ck, []).append(nm)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 recent, by_group = [], {}
             if not recent:
                 log.info("本次无可总结的对话，跳过关机印象")
@@ -2974,7 +3100,8 @@ def main():
         try:
             with open(os.path.join(ROOT, "data", "stopped.flag"), "w", encoding="utf-8") as f:
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         try:
             _kill_watchdog()
@@ -2986,7 +3113,8 @@ def main():
             _p = os.path.join(ROOT, "data", "bot.pid")
             if os.path.exists(_p):
                 os.remove(_p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         # 关机总结印象（可选）：最多等 5 秒——绝不阻塞"停止"；被强杀则本次跳过
         try:
@@ -3007,7 +3135,7 @@ def main():
         #   这个再起一个；之前杀掉就没了，现在更是杀都杀不掉」）——老顺序是：
         #     先 `_spawn_watchdog()`（新看门狗**立刻** Popen 新 bot）→ 再**同步** `orch.shutdown()`
         #     （下面那句注释自己写着"微信登出可能一直阻塞"）→ 最后才装 1.5 秒强退 Timer。两个后果：
-        #     ① `orch.shutdown()` 一阻塞，**那行 Timer 永远执行不到** ⇒ 本进程永不退出（"关不掉自己"）；
+        #     ① `orch.shutdown()` 一阻塞，**那行 Timer 永远执行不到** ⇒ 本进程永不退出；
         #        再从任务管理器杀掉，5 秒内被旧看门狗拉起来 ⇒ 看着就是"杀都杀不掉"。
         #     ② 新 bot 起来时旧实例还活着、端口与**单实例锁**都没放开 ⇒ 新实例在启动闸门处 `sys.exit(3)`，
         #        看门狗每 5 秒重试一次、次次撞锁 ⇒ 永远看不到"新的那个"。
@@ -3024,7 +3152,8 @@ def main():
                     _p = os.path.join(ROOT, "data", _f)
                     if os.path.exists(_p):
                         os.remove(_p)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
             os._exit(0)
 
@@ -3038,7 +3167,8 @@ def main():
             if os.path.exists(_sf):
                 os.remove(_sf)
                 log.info("重启：已清掉 data/stopped.flag（重启＝要它跑）")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         try:
             _kill_watchdog(fast=True) # ② 只做快杀：按 pid 文件结束旧看门狗
@@ -3068,7 +3198,8 @@ def main():
                 with open(_wp, "r", encoding="utf-8") as _f:
                     _m = _re.search(r"\d+", _f.read() or "")
                     _wpid = int(_m.group(0)) if _m else 0
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _wpid = 0
             if not _wpid:
                 log.error("新看门狗没接上（data/watchdog.pid 没有 pid）⇒ 直接拉起机器人本体兜底")
@@ -3094,7 +3225,8 @@ def main():
 
     try:
         _LLM_COUNT_HOOK[0] = _tool_llm_count
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     webui = WebUI(status_provider, log_buffer, test_api_fn=test_api_fn, balance_fn=balance_fn,
                   # 保存配置后就地重算监听目标（否则改了群勾选只有重启才生效，概览也一直是老的）
@@ -3208,7 +3340,12 @@ def main():
             #   循环里有一段专门把"水位 0"对齐到现有最新（或这一轮跳过这个群）。
             _ok0, _seq0, _why0 = (wechat_box[0] or wechat).latest_seq_ex(g["wxid"])
             if _ok0:
-                wm.set(_key0, _seq0)
+                # ⭐ **起点取 `latest - 1`（多读一条防漏）**：
+                #   取 `latest` 时，"启动瞬间正好落库的最后一条"可能**恰好被跳过**（那一秒的竞态）；
+                #   往回一条 ⇒ 至少把那条重读一遍。**代价可控**：多读的那条命中的是同一段历史，
+                #   而"是否该回它"由下面那层**台账核对**决定（**回过就放掉**，见监听循环里的 prefilter）
+                #   —— 所以多读一条**不会造成重复回复**。
+                wm.set(_key0, max(0, int(_seq0) - 1))
             else:
                 log.warning("群[%s] 的「最新序号」读不出来 ⇒ **不给它定起点**"
                             "（绝不写 0＝绝不从最旧历史重放），下一轮再试：%s",
@@ -3229,7 +3366,7 @@ def main():
                 log.warning("兼容性自动体检跳过（不影响运行）：%s", _e)
             # 环境自适应：开机记一版"本机档案"（**只读探测** + 落盘，供「这台机器学到了什么」读）
             # ⛔ 不写这一段的话，`data/env_profile.json` 永远是空的、那条检验器只会显示"未探测"
-            #    （2026-09-29 发现：`record_probe` 当时**没有任何生产调用点**）。best-effort、不阻塞。
+            #    （发现：`record_probe` 当时**没有任何生产调用点**）。best-effort、不阻塞。
             try:
                 from agent import env_profile as _epm
                 _st = _epm.record_probe()
@@ -3249,7 +3386,8 @@ def main():
             if _noww - float(_rd_last.get(wxid, 0) or 0) > 60:
                 _rd_last[wxid] = _noww
                 log.warning(msg)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     def _stop(signum=None, frame=None):
@@ -3388,7 +3526,8 @@ def main():
                             else:
                                 _warn_rl(wxid, "暂停期间读不到群[%s]的最新序号 ⇒ 水位不动（不写 0）：%s"
                                          % (g["name"], str(_whyp)[:100]))
-                        except Exception:
+                        except Exception as _e:
+                            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                             pass
                     continue
                 # ⛔ **水位 0 ＝ 从最旧历史重放** ——
@@ -3465,6 +3604,20 @@ def main():
                     #   等它超过回声窗就被当成"别人的话"⇒ 机器人回自己（现场就是这么吵起来的）。
                     if nm.get("skip"):
                         return {"dropped": nm.get("skip")}
+                    # ⭐ **台账核对**：这条如果**是我们自己刚发出去的** ⇒ **放掉**（不回它），
+                    #   但**算已处理**（`{"dropped": ...}` ⇒ 水位照推，否则同一行会被反复重读）。
+                    #   ⛔ 为什么需要它：启动水位现在取 `latest - 1`（**多读一条防漏**）——
+                    #     多读的那条如果恰好是我方发出的，没有这层核对就会**回自己**（"回声"事故）。
+                    #   ⛔ 复用**现成台账**（`already_sent_recently`，窗口 120 秒，发送链本来就在维护它），
+                    #     **不新加任何机制** —— 少就是多。
+                    try:
+                        _self_txt = str(nm.get("text") or "")
+                        if _self_txt and wechat.already_sent_recently(_chat_key, _self_txt):
+                            log.info("群[%s]这条是**我们自己刚发过的**（台账命中）⇒ 放掉不回复，水位照推",
+                                     _g["name"])
+                            return {"dropped": "sent-by-us"}
+                    except Exception as e:
+                        log.debug("台账核对异常（按「没回过」处理，宁可不漏）：%s", e)
                     # ── 屏蔽存档的会话（第 10 条）：不落库、不触发、不进记忆；水位照推 ──
                     if archive_filter.is_blocked(chat_key=_chat_key, group_name=_g["name"]):
                         return {"dropped": "archive-block"}
@@ -3528,7 +3681,7 @@ def main():
                     #   **"我们自己拍出去"的拍一拍回执也是 `[拍一拍]`**（解析侧抠不出名字），
                     #   原来这里不分方向、一律 `orch.on_incoming` ⇒ **回执被当成"别人拍我"喂给模型**
                     #   ⇒ 模型看不到主语，只能反问「谁拍我」（session 里实锤：
-                    #   `trigger="[拍一拍]"` → `send_message("谁拍我")`）。⇒ 自己的回执只落库，不喂模型、不回拍。
+                    #   `trigger="[拍一拍]"` → `send_message`）。⇒ 自己的回执只落库，不喂模型、不回拍。
                     if str(nm.get("text") or "").startswith("[拍一拍]"):
                         from agent.wechat import poke_event_is_ours as _is_ours
                         if _is_ours(nm, str(getattr(wechat, "_self_wxid", "") or "")):
@@ -3609,7 +3762,8 @@ def _start_timer_holiday_loop(orch, get_wc, interval_s: float = 20.0):
                     t.daemon = True
                     state["timer"] = t
                     t.start()
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
 
     t0 = threading.Timer(3.0, tick)
@@ -3643,7 +3797,8 @@ def _auto_pythonw():
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
             sys.exit(0)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 

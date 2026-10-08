@@ -17,6 +17,8 @@ import os
 import re
 import sys
 
+import logging
+log = logging.getLogger("persona-morph")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -89,7 +91,8 @@ FB.FEEDBACK_FILE = _tmp
 try:
     try:
         os.remove(_tmp)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
     _real_cfg = FB._cfg
     _real_lim = dict(FB.LIMIT)
@@ -186,7 +189,8 @@ finally:
     FB.LIMIT.update(_real_lim)
     try:
         os.remove(_tmp)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass  # 清理型：静默合法
 
 print("── D. 个人信息不进代码/包 ──")
@@ -238,7 +242,8 @@ try:
     for _p in (_tmp3, _rej3):
         try:
             os.remove(_p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
     FB.FEEDBACK_FILE = _tmp3
     FB.REJECT_FILE = _rej3
@@ -266,7 +271,8 @@ finally:
     for _p in (_tmp3, _rej3):
         try:
             os.remove(_p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
 
 print("── F. 凭据不原样回到浏览器──")
@@ -402,6 +408,8 @@ print("\n── I. 附件与联系邮箱──")
 
 import base64 as _b64 # noqa: E402
 import shutil as _shutil # noqa: E402
+import logging
+
 
 _ui2 = src("assets/console/index.html")
 ok("界面有「图片/文件」这一行与选择按钮",
@@ -428,7 +436,8 @@ try:
     for _p in (_tmp4,):
         try:
             os.remove(_p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
     _shutil.rmtree(_mdir, ignore_errors=True)
     FB.MEDIA_DIR = _mdir
@@ -559,7 +568,8 @@ finally:
     for _p in (_tmp4,):
         try:
             os.remove(_p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass  # 清理型：静默合法
     _shutil.rmtree(_mdir, ignore_errors=True)
 
@@ -601,7 +611,7 @@ ok("K4 自动带上这件事是**可关**的（配置键 `feedback.attach_compat
    _cfgsrc.find('"attach_compat": True') >= 0, "")
 
 print("\n── L. 出厂自带接收端（用户零配置也能送达；用户自己的配置优先）──")
-# 起因（2026-09-28 的真反馈）：早先几版把接收端**写进代码/示例**随包发布 ⇒ 用户点一下就能发到作者；
+# 起因（的真反馈）：早先几版把接收端**写进代码/示例**随包发布 ⇒ 用户点一下就能发到作者；
 # 后来因为"仓库公开、key 视为已泄露"被清空 ⇒ 用户侧没了通道，反馈只落他自己机器上、作者收不到。
 # 现在的口径：接收端放**独立数据文件**（`assets/feedback_endpoint.json`，**不进仓库**、出包时注入），
 # 用户的 config.json 优先、空则用它兜底。这一节把这条链钉住。

@@ -44,6 +44,41 @@ _RGBA_RE = re.compile(
 )
 
 
+def bevel(base: QColor, k_up: float = 0.16, k_dn: float = 0.12,
+          keep_alpha: bool = False) -> str:
+    """一块"底" → **浮雕渐变**（QSS `qlineargradient`，上亮下暗）。
+
+    立体感的公共实现：**所有"凸起面"**（按钮 / 顶栏胶囊 / 状态徽章 / 导航选中项 /
+    侧栏状态卡）都走它。这样"光从上方来"在整个界面是**同一支规则** ——
+    换个控件就换一套明暗关系的话，用户会读成"两种材质"。
+
+    `keep_alpha=True` 时保留原色的 alpha（徽章那类底色是带透明度的，直接变实心会跳色）。
+    """
+    if keep_alpha:
+        a = base.alpha()
+        _rgb = QColor(base.red(), base.green(), base.blue())
+        hi = rgba(mix(_rgb, QColor(255, 255, 255), k_up), a)
+        lo = rgba(mix(_rgb, QColor(0, 0, 0), k_dn), a)
+    else:
+        hi = mix(base, QColor(255, 255, 255), k_up)
+        lo = mix(base, QColor(0, 0, 0), k_dn)
+    return ("qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %s,stop:1 %s)"
+            % (qss(hi), qss(lo)))
+
+
+def bevel_edges(base: QColor, k_up: float = 0.45, k_dn: float = 0.32,
+                floor: int = 0) -> tuple[str, str]:
+    """凸起面的**顶受光边 / 底背光边**（返回两个 QSS 颜色串，供 `border-top` / `border-bottom`）。
+
+    四边同一条线在平面设计里是"贴纸"；顶边提亮、底边压暗才有"被光照到"的厚度。
+    `floor` 抬边框的最低不透明度 —— 半透底（徽章）上，边框跟着半透会看不见棱。
+    """
+    a = max(int(floor), base.alpha())
+    _rgb = QColor(base.red(), base.green(), base.blue())
+    return (qss(rgba(mix(_rgb, QColor(255, 255, 255), k_up), a)),
+            qss(rgba(mix(_rgb, QColor(0, 0, 0), k_dn), a)))
+
+
 def _c(hexstr: str) -> QColor:
     """`#RRGGBB` / `#AARRGGBB` / `rgba(...)` 统一 QColor。
 
@@ -120,7 +155,7 @@ def _qssify_tokens() -> None:
     直接插进 QSS —— 逐点包一层 `qss()` 既容易漏、又会把调用点淹掉。
 
     `_c()` 已经能解析全部三种来源，这里只是把结果固化回字符串。所有引用
-    `t.xxx` 的地方自动拿到合法值；走 `t.q('xxx')` 的路径本来就回 QColor，不受影响。
+    `t.xxx` 的地方自动拿到合法值；走 `t.q` 的路径本来就回 QColor，不受影响。
     """
     for theme in (WHALE, LIGHT, DARK):
         for f in theme.__dataclass_fields__:
@@ -234,17 +269,41 @@ WHALE = Tokens(
     # 对齐 web 真值 —— 画卷（ocean1.jpg+tint）透出后，
     # 玻璃卡必须用 web 的浅蓝调才读得对（assets/console/index.html L35 --card / L36 --bd）。
     # 旧值 rgba(255,255,255,.055) 在纯深底上够用，垫在实拍海浪上会发灰。
-    # I：波浪动效砍掉后卡片仍偏透→ .10 → .14
-    # R9：.14 在实拍海浪上「和底混一起」⇒ 改**深色毛玻璃**：
-    #    底色 66% 不透明 —— 透一点光、又不和底混；白字对比也保得住。
-    card="rgba(10,27,46,0.66)",
+    # I：波浪动效砍掉后卡片仍偏透 → .10 → .14。
+    # ⚠️ 「太透」与「太黑」是这条 token 的两个失败方向，别只防一头：
+    #   · 透到 .10 的教训是**和底混一起**（卡片边缘消失，读不出"这是一块卡"）；
+    #   · 为治它改成**近黑**基色（#0A1B2E / 66%）又走到另一头 —— 卡片成了一块
+    #     比背景更暗的实心黑板，与 web 的"半透明海面"完全两种东西。
+    #   正解是**保住不透明度、换掉近黑基色**：α 0.72（压得住，边界清楚），
+    #   基色取偏亮的深蓝 ⇒ 主区底图（实测 #082038）上显示 ≈ #15334F。
+    #   ⚠️ **不要把这个值往浅蓝调**：卡片上排的是 `tx` / `tx2` / `tx3` 三档**浅色**文字，
+    #      底一浅它们全糊（实测取到 #446A85 时，72% 透明的 `tx3` 只剩 2.6:1）。
+    #      web 侧的 `--card: rgba(150,206,255,.10)` 叠在海浪上也只到 #163149 ——
+    #      卡片本来就是深的，浅蓝只出现在**顶栏**与**侧栏卡片**（那两处单独取色）。
+    card="rgba(26,58,88,0.72)",
     bd="rgba(170,215,255,0.26)", # web --bd:rgba(170,215,255,.26)
     tx="#E8F3FF",
-    tx2="rgba(200,224,245,0.78)",
-    tx3="rgba(169,209,236,0.72)",
+    # web --tx2 是**实色** `#A9D1EC`（assets/console/index.html L36，不在三级文字注释
+    # 那一段里）。此前这里写的是 `rgba(200,224,245,0.78)` —— 与 web 真值**既不同色
+    # 也不同透明度**：半透明次级文字叠在深蓝卡片上会再淡一层，组标题 / 组锚点条
+    # 这类"靠 tx2 撑层级"的元素在 whale 下糊成一片（light/dark 的 tx2 是实色，所以
+    # 只有 whale 出这个现象）。⇒ 直接取 web 值。
+    tx2="#A9D1EC",
+    # ★ 注意 tx2 与 tx3 的**关系**，不要只看各自是否为合法色值：
+    #   tx2 已按 web 真值改成**实色** `#A9D1EC`，若 tx3 仍是同色相的
+    #   `rgba(169,209,236,.72)`，两个动作叠起来等于"tx3 与 tx2 完全同色"
+    #   （`_qssify_tokens` 把 alpha 固化后二者都是 #a9d1ec）⇒ 三级文字的层级当场塌掉：
+    #   `desc()` 走 tx3、组标题走 tx2，用户看到的是一模一样的一行灰蓝字。
+    #   实测比值：tx3 压卡 = 7.27（与 tx2 逐位相同）。
+    #   ⇒ 保住"三档文字必须拉开"这条设计意图，对 tx3 加一档**实色**降级，
+    #     而不是继续用 alpha（alpha 在深底上只会更淡，方向反了）。
+    tx3="#8FB4D0",
     blue="#6FCFFF",
     blue2="#3FA9E8",
-    blue_soft="rgba(111,207,255,0.14)",
+    # web whale `--blue-soft:rgba(63,168,240,.15)`（L32）—— 取 web 值。
+    # 此前是 `rgba(111,207,255,0.14)`：色相偏青、透明度偏低，作为"浅蓝底"用在
+    # 组锚点条 / chips 这类 chip 上是另一种气质（web 那个更沉、更贴底）。
+    blue_soft="rgba(63,168,240,.15)",
     blue_line="rgba(120,190,255,0.32)", # web --blue-line（默认深色主题）
     ok="#5FE0A8",
     warn="#FFC773",
@@ -330,8 +389,16 @@ DARK = Tokens(
     card="#101113",
     bd="#1D1F23",
     tx="#F7F8F8",
-    tx2="#8A8F98",
-    tx3="#5A5E66",
+    # ⛔ 这两档**刻意不照抄 web 真值**（web: `--tx2:#8A8F98` / `--tx3:#62666D`）：
+    #    web 自己的 tx3 压卡底只有 3.28，低于 WCAG 正文门槛 4.5
+    #    ⇒ 落在真实使用中就是"黑底灰字读不出来"。
+    #    light 侧早就按同一口径修过（`#8A8D91` → `#5F6368`，6.05），dark 侧此前
+    #    漏了（`#5A5E66` = 2.90）—— 同一件事写在两处、只改了白底那一边。
+    #    ⇒ 补上深色侧：tx3 = `#9BA0A8`（压卡 7.24），tx2 = `#A9AEB6`（压卡 8.74），
+    #      三级"tx > tx2 > tx3"的层级仍然成立（17.76 > 8.74 > 7.24）。
+    #    ⚠️ 若日后要回退到 web 原值，须知那两个值是**故意**低于 4.5 的，别当 bug 修回去。
+    tx2="#A9AEB6",
+    tx3="#9BA0A8",
     blue="#8B93FF",
     blue2="#6E78E8",
     blue_soft="rgba(139,147,255,0.12)",
@@ -556,17 +623,19 @@ def ensure_fonts() -> tuple[str, str, str]:
 
 #: 浮层（弹窗 / 菜单 / 盖在正文之上的卡片）的**实心底色**（玻璃主题用）。
 #:
-#: 为什么要有这个函数：玻璃主题（whale）下 `t.card` 是 `rgba(10,27,46,0.66)` —— **34% 透**。
+#: 为什么要有这个函数：玻璃主题（whale）下 `t.card` 是 `rgba(26,58,88,0.72)` —— **28% 透**。
 #: 页面内的卡片透出来是设计（底下是海面）；但**浮在正文之上的浮层**透出来，就是把下面的字
-#: 叠进弹窗里，观感就是「发虚、看不清」（用户实测截图：引导弹窗半透 + 字发虚）。
-#: ⇒ 浮层的底色必须**实心**：玻璃主题固定用海底实色 `#0E2136`，其余主题照旧 `t.card`。
+#: 叠进弹窗里，观感就是「发虚、看不清」。
+#: ⇒ 浮层的底色必须**实心**：玻璃主题固定用海底实色 `#16334F`，其余主题照旧 `t.card`。
 #: ⚠️ 这个口径**只此一处**：`confirm._apply_shell` 与 `panels_custom` 的一处各自手抄过同一句话，
 #:    结果 `onboarding` 那份漏抄了 —— 浮层就它一个还透着。所以收敛到这里，别再手抄。
-_SURFACE_SOLID_GLASS = "#0E2136"
+#: ⚠️ 这个实色与 `t.card` 是**同一支调子**：改 `card` 基色时必须同步改它，
+#:    否则浮层会比它浮出来的那张卡还黑（层级看着是"沉下去"）。
+_SURFACE_SOLID_GLASS = "#16334F"
 
 
 def surface_bg(t: Tokens) -> str:
-    """**浮层**底色：玻璃主题给实色（`#0E2136`），其余主题照旧 `t.card`。
+    """**浮层**底色：玻璃主题给实色（`#16334F`），其余主题照旧 `t.card`。
 
     判据是"这块底**盖在别的内容之上**吗"：盖着就要实心（弹窗、菜单、下拉列表、浮层卡片）；
     页面里平铺的卡片不算，那些照旧用 `t.card`（玻璃是设计）。
@@ -607,15 +676,27 @@ def field_qss(t: Tokens, shape: str = "line", accent: str = "", radius: int = No
         r = int(radius)
     pad = "4px 8px" if shape == "area" else "0 10px"
     focus = t.err if str(accent) == "err" else t.blue
+    # ── 立体感：槽要**凹进去**（与卡片/按钮的"凸起"正好相反）──
+    # 光的方向不变，受光面反过来即可：凸起是"上亮下暗"，凹陷就是"上暗下亮"。
+    #   底：垂直渐变 stop:0 = 更透（暗）→ stop:1 = 更实（亮）
+    #   边：顶边用半透明黑（内上沿的投影）、底边用亮色（内下沿的反光）
+    # ⚠️ 聚焦态会让位给强调色全边框（那一下"我在哪"比内凹更重要），
+    #    所以内凹只在常态/悬停成立 —— 这是有意的取舍。
+    _bg = ("qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %s,stop:1 %s)"
+           % (qss(rgba(t.q("tx"), 12)), qss(rgba(t.q("tx"), 30))))
+    _bd_up = qss(rgba(QColor(0, 0, 0), 72)) # 顶边：暗
+    _bd_dn = qss(rgba(t.q("tx"), 58)) # 底边：亮
     return (
         f"QLineEdit,QComboBox,QPlainTextEdit,QTextEdit{{"
-        f"background:{qss(rgba(t.q('tx'), 20))};color:{t.tx};"
-        f"border:1px solid {qss(rgba(t.q('tx'), 34))};border-radius:{r}px;padding:{pad};"
+        f"background:{_bg};color:{t.tx};"
+        f"border:1px solid {qss(rgba(t.q('tx'), 34))};"
+        f"border-top:1px solid {_bd_up};border-bottom:1px solid {_bd_dn};"
+        f"border-radius:{r}px;padding:{pad};"
         f"selection-background-color:{t.blue_soft};selection-color:{t.tx};}}"
         f"QLineEdit:hover,QComboBox:hover,QPlainTextEdit:hover,QTextEdit:hover{{"
         f"border:1px solid {qss(rgba(t.q('tx'), 52))};}}"
         f"QLineEdit:focus,QComboBox:focus,QPlainTextEdit:focus,QTextEdit:focus{{"
-        f"border:1px solid {focus};background:{qss(rgba(t.q('tx'), 28))};}}"
+        f"border:1px solid {focus};background:{qss(rgba(t.q('tx'), 30))};}}"
         f"QComboBox::drop-down{{border:none;width:{FIELD_CHEVRON_W}px;}}"
         f"QComboBox::down-arrow{{image:none;width:0;height:0;}}"
         f"QComboBox QAbstractItemView{{background:{surface_bg(t)};color:{t.tx};"
@@ -687,3 +768,34 @@ def resolve_family(want: str, fallbacks: tuple[str, ...] = ("Microsoft YaHei UI"
         if f in fams:
             return f
     return want
+
+
+# ---------------------------------------------------------------- 无障碍：动效开关
+
+
+def motion_ok() -> bool:
+    """系统是否**允许播放动效**。返回 False ⇒ 调用方必须**跳过动画、直接给终态**。
+
+    对应 web 侧的 `@media (prefers-reduced-motion: reduce)`：前庭功能敏感的人会因为元素位移/淡入
+    而眩晕（WCAG 2.3.3）。Qt 没有 CSS 媒体查询，改读平台提示：
+      · Qt 6.5+ 在 `QStyleHints` 上提供 `reduceMotion`（Windows 的
+        「设置 → 辅助功能 → 视觉效果 → 动画效果」关掉后它就是 true）；
+      · 旧版 Qt 没有这个属性 ⇒ 拿不到就按"允许动效"处理
+        （**默认放开**，只是少一层尊重，不会让界面坏掉）。
+
+    ⚠️ 该函数**只回答"能不能动"**，不负责"怎么替"——跳过动画时直接 set 终值即可，
+    调用方不要把"没有动画"实现成"卡在半路"。
+    """
+    try:
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+        app = QApplication.instance()
+        if app is None:
+            return True
+        hints = app.styleHints()
+        # Qt 6.5+ 有官方属性；旧版没有该属性 ⇒ 走 except 分支按"允许"处理。
+        v = getattr(hints, "reduceMotion", None)
+        if v is not None:
+            return not bool(v() if callable(v) else v)
+    except Exception:  # noqa: BLE001
+        pass
+    return True

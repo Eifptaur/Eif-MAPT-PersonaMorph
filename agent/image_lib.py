@@ -19,6 +19,9 @@ import threading as _threading
 import time
 import urllib.request
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 
@@ -38,7 +41,8 @@ def _load_recent(root: str = None) -> dict:
         with open(recent_file(root), encoding="utf-8") as fh:
             d = json.load(fh)
         return d if isinstance(d, dict) else {}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -46,11 +50,12 @@ def _save_recent(d: dict, root: str = None) -> None:
     try:
         p = recent_file(root)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
+        tmp = persist.tmp_for(p)
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False)
         persist.replace_into(tmp, p) # 原子替换，避免半截文件
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -109,7 +114,8 @@ def scan(cfg: dict = None, root: str = None) -> list:
             out.append(p)
     except FileNotFoundError:
         return []
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
     return out
 
@@ -117,7 +123,8 @@ def scan(cfg: dict = None, root: str = None) -> list:
 def _too_big(path: str, max_mb: float) -> bool:
     try:
         return os.path.getsize(path) > float(max_mb) * 1024 * 1024
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return True
 
 
@@ -191,7 +198,8 @@ def fetch_api(cfg: dict, root: str = None) -> tuple:
         try: # 能打开才算真图片
             from PIL import Image
             Image.open(p).verify()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             os.remove(p)
             return None, "图源返回的内容不是有效图片（%s）" % (ctype or "未知类型")
         return p, "已从在线图源取图并校验通过（%.0fKB）" % (len(data) / 1024.0)
@@ -245,7 +253,8 @@ def _fail_note(src: str, ttl_s: int) -> None:
     try:
         with _FAIL_LOCK:
             _FAIL_UNTIL[str(src)] = time.time() + max(0, int(ttl_s))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 

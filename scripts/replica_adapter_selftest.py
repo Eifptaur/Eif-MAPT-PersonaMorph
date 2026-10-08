@@ -19,6 +19,9 @@ except Exception:
     pass
 
 from agent import replica_adapter as ra # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 PASS, FAIL = [], []
 
@@ -217,7 +220,8 @@ def main():
                 ra.fix_page1_plaintext_header() # 用真 AES 重新装上补丁
             ok("收尾：驱动库里没有留下我们的桩件（AES 仍是原来的那个）",
                (_wdb is None) or (_wdb._aes_cbc_decrypt is _real_aes))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     _wxa = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
@@ -345,12 +349,20 @@ def main():
     ok("补了也补不到 ⇒ 返回 None（**不抛**，让调用方跳过这个分片）",
        ra.open_shard(_sd2, "message\\media 1.db") is None and _sd2.extracted == 1, "extracted=%s" % _sd2.extracted)
     _rep = ra.refresh_shards(_ShardDB())
-    ok("refresh_shards 回报 missing（接入时据此记日志/显示）",
-       _rep.get("missing") == [] and _rep.get("refreshed") is True, str(_rep))
+    # ⛔ `refreshed` 的语义是"**这次刷新时发现了缺密钥的分片 ⇒ 走了补齐流程**"（实现里 `refreshed = bool(miss)`），
+    #   **不是**"刷新成功"。全好的一库 ⇒ 正确结果就是 **False**（没有分片需要补）。
+    #   原来这里写 `refreshed is True` ⇒ 与实现语义相反，**恒红**（而且断言名写的是"回报 missing"、
+    #   实际却在查 refreshed ⇒ 名实也不符）。
+    ok("refresh_shards：全好的一库 ⇒ `missing` 空 · `dropped` 空 · **没走补齐流程**（`refreshed=False`）",
+       _rep.get("missing") == [] and _rep.get("dropped") == [] and _rep.get("refreshed") is False,
+       str(_rep))
 
     print("— G. 二级兜底：补不到密钥的分片**从分片表摘掉**（换整条链可用，但要留痕）—")
     _sd3 = _ShardDB(heal=False)
     _r3 = ra.refresh_shards(_sd3)
+    # 阳性对照：证明 `refreshed` 不是恒 False（否则上面那条等于没测）
+    ok("对照：缺密钥的那一库 ⇒ `refreshed=True`（这个字段真的在反映事实）",
+       _r3.get("refreshed") is True, str(_r3.get("refreshed")))
     ok("摘掉的是补不到密钥的那个分片", _r3.get("dropped") == ["message\\media 1.db"], str(_r3.get("dropped")))
     ok("摘完之后它能用的分片都不缺密钥", _r3.get("missing") == [] and ra.missing_key_shards(_sd3) == [],
        str(_r3.get("missing")))

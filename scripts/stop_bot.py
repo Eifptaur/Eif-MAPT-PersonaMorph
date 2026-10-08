@@ -8,6 +8,9 @@ import os
 import subprocess
 import sys
 import time # 第 59 行 time.strftime 需要；缺失会导致 stop_bot 一运行即崩溃（"停止机器人文件"失效）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
@@ -20,7 +23,8 @@ def kill_pid(pid):
         r = subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
                            capture_output=True, creationflags=0x08000000, timeout=10)
         return r.returncode == 0 and b"not found" not in r.stderr.lower()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
 
 
@@ -37,14 +41,15 @@ def read_pid(name):
         with open(os.path.join(DATA, name), "r", encoding="utf-8") as f:
             m = _re.search(r"\\d+", f.read() or "")
         return int(m.group(0)) if m else None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
 def kill_by_cmdline(marker):
     """回退：按命令行特征找 PID —— wmic 优先，**再补一条 PowerShell**（新版 Windows 已移除 wmic）。
 
-    ⛔ 补 的另一半**：这里原来和 `onestart` 一样是"命令行含子串就杀"，
+    ⛔ 补另一半**：这里原来和 `onestart` 一样是"命令行含子串就杀"，
     于是"一键关闭"会把**别人项目**的 `watchdog.py`、另一份解压目录里的群相副本一起 `taskkill /F`
     （而同一天刚把 onestart 那一侧改成"必须落在本安装目录下"）⇒ 现在**共用同一份判据**
     `agent.proc_match.is_our_install`，不是本安装的进程一律**跳过并留痕**（fail-loud）。
@@ -87,7 +92,8 @@ def _kill_by_ps2(marker):
             if pid.isdigit() and int(pid) > 0:
                 res.append((int(pid), cmd))
         return res
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
 
 
@@ -106,7 +112,8 @@ def _kill_by_wmic2(marker):
             if not pids:
                 continue
             res.append((int(pids[-1]), line))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return res
 
@@ -118,7 +125,8 @@ def main():
     try:
         with open(os.path.join(DATA, "stopped.flag"), "w", encoding="utf-8") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     for name, marker in (("bot.pid", "persona_morph.py"), ("watchdog.pid", "watchdog")):
         pid = read_pid(name)
@@ -126,7 +134,8 @@ def main():
             killed += 1
             try:
                 os.remove(os.path.join(DATA, name))
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass  # 清理型：静默合法
         elif pid and pid != os.getpid():
             failed += 1
@@ -138,7 +147,7 @@ def main():
     except Exception:
         pass
     # 看门狗也得按命令行兜一遍（它不在上面那份名单里时），并把"开窗锁/实例证据"
-    # 一起清掉——残留的锁会让下一次「一键启动」判"已经开着"从而什么都不弹（用户实测就是这个）。
+    # 一起清掉——残留的锁会让下一次「一键启动」判"已经开着"从而什么都不弹（就是这个）。
     try:
         for pid in kill_by_cmdline("watchdog.py"):
             if pid != os.getpid() and kill_pid(pid):
@@ -151,7 +160,8 @@ def main():
         try:
             if os.path.exists(_p):
                 os.remove(_p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     print("已结束 %d 个进程" % killed)
     if failed:

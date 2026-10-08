@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """单实例锁：同一时间只允许一个机器人实例在跑（对账清单第 4 条）。
 
-**为什么不用旧实现**（"只写一个 `data\\bot.lock` 存 pid，再 OpenProcess 猜死活"）：
+**为什么不用旧实现**：
 
 1. **TOCTOU**：两次启动同时发生，"检查→写文件"之间双方都能通过 ⇒ 还是双实例；
 2. **pid 复用**：死掉的机器人 pid 被系统分给了别的进程 ⇒ 旧实现判"还活着" ⇒ 机器人**再也起不来**；
@@ -20,6 +20,9 @@ from __future__ import annotations
 import ctypes
 import os
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 IS_WIN = os.name == "nt"
 
@@ -99,7 +102,8 @@ def pid_image_name(pid: int) -> str:
         if _k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
             return os.path.basename(buf.value or "")
         return ""
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ""
     finally:
         _k32.CloseHandle(h)
@@ -147,7 +151,8 @@ def _read_pid(path) -> int:
         with open(path, "r", encoding="utf-8") as f:
             t = (f.read() or "").strip()
         return int(t) if t.isdigit() else 0
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
@@ -207,7 +212,7 @@ class InstanceLock:
             d = os.path.dirname(self.lock_path)
             if d:
                 os.makedirs(d, exist_ok=True)
-            tmp = self.lock_path + ".tmp"
+            tmp = persist.tmp_for(self.lock_path)
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(str(os.getpid()))
             persist.replace_into(tmp, self.lock_path)
@@ -292,6 +297,7 @@ class InstanceLock:
             try:
                 if _read_pid(self.lock_path) == os.getpid():
                     os.remove(self.lock_path)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         self.acquired = False

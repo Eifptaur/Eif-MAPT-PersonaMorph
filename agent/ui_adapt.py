@@ -99,9 +99,26 @@ def detect_scale() -> float:
             perceive_w = int(_user32.GetSystemMetrics(0) or 0)
             if phys_w > 0 and perceive_w > 0:
                 return round(phys_w / perceive_w, 3)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return 1.0
+
+
+def _fallback_scale(hwnd: int = 0) -> float:
+    """缩放倍率的**兜底取值** —— 走 `display_metrics`（实测/缓存/系统级），**不写死数字**。
+
+    ⛔ 本文件原来在 `GetDpiForWindow` 失败时硬退 `1.25`（用户 ："硬编码在我眼里
+      都是定时炸弹"）—— 那在 150%/200% 的机器上会把窗口尺寸算错。
+    """
+    try:
+        from . import display_metrics as _dm
+        return float(_dm.scale(int(hwnd or 0)) or 1.0)
+    except Exception:  # noqa: BLE001
+        try:
+            return max(1.0, _user32.GetDpiForSystem() / 96.0)
+        except Exception:  # noqa: BLE001
+            return 1.0
 
 
 def coord_scale(override=None) -> float:
@@ -146,7 +163,8 @@ def _window_info(hwnd: int) -> tuple:
         r = wintypes.RECT()
         _user32.GetWindowRect(hwnd, ctypes.byref(r))
         return (cls.value, title.value, pid.value, (r.left, r.top, r.right, r.bottom))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return ("", "", 0, (0, 0, 0, 0))
 
 
@@ -267,9 +285,11 @@ def dismiss_overlays(wechat_hwnds: tuple = ()) -> list:
                     #    控制台窗口（它跟微信重叠时）⇒ 用户怎么点别的窗口都压不下去。
                     _user32.SetWindowPos(h, 1, 0, 0, 0, 0, 0x0001 | 0x0002) # 1 = HWND_BOTTOM
                     handled.append(("window", cls, title[:50], pid))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return handled
 
@@ -297,7 +317,8 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
             elif wechat_hwnds:
                 _user32.SetForegroundWindow(int(wechat_hwnds[0]))
             time.sleep(0.25)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         if i == 0:
             dismiss_overlays(wechat_hwnds)
@@ -309,8 +330,7 @@ def ensure_point(x: int, y: int, wechat_hwnds: tuple = (), retries: int = 3, gui
 def real_guard(x: int, y: int, gui=None, extra_hwnds: tuple = ()) -> tuple:
     """**真鼠标动作前的最后一道闸**：先确认 (x, y) 这点真属于微信，再把光标移过去。
 
-    为什么必须有它（用户当面问
-    为什么还会划我的控制台」）：
+    为什么必须有它：
       · **投递档**（`PostMessageW` 把消息发进微信自己的消息队列）**永远不会**点到别的窗口
         —— 他这句判断是对的，那 3 条全投递路径确实不碰光标；
       · 但**真鼠标档**是 `SetCursorPos` + `mouse_event`：`mouse_event` 是**全局输入**，
@@ -401,10 +421,17 @@ def click_real_at(sx: int, sy: int, *, gui=None, right: bool = False, hold_ms: i
                     return False, ("开枪前落点已经变了（%s）⇒ 这一枪没打（多半是你这几百毫秒里点/切到了别的窗口）"
                                    % str(why2)[:70])
         down, up = (0x0008, 0x0010) if right else (0x0002, 0x0004)
+        # ⛔ "按下"与"抬起"必须被**同一个 `try/finally`** 罩住：
+        #   若 `down` 已发出、而中途抛异常（`hold_ms` 期间的键盘中断、`mouse_event` 自身失败…）
+        #   使"抬起"没发出去，系统会认为该键**一直处于按下状态** ——
+        #   用户之后拖鼠标就变成"拖拽"（框选/拖走文件），且他自己不知道原因。
+        #   ⇒ 抬起放 `finally` 里无条件发一次（重复发"抬起"是幂等的，无害）。
         _user32.mouse_event(down, 0, 0, 0, 0)
-        if hold_ms > 0:
-            time.sleep(int(hold_ms) / 1000.0)
-        _user32.mouse_event(up, 0, 0, 0, 0)
+        try:
+            if hold_ms > 0:
+                time.sleep(int(hold_ms) / 1000.0)
+        finally:
+            _user32.mouse_event(up, 0, 0, 0, 0)
         return True, "真点 (%d,%d)（按住 %dms）" % (sx, sy, int(hold_ms))
     except Exception as e: # noqa: BLE001
         return False, "click_real_at 异常：%s" % str(e)[:80]
@@ -517,7 +544,8 @@ def _restore_wechat_window(gui) -> bool:
             time.sleep(0.3)
             gui._update_render_rect()
             return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return False
 
@@ -532,13 +560,13 @@ def _cfg_bool(key: str, default: bool = False) -> bool:
 
 
 def _force_geometry(gui) -> None:
-    """把微信主窗移到固定位置/大小（**默认开**：`ui.lock_window_pos`
-    「你把限位设成默认吧…也能防止点错」；**关掉就一行都不碰用户的窗口**）。
+    """把微信主窗移到固定尺寸/位置（受 `ui.lock_window_pos` 控制，默认开——
+    坐标更稳、少点错；关掉则一行都不碰用户的窗口）。
 
-    用户实测——真凶就是这里原来那句
-    `ShowWindow(hwnd, 9)`（SW_RESTORE：**把最小化的微信强行弹出来**）＋ 一对自相矛盾的
-    `SWP_SHOWWINDOW|SWP_HIDEWINDOW`。原实现的坐标其实被 `SWP_NOMOVE|SWP_NOSIZE` 抵消掉了，
-    所以它的实际效果只剩"把用户的微信窗口抬出来"——正是最高目标（不打扰）明令禁止的事。
+    旧实现的真凶是 `ShowWindow(hwnd, 9)`（SW_RESTORE：**把最小化的微信强行弹出来**）
+    ＋ 一对自相矛盾的 `SWP_SHOWWINDOW|SWP_HIDEWINDOW`。原实现的坐标其实被
+    `SWP_NOMOVE|SWP_NOSIZE` 抵消掉了，所以它的实际效果只剩"把用户的微信窗口抬出来"——
+    正是"不打扰"目标明令禁止的事。
     现在：默认不调用；真要摆窗口时**只挪不动前台、不还原最小化、不激活**。
     """
     try:
@@ -557,7 +585,7 @@ def _force_geometry(gui) -> None:
         try:
             _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
         except Exception:
-            _scale = 1.25
+            _scale = _fallback_scale(hwnd)
         # 目标尺寸按 DPI 换算，但限制在屏幕内（小分辨率屏幕不超出；避免窗口出屏）
         try:
             _sw = int(_user32.GetSystemMetrics(0))
@@ -579,7 +607,8 @@ def _force_geometry(gui) -> None:
         _user32.SetWindowPos(hwnd, 0, _x, _y, _w, _h, 0x0004 | 0x0010)
         time.sleep(0.15)
         gui._update_render_rect()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -617,9 +646,9 @@ def _guarded(name: str, fail_value):
 
     两道闸，缺一不可：
       ① `fg_allowed()` —— **该不该**置前（配置/档位层面）；
-      ② `backoff.foreground()` 的**配额** —— **还能不能**再借一次（"学会停手"）。
+      ② `backoff.foreground()` 的**配额** —— **还能不能**再借一次。
     只装 ① 的后果现场见过：闸放行、于是每条要回的消息都再借一次前台（每次短暂置前 1.8~3.2 秒后
-    还回）⇒ 用户那边就是"一直顶界面、闪来闪去"（2026-09-28 反馈）。配额把"次数"钉住。
+    还回）⇒ 用户那边就是"一直顶界面、闪来闪去"（反馈）。配额把"次数"钉住。
     """
     def _make(fn):
         import functools
@@ -740,10 +769,10 @@ def harden_gui(gui):
 def prepare_screen(gui) -> bool:
     """点击操作前的整备：把微信置前 + 清理叠加层/遮挡窗口 + 窗口出屏自动还原。
 
-    ⚠️ 用户实测＋「它还会导致微信卡死，
-    我操作都操作不了」——本函数原来那几段 `ShowWindow(hwnd, 9)`（SW_RESTORE）＋
+    ⚠️ 本函数原来那几段 `ShowWindow(hwnd, 9)`（SW_RESTORE）＋
     `gui.bring_to_front(keep_topmost=True)`（**把微信钉到最上层**）就是真凶：
-    最小化的微信被强行弹出来，而且置顶窗口会一直压在所有窗口之上（用户当然点不动自己其它窗口）。
+    最小化的微信被强行弹出来，而且置顶窗口会一直压在所有窗口之上
+    （用户当然点不动自己其它窗口，观感上就是"微信卡死、操作不了"）。
     ⇒ 现在只做"零打扰"的那一半（清遮挡、探活），**除非显式打开 `ui.allow_foreground`
     否则绝不挪窗口/不还原最小化/不打扰你（可能短暂置前约 1~3 秒后自动还回）/不置顶**。
     """
@@ -751,7 +780,8 @@ def prepare_screen(gui) -> bool:
         try:
             dismiss_overlays((getattr(gui, "main_hwnd", 0), getattr(gui, "render_hwnd", 0)))
             gui._update_render_rect()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return bool(getattr(gui, "is_alive", lambda: True)())
     try:
@@ -769,14 +799,14 @@ def prepare_screen(gui) -> bool:
                     try:
                         _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
                     except Exception:
-                        _scale = 1.25
+                        _scale = _fallback_scale(hwnd)
                     try:
                         _sw = int(_user32.GetSystemMetrics(0))
                         _sh = int(_user32.GetSystemMetrics(1))
                     except Exception:
                         _sw, _sh = 1920, 1080
                     # ⛔ 原来这里写死 1250×1100（再乘 DPI 缩放）⇒ 每次限位都把用户的窗口摆成
-                    #    "贼大、屏幕中间"（用户反馈的正是这个）；而且与 `wechat._limit_wechat_window`
+                    #    "贼大、屏幕中间"（现场实测到的正是这个）；而且与 `wechat._limit_wechat_window`
                     #    是**两套口径**。⇒ 统一读同一份配置 `ui.lock_window_w/h`。
                     _ui_cfg = (cfg.get("ui") or {}) if isinstance(cfg, dict) else {}
                     try:
@@ -797,7 +827,8 @@ def prepare_screen(gui) -> bool:
                         _user32.SetWindowPos(hwnd, 0, _tx, _ty, _tw, _th,
                                              0x0001 | 0x0002 | 0x0020 | 0x0040)
                         time.sleep(0.2)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         # 窗口被移出屏幕（多屏切换/DPI 变化常见）→ 自动还原到可见区
         try:
@@ -822,7 +853,7 @@ def prepare_screen(gui) -> bool:
                     try:
                         _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
                     except Exception:
-                        _scale = 1.25
+                        _scale = _fallback_scale(hwnd)
                     # ⛔ 这一处原来也按写死的 **1250×1100 ×DPI** 摆窗口（实测把用户的 977×976 顶成
                     #    1466×1464 / 1875×1472），并把位置钉到 (90,90)。⇒ 尺寸读 `ui.lock_window_w/h`、
                     #    位置用窗口自己的（不再搬）。这是"窗口老是自己变大"的最后一处。
@@ -838,7 +869,8 @@ def prepare_screen(gui) -> bool:
                                          0x0001 | 0x0020 | 0x0040)
                     time.sleep(0.6)
                     gui._update_render_rect()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         # 先确保前台可见（多实例/最小化自愈）
         _restore_wechat_window(gui)
@@ -854,7 +886,8 @@ def prepare_screen(gui) -> bool:
             _restore_wechat_window(gui)
             time.sleep(0.4)
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return _restore_wechat_window(gui)
 
 
@@ -875,7 +908,8 @@ def heal_input():
         _user32.SetCursorPos(x + 4, y + 2)
         time.sleep(0.05)
         _user32.SetCursorPos(x, y)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -961,6 +995,21 @@ def click(gui, x: int, y: int, right: bool = False, scale=None, extra_hwnds: tup
                 _ok2, _why2 = backend.click(int(getattr(gui, "main_hwnd", 0) or 0), (sx, sy), right=right)
             except Exception as _e2: # noqa: BLE001
                 _ok2, _why2 = False, str(_e2)
+            if (not _ok2) and _ib.stale_handle_like(_why2):
+                # ★ P1-6 已知错误自愈：投递点击失败且**像句柄过期**（微信主窗被重建/重启过）
+                #   ⇒ 重取一次主窗句柄，再投一次（**仅此一次**，不做无限重试）。
+                #   换了新句柄才重试；句柄没变 ⇒ 问题不在句柄，原样如实回报。
+                _h_new = _ib.refresh_main_window()
+                if _h_new and _h_new != int(getattr(gui, "main_hwnd", 0) or 0):
+                    try:
+                        _ok3, _why3 = backend.click(_h_new, (sx, sy), right=right)
+                    except Exception as _e3: # noqa: BLE001
+                        _ok3, _why3 = False, str(_e3)
+                    log.warning("已知错误自愈：主窗句柄已变 ⇒ 重投一次：%s",
+                                "成功" if _ok3 else ("仍失败：%s" % str(_why3)[:80]))
+                    if _ok3:
+                        return True, ""
+                    _ok2, _why2 = _ok3, _why3
             if _ok2:
                 return True, ""
             if not _real_mouse_allowed():
@@ -1107,12 +1156,14 @@ def patch_no_window_geometry(cls=None) -> bool:
                                          int(r0[2] - r0[0]), int(r0[3] - r0[1]),
                                          _wc.SWP_NOACTIVATE | _wc.SWP_NOZORDER)
                         log.info("窗口几何补丁：驱动库校准把窗口从 %s 改成 %s ⇒ 已还原（不打扰用户）", r0, r1)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
             return out
 
         cls.calibrate_layout = _wrapped
         cls._pm_geometry_locked = True
         return True
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False

@@ -60,7 +60,7 @@ ok("rgrc0 的四个边都取了屏幕矩形", "nc.rgrc0.left = mo.Left" in seg.r
    or "rgrc0.left=mo.Left" in seg.replace(" ", ""))
 ok("**不再内缩**（没有 rgrc0.left += bx 那种旧写法）",
    ("rgrc0.left +=" not in seg) and ("rgrc0.top +=" not in seg),
-   "内缩写法＝四周露一圈窗体底色，用户报过的那个边框")
+   "内缩写法＝四周露一圈窗体底色（那圈多出来的边框）")
 
 print("")
 print("── B. WM_GETMINMAXINFO：最大化尺寸用整屏（真全屏，含任务栏）──")

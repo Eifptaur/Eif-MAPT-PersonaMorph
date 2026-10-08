@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """磁盘占用的「收尾」：临时目录清理、产物目录上限、占用体检。
 
-**为什么有这个模块**（
+**为什么有这个模块**
 功能有没有做好删除措施或者限制写入措施」）：审计后发现确实有缺口——最刺眼的是系统临时目录里
 躺着 **352 个条目 / 1192 个文件 / 22.8 MB** 我们自己的残留，而 `media/tts` 的合成产物
 **221 个文件 / 12.6 MB 且只增不减**。
@@ -34,11 +34,42 @@ import re
 import shutil
 import tempfile
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 我们在系统临时目录里的前缀（只清这些；别的程序、别的工具的残留一概不碰）
-TEMP_PREFIXES = ("pm-",)
+#:
+#: ⛔ **名单是"量出来 + 源码里查到出处"的，不是猜的**。实测系统临时目录里已有的残留：
+#:   · `pm_`（下划线）**3,316 个 / 98.7 MB 的一部分** —— 原名单只有 `pm-`（连字符）⇒ **整族漏掉**；
+#:   · `imgc_` **253.5 MB** —— 出处 `scripts/img_compress_selftest.py`；
+#:   · `chgrab-` **60.3 MB** —— 出处 `scripts/chat_header_selftest.py`。
+#:   ⇒ 上面三族都是**我们自己**留下的（都在源码里找到了 `mkdtemp(prefix=…)`）。
+#:   ⛔ 反例（**不加**）：`pip-` / `node-` / `ch4_` / `genji_` / `LH…` 这些同样很大，
+#:      但**在我们源码里查不到出处** ⇒ 判为"不是我们的"⇒ **一律不碰**。
+#: ⚠️ **已知缺口（下一步）**：源码里还有约 150 个只出现一两次的前缀（`sfp_`/`ufp_`/`cuj-`/
+#:      `whale-*`/`silock_`/`ledger-`/`tt_` …）。它们多数很小，且**名字较短**、
+#:      有"删到别的程序"的风险 ⇒ 本轮先不加；正确做法是**从源码生成名单 + 加一条判据防漂**（已记进 PLAN）。
+#:
+#: ⛔ **上面那段"已知缺口"已经用另一种办法补掉了**（见本行下面）：
+#:   那 150 个前缀**几乎全是判据**（`scripts/*_selftest.py`）用的 ⇒ 与其枚举它们，
+#:   不如让**判据的临时目录整体落进"当次运行根"**（套件给子进程设 `TEMP`/`TMP`/`TMPDIR`），
+#:   跑完把整个根删掉 ⇒ **一次覆盖全部判据前缀**（见 `scripts/run_all_selftests.py`）。
+#:   本名单因此只需覆盖**产品代码**（`agent/` ＋ `ui_qt/`，实测共 **20 个前缀**，
+#:   每个都在源码里查得到出处）＋ 那几族"量特别大"的判据前缀（`imgc_` 253 MB / `chgrab-` 60 MB）。
+#:   防漂：判据 `housekeeping_selftest` 会**重新扫源码**，产品里新出现的前缀若不在此名单就报红。
+TEMP_PREFIXES = (
+    # ── 产品代码（agent/ ＋ ui_qt/，逐条在源码里核过出处）──
+    "pm-", "pm_",                        # 通名（含 voice/backup/video/stage/whale 等）
+    "atomic-gate-", "cfg_stamp_", "g20-mem-", "g21-io-", "g22-busy-",
+    "landing-discipline-", "ledger-gate-", "mem-dir-gate-", "p17-", "st_sh_",
+    "suspend-guard-", "vg-middle-gate-", "whale-assets-gate-",
+    "whale-roles-gate-", "whale-usage-gate-",
+    # ── 判据里"量特别大"的两族（实测 253.5 MB / 60.3 MB）──
+    "imgc_", "chgrab-",
+)
 #: 我们在媒体目录里的**产物文件名前缀**（`tts_*.wav` / `tts_custom_*.mp3` / `tts_edge_*.mp3` /
 #: `tts_seg_*.wav` / `vc_*.wav` / `seg_*.txt`，见 `tts.py` / `voice_models.py`）。
 #: ⛔ 只删这些 —— 用户自己丢进同一目录的文件（录音、照片…）一个都不许碰。
@@ -55,6 +86,28 @@ _MEDIA_NAME_RES = (
     re.compile(r"^vc_\d{6,20}(_\d{1,4})?\.(wav|mp3|m4a|flac)$"),
     re.compile(r"^seg_\d{6,20}(_\d{1,3})?\.(wav|txt)$"),
 )
+#: ── 图库（`data/gen_images/`）保留策略 ──────────────────────────────────────────
+#: 背景：图库**只增不清理**（最老 2026-09-17）⇒ 用户看不到、也不会有机会自己清。
+#: 阈值取法（不猜、按当前真实数据定；实测 2026-10-08：**160 张 / 299.6 MB**，两天产量）：
+#:   · `GEN_IMG_MAX_MB = 666` —— **用户定案**（2026-10-08）：上限给到 666 MB。
+#:     口径：这是"**总量别失控**"的上限，不是"必须清到多少" —— 到 666 MB 才从最旧的删起。
+#:     实测基线（2026-10-08）：**160 张 / 299.6 MB（两天产量）**⇒ 666 MB ≈ **4 天多的量**，
+#:     按此增速够用；且比原拟的 300 更宽（理由是"用户认可这个量级、不必压太紧"）。
+#:   · `GEN_IMG_KEEP_DAYS = 60` —— **时间兜底**（两个月）。原拟 30 天，按数据上调：
+#:     图上带日期、群里发过的图用户**过一阵可能还想找**；30 天太短、60 天是"两个月的图"这个
+#:     说得出口的口径。两条**同时生效**（超量按 mtime 从最旧删；天数到点也删）。
+#:   ⛔ 用户的**底线**：只删"产品命名形状"的图（`<backend>_<序号>_<时分秒>.jpg|png`，
+#:     见 `is_our_gen_image_name`）；`index.jsonl`（台账）**永不删**；用户自己丢进目录的图不碰。
+GEN_IMG_MAX_MB = 666
+GEN_IMG_KEEP_DAYS = 60
+#: 图库文件名形状（生产者：`image_gen._save_image_bytes` ⇒
+#: `<backend_id>_<%H%M%S>.<jpg|png>`，或带序号的老版 `<backend>_<n>_<%H%M%S>.png`）。
+#: ⛔ `backend_id` 取值无上限（用户可配别的后端名），所以前缀只认"字母/数字/下划线"这一段，
+#:   不能钉死成 `gen`/`a1111`。
+_GEN_IMG_NAME_RES = (
+    re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,40}_\d{6}\.(jpg|jpeg|png)$"),
+    re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,40}_\d{1,6}_\d{6}\.(jpg|jpeg|png)$"),
+)
 
 
 def is_our_media_name(name: str) -> bool:
@@ -64,6 +117,19 @@ def is_our_media_name(name: str) -> bool:
     """
     n = str(name or "")
     for _re_name in _MEDIA_NAME_RES:
+        if _re_name.match(n):
+            return True
+    return False
+
+
+def is_our_gen_image_name(name: str) -> bool:
+    """`True` ⇒ 这个文件名**确实是我们生成的图**（`data/gen_images/<日期>/` 下）。
+
+    ⛔ 与 `is_our_media_name` 同一条纪律：**不匹配就绝不删** ——
+       用户可能把自己的照片、截图丢进这个目录，那些一张都不能动。
+    """
+    n = str(name or "")
+    for _re_name in _GEN_IMG_NAME_RES:
         if _re_name.match(n):
             return True
     return False
@@ -90,7 +156,8 @@ def dir_footprint(path: str) -> dict:
                 try:
                     b += os.path.getsize(os.path.join(dp, f))
                     n += 1
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
     return {"files": n, "bytes": b, "mb": round(b / 1048576.0, 2)}
 
@@ -141,7 +208,8 @@ def footprint(root: str | None = None) -> dict:
             out["temp"]["bytes"] += fp["bytes"]
             if len(out["temp"]["names"]) < 40:
                 out["temp"]["names"].append(nm)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     out["temp"]["mb"] = round(out["temp"]["bytes"] / 1048576.0, 2)
     return out
@@ -159,7 +227,8 @@ def sweep_temp(prefixes=TEMP_PREFIXES, max_age_h: float = 24.0, root: str | None
     res = {"removed": 0, "bytes": 0, "kept": 0, "names": []}
     try:
         names = os.listdir(tr)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return res
     for nm in names:
         if not nm.startswith(prefixes):
@@ -181,7 +250,8 @@ def sweep_temp(prefixes=TEMP_PREFIXES, max_age_h: float = 24.0, root: str | None
         if not dry:
             try:
                 shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 res["removed"] -= 1
                 res["bytes"] -= fp["bytes"]
     return res
@@ -231,7 +301,8 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
             continue
         try:
             st = os.stat(p)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             continue
         items.append((p, st.st_size, st.st_mtime))
     items.sort(key=lambda x: x[2], reverse=True) # 新的在前
@@ -266,7 +337,8 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
                     if p in doomed:
                         fh.write(json.dumps({"at": now, "path": p, "size": sz, "mtime": mt},
                                             ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             res["ledger"] = ""
     for p, sz, _mt in items:
         if p not in doomed:
@@ -277,10 +349,113 @@ def prune_dir(path: str, keep_newest: int = 0, max_age_days: float = 0.0, max_mb
         if not dry:
             try:
                 os.remove(p)
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 res["removed"] -= 1
                 res["bytes"] -= sz
     return res
+
+
+def prune_gen_images(root: str | None = None, max_mb: float = GEN_IMG_MAX_MB,
+                     keep_days: float = GEN_IMG_KEEP_DAYS, min_age_s: float = MIN_AGE_S,
+                     now: float | None = None, dry: bool = False,
+                     ledger: str = "") -> dict:
+    """按"总量上限 + 最长时间"清图库（`data/gen_images/`）⇒ `{removed, bytes, kept, skipped, dirs, ledger}`。
+
+    **为什么要它**：图库**只增不清理** —— 实测 **666 MB / 364 张 ＝ `data/` 的 98%**，
+    且没有引用计数（"这张图有没有人再看过"代码里查不到）⇒ 只能用 **mtime 代理**。
+
+    **怎么做**（按数据定的阈值，见 `GEN_IMG_MAX_MB` / `GEN_IMG_KEEP_DAYS`）：
+      · 递归收所有子目录（图按日期分目录）里的 `.jpg/.png`；
+      · **只收形状对得上的**（`is_our_gen_image_name`）⇒ 用户丢进来的图**一个不动**；
+      · `index.jsonl` **永不删**（那是台账，删了就再也去不了重）；
+      · 先按 `keep_days` 标过期的，再按 `max_mb` 从最旧的继续删到不超；
+      · `min_age_s` 以内的不动（可能正被发送）；
+      · 删完把**空了的日期子目录一并删掉**（否则留一堆空目录，`ls` 一片噪声）。
+
+    ⛔ 删之前写清单（与其他清理同一条链路），**删了不可恢复**。
+    """
+    now = time.time() if now is None else now
+    d = _gen_images_dir(root)
+    res = {"removed": 0, "bytes": 0, "kept": 0, "skipped": 0, "dirs": 0, "ledger": "",
+           "dir": d, "cut_bytes": max(0.0, float(max_mb)) * 1048576.0}
+    if not d or not os.path.isdir(d):
+        return res
+    items = []          # (path, size, mtime)
+    for dp, _dirs, fs in os.walk(d):
+        for nm in fs:
+            p = os.path.join(dp, nm)
+            try:
+                if not os.path.isfile(p):
+                    continue
+                if not is_our_gen_image_name(nm):
+                    res["skipped"] += 1     # 不是我们生成的图 ⇒ 一律不碰
+                    continue
+                st = os.stat(p)
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                continue
+            items.append((p, st.st_size, st.st_mtime))
+    items.sort(key=lambda x: x[2], reverse=True)   # 新的在前
+    total = sum(x[1] for x in items)
+    doomed = set()
+    for p, _sz, mt in items:
+        if (now - mt) < max(0.0, float(min_age_s)):
+            continue
+        if keep_days > 0 and (now - mt) > float(keep_days) * 86400.0:
+            doomed.add(p)
+    if res["cut_bytes"] > 0:
+        freed = sum(x[1] for x in items if x[0] in doomed)
+        for p, sz, mt in reversed(items):
+            if total - freed <= res["cut_bytes"]:
+                break
+            if p in doomed or (now - mt) < max(0.0, float(min_age_s)):
+                continue
+            doomed.add(p)
+            freed += sz
+    if doomed and ledger and not dry:
+        res["ledger"] = str(ledger)
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(ledger)), exist_ok=True)
+            with open(ledger, "a", encoding="utf-8") as fh:
+                for p, sz, mt in items:
+                    if p in doomed:
+                        fh.write(json.dumps({"at": now, "path": p, "size": sz, "mtime": mt,
+                                             "kind": "gen_image"}, ensure_ascii=False) + "\n")
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            res["ledger"] = ""
+    for p, sz, _mt in items:
+        if p not in doomed:
+            res["kept"] += 1
+            continue
+        res["removed"] += 1
+        res["bytes"] += sz
+        if not dry:
+            try:
+                os.remove(p)
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                res["removed"] -= 1
+                res["bytes"] -= sz
+    # 删空的日期子目录（⛔ 只删"清完自己变空"的，不递归删有内容的）
+    if not dry:
+        try:
+            for dp, _dirs, fs in os.walk(d, topdown=False):
+                if os.path.realpath(dp) == os.path.realpath(d):
+                    continue
+                if not os.listdir(dp):
+                    os.rmdir(dp)
+                    res["dirs"] += 1
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+    return res
+
+
+def _gen_images_dir(root: str | None = None) -> str:
+    """图库真值目录（`<root>/data/gen_images`）—— 与 `image_gen` 的落盘口径同一处。"""
+    base = root or ROOT
+    return os.path.join(base, "data", "gen_images")
 
 
 def _entry_mtime(p: str) -> float:
@@ -292,14 +467,16 @@ def _entry_mtime(p: str) -> float:
     """
     try:
         best = os.path.getmtime(p)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0.0
     if os.path.isdir(p):
         for dp, _dirs, fs in os.walk(p):
             for nm in fs:
                 try:
                     best = max(best, os.path.getmtime(os.path.join(dp, nm)))
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     pass
     return best
 
@@ -310,18 +487,20 @@ def cleanup_dir(d: str) -> bool:
         if d and os.path.isdir(d) and os.path.basename(os.path.normpath(d)).startswith(TEMP_PREFIXES):
             shutil.rmtree(d, ignore_errors=True)
             return not os.path.exists(d)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return False
 
 
 def tick(dry: bool = False, root: str | None = None, now: float | None = None,
-         media_dir: str = "", ledger: str = "") -> dict:
-    """一次收尾：清临时残留 + 收**实际的**产物目录。启动时调一次，也可以随时手动调。
+         media_dir: str = "", ledger: str = "", gen_dir: str = "") -> dict:
+    """一次收尾：清临时残留 + 收**实际的**产物目录 + 收图库。启动时调一次，也可以随时手动调。
 
     ⛔ 产物目录用 `tts_dir()`（用户可配 `voice_reply.dir`），不再硬编码 `ROOT\\media\\tts`；
     删之前写清单（`data/housekeeping_pruned.jsonl`）；只删 `MEDIA_PREFIXES` 里那些**我们造的**文件名。
-    `media_dir` / `ledger` 是**给判据用的显式入口**（不传就走生产默认值），免得自检去碰真的
+    图库走 `prune_gen_images`（总量上限 ＋ 最长时间，阈值见 `GEN_IMG_MAX_MB`）。
+    `media_dir` / `gen_dir` / `ledger` 是**给判据用的显式入口**（不传就走生产默认值），免得自检去碰真的
     `data/` 与用户配置的那个目录。
     """
     t = sweep_temp(root=root, now=now, dry=dry)
@@ -329,8 +508,9 @@ def tick(dry: bool = False, root: str | None = None, now: float | None = None,
     _led = ledger or ("" if dry else os.path.join(ROOT, LEDGER_REL))
     m = prune_dir(d, keep_newest=TTS_KEEP_NEWEST, max_mb=TTS_MAX_MB, now=now, dry=dry,
                   prefixes=MEDIA_PREFIXES, ledger=_led)
-    freed = t["bytes"] + m["bytes"]
-    return {"temp": t, "media_tts": m, "media_dir": d, "freed_bytes": freed,
+    g = prune_gen_images(root=gen_dir or None, now=now, dry=dry, ledger=_led)
+    freed = t["bytes"] + m["bytes"] + g["bytes"]
+    return {"temp": t, "media_tts": m, "gen_images": g, "media_dir": d, "freed_bytes": freed,
             "freed_mb": round(freed / 1048576.0, 2), "dry": bool(dry)}
 
 
@@ -338,6 +518,9 @@ def brief(rep: dict) -> str:
     """给日志/控制台的一句话（没有数字就不算做过）。"""
     if not rep:
         return "收尾：没有结果"
-    return ("收尾：临时目录清 %d 项、产物目录清 %d 个文件（跳过 %d 个不是我们造的文件），共回收 %.2f MB"
+    _g = rep.get("gen_images") or {}
+    return ("收尾：临时目录清 %d 项、产物目录清 %d 个文件（跳过 %d 个不是我们造的文件）、"
+            "图库清 %d 张（跳过 %d 个非产品图），共回收 %.2f MB"
             % (rep["temp"]["removed"], rep["media_tts"]["removed"],
-               rep["media_tts"].get("skipped") or 0, rep.get("freed_mb") or 0))
+               rep["media_tts"].get("skipped") or 0, _g.get("removed") or 0,
+               _g.get("skipped") or 0, rep.get("freed_mb") or 0))

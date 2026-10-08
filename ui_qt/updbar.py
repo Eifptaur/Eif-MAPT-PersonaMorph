@@ -1,23 +1,21 @@
 # -*- coding: utf-8 -*-
-"""更新公告 —— web updbar（agent/assets/console/index.html L806-880）的 Qt 复刻。
+"""更新公告条 —— web `#updBar`（assets/console/index.html L759-792）的 Qt 复刻。
 
- #13：拆掉 shell.py:473 的假条，接真值四态机 + 三按钮（join_url 口径）。
- #14：**形态改造** —— 把三按钮塞进 60px 顶栏是总调度自认的设计缺陷
-（web 真值里 updBar 本是顶栏下方独立一行，assets/console/index.html L760-767 全屏宽度；
-用户截图里三按钮挤成墨块）。按改为「胶囊 + 下滑 popover」：
+**形态**：顶栏**下方**一条通栏 —— 上行「文本 ＋ 四个按钮」
+（立即更新 primary／稍后／不再提醒这个版本／重置更新状态），下行明细（有内容才占位）。
+按钮**内联在条里**，没有弹层。
 
-  · 顶栏常态只留一个胶囊：`有新版本 {theirs}` / `更新源异常` /
-    `上次更新只装了一半`（warn 底色区分）；**无新版且无异常时胶囊不出现**
-  · 点胶囊 → 顶栏下方滑出 Popover 面板（popover.py，220ms OutCubic 可打断）：
-    正文 = notes 逐条（「这版本更了啥」）/ pending 明细 / error 原因；
-    三按钮 = 立即更新（primary）/ 稍后 / 不再提醒这个版本
-  · 更新中 = 进度态就地显示（胶囊 + 面板同步刷：download % / verify /
-    done→重启 / error→可重试）
-  · 面板外点 / Esc / 再点胶囊 → 收回（Qt.Popup 白拿）；stateSaved===false
-    附加提示保留
-  · API 链路全沿用/api/update /api/update_apply /api/update_skip
+  · 常态：**没有待处理事项就整条不出现**（web 侧 `display:none`）
+  · 有新版：`有新版本 {theirs}（当前 {mine}）`
+  · warn 态：`更新源异常` / `上次更新只装了一半`（只换描边与字色）
+  · 更新中：进度态就地刷（download % / verify / done→重启 / error→可重试）
+  · API 链路沿用 /api/update /api/update_apply /api/update_skip
 
 「稍后」的会话抑制语义对齐 web：同版本不再打扰，出**新**版本照常弹。
+
+⚠️ **形态沿革（别再往回走）**：最早把四个按钮塞进 60px 顶栏 —— 横向空间不够，
+会被挤成"每行一两个字"；后来改成"顶栏胶囊 ＋ 下滑 popover"（要两次点击才看得到按钮）；
+现在回到 web 的原形态：**顶栏下方独立一条 ＋ 内联按钮**。
 """
 
 from __future__ import annotations
@@ -25,12 +23,11 @@ from agent import version as _ver
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from async_ui import run_async, run_bg
 from confirm import ConfirmDialog
-from popover import Popover
-from stylekit_qt import Tokens, pill, qfont, rgba
+from stylekit_qt import Tokens, qfont, rgba
 from widgets import Btn
 
 
@@ -106,16 +103,15 @@ def _notes_text(s: dict | None) -> str:
 
 
 class UpdateBar(QFrame):
-    """顶栏更新胶囊。数据入口 apply_state(s)；动作自含。"""
+    """顶栏**下方**的更新公告条（web `#updBar`）。数据入口 `apply_state(s)`；动作自含。
+
+    形态＝通栏一条（文本 ＋ 内联按钮 ＋ 可选明细行），**不是**顶栏里的胶囊。
+    """
 
     def __init__(self, t: Tokens, parent=None):
         super().__init__(parent)
         self.t = t
-        self.setObjectName("UpdPill")
-        from PySide6.QtCore import Qt # noqa: PLC0415
-
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("点击查看这版本更了啥")
+        self.setObjectName("UpdBar")
         self._cur: dict | None = None # 最近一次 /api/update 真值
         self._dismissed: tuple | None = None # 「稍后」会话抑制（status, theirs）
         self._polling = False # 更新作业轮询中（主态机让位）
@@ -124,81 +120,92 @@ class UpdateBar(QFrame):
         self._poll_iv.setInterval(900) # web setInterval(pollJob, 900)
         self._poll_iv.timeout.connect(self._poll_once)
 
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 3, 12, 3)
-        self.txt = QLabel("")
-        self.txt.setFont(qfont(t, 11.5, 500))
-        self.txt.setStyleSheet("background:transparent;")
-        lay.addWidget(self.txt)
-        self._style(warn=False, visible=False)
+        # ── 形态：web `#updBar`（assets/console/index.html L759-766）**同构** ──
+        #   一条通栏：上行「文本 ＋ 按钮组」，下行明细（有内容才显示）。
+        #   ⚠️ 它不是顶栏里的胶囊：四个按钮塞进顶栏会被挤成"每行一两个字"，
+        #      web 自己也是把它放在**顶栏下方独立一行**。
+        # ── 版式：**左右两栏**（左＝文本＋明细，右＝按钮组）──
+        # ⚠️ 按钮不能和文本同处一个 QHBoxLayout：那样它们只相对**文本那一行**居中，
+        #    一旦有明细行，整条变高、按钮却吊在上半 ⇒ 看着"没在中间"。
+        #    拆成两栏后，按钮组由外层 HBox 相对**整条高度**居中，多一行明细也不跑偏。
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(15, 12, 14, 12)
+        outer.setSpacing(12)
 
-        # ── 下滑面板（点胶囊弹出）。parent=self：主题重建销毁旧胶囊时面板随葬，
-        #    不留幽灵顶层窗（Qt.Popup 有 parent 只影响归属，显示仍是独立浮层）。──
-        self.pop = Popover(t, parent=self)
-        self.detail = QLabel("")
-        self.detail.setFont(qfont(t, 12))
-        self.detail.setWordWrap(True)
-        self.pop.add(self.detail)
+        left = QVBoxLayout()
+        left.setSpacing(6)
+        self.txt = QLabel("")
+        self.txt.setObjectName("UpdMain")
+        self.txt.setFont(qfont(t, 13))
+        self.txt.setWordWrap(True)
+        self.txt.setStyleSheet("background:transparent;")
+        left.addWidget(self.txt)
+
         self.notes = QLabel("")
-        self.notes.setFont(qfont(t, 11.5))
-        self.notes.setStyleSheet("background:transparent;")
+        self.notes.setFont(qfont(t, 12))
         self.notes.setWordWrap(True)
-        self.pop.add(self.notes)
+        self.notes.hide() # 明细：有内容才占位
+        left.addWidget(self.notes)
+        outer.addLayout(left, 1)
+
+        right = QHBoxLayout()
+        right.setSpacing(10)
         self.prog = QLabel("")
-        self.prog.setFont(qfont(t, 11.5, 500))
-        self.prog.setWordWrap(True)
+        self.prog.setFont(qfont(t, 12))
+        self.prog.setStyleSheet("background:transparent;")
         self.prog.hide()
-        self.pop.add(self.prog)
-        row = self.pop.add_row()
+        right.addWidget(self.prog)
+
         self.btn_go = Btn("立即更新", t, "primary")
         self.btn_go.clicked.connect(self._on_go)
-        row.addWidget(self.btn_go)
+        right.addWidget(self.btn_go)
         self.btn_later = Btn("稍后", t, "ghost")
         self.btn_later.clicked.connect(self._on_later)
-        row.addWidget(self.btn_later)
+        right.addWidget(self.btn_later)
         self.btn_skip = Btn("不再提醒这个版本", t, "ghost")
         self.btn_skip.clicked.connect(self._on_skip)
-        row.addWidget(self.btn_skip)
+        right.addWidget(self.btn_skip)
         self.btn_reset = Btn("重置更新状态", t, "ghost")
         self.btn_reset.setToolTip("更新闸门卡死时的出口：只清本机记的「见过的最高版本」")
         self.btn_reset.clicked.connect(self._on_reset)
-        row.addWidget(self.btn_reset)
+        right.addWidget(self.btn_reset)
+        outer.addLayout(right)
+
+        self._style(warn=False, visible=False)
 
     # ------------------------------------------------------------ 交互
 
-    def mousePressEvent(self, e): # noqa: N802
-        self.pop.toggle_at(self, width=470, align="left")
-        super().mousePressEvent(e)
-
     def close_pop(self) -> None:
-        """⛔ P1（切界面闪小窗）：主题切换 `_rebuild` 会 deleteLater 掉旧胶囊，
-        而 Qt.Popup 面板是**独立顶层窗**——父销毁的同一帧里它还在屏幕上闪一下。
-        ⇒ Shell._rebuild 开头先挨个收回（本方法），再拆旧控件。"""
-        try:
-            if self.pop.isVisible():
-                self.pop.close()
-        except Exception: # noqa: BLE001
-            pass
+        """保留的空实现（外部按老契约还会调它）。
+
+        改版后更新条**不再有弹出面板** —— web `#updBar` 本来就是"一条 + 四个内联按钮"，
+        没有弹层，所以也没有需要收回的顶层窗。方法留着只为不破坏调用方。
+        """
+        return
 
     # ------------------------------------------------------------ 样式
 
     def _style(self, warn: bool, visible: bool) -> None:
+        """外观与**常驻公告**（`shell._build_notice` 的 `#fbNotice`，web `#noticeBar`）**同一套**：
+        左侧 3px 实色条 ＋ 2px 近直角 ＋「左浓右淡」的横向渐变底，**没有整块底色**。
+
+        ⚠️ 别退回"实心矩形 ＋ 四边框"那一版：在底图上那是一块**沉重的板**，
+           而公告条要的是"一条轻的提示" —— 靠左缘那道色条立住就够，不必把整块涂满。
+        warn 态只换强调色（蓝 → 黄），版式不动。
+        """
         t = self.t
-        if warn:
-            fg = t.warn
-            self.setStyleSheet(
-                f"QFrame#UpdPill{{background:{rgba(t.q('warn'), 26).name(QColor.NameFormat.HexArgb)};"
-                f"border:1px solid {rgba(t.q('warn'), 120).name(QColor.NameFormat.HexArgb)};"
-                f"border-radius:{pill(22)}px;}}"
-                f"QFrame#UpdPill QLabel{{color:{fg};background:transparent;}}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QFrame#UpdPill{{background:{t.card};"
-                f"border:1px solid {rgba(t.q('blue'), 90).name(QColor.NameFormat.HexArgb)};"
-                f"border-radius:{pill(22)}px;}}"
-                f"QFrame#UpdPill QLabel{{color:{t.blue};background:transparent;}}"
-            )
+        acc = t.q("warn") if warn else t.q("blue")
+        self.setStyleSheet(
+            f"QFrame#UpdBar{{"
+            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {rgba(acc, 26).name(QColor.NameFormat.HexArgb)},"
+            f"stop:0.55 {rgba(acc, 6).name(QColor.NameFormat.HexArgb)},"
+            f"stop:1 {rgba(acc, 0).name(QColor.NameFormat.HexArgb)});"
+            f"border-left:3px solid {acc.name()};border-radius:2px;}}"
+            # 主句走强调色（= 公告标题那一档），明细退回次要字色 ⇒ 两行之间自然分层
+            f"QFrame#UpdBar QLabel{{color:{t.tx2};background:transparent;}}"
+            f"QFrame#UpdBar QLabel#UpdMain{{color:{acc.name()};font-weight:600;}}"
+        )
         self.setVisible(visible)
 
     # ------------------------------------------------------------ 数据入口
@@ -217,27 +224,30 @@ class UpdateBar(QFrame):
         theirs = str((cur or {}).get("theirs") or "")
         if cur is None or (self._dismissed == (st, theirs) and st != ""):
             self._style(warn=False, visible=False) # 同版本「稍后」过了 → 本会话不再弹
-            self._fill_pop()
+            self._fill_notes()
             return
         p = pill(cur)
         if p is None:
             self._style(warn=False, visible=False)
         else:
-            self.txt.setText(p[0])
+            st = str((cur or {}).get("status") or "")
+            if st == "newer":
+                # 「有新版本」这一态要把"当前是哪个版本"一起说 —— 只报"有新版本"
+                # 不了自己差多远（web 的 `updText` 也是这么写的）。
+                self.txt.setText("有新版本 %s（当前 %s）" % (
+                    _ver.tag(cur.get("theirs")), _ver.tag(cur.get("mine")) or "未记录"))
+            else:
+                self.txt.setText(p[0])
             self._style(warn=p[1], visible=True)
-        self._fill_pop()
+        self._fill_notes()
 
-    def _fill_pop(self) -> None:
-        """面板正文/notes/按钮态（胶囊数据同源）。正文用短版 —— notes 逐条
-        明细由独立区域负责，不与 decide 全文的「· 连接」段重复。"""
+    def _fill_notes(self) -> None:
+        """条内第二行（明细）＋ 按钮态，与主文本同源。
+
+        明细为空就整行收起 —— 空标签占着一行会把条撑高，看着像"这里本该有东西"。
+        """
         cur = self._cur
         st = str((cur or {}).get("status") or "")
-        if st == "newer":
-            text = "有新版本 %s（当前 %s）" % (_ver.tag(cur.get("theirs")),
-                                              _ver.tag(cur.get("mine")) or "未记录")
-        else:
-            text, _warn = decide(cur)
-        self.detail.setText(text or "没有待处理的更新事项。")
         self.notes.setText(_notes_text(cur))
         self.notes.setVisible(bool(self.notes.text()))
         self.btn_skip.setEnabled(st == "newer") # 只有真有新版才允许消音
@@ -250,7 +260,6 @@ class UpdateBar(QFrame):
         st = str((self._cur or {}).get("status") or "")
         theirs = str((self._cur or {}).get("theirs") or "")
         self._dismissed = (st, theirs)
-        self.pop.close()
         self._style(warn=False, visible=False)
 
     def _on_skip(self) -> None:
@@ -266,7 +275,6 @@ class UpdateBar(QFrame):
             post_json("/api/update_skip", {"version": ver})
 
         def _apply(box: dict) -> None:
-            self.pop.close()
             self._style(warn=False, visible=False) # web .then(hide).catch(hide)
 
         run_async(_work, _apply, page=self, interval=150, name="upd-skip")
@@ -299,10 +307,10 @@ class UpdateBar(QFrame):
         def _apply(box: dict) -> None:
             r = box.get("r") or {}
             if r.get("ok"):
-                self.detail.setText("已重置（原记录 %s ⇒ 现在 %s）"
+                self.txt.setText("已重置（原记录 %s ⇒ 现在 %s）"
                                     % (r.get("before") or "无", r.get("after") or "清空"))
             else:
-                self.detail.setText("重置失败：%s"
+                self.txt.setText("重置失败：%s"
                                     % (r.get("why") or r.get("error") or "未说明"))
 
         run_async(_work, _apply, page=self, interval=150, name="upd-reset")

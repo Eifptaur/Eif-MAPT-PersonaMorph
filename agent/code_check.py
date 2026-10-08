@@ -9,23 +9,14 @@ from __future__ import annotations
 
 import os
 import sys
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT) # 支持脚本直接运行（py agent/code_check.py）
-
-
-def _run_py(args, timeout=120):
-    import subprocess
-    import sys
-    try:
-        r = subprocess.run([sys.executable, "-X", "utf8"] + args,
-                           cwd=ROOT, capture_output=True, timeout=timeout,
-                           creationflags=0x08000000 if os.name == "nt" else 0)
-        return r.returncode == 0, (r.stdout or b"").decode("utf-8", "replace")[-400:]
-    except Exception as e:
-        return False, str(e)
 
 
 def _compile_all():
@@ -197,7 +188,8 @@ def run(verbose_deps: bool = False) -> dict:
     def _src(name):
         try:
             return open(os.path.join(ROOT, name), encoding="utf-8").read()
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return ""
     _wx = _src("scripts/persona_morph.py")
     _webui = os.path.join(ROOT, "agent", "webui.py")
@@ -217,10 +209,19 @@ def run(verbose_deps: bool = False) -> dict:
             hint)
 
     # —— 历史已知 Bug 回归 ——
-    _code_check("路由归属(POST 链)", "elif path == \"/api/ui-test\""
-                in _wui[_wui.find("def _handle_body_request"):] if "def _handle_body_request" in _wui else False,
-                "ui-test/selfcheck-stop/评分/背景等 POST 路由在 _handle_body_request")
-    _code_check("搜索不再翻页定位(服务通知)", "没有可定位的消息文本" in _wx,
+    # ⛔ 路由这条的锚点**随实现搬过家**，旧写法已经失效：
+    #    POST 路由从 `webui._handle_body_request` 迁到了 `agent/routes.py` 的 `ROUTES` 表
+    #    （`_rapi_*` 处理器），且 `/api/ui-test` 这条路由**已被有意删除** ——
+    #    `fullcheck` 另有一条「真鼠标一键检验已删除（路由）」断言它**不许回来**。
+    #    旧写法去 `webui` 里找 `elif path == "/api/ui-test"` ⇒ 与那条断言**互相矛盾**、必然恒注意。
+    #    改成守"路由表还在 ＋ 已删的那条没回来"两件真事实。
+    _routes_src = _src("agent/routes.py")
+    _code_check("路由归属(POST 链)", "ROUTES = {" in _routes_src and "_rapi_config" in _routes_src
+                and "/api/ui-test" not in _wui,
+                "POST 路由集中在 agent/routes.py 的 ROUTES（`_rapi_*`）；已删的 /api/ui-test 未回来")
+    # ⛔ 这条原来查的是 `_wx`（`scripts/persona_morph.py`），而那句文案在 `agent/wechat.py`
+    #    ⇒ **查错文件**、恒注意。已改为查 `_wechat`。
+    _code_check("搜索不再翻页定位(服务通知)", "没有可定位的消息文本" in _wechat,
                 "无文本消息时明确失败，不再搜索/翻页")
     _code_check("评论区输入框(剪贴板+点击)", "type_into_focused" in _wechat and "0.965" in _wechat,
                 "点击输入框+剪贴板粘贴 3 次重试；失败保留窗口")
@@ -234,12 +235,25 @@ def run(verbose_deps: bool = False) -> dict:
                 "窗口尺寸变化>15% 自动重标")
     _code_check("标定保护(少于5图标不覆盖)", "if len(clusters) < 5" in _ui,
                 "图标不足不写文件")
-    _code_check("表情面板坐标(实测校准)", "0.302" in _wechat and "0.879" in _wechat,
-                "笑脸 13.2%宽 + 爱心底栏最右实测比例")
+    # ⛔ 这条的锚点**换过一次**（旧标记 `0.302`/`0.879` 随实现重写而消失）。现实现是：
+    #    ① **笑脸落点一律帧内现量优先**（`chat_ocr.toolbar_first_icon` 取工具栏行最左那个字形），
+    #       比例法只做兜底 —— 因为"占整幅的比例"会随窗口宽高比变：实测 `947×972` 那轮
+    #       比例法算出 `0.324×947=306`、真值 **379** ⇒ 点进输入框左边的空白处、**面板一次都开不出来**；
+    #    ② 收藏标签（爱心）用**面板相对**实测常量；③ 网格用 `_panel_grid`（实测）优先，兜底才用常量。
+    #    ⇒ 改锚到"**帧内现量优先 ＋ 实测网格优先**"这两件**稳定事实**上（不再锚会变的比例值）。
+    _code_check("表情面板坐标(实测校准)", "toolbar_first_icon" in _wechat and "_panel_grid" in _wechat,
+                "笑脸帧内现量优先（量不到才退比例法）＋ 网格实测优先")
     _code_check("表情顺序(最早收藏排最尾)", "getmtime" in _wechat,
                 "按 mtime 新→旧 排序")
-    _code_check("表情收藏(空区防护+防误击)", "防误击" in _wechat or "收藏表情为空" in _wechat,
-                "空收藏明确提示")
+    # ⛔ 这条的锚点也换过（旧标记「防误击 / 收藏表情为空」两串都不在 `agent/wechat.py`）。
+    #    实测两半**都做了**，只是换了措辞、其中一半还换成了更强的机制：
+    #    ① **空区防护**搬到了 `agent/tools.py` —— `list_emojis` 空态明确返回「收藏夹为空：…」；
+    #    ② **防误击/防假成功**改成了**回读确认**：`emoji_panel_send` 点完必须轮询数据库确认真出新行，
+    #       确认不到就换下一格重试，仍确认不到 ⇒ **如实报失败**
+    #       （旧实现是"点一下就报已发送"，现场后果＝面板开了、一个没发出去、日志一字不留）。
+    _tools_src = _src("agent/tools.py")
+    _code_check("表情收藏(空区防护+防误击)", "收藏夹为空" in _tools_src and "已回读确认新行" in _wechat,
+                "空态明确提示（`tools.list_emojis`）＋ 点完回读确认、确认不到如实报失败")
     _code_check("背景上传(base64清洗+padd)", "b64decode(raw, validate=False)" in _wui and "len(raw) % 4" in _wui,
                 "清洗空白+padding 补全+明确报错")
     _code_check("背景资源服务(self._data_path)", "self._data_path" in _wui,
@@ -268,7 +282,9 @@ def run(verbose_deps: bool = False) -> dict:
                 "只分析角色本体段")
     _code_check("模型评分(五维加权+0.01)", "from agent.persona_rating" in _wx and "RULES_TEXT" in _wx,
                 "五维加权百分位；禁止整分")
-    _code_check("补足循环(分升继续)", "rounds_done" in _wx and "人设导向" in _wx,
+    # ⛔ 原来的第二个标记串是 `人设导向` —— 代码里的实际措辞是"按人设重写→严格评分→**分升则下一轮**"
+    #    ⇒ 旧标记查不到、恒注意（补足链本身是好的）。改成真实存在的措辞。
+    _code_check("补足循环(分升继续)", "rounds_done" in _wx and "分升则下一轮" in _wx,
                 "人设导向+分升检测+轮数")
     _code_check("补足import(agent.persona_enrich)", "from agent.persona_enrich import" in _wx,
                 "补足引擎 import 位置正确")

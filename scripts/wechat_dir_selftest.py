@@ -391,6 +391,7 @@ finally:
 
 print("\n── E. 扫盘探到就**自动记住**──")
 _sv_save = D.save
+_sv_check = D.check
 # ⚠️ 判据自己跑在 `PM_JUDGE_NO_PROC=1` 下（run_all_selftests 会给子判据带）⇒ E1 要验"真去写了"就得
 #   先把它拿掉，跑完再还回去（E7 专门验"判据环境下不写"）。
 _sv_env = os.environ.pop("PM_JUDGE_NO_PROC", None)
@@ -401,9 +402,20 @@ try:
     ok("E1 配置里没填、扫盘探到 ⇒ **真去写了**（且写的就是扫盘那个路径）",
        _r1.get("saved") is True and _calls == ["M:\\WX\\talk\\xwechat_files"], str(_r1) + str(_calls))
     _calls.clear()
+    # ⭐⭐ E2 **口径已改**：判据不是"用户填过没填过"，
+    #    而是"**配着的那个到底能不能用**"：
+    #      · 能用 ⇒ 一个字不动（**不覆盖好配置**，这才是真正该守的"不替用户改"）；
+    #      · 用不了（扫不到盘）⇒ **必须改成扫到的那个**（静默，让它跑起来，不评判用户填错）。
+    D.check = lambda p: {"ok": True}
     _r2 = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "D:\\我自己填的")
-    ok("E2 配置里**本来就有值** ⇒ 一个字都不动（不替用户改）",
+    ok("E2a 配着的那条**本来就能用** ⇒ 一个字都不动（不覆盖一个好配置）",
        _r2.get("saved") is False and not _calls and "不替你改" in str(_r2.get("why")), str(_r2))
+    _calls.clear()
+    D.check = lambda p: {"ok": False, "error": "扫不到盘"}
+    _r2b = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "D:\\我填错的")
+    ok("E2b ★★ 配着的那条**用不了（扫不到盘）** ⇒ **必须静默改成扫到的那个**（让它跑起来）",
+       _r2b.get("saved") is True and _calls == ["M:\\WX\\talk\\xwechat_files"], str(_r2b) + str(_calls))
+    _calls.clear()
     D.save = lambda pth, on_save=None: (_ for _ in ()).throw(OSError("判据模拟：盘不可写"))
     _r3 = D.remember_scanned("M:\\WX\\talk\\xwechat_files", "")
     ok("E3 写盘抛异常 ⇒ 如实报「没记成」、**不抛**（继续用扫盘结果就行）",
@@ -415,6 +427,7 @@ try:
     ok("E5 扫盘结果为空 ⇒ 什么都不做", _r5.get("saved") is False and not _calls, str(_r5))
 finally:
     D.save = _sv_save
+    D.check = _sv_check
     if _sv_env is not None:
         os.environ["PM_JUDGE_NO_PROC"] = _sv_env
 

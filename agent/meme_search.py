@@ -34,6 +34,14 @@ QUERY_TEMPLATES = (
     "本周 网络流行语 热梗",
 )
 
+#: 已知话题时**额外打的两路"专门站"查询**：梗站是按梗组织的，比泛搜索准得多 ——
+#  泛搜索常把同名的**人／事／商品**排在前面，专门站直接给"这个梗是什么、怎么来的"。
+#  ⛔ 只在**给了话题**时用（拿它当泛查询会搜不到"最近有什么梗"）。
+TOPIC_SITE_QUERIES = (
+    'site:zh.moegirl.org.cn "{t}" 梗',
+    '"{t}" 是什么意思 梗 出处',
+)
+
 
 def _norm_topic(topic: str) -> str:
     """把话题归一成缓存键（去空白/标点、限长）。空串 ⇒ 用固定键（＝"最新热梗"泛查询）。"""
@@ -110,6 +118,18 @@ def search_meme(topic: str = "", max_results: int = 5, use_cache: bool = True) -
             pass
     topic = str(topic or "").strip()
     key = _norm_topic(topic)
+    # ⭐ **以前查过就直接给**：口径是"**见过一次就记下来**" ⇒
+    #    同名梗**不再重复出网**（既省 token 也省时间）。
+    #    ⛔ 只认**完全同名**（`recall_meme` 内部已归一大小写/空白）；**没记过就照常出网**。
+    if topic:
+        try:
+            _old = recall_meme(topic)
+            if _old:
+                return {"ok": True, "topic": topic, "cached": True, "from_note": True,
+                        "note": "这条以前查过并记下了：%s" % (_old.get("gist") or ""),
+                        "results": []}
+        except Exception: # noqa: BLE001
+            pass
     if use_cache:
         hit = _cache_get(key)
         if hit is not None:
@@ -121,6 +141,14 @@ def search_meme(topic: str = "", max_results: int = 5, use_cache: bool = True) -
         queries = ["%s 是什么梗" % topic]
     else:
         queries = list(QUERY_TEMPLATES)
+        # ⭐ 给了话题 ⇒ **先打"专门站"那两路**（梗站按梗组织，比泛搜索准得多），再补一路泛查询兜底。
+        #    ⛔ 泛查询（没给话题）**不加** `site:` —— 那会搜不到"最近有什么梗"。
+        _t = str(topic or "").strip()
+        if _t:
+            try:
+                queries = [q.format(t=_t) for q in TOPIC_SITE_QUERIES] + list(QUERY_TEMPLATES[:1])
+            except Exception: # noqa: BLE001
+                queries = list(QUERY_TEMPLATES)
     results: list = []
     seen = set()
     errs: list = []
@@ -160,3 +188,81 @@ def search_meme(topic: str = "", max_results: int = 5, use_cache: bool = True) -
     if results and use_cache:
         _cache_put(key, out)
     return out
+
+
+# ── 已验证梗的**长期笔记**──────────────────────────────
+#   口径：**见到过一次就要自己记下来**，但**尽量省着点、保护用户的存储空间**。
+#   ⇒ 只落**结论**（这个梗是什么、什么时候记的、来源标题一行），
+#     **不落正文/全文/链接内容**（那才是吃空间的大头）；
+#     单文件 JSONL、**条数封顶**（超了丢最老的）⇒ 长期占用几十 KB 量级，可忽略。
+MEME_NOTE_MAX = 400
+
+
+def _note_path() -> str:
+    """笔记落盘路径（`data/` 下，与其它运行数据同处，便于一起备份/清理）。"""
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    return _os.path.join(root, "data", "meme_notes.jsonl")
+
+
+def note_meme(topic: str, gist: str, *, source: str = "") -> bool:
+    """把"查过的梗"记一行：`{ts, topic, gist, source}`。成功返 `True`。
+
+    ⛔ 三条边界：① `topic` 或 `gist` 为空 ⇒ **不记**（空条目没意义还占空间）；
+      ② `gist` **截断到 200 字**（只留结论）；③ 条数超过 `MEME_NOTE_MAX` ⇒ **丢最老的**。
+    """
+    import json as _json
+    import os as _os
+    import time as _t
+    _tp, _g = str(topic or "").strip()[:60], str(gist or "").strip()[:200]
+    if not _tp or not _g:
+        return False
+    p = _note_path()
+    try:
+        _os.makedirs(_os.path.dirname(p), exist_ok=True)
+        rec = {"ts": round(_t.time(), 1), "topic": _tp, "gist": _g,
+               "source": str(source or "")[:120]}
+        rows = []
+        if _os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as fh:
+                rows = [ln for ln in fh.read().splitlines() if ln.strip()]
+        rows.append(_json.dumps(rec, ensure_ascii=False))
+        if len(rows) > MEME_NOTE_MAX:                 # 封顶：丢最老的（省空间）
+            rows = rows[-MEME_NOTE_MAX:]
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(rows) + "\n")
+        return True
+    except Exception: # noqa: BLE001
+        return False
+
+
+def recall_meme(topic: str):
+    """查这条梗**以前记过没有** ⇒ 记过返回 `{ts, topic, gist, source}`，没有返回 `None`。
+
+    用途：**以前查过的就不必再出网**（既省 token 也省时间）。
+    ⛔ 只认**完全同名**（大小写/空白归一后相等），不做模糊匹配 —— 模糊匹配会把"同音的另一个梗"认成同一个。
+    """
+    import json as _json
+    import os as _os
+    _tp = str(topic or "").strip().lower()
+    if not _tp:
+        return None
+    p = _note_path()
+    try:
+        if not _os.path.isfile(p):
+            return None
+        last = None
+        with open(p, "r", encoding="utf-8") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    r = _json.loads(ln)
+                except Exception: # noqa: BLE001
+                    continue
+                if str(r.get("topic") or "").strip().lower() == _tp:
+                    last = r
+        return last
+    except Exception: # noqa: BLE001
+        return None

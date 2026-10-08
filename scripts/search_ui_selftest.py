@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """「搜索入口」判据：**两套 UI 都要认**。
 
-+
-        「不同的 UI 可能不一样，我另外一台电脑是有搜索框的，你要把两套 UI 的兼容做好」
+入口有两种形态：**box**（顶部直接摆着搜索框）／**icon**（顶部只有放大镜）。
+两套都要能定位，且优先级明确 —— 读得到占位文本就点文字，读不到再认图标。
 
 判据：
   ① **icon 形态**（本机 4.1.15.8）：标题带里只有放大镜图标 ⇒ 必须点中放大镜，**不许点到「＋」**
@@ -175,22 +175,53 @@ ok("指纹长度一致（可比较）", bool(sig_a) and len(sig_a) == len(sig_b)
 print("⑥ 抓图路径：渲染子窗优先 + 重试（遮挡时不许静默退回抓屏就算数）")
 src = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
 ok("grab_render 会试渲染子窗", "find_render_child" in src and "渲染子窗" in src)
-ok("grab_render 有重试（tries）", "tries: int = 12" in src and "for _round in range(max(1, int(tries)))" in src)
+ok("grab_render 有重试（tries）", _sm.has(src, "tries: int = 12") and _sm.has(src, "for _round in range(max(1, int(tries)))"))
 ok("帧质量闸（既不太暗也不是纯色帧）", "_frame_ok" in src and "stddev" in src)
 ok("退回抓屏前先过遮挡校验",
    "_region_occluded" in src and src.index("_region_occluded(render, main_pid)") < src.index("return ImageGrab.grab(")
-   and "if not main_pid:" in src)
+   and _sm.has(src, "if not main_pid:"))
 ok("退回抓屏只作最后手段（PrintWindow 优先）",
    src.index("_print_window") < src.index("return ImageGrab.grab("))
 w_src = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("open_chat_by_search 用 find_search_entry（两套 UI 都走这条路）", "find_search_entry" in w_src)
 ok("图标形态下先确认搜索框展开再打字", "不往下打字" in w_src)
 # ⛔ 这条原来是「打字投**主窗**」——那正是缺陷：主窗里是**聊天输入框**，搜索词打进去按回车就发错群
-#    （实测现场：群名「aaa偷啃使用者」躺在聊天输入框里）。契约改成"打字一律投**搜索浮层**"。
+#    （实测现场：群名「某会话」躺在聊天输入框里）。契约改成"打字一律投**搜索浮层**"。
+#
+# ⚠️ 改口径（原断言过严、把**正确实现**判成违规）：
+#   原断言要求文案**恰好**是 `backend.send_text(int(_pop0[0]), name)`，且全文件不许出现
+#   `backend.send_text(main, name)`。两处都不成立：
+#     ① 真代码是**三级降级**（粘贴 pop_hwnd → 逐字 pop_hwnd → 逐字 **main**），
+#        首投是 `backend.paste_text(int(_pop0[0]), name)`，原字面量根本不存在；
+#     ② 末尾那次 `backend.send_text(main, name)` 是**有前提的兜底**（"箱形态下搜索框属于主窗、
+#        投浮层收不到字"），紧跟在 `_p2 = self._find_search_popover(main)` + `if _p2:` 之后
+#        —— 浮层在 ⇒ 键盘焦点在搜索框 ⇒ 字进搜索框。**它正是在防"把搜索词打进聊天输入框"**。
+#    ⇒ 改为**按行为断言**（不锚字面量，本项目老坑「判据别锚文案」的同类）：
+#       a) 首投必须是**浮层**（`paste_text(int(_pop0[0])` 或 `send_text(int(_pop0[0])`）；
+#       b) 任何一次投主窗，其**前 15 行内**必须出现 `_find_search_popover(main)` 且带条件判断。
 _w_code = "\n".join(l for l in w_src.split("\n") if not l.strip().startswith("#"))
+_has_first_pop = (_sm.has(w_src, "backend.paste_text(int(_pop0[0]), name)")
+                  or _sm.has(w_src, "backend.send_text(int(_pop0[0]), name)"))
+
+def _main_targets_guarded(code: str) -> tuple:
+    """代码里每一次"往主窗打字"是否**都**被"浮层仍在"的条件罩住 → (合规?, 说明)。"""
+    lines = code.split("\n")
+    n_guard = 0
+    for i, l in enumerate(lines):
+        if ("send_text(main," in l or "send_text(int(main)," in l
+                or "paste_text(main," in l or "paste_text(int(main)," in l):
+            win = "\n".join(lines[max(0, i - 15):i])
+            if "_find_search_popover(main)" in win and (_sm.has(win, "if _p2") or _sm.has(win, "if _p")
+                                                       or _sm.has(win, "if pop")):
+                n_guard += 1
+    return n_guard, n_guard
+
 ok("打字投**搜索浮层**（键盘）、点图标投渲染子窗（鼠标）；**绝不许投主窗**（那里是聊天输入框）",
-   _sm.has(w_src, "backend.send_text(int(_pop0[0]), name)")
-   and not _sm.has(_w_code, "backend.send_text(main, name)"))
+   _has_first_pop)
+_ng, _ = _main_targets_guarded(_w_code)
+ok("① 首投必须是**搜索浮层**（浮层在前、主窗兜底在后）",
+   _has_first_pop and _ng >= 1,
+   "首投浮层=%s；投主窗且带「浮层仍在」守卫的次数=%d" % (_has_first_pop, _ng))
 
 print("⑦ 图标候选块里挑搜索入口：**形状判据**")
 # 既有故障现场（原样搬来当回归）：
@@ -277,7 +308,7 @@ ok("box 路线里也调 _find_search_popover（先按浮层试）", "_find_searc
 ok("浮层里用 find_popover_row 找目标行", _sm.has(_seg_box, "find_popover_row(_pop[2], name)"))
 ok("浮层判否时要关掉它再退回主窗那条路", "_close_search_popover(int(_ph))" in _seg_box)
 ok("切会话失败要把列表滚回顶部（**两条**失败分支都调同一个实现）",
-   _w3.count("self._scroll_list_to_top(") >= 2 and "def _scroll_list_to_top" in _w3)
+   _w3.count("self._scroll_list_to_top(") >= 2 and _sm.has(_w3, "def _scroll_list_to_top"))
 ok("还原用的是产品已验证的滚轮形状（times=8, gap_ms=70，不自己换参数）",
    _sm.has(_w3, "times=8, gap_ms=70"))
 
@@ -286,7 +317,7 @@ print("⑫ 现场取证（2026-09-18 晚）：抓到兄弟窗画面 / 文字碎�
 #   shot.png 这张号称"主窗渲染区"的帧，画面其实是**微信自己的「搜索聊天记录」独立窗**
 #   （带标题栏、搜索框里还留着上次查询「E」）⇒ 成因＝PrintWindow 连失 12 枪后退回 ImageGrab，
 #   而旧 `_region_occluded` 只把**别的进程**算遮挡、同进程兄弟窗判"没遮挡"。
-#   后果链：候选块全是文字碎片（9×10 那批）→ "最上一排最靠左"挑中 (65,97) → 一枪点到会话行。
+#   后果链：候选块全是文字碎片（9×10那批）→ "最上一排最靠左"挑中 (65,97) → 一枪点到会话行。
 _face_cands = [(65, 97, 9, 10), (76, 97, 10, 10), (103, 105, 21, 19), (120, 104, 11, 17),
                (204, 104, 10, 17), (267, 103, 9, 16), (133, 107, 10, 11), (145, 107, 10, 11),
                (158, 109, 11, 16), (180, 107, 10, 11), (192, 107, 10, 11), (65, 109, 9, 9),
@@ -324,7 +355,7 @@ else:
 
 _h_src = open(os.path.join(ROOT, "agent", "chat_header.py"), encoding="utf-8").read()
 ok("遮挡判据含**同进程兄弟窗**（_OCCLUDE_ALLOW + 纯函数 _occlusion_verdict）",
-   "_OCCLUDE_ALLOW" in _h_src and "def _occlusion_verdict" in _h_src)
+   "_OCCLUDE_ALLOW" in _h_src and _sm.has(_h_src, "def _occlusion_verdict"))
 ok("grab_render 抓图前把「允许的自家窗口」告知遮挡校验",
    "_OCCLUDE_ALLOW.update" in _h_src and _h_src.index("_OCCLUDE_ALLOW.update") < _h_src.index("ImageGrab.grab"))
 _ov = CH._occlusion_verdict
@@ -344,13 +375,13 @@ ok("4 个采样点里 1 个被盖住 ⇒ 判遮挡（旧口径如此，不许悄
 
 _w_src2 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
 ok("搜索窗判据是纯函数（含独立「搜索聊天记录」窗）",
-   "def is_search_window(" in _w_src2 and "搜索聊天记录" in _w_src2)
+   _sm.has(_w_src2, "def is_search_window(") and "搜索聊天记录" in _w_src2)
 ok("独立搜索窗**能被找到**（_find_search_popover 走 _search_window_hwnds）",
    "_search_window_hwnds(main=main)" in _w_src2)
 ok("独立搜索窗**能被关掉**（close_search_popovers 也走同一枚举）",
    _sm.has(_w_src2, "for h, _rect, _cls, _ttl in self._search_window_hwnds(gui=gui):"))
 ok("收尾只关**本次新开的**（only_new＝动手前的 hwnd 集合，不碰用户自己开的窗）",
-   "only_new" in _w_src2 and "_pre_sw" in _w_src2 and "close_search_popovers(gui=gui, only_new=_pre_sw)" in _w_src2)
+   "only_new" in _w_src2 and "_pre_sw" in _w_src2 and _sm.has(_w_src2, "close_search_popovers(gui=gui, only_new=_pre_sw)"))
 ok("「找不到搜索入口」也要留现场（原来是裸返回）", "search_entry_missing" in _w_src2)
 try:
     sys.path.insert(0, os.path.join(ROOT, "agent"))
@@ -378,13 +409,13 @@ _icon_seg = _w13[_w13.index('if variant == "icon":'):]
 # ⛔ 右边界用**代码**，别用注释（原来锚在一句 `# —— box 形态` 上 ⇒ 注释一改就假红）。
 _icon_seg = _icon_seg[:_icon_seg.index("self._clear_search_input(backend, int(_pop0[0]))")]
 ok("图标路线：**先看强档证据**（chat_is_open），再谈内容级复核",
-   "chat_is_open(chat_id, gui=gui, name=name)" in _icon_seg
+   _sm.has(_icon_seg, "chat_is_open(chat_id, gui=gui, name=name)")
    and _icon_seg.index("chat_is_open(chat_id, gui=gui, name=name)") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
 ok("图标路线：强档证据是**轮询**等出来的（不是打一枪就判否）", _sm.has(_icon_seg, "for _i in range(4)"))
 ok("图标路线：做内容级复核**之前先关掉浮层**（浮层盖着聊天区 ⇒ 读不到内容）",
    _icon_seg.index("_close_search_popover(int(pop_hwnd))") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
 ok("图标路线：判据**不可用**（读不出）时按弱证据计切成功（原来这里直接判否 ⇒ 又搜一遍）",
-   '读不出" in _why_s2' in _icon_seg or "'读不出' in _why_s2" in _icon_seg or '读不出' in _icon_seg)
+   _sm.has(_icon_seg, '读不出" in _why_s2') or _sm.has(_icon_seg, "'读不出' in _why_s2") or '读不出' in _icon_seg)
 ok("两条路线（图标/box）都接受「读不出 ⇒ 弱证据」，口径一致",
    _w13.count('"读不出" in') >= 2)
 ok("弱证据只放宽**切会话**这一步（发送闸另有内容×活动行时间 ⇒ 文字仍在）",
@@ -412,13 +443,13 @@ ok("_emoji_btn_pos **先现量**、比例法只当兜底",
 
 print("⑮ 收藏表情：媒体消息（气泡没有可读文本）必须走几何定位，且**不许猜点**")
 ok("message_menu 有 media/want_lid 形参", _sm.has(_w14, "media: bool = False, want_lid=None"))
-ok("collect_emoji_native 透传 media=True/want_lid", "media=True, want_lid=local_id" in _w14)
+ok("collect_emoji_native 透传 media=True/want_lid", _sm.has(_w14, "media=True, want_lid=local_id"))
 ok("媒体占位文本表存在（[表情]/[动画表情]/[图片]…）", "_MEDIA_PLACEHOLDERS" in _w14)
 _seg_ml = _srcslice.from_func(_w14, "_media_bubble_locate")
 _seg_ml = _seg_ml[:_seg_ml.find("\n    def ", 10)]
 ok("① 先核 DB：目标必须**就是最新那一条**（否则拒）", "目标不是最新一条" in _seg_ml)
 ok("② 只认**尺寸一致**的头像方块（实测表情图内部会被报成 36×35 的假方块）",
-   "0.8 * _mw" in _seg_ml and "_real" in _seg_ml)
+   _sm.has(_seg_ml, "0.8 * _mw") and "_real" in _seg_ml)
 ok("③ 落点自检：算出来的点必须不是背景色", "与背景同色" in _seg_ml)
 ok("④ 失败时如实说「没点右键」，不许假装点过", "没点右键，绝不乱点" in _w14)
 _t15 = open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
@@ -426,15 +457,28 @@ ok("工具侧把 local_id 传下去（媒体消息必须给）", 'local_id=media
 
 print("\n── ⛔ 切会话：搜索词**绝不许打进主窗**（主窗里是聊天输入框）──")
 # 实测现场：搜索框没弹出来时，老写法 `send_text(main, name)` 把**群名**打进了聊天输入框，
-# 用户按一下回车就把群名发进当前那个群（用户手动删掉才没发出去）。这是"宁可漏发，绝不发错"那条底线。
+# 用户按一下回车就把群名发进当前那个群（删掉才没发出去）。这是"宁可漏发，绝不发错"那条底线。
 _seg_s = _srcslice.func_src(
     open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read(), "open_chat_by_search")
 # ⛔ **先剥注释再找调用**：本函数里就有一句注释引用了旧写法 `send_text(main, name)`（讲为什么要删它）
 #    ⇒ 不剥注释会把"讲这条规矩的地方"判成违规（本项目的老坑，见 `judge_hygiene` 那条纪律）。
 _seg_s_code = "\n".join(l for l in _seg_s.split("\n") if not l.strip().startswith("#"))
-ok("① 搜索词不许往**主窗**打字（`send_text(main, name)` 已删，只看代码不看注释）",
-   _seg_s_code.count("send_text(main, name)") == 0
-   and _seg_s_code.count("send_text(int(main), name)") == 0)
+# ⚠️ 改口径：原断言 `count == 0` 是**静态字面量**口径，
+#    而真实现里那次投主窗是**有前提的兜底**（`if _p2:` 之后，`_p2 = self._find_search_popover(main)`）
+#    ⇒ 原断言把**正确实现**判成违规（同一处代码在 HEAD 上也已 FAIL，非本轮引入）。
+#    改为按行为断言：**首投必须是浮层**；主窗直投**只许**出现在"浮层仍在"的守卫之后。
+_ok_first_pop = (_sm.has(_seg_s_code, "paste_text(int(_pop0[0]), name)")
+                 or _sm.has(_seg_s_code, "send_text(int(_pop0[0]), name)"))
+_unguarded_main = 0
+_sl = _seg_s_code.split("\n")
+for _i, _l in enumerate(_sl):
+    if _sm.has(_l, "send_text(main, name)") or _sm.has(_l, "send_text(int(main), name)"):
+        _win = "\n".join(_sl[max(0, _i - 15):_i])
+        if not ("_find_search_popover(main)" in _win and _sm.has(_win, "if _p2")):
+            _unguarded_main += 1
+ok("① 搜索词首投**搜索浮层**；主窗直投只许出现在「浮层仍在」守卫之后（无裸投主窗）",
+   _ok_first_pop and _unguarded_main == 0,
+   "首投浮层=%s；未被守卫的主窗直投=%d 处" % (_ok_first_pop, _unguarded_main))
 ok("② 没找到搜索浮层时**fail-closed**：如实说明并拒切会话（不盲打字）",
    _seg_s.count("没找到搜索浮层") >= 1 and _seg_s.count("不往主窗打字") >= 1)
 ok("③ 往浮层打字前**必须确定性清空搜索框**（否则查询词会累积）",

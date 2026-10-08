@@ -10,7 +10,7 @@
   B. 阴性对照：空树 / `xwechat_files` 里没有 `db_storage` ⇒ **不许命中**；
   C. **有界**：深度上限与目录预算都生效（预算 1 时立刻停，且不抛）；
   D. 集成：候选表全不命中时，`_probe_db_dirs` 靠深扫把 `hit` 找出来（并如实标 `deep`）；
-  E. 决策：`resolve_db_dir("")` 在这种情况下给出 (`…\\xwechat_files`, `"scanned"`)。
+  E. 决策：`resolve_db_dir` 在这种情况下给出 (`…\\xwechat_files`, `"scanned"`)。
 
 用法：`runtime\\python\\python.exe scripts\\db_discovery_selftest.py`
 """

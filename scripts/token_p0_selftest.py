@@ -160,5 +160,54 @@ _pm_src = io.open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="u
 ok("P0-3h 谷段门挂在 `_maybe_consolidate` 里，且**有超时兜底**（防白天永远不整理）",
    _sm.has(_pm_src, "记忆整理延后到谷段") and _sm.has(_pm_src, "consolidate_force_after_hours"))
 
+print("\n── P0-4 恒定段必须放 system（R1：挪错位置＝每轮按未命中全价重算） ──")
+# ⭐ 判据锚**意图**：内容恒定的段（不随本轮消息变）必须放 system prompt。
+#   放用户消息尾部 ⇒ 排在一堆"每轮都变"的段之后 ⇒ 前缀缓存吃不到 ⇒ 每轮 fresh 全价。
+#   实测代价：103 token/次 × 330 次 ＝ 33,990 token（占 fresh 总量 30.2%）。
+#   ⛔ 这条守的是"位置"这条产品决策，不是某段文案的字面 —— 所以按**函数调用**判，不按文案判。
+_p_src = io.open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read()
+try:
+    def _body(src, fname):
+        """抠出某个函数的函数体（到下一个顶层 def 为止）。"""
+        i = src.index("\ndef %s(" % fname)
+        j = src.find("\ndef ", i + 1)
+        return src[i:j if j != -1 else len(src)]
+
+    def _code_only(text):
+        """只留**代码行**（去掉注释与三引号块）—— ⛔ 否则说明性注释里提到那两段名字
+        就会被误判成"还发着"（本判据第一版就这么假红过一次）。"""
+        out, in_doc = [], False
+        for ln in text.split("\n"):
+            s = ln.strip()
+            if s.count('"""') == 1:
+                in_doc = not in_doc
+                continue
+            if in_doc or s.startswith("#"):
+                continue
+            out.append(ln)
+        return "\n".join(out)
+
+    _sys_body = _code_only(_body(_p_src, "build_system_prompt"))
+    _usr_body = _code_only(_body(_p_src, "build_user_prompt"))
+    ok("P0-4a 分母守卫：两个函数体都真读到了（否则下面两条测的是空气）",
+       len(_sys_body) > 400 and len(_usr_body) > 1200,
+       "sys=%d usr=%d" % (len(_sys_body), len(_usr_body)))
+    ok("P0-4b ★恒定段在 system 里（参与度 ＋ 引导说明）",
+       "_participation_line" in _sys_body and "_guidance_text" in _sys_body,
+       "参与度=%s 引导=%s" % ("_participation_line" in _sys_body, "_guidance_text" in _sys_body))
+    ok("P0-4c ★恒定段**不在**用户消息里（不许两边都发＝白付一份）",
+       "【参与度参考】" not in _usr_body and "【引导说明】" not in _usr_body,
+       "参与度=%s 引导=%s" % ("【参与度参考】" in _usr_body, "【引导说明】" in _usr_body))
+    # 反向锚：把同样的两段塞回 user 侧的一份**样张**，P0-4c 的检查器必须能抓出来
+    _fake_usr = _usr_body + '\nparts.append("【参与度参考】x")\n'
+    ok("P0-4d ★反向锚：塞回 user 侧的样张会被 P0-4c 的检查抓出",
+       "【参与度参考】" in _fake_usr, "检查器有效")
+    # 反向锚 ②：注释里提到它**不该**被判红（防止判据退化成"按字面抓"）
+    _fake_cmt = _usr_body + '\n# 【参与度参考】已挪进 system\n'
+    ok("P0-4e ★反向锚②：只是**注释**里提到它 ⇒ 不该报红（判据要去注释）",
+       "【参与度参考】" not in _code_only(_fake_cmt), "去注释有效")
+except Exception as e: # noqa: BLE001
+    ok("P0-4a~d 恒定段位置", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+
 print("\nToken P0 判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

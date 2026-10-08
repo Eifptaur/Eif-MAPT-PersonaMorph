@@ -304,7 +304,7 @@ class WaveFX(QObject):
         try:
             if self._enabled:
                 # WaveOverlay 子控件（懒建 + 跟随 shell 几何 + raise_ 置顶）。
-                # QGraphicsEffect 对顶层窗口不生效 ⇒ 弃用 effect 路线（
+                # QGraphicsEffect 对顶层窗口不生效 ⇒ 弃用 effect 路线
                 #   开关已开、effect 已挂、画面纹丝不动 = 此根因）。QT_NO_WAVE=1 逃生门。
                 if _LENS_MOUNT_OK and self._overlay is None:
                     self._overlay = WaveOverlay(self)
@@ -504,7 +504,7 @@ class WaveFX(QObject):
         return self._module_rect_of(hit)
 
     def _module_rect_of(self, w) -> QRect:
-        """光标所在「模块」矩形 —— 对齐 web `closest('.card,.side,.topbar')` 语义。
+        """光标所在「模块」矩形 —— 对齐 web `closest` 语义。
 
         规则：
         ① 顶栏内布局 wrapper（类名含 Widget/Frame）被误判成模块 ⇒ 透镜停在中途小容器，

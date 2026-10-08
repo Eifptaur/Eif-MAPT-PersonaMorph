@@ -44,7 +44,7 @@ import io
 import json
 import os
 import re
-import shutil
+
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -205,7 +205,12 @@ def main() -> int:
         dst = os.path.join(LOCAL, "local-%03d-%s.png" % (seq, re.sub(
             r"[^A-Za-z0-9._-]", "_", os.path.splitext(name)[0])[:50]))
         try:
-            Image.open(p).convert("RGB").save(dst, "PNG")
+            # 原子写：这批图会进真值流水线当基准，**半截图会污染分母**（读到的是坏图/None，
+            # 却被当成"模型认得差"）。落盘统一走 `agent.atomic_io`（tmp + 校验非空 + 换档）。
+            sys.path.insert(0, ROOT)
+            from agent import atomic_io as _aio_c
+            if not _aio_c.save_image(dst, Image.open(p).convert("RGB"), fmt="PNG", halt_check=False):
+                raise IOError("原子写判失败（目标未留半截文件）")
         except Exception as e:  # noqa: BLE001
             print("   （转存失败 %s：%s）" % (name[:40], str(e)[:40]))
             skipped += 1

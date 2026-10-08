@@ -24,11 +24,14 @@ VERSION = '2026.9.28.6'
 #   "版本号没变、但包的内容变了" ⇒ 照常提示更新。
 # ⚠️ **它对已经在跑的老版无效**（老版没有这段代码，只认版本号）⇒ 老用户只能靠**版本号前进**触达；
 #   这正是"修一个 bug 就发一个版本号"那条口径的由来（见上面 docstring）。
-BUILD = '547dd1c3700b'
+BUILD = 'ad457fd6675d'
 
 import hashlib as _hashlib # noqa: E402
 import os as _os # noqa: E402
 import re as _re # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 def build_fingerprint(files, root: str = "") -> str:
@@ -87,7 +90,8 @@ def write_build(value: str, path: str = "") -> str:
                         _os.remove(_os.path.join(_d, _n))
                     except OSError:
                         pass  # 清理型：静默合法
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return str(value)
 
@@ -117,7 +121,8 @@ def tag(v: str = "") -> str:
         return s
     try:
         n = int(p[3])
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return s
     out = "v2.1.%d" % (n + 1)
     if len(p) >= 5 and str(p[4]).strip():

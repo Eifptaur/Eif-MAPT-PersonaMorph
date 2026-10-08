@@ -207,7 +207,7 @@ try:
     _d = _Dr.Draw(_im)
     for x in (312, 357, 402, 446, 509): # 工具栏 5 簇
         _d.rectangle([x - 8, 843, x + 8, 863], fill=60)
-    for x in (700, 760, 820, 880): # 同一行另外 4 个簇（"整行 9 簇"）
+    for x in (700, 760, 820, 880): # 同一行另外 4 个簇
         _d.rectangle([x - 8, 843, x + 8, 863], fill=60)
     _g = _im.convert("L")
     _y, _cl, _total = _ib.best_row(_g)
@@ -255,7 +255,7 @@ try:
     ok("r8 回归：pane_left 已经不参与判定（换一个 pane_left 结论不变）",
        _ib2.file_point(_g2, (0, 0, 1139, 890), pane_left=0)[0][0] == 402)
     _probe2 = open(os.path.join(_ROOT, "scripts", "file_btn_probe.py"), encoding="utf-8").read()
-    # ⚠️ 先剥注释再判：注释里会**提到**被删掉的名字（"删掉 ICONS_X 那段"），按全文 grep 会假红
+    # ⚠️ 先剥注释再判：注释里会**提到**被删掉的名字，按全文 grep 会假红
     _pcode2 = "\n".join(l for l in _probe2.split("\n") if not l.lstrip().startswith("#"))
     ok("探针里那段会误导的「常量 vs 最近邻命名」已删（按代码判，不看注释）",
        "ICONS_X" not in _pcode2 and "最近实测簇" not in _pcode2)

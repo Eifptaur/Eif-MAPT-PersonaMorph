@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """probe_content_match_width.py —— `content_match` 最后那条 `sm.ratio() > 0.5` 兜底有多宽？
 
-⛔ 起因（实测）：
+⛔ 起因：
   `content_match(pane, needle)` 的主路是"针的 8/10/12/16 字**非低熵片段**在 pane 里精确命中"，
   这条哲学很清楚：**要一个够长的确切片段**。
   可它最后一行是：
@@ -30,13 +30,13 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-import agent.wechat as W  # noqa: E402
+
 from agent import chat_ocr as CO  # noqa: E402
 
 _CANDIDATES = [
-    os.path.join(os.environ.get("TEMP", "."), "wechatauto_db", "wxid_ctkh6fu5iuri22_eda5"),
-    os.path.join(os.environ.get("TEMP", "."), "wechatauto_db", "wxid_ukl2ti5eyhu029_e7c2"),
-    r"M:\WX\talk\xwechat_files\wxid_ukl2ti5eyhu029_e7c2",
+    os.path.join(os.environ.get("TEMP", "."), "wechatauto_db", "wxid_<别号>_eda5"),
+    os.path.join(os.environ.get("TEMP", "."), "wechatauto_db", "wxid_<本机号>_e7c2"),
+    r"M:\WX\talk\xwechat_files\wxid_<本机号>_e7c2",
 ]
 
 

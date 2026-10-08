@@ -28,6 +28,8 @@ INNER: dict[str, str] = {
     "memory-set": '<circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/>',
     "search": '<circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/>',
     "community": '<circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/>',
+    #: 表情 —— 一张"卡片上的脸"（自定义表情是图片，不是圆脸人设；见与上面 persona 的区分）
+    "emoji": '<rect x="2" y="2.6" width="12" height="10.8" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.9" cy="7" r=".95" fill="currentColor"/><circle cx="10.1" cy="7" r=".95" fill="currentColor"/><path d="M5.6 10.1c1.3 1 3.5 1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
     # ── 内容 ──
     "media": '<rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/>',
     "tts": '<path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/>',
@@ -39,6 +41,24 @@ INNER: dict[str, str] = {
     "sessions": '<path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/>',
     "feedback": '<path d="M2.4 3.6h11.2v7.2H7.2L4.2 13.4V10.8H2.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 6.2h5.6M5.2 8.4h3.6" stroke="currentColor" stroke-width="1.3" fill="none"/>',
     "send": '<path d="M14 2L2 7.4l4.2 1.6L13 4l-4.8 6.6.6 3.4z" fill="none" stroke="currentColor" stroke-width="1.4"/>',
+    # ── 顶栏/侧栏专用（不是导航 sec，故与上面的 key 不同名）──
+    #    ⚠️ 这几个**必须是图标本义与用途一致**的：
+    #       顶栏"监听"曾借用导航的 `wechat`（微信）、"模型"借 `model`（芯片）、
+    #       "余额"借 `overview`（仪表盘）—— 用户一眼就看出来"这是套用"：
+    #       芯片是硬件不是模型、仪表盘跟钱无关。**用途不同就别复用**，
+    #       同义复用（如侧栏那颗"微信"）才是对的。
+    #: 监听 —— 中心音源 ＋ 两侧各两道声波弧
+    "chip_listen": '<circle cx="8" cy="8" r="1.5" fill="currentColor"/><path d="M5 5a4.3 4.3 0 000 6M11 5a4.3 4.3 0 010 6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M2.8 2.8a7.4 7.4 0 000 10.4M13.2 2.8a7.4 7.4 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/>',
+    #: 模型 —— 四个节点互连（神经网络；不是"芯片"，芯片表达的是硬件）
+    "chip_model": '<circle cx="3.3" cy="8" r="1.55" fill="none" stroke="currentColor" stroke-width="1.25"/><circle cx="8" cy="3.3" r="1.55" fill="none" stroke="currentColor" stroke-width="1.25"/><circle cx="8" cy="12.7" r="1.55" fill="none" stroke="currentColor" stroke-width="1.25"/><circle cx="12.7" cy="8" r="1.55" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M4.7 6.9l1.8-1.9M9.5 5l1.8 1.9M4.7 9.1l1.8 1.9M9.5 11l1.8-1.9" fill="none" stroke="currentColor" stroke-width="1.15"/>',
+    #: 余额 —— 钱包（矩形 ＋ 折痕 ＋ 扣；"仪表盘"跟钱无关）
+    "chip_balance": '<rect x="2" y="4.2" width="12" height="8.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 6.9h12" fill="none" stroke="currentColor" stroke-width="1.15"/><circle cx="11.1" cy="9.6" r="1.05" fill="currentColor"/>',
+    #: 运行状态 —— 脉搏波（"还在跳"＝在跑；圆圈打勾读起来是"体检通过"，不是状态）
+    "state_pulse": '<path d="M1.6 8h2.9l1.5-3.7L8.6 11.7 10.1 8h4.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    #: 启动时间 —— 带刻度的时钟。
+    #    ⚠️ 不复用导航的 `overview`（那也是圆＋指针）：同一个形状在同一个界面里
+    #       承担两种含义（"概览页"与"启动时刻"）本身就是混淆，加四个刻度才是明确的"钟"。
+    "state_boot": '<circle cx="8" cy="8" r="5.9" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.6V8l2.3 1.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M8 1.5v1.1M8 13.4v1.1M1.5 8h1.1M13.4 8h1.1" stroke="currentColor" stroke-width="1.1" fill="none"/>',
     "log": '<path d="M4 2h5.6L13 5.4V14H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2v3.6H13" fill="none" stroke="currentColor" stroke-width="1.2"/>',
     "vermat": '<path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/>',
     "server": '<rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/>',

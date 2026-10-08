@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""会话键 → 展示名 的解析判据：`group:<wxid>` 形态必须解析出**群名**（不是把 key 原样当名字）。
+"""会话键 → 展示名解析判据：`group:<wxid>` 形态必须解析出**群名**（不是把 key 原样当名字）。
 
 为什么要有它：产品里到处用 `"group:" + wxid` 当 chat_key（`persona_morph` 的会话键就这么构造），
 而群表 `_group_by_wxid` 与昵称表 `_nick_map` 是**按裸 id 索引**的 ⇒ 不剥前缀就查不到，
 `group_name()` 会**原样把 key 返回**。后果不是"显示难看"，而是**功能坏掉**：
 `switch_chat_posted` / `open_chat_by_search` 拿这个"名字"去搜索会话、并拿它做 OCR 名字比对
 ⇒ 永远匹配不上 ⇒ 群消息在"还没学过会话头参照"时**无法自助切会话**（真发实测在日志里复现过：
-搜索用的是 `group:58471307405@chatroom`）。
+搜索用的是 `group:10000000003@chatroom`）。
 
 本判据用**桩对象**直接调真实方法：不连微信、不读数据、零副作用。
 """
@@ -32,8 +32,8 @@ def ok(name, cond, detail=""):
 def main():
     from agent.wechat import WeChatAdapter as W
 
-    WXID = "58471307405@chatroom"
-    NAME = "aaa偷啃使用者"
+    WXID = "10000000003@chatroom"
+    NAME = "某会话"
 
     class Stub(W):
         """轻量桩：**继承真类**只填两张表 ⇒ 所有方法（含 `_bare_key`）都自然可用，

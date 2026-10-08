@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """`send_text_posted` **三枪发送循环**的离线行为测试（不需要微信、不碰鼠标、不弹任何窗）。
 
-为什么要有它：`background_selftest.py` 对这条链只做**源码结构**断言（"有没有那个 for / 那句字符串"），
+为什么要有它：`background_selftest.py` 对这条链只做**源码结构**断言，
 "第一枪就成了会不会还多打两枪""三枪都打出去了但都没生效，到底判 未证实 还是 失败""三枪一次都没
 打出去时说什么"这类**行为**它一句都看不见。这里用**假后端 + 假库 + 假时钟**把整段循环真跑一遍。
 
@@ -106,7 +106,7 @@ class _FakeBackend(ib.MessageBackend):
         self.scn.calls.append(("send_text", text))
         return True, ""
 
-    def keys(self, hwnd, vks, hold_ms=30):
+    def keys(self, hwnd, vks, hold_ms=5, wake=True):
         kv = tuple(int(v) for v in vks)
         self.scn.calls.append(("keys", kv))
         # ⛔ 只有**回车**才是"发送那一枪"。发送链在打字前会先清输入框残留（Ctrl+A + Backspace），

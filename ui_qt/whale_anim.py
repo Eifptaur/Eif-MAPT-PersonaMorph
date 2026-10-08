@@ -39,7 +39,7 @@ def clamp_km(v) -> float: # 解析不动（None/非数字/NaN）一律回 1.0，
 
 
 def km_for(key: str) -> float:
-    """ui.whale_anim.<key> —— **系数解析只写这一处**（web getPath('ui.whale_anim')）。
+    """ui.whale_anim.<key> —— **系数解析只写这一处**（web getPath）。
     刻意不走 load_config()：它会对真实 config.json 触发一次性迁移（写盘）—— 对 agent/ 只读，只 import 常量。"""
     v = None
     try:

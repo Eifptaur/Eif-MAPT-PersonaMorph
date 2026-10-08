@@ -38,6 +38,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{2,30}$")
@@ -78,7 +81,8 @@ def _render(obj, args: dict):
 def _host_allowed(url: str, allow_hosts) -> bool:
     try:
         host = (urllib.parse.urlparse(str(url)).hostname or "").lower()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     if not host:
         return False
@@ -239,7 +243,8 @@ def _is_private_host(url: str) -> bool:
     import ipaddress
     try:
         host = (urllib.parse.urlparse(str(url)).hostname or "").lower()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
     if not host:
         return True
@@ -260,7 +265,8 @@ def _finish(tool: dict, raw: bytes) -> dict:
             got = _dig(json.loads(txt), tool["response_path"])
             if got is not None:
                 txt = got if isinstance(got, str) else json.dumps(got, ensure_ascii=False)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     txt = txt[:int(tool.get("max_chars") or 4000)]
     return {"content": txt or "（接口返回了空内容）", "is_error": False}
@@ -398,7 +404,7 @@ def set_enabled(name: str, on: bool) -> tuple:
             with open(p, "r", encoding="utf-8") as fh:
                 mf = json.load(fh)
             mf["enabled"] = bool(on)
-            tmp = p + ".tmp"
+            tmp = persist.tmp_for(p)
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(mf, fh, ensure_ascii=False, indent=2)
             persist.replace_into(tmp, p)
@@ -458,7 +464,8 @@ def _read_manifest(path: str):
         with open(path, "r", encoding="utf-8-sig") as fh:
             obj = json.load(fh)
         return obj if isinstance(obj, dict) else None
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return None
 
 
@@ -499,7 +506,8 @@ def import_text(text: str, overwrite: bool = False) -> dict:
     on_disk = set()
     try:
         on_disk = {fn[:-5] for fn in os.listdir(d) if fn.lower().endswith(".json")}
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     builtin = _builtin_names()
     added, replaced, skipped, seen = [], [], [], []
@@ -539,7 +547,7 @@ def _next_step(snap: dict) -> dict:
     """**只读已有状态**推导"下一步该干什么"（不引入新概念）。
 
     `step` 指向控制台 `GUIDES.tools.steps` 的第几步（1-based；0＝没有对应步骤）——
-    **文案只有一份**：前端拿 step 去取引导里那几步的原话，后端不另写一份说明。
+    **文案只有一份**：前端拿 step 去取引导里那几步的文字，后端不另写一份说明。
     对标结论（nonebot2/koishi）：两家都只有"装完让你自己去配置页"，**"装完怎么引导"这一格是空的**。
     """
     tools = snap.get("tools") or []

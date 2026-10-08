@@ -47,7 +47,8 @@ BOOT_REL = os.path.join("assets", "webview2", "MicrosoftEdgeWebview2Setup.exe")
 BOOT_ABS = os.path.join(ROOT, BOOT_REL)
 BOOT_BYTES = 1844944
 BOOT_SHA256 = "83004A28553BCF2F932BF03564FBAB407B8E1F59CD265F8DC99CC53D028E459C"
-EXE = os.path.join(ROOT, "一键启动.exe")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # ⛔ 先补路径再 import
+EXE = __import__("agent.autostart", fromlist=["x"]).find_launcher_exe()
 
 print("== ⑤ WebView2 引导器判据 ==")
 

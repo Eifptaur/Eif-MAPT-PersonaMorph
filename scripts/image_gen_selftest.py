@@ -144,7 +144,7 @@ okf, resf = IG.run_filters(good_png, {"prompt": "猫"})
 ok("三层开着且都过 ⇒ ok=True", okf is True, json.dumps([r for r in resf if r.get("skipped") is None], ensure_ascii=False)[:120])
 set_cfg(enabled=True, filter_chain={"size": True, "dup": True, "blacklist": True, "text": True, "classifier": True})
 okd, resd = IG.run_filters(good_png, {"prompt": "猫"})
-# ⛔ 这一层的口径已改（用户拍板）：以前是"分类器**未接** ⇒ 判不出 ⇒ 整链判否"（一个从不工作的桩：
+# ⛔ 这一层的口径已改：以前是"分类器**未接** ⇒ 判不出 ⇒ 整链判否"（一个从不工作的桩：
 #    用户关掉它 ⇒ 内容过滤名存实亡；开着它 ⇒ 所有图都发不出去）。现在它接 `image_filter.PIPELINE`
 #    的真链，**真参与判定**；判据跑不起来时如实写"未参与判定"并放行（可用优先，不假装检查过）。
 _cl = [r for r in resd if r["name"] == "classifier"]
@@ -478,7 +478,7 @@ try:
        "files=%s 连接目标=%s" % (len(_r13b.get("files") or []), _conn13[:4]))
 except Exception as _e13:
     # 「**夹具**跑不起来」不等于「产品没做到」：这条夹具要连的是个假域名（`pinned.test`），
-    # 而本机配了代理时它会被代理截走 ⇒ 造出 HTTP 502（实测）。断言要证的是"回链那一跳钉 IP"
+    # 而本机配了代理时它会被代理截走 ⇒ 造出 HTTP 502。断言要证的是"回链那一跳钉 IP"
     # 这件事本身，跟代理无关。
     # ⇒ **传输/网络类**失败如实**跳过并说明**（判据与读者都知道这次没验到、也不算通过）；
     #    **其它异常仍然判否** —— 那才可能是产品真坏了（比如 `call_backend` 抛了别的错）。
@@ -549,6 +549,9 @@ import base64 # noqa: E402
 import io # noqa: E402
 import threading # noqa: E402
 import http.server # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 _buf = io.BytesIO()
 # ⚠️ 每次跑都用**不同**的像素值：假服务每次返回同一张图会让"去重层"在第二次跑时就把第一张也判成重复
@@ -575,7 +578,8 @@ class _FakeGen(http.server.BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if n else b"{}"
         try:
             req = json.loads(raw.decode("utf-8"))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             req = {}
         out = json.dumps({"images": [_PNG_B64] * max(1, int(req.get("batch_size") or 1))}).encode("utf-8")
         self.send_response(200)
@@ -632,7 +636,8 @@ try:
                     os.remove(_ledger)
             else:
                 open(_ledger, "w", encoding="utf-8").write(_backup)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
     ok("协议里有 pollinations（免密钥在线）", IG.ONLINE_FREE["id"] == "pollinations" and "pollinations" in IG.ONLINE_FREE["url"])
     set_cfg(enabled=True, online_allowed=False)

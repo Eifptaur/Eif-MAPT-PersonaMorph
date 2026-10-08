@@ -17,6 +17,9 @@ import io
 import json
 import os
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILE = os.path.join(ROOT, "logs", "thoughts.jsonl")
@@ -30,7 +33,8 @@ def _rotate():
             if os.path.exists(bak):
                 os.remove(bak)
             os.replace(FILE, bak)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -46,7 +50,8 @@ def note(chat_key: str, kind: str, **fields) -> dict:
         _rotate()
         with io.open(FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return item
 
@@ -64,18 +69,20 @@ def recent(chat_key: str = "", limit: int = 20) -> list:
                     continue
                 try:
                     it = json.loads(line)
-                except Exception:
+                except Exception as _e:
+                    log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue
                 if chat_key and str(it.get("chat") or "") != str(chat_key):
                     continue
                 out.append(it)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return []
     return out[-max(1, int(limit)):]
 
 
 def format_for_memory(chat_key: str, limit: int = 12) -> str:
-    """给记忆整理用的一段文本（"机器人的内心判断"）——没有就返回空串。"""
+    """给记忆整理用的一段文本——没有就返回空串。"""
     rows = recent(chat_key, limit)
     if not rows:
         return ""

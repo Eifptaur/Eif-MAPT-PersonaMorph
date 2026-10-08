@@ -19,6 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _srcmatch as _sm # noqa: E402
 
 from agent import compat as CP # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 
 def ok(name, cond, detail=""):
@@ -31,7 +34,8 @@ def _snap(paths):
     for p in paths:
         try:
             out[p] = (os.path.getmtime(p), os.path.getsize(p))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             out[p] = None
     return out
 
@@ -158,7 +162,7 @@ def main():
         ok("F9 状态文件坏了 ⇒ `last()` 回空、`attach_text()` 照样出文本（永不抛）",
            CP.last() == {} and "兼容性" in CP.attach_text())
 
-        # ── F15~F18：**账号 / 群号** 也属隐私（2026-09-28 现场事故）──
+        # ── F15~F18：**账号 / 群号** 也属隐私（现场事故）──
         #    现场：用户在控制台提交反馈，反馈消息里带着 `账号=wxid_<真号>` 发到了群里。
         #    两向锚：塞进**真实形态**的账号与群号 ⇒ 两条出口（反馈摘要 / 用户发回的检验报告）
         #    都不许出现原名；同时掩码要**可辨认**（排障能对着看是不是同一个号）。

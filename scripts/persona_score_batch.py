@@ -27,6 +27,9 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
 from agent.persona import PERSONAS # noqa: E402
+import logging
+
+log = logging.getLogger("persona-morph")
 
 RATINGS = os.path.join(ROOT, "data", "persona_ratings.json")
 
@@ -35,7 +38,8 @@ def load_ratings() -> dict:
     try:
         with io.open(RATINGS, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 

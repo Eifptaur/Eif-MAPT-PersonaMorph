@@ -103,6 +103,37 @@ class _Stub(object):
     def _idn_txn_end(self):
         return None
 
+    # ⛔ 「只对独立窗操作」闸门（`send.only_popup`，默认 **False**）。
+    #    漏了它 ⇒ `agent/wechat.py` 里那几处 `self._only_popup()` 直接 `AttributeError`
+    #    ⇒ **被上层宽 except 吞成"会话头三态=异常"** ⇒ 整段判据全歪（不是产品坏，是夹具缺件）。
+    #    本夹具测的是默认档（主窗/投递档）⇒ 桩成 False（与真实现的默认值一致）。
+    def _only_popup(self):
+        return False
+
+    # 抓帧失败时那句"能不能改走独立窗"的提示（真实现只读、不改行为）⇒ 桩成空串。
+    def _popup_bypass_hint(self, chat_id="", name=""):
+        return ""
+
+    # 独立弹窗直通开关（`send.popup_first`，默认关）⇒ 桩成 False（＝默认档，与真实现一致）。
+    def _popup_preferred(self):
+        return False
+
+    # 口径：产品里凡 `getattr(self, "_x", <默认>)` 访问的可选成员，**也按那个默认值桩上** ——
+    # 因为 `__getattr__` 分不出"调用方要的是硬属性还是带默认的可选属性"，留空会一直报缺件。
+
+    # ⛔ **缺件不许静默**（根治"打地鼠"）：产品代码里 `self.X` 若指向夹具没桩的成员，
+    #    抛出的 `AttributeError` 会被上层宽 `except` 吞成"会话头三态=异常" ⇒
+    #    **判据全歪，而现场看着像产品问题**（本轮实测就踩了两次：`_only_popup`、`_popup_bypass_hint`）。
+    #    ⇒ 把每一个被问到的缺件记下来，收尾断言"一次都没缺"（分母守卫）。
+    #    `__getattr__` 只在**正常查找失败**时才被调用，所以不会干扰已桩好的成员。
+    MISSING = []
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        _Stub.MISSING.append(str(name))
+        raise AttributeError("_Stub 缺件：%s（补桩；别让它被吞成「三态=异常」）" % name)
+
     # 去重闸（`send_text_posted` 入口会调）：本夹具测"发送前的准备/闸门"，去重语义不在范围内
     # ⇒ 一律放行、记账空操作。漏了它 ⇒ 被吞成"三态=异常"，整条判据歪掉。
     def _dedup_send(self, chat_id, text):
@@ -664,6 +695,13 @@ _SEG_GG_B = _srcslice.from_func(_SRC_W_B, "_get_gui").split("\n    def ", 1)[0]
 ok("B9d `_get_gui` 自愈的两条出口（构造成功 / 构造失败）都有放回",
    _SEG_GG_B.count("_minimize_back_if_needed(") >= 2,
    "出现 %d 次" % _SEG_GG_B.count("_minimize_back_if_needed("))
+
+# ── 夹具零缺件（分母守卫）────────────────────────────────────────────────
+# 为什么放在**最后**：缺件是被"跑到才记下"的 ⇒ 必须等所有段都跑完再判。
+# ⛔ 没有这一条时，缺一个成员只会表现为"某条断言莫名失败"，而真因（夹具缺件）被
+#    上层宽 `except` 吞成"三态=异常" ⇒ **看起来像产品坏了**（本轮实测踩了两次）。
+ok("夹具零缺件：产品代码要用的 `self.X` 全都桩到了（缺件会被宽 except 吞成「三态=异常」）",
+   not _Stub.MISSING, "缺件：%s" % sorted(set(_Stub.MISSING)))
 
 print("\n==== 发送前准备画面判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

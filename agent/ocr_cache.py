@@ -295,7 +295,7 @@ def _merge_boxes(boxes: list) -> list:
 def _fill_tiles(c: OcrCache, img, tiles: list, items: list, trusted_empty: bool = False):
     """把**已读到的整图坐标结果**按块归档（这样下一帧只有变化的块会 miss）。
 
-    `trusted_empty=True` 时**空块也归档**（"读成功且此处无字"）——理由见 `OcrCache.put_tile`
+    `trusted_empty=True` 时**空块也归档**——理由见 `OcrCache.put_tile`
     的文档：不归档的话，没有完整文字的那些带**每帧都会重读**（A4 实测固定重读 47% 面积）。
     """
     for th, (x0, y0), (tw, thh) in tiles:

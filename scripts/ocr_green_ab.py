@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""绿底白字**端到端**实测 —— 回答用户 2026-09-30 当面问的那句：
+"""绿底白字**端到端**实测 —— 回答用户 当面问的那句：
 
     朋友那版裸像素喂 OCR 读不出绿底白字 ⇒ **不代表我方增强版也不行**。到底行不行？
 
@@ -35,10 +35,10 @@ from agent import chat_ocr as O # noqa: E402
 _SAMPLES = os.path.join(os.path.dirname(ROOT), "dev-workspace", "persona-morph",
                         "ocr-samples", "wechat")
 
-#: `(文件, 真值会话名)` —— 真值由用户提供 + 我逐张读图核对（`_probe` 裁图目视比对过）
+#: `(文件, 真值会话名)` —— 真值由 + 我逐张读图核对（`_probe` 裁图目视比对过）
 CASES = [
     ("0af83564-b60d-4812-aa4f-3c330c6399c0.png", "微信团队"),
-    ("7bcf1579-61e9-4c80-a54a-47eb45341b53.png", "aaa偷啃使"),
+    ("7bcf1579-61e9-4c80-a54a-47eb45341b53.png", "某会话"),
     ("6c29e9f4-2c81-4b4d-9a71-a826c521f403.png", None),   # 真值未核：只量"读到什么"
 ]
 

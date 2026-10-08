@@ -1530,4 +1530,145 @@ namespace WxLauncher
             }
         }
     }
+
+    /// <summary>安装向导的顶部**页签**：一行 N 个（● 当前 / ✓ 已完成 / ○ 未到）＋ 名称。
+    ///
+    /// ⛔ 为什么不用系统 `TabControl`：它自带系统边框与系统配色 —— 与本项目"**外观只有一处来源**"
+    ///   （颜色/字体/圆角全在 `StyleKit`）直接冲突，用上就会在自绘窗体里撕出一块系统皮肤。
+    ///   ⇒ 自绘：颜色/字体/行高全部走 `StyleKit`，与 `StepList` 同一套口径。
+    /// 高度由窗体侧按 `LineHeight(Font)` 给（和其它自绘控件一样，⛔ 不写死像素）。
+    /// </summary>
+    public class WizardTabs : Control
+    {
+        string[] _names = new string[0];
+        int _idx = 0;
+        /// <summary>本页的完成态可达位置（页签画到它为止算"已完成"）；默认取当前页。</summary>
+        public int DoneUpTo = -1;
+        public WizardTabs()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = StyleKit.Bg;
+            Font = StyleKit.Ui(StyleKit.TextScale.Small, FontStyle.Regular);
+        }
+        public void SetNames(string[] names) { _names = (names == null) ? new string[0] : names; Invalidate(); }
+        public void GoTo(int idx) { _idx = idx; Invalidate(); }
+        /// <summary>覆盖 Text：自绘控件默认是空串，`--dlgprobe` 这类机械判据要靠它读到"现在第几页"。</summary>
+        public override string Text
+        {
+            get
+            {
+                if (_names.Length == 0) return "向导页签 空";
+                string cur = (_idx >= 0 && _idx < _names.Length) ? _names[_idx] : "?";
+                return "向导页签 " + (_idx + 1) + "/" + _names.Length + "：" + cur;
+            }
+            set { }
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            int n = _names.Length;
+            if (n == 0 || Width < 40) return;
+            int dot = Math.Max(12, StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Micro, FontStyle.Bold)) - 4);
+            int seg = Width / n;
+            int cy = Height / 2;
+            using (var track = new Pen(StyleKit.Line, 2f))
+            using (var acBrush = new SolidBrush(StyleKit.Accent))
+            using (var okBrush = new SolidBrush(StyleKit.Ok))
+            using (var cardBrush = new SolidBrush(StyleKit.Card))
+            using (var softPen = new Pen(StyleKit.Line, 1.5f))
+            using (var tickPen = new Pen(Color.White, 2f))
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    int cx = seg * i + seg / 2;
+                    // 连接线：画在圆之间（首尾不画）
+                    if (i > 0) g.DrawLine(track, seg * (i - 1) + seg / 2 + dot, cy, cx - dot, cy);
+                    bool done = (i <= DoneUpTo) && (i != _idx);
+                    bool cur = (i == _idx);
+                    Rectangle box = new Rectangle(cx - dot / 2, cy - dot / 2, dot, dot);
+                    if (done)
+                    {
+                        g.FillEllipse(okBrush, box);
+                        float k = dot / 20f;
+                        g.DrawLines(tickPen, new Point[] {
+                            new Point((int)(cx - 5 * k), cy),
+                            new Point((int)(cx - 1 * k), (int)(cy + 4 * k)),
+                            new Point((int)(cx + 5 * k), (int)(cy - 4 * k)) });
+                    }
+                    else if (cur) { g.FillEllipse(acBrush, box); }
+                    else { g.FillEllipse(cardBrush, box); g.DrawEllipse(softPen, box); }
+                    Color ink = done ? StyleKit.Ink : (cur ? StyleKit.Link : StyleKit.Ink3ok);
+                    Font f = cur ? StyleKit.Ui(StyleKit.TextScale.Small, FontStyle.Bold) : Font;
+                    // 名字放在圆**下面**（顶部页签横排时挨着读最省眼神）
+                    var rt = new Rectangle(seg * i, cy + dot / 2 + 1, seg, Math.Max(10, Height - (cy + dot / 2) - 1));
+                    StyleKit.DrawText(g, _names[i], f, rt, ink,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.EndEllipsis);
+                }
+            }
+        }
+    }
+
+    /// <summary>自绘勾选框（安装完成页的「立即启动」等）。
+    ///
+    /// ⛔ 不用系统 `CheckBox`：同 `WizardTabs` 的理由（系统皮肤会撕开统一外观）。
+    /// 语义照搬 `CheckBox`：`Checked`、`CheckedChanged`（流程代码零学习成本）。
+    /// </summary>
+    public class CardCheck : Control
+    {
+        bool _checked = true;
+        bool _hover;
+        public event EventHandler CheckedChanged;
+        public CardCheck()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = StyleKit.Bg;
+            Font = StyleKit.Ui(StyleKit.TextScale.Body, FontStyle.Regular);
+            ForeColor = StyleKit.Ink;
+            Cursor = Cursors.Hand;
+        }
+        public bool Checked
+        {
+            get { return _checked; }
+            set { if (_checked != value) { _checked = value; Invalidate(); if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty); } }
+        }
+        /// <summary>覆盖 Text：机械判据靠它读到"这个勾选框是干什么的、现在勾没勾"。</summary>
+        public override string Text
+        {
+            get { return "勾选框[" + (_checked ? "x" : " ") + "] " + base.Text; }
+            set { base.Text = value; }
+        }
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnClick(EventArgs e) { Checked = !Checked; base.OnClick(e); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            int s = Math.Max(14, StyleKit.LineHeight(Font) - 8);
+            int cy = Height / 2;
+            Rectangle box = new Rectangle(1, cy - s / 2, s, s);
+            using (var pen = new Pen(_checked ? StyleKit.Accent : StyleKit.Line, 1.6f))
+            using (var acBrush = new SolidBrush(StyleKit.Accent))
+            using (var cardBrush = new SolidBrush(StyleKit.Card))
+            using (var tickPen = new Pen(Color.White, 2f))
+            {
+                if (_checked) g.FillRectangle(acBrush, box); else { g.FillRectangle(cardBrush, box); }
+                g.DrawRectangle(pen, box);
+                if (_checked)
+                {
+                    float k = s / 20f;
+                    g.DrawLines(tickPen, new Point[] {
+                        new Point((int)(box.X + 4 * k), cy),
+                        new Point((int)(box.X + 8 * k), cy + (int)(4 * k)),
+                        new Point((int)(box.X + 15 * k), cy - (int)(5 * k)) });
+                }
+                var rt = new Rectangle(box.Right + 6, 0, Math.Max(10, Width - box.Right - 8), Height);
+                StyleKit.DrawText(g, base.Text ?? "", Font, rt, _hover ? StyleKit.Link : ForeColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
+        }
+    }
 }

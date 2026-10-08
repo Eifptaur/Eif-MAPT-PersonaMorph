@@ -81,7 +81,8 @@ def table() -> dict:
             for k, v in user.items():
                 if str(k).strip() and str(v).strip():
                     out[str(k).strip()] = str(v).strip()
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return out
 

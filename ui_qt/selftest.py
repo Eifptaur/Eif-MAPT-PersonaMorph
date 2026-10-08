@@ -16,7 +16,11 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from pathlib import Path
+import logging
+
+log = logging.getLogger("persona-morph")
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -81,14 +85,14 @@ def t_nav() -> None:
     wid = (HERE / "widgets.py").read_text(encoding="utf-8")
 
     flat = [e[0] for _t, _k, es in NAV for e in es]
-    ck("导航项数 = 27", len(flat) == 27, f"实际 {len(flat)}")
+    ck("导航项数 = 28", len(flat) == 28, f"实际 {len(flat)}")
 
     # ★ 真对齐：以 web 源码解析结果为唯一真值，全等比对。
     web = _nav_truth_from_web()
     mine = [(t, k, [e[0] for e in es], [e[2] for e in es]) for t, k, es in NAV]
     theirs = [(t, k, [lb for _s, lb in es], [s for s, _lb in es]) for t, k, es in web]
-    ck("web 侧解析出 5 组 27 项（解析器没跟丢）",
-       len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 27,
+    ck("web 侧解析出 5 组 28 项（解析器没跟丢）",
+       len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 28,
        f"组 {len(theirs)} / 项 {sum(len(t[2]) for t in theirs)}")
     ck("组名与 web 侧逐字一致（顺序含内）",
        [m[0] for m in mine] == [t[0] for t in theirs],
@@ -136,11 +140,11 @@ def t_nav() -> None:
        "it.text() + \" \" + g.title" in src and "it.hint or" in src)
 
     # ★ 导航图标
-    #   判据一：icons.INNER 覆盖全部 27 个 sec 锚点（与 web 同一份 path 数据）
+    #   判据一：icons.INNER 覆盖全部 28 个 sec 锚点（与 web 同一份 path 数据）
     ico_src = (HERE / "icons.py").read_text(encoding="utf-8")
     secs = [e[2] for _t, _k, es in NAV for e in es]
     missing_ico = [s for s in secs if f'"{s}"' not in ico_src]
-    ck("27 个导航图标与 sec 锚点一一对应（icons.py）", not missing_ico, ",".join(missing_ico))
+    ck("28 个导航图标与 sec 锚点一一对应（icons.py）", not missing_ico, ",".join(missing_ico))
     #   判据二：NavItem 真的把图标接上了（有 icon_key 参数 + 渲染调用），组头有 chevron
     ck("导航项图标已接线（icon_key → setIcon）",
        "icon_key" in wid and "nav_icon(" in wid and "_refresh_icon" in wid)
@@ -329,8 +333,16 @@ def t_fonts_rgba() -> None:
        c.isValid() and (c.red(), c.green(), c.blue(), c.alpha()) == (200, 224, 245, 199),
        c.name(QColor.NameFormat.HexArgb))
     fg = status_colors(w, "idle")[2]
-    ck("「读取中」徽章字色 = 淡蓝白（不再是黑）",
-       fg.isValid() and fg.name(QColor.NameFormat.HexArgb).lower() == "#c7c8e0f5",
+    # ⚠️ 断言口径 = **与 tx2 一致且不是黑**，不锁死具体色值：
+    #    idle 徽章字色的设计就是"取次级文字色 tx2"（`status_colors` 里 `c = t.q`）。
+    #    锁死字面值会在每次对齐 web token 时假红一次 —— 判据要钉的是**关系**（跟随 tx2），
+    #    不是当前那一串十六进制。原意在防"α 解析错 ⇒ 退化成纯黑"（坑⑥），
+    #    故"不是黑"这一半必须保留。
+    _want_tx2 = w.q("tx2")
+    _is_black = (fg.red(), fg.green(), fg.blue()) == (0, 0, 0)
+    ck("「读取中」徽章字色 = 次级文字色 tx2（且不是黑）",
+       fg.isValid() and not _is_black
+       and (fg.red(), fg.green(), fg.blue()) == (_want_tx2.red(), _want_tx2.green(), _want_tx2.blue()),
        fg.name(QColor.NameFormat.HexArgb))
 
     wid = (HERE / "widgets.py").read_text(encoding="utf-8")
@@ -370,7 +382,7 @@ def t_usability() -> None:
 
     # 自愈：窗口能自己发现服务死活
     ck("原型自己做后台探活", "_probe_timer" in src and "probe_backend(" in src)
-    ck("有『服务死掉』的演示入口（对应用户报的场景）",
+    ck("有『服务死掉』的演示入口（对应那个场景）",
        "_simulate_dead" in src and "Health.DEAD" in src)
 
 
@@ -396,13 +408,13 @@ def t_panels() -> None:
 
     QApplication.instance() or QApplication([])
 
-    # ① 面板↔导航一一对应：BATCH_SECS + 机器人主面板 = 全部 27 项导航
+    # ① 面板↔导航一一对应：BATCH_SECS + 机器人主面板 = 全部 28 项导航
     nav_secs = {s for _t, _k, es in NAV for _l, _h, s in es}
-    ck("新面板清单与全部导航一一对应（机器人=主面板，共 26+1）",
+    ck("新面板清单与全部导航一一对应（机器人=主面板，共 27+1）",
        nav_secs == set(BATCH_SECS) | {"bot"},
        f"导航有而面板无: {sorted(nav_secs - set(BATCH_SECS) - {'bot'})} / "
        f"面板有而导航无: {sorted(set(BATCH_SECS) - nav_secs)}")
-    ck("web 源码解析出了全部 26 个 sec 的元数据（手写件允许 0 行，但标题必须有）",
+    ck("web 源码解析出了全部 27 个 sec 的元数据（手写件允许 0 行，但标题必须有）",
        all(s.title and (s.rows or s.key in MANUAL)
            for s in secs().values() if s.key in BATCH_SECS),
        ",".join(k for k in BATCH_SECS
@@ -413,7 +425,7 @@ def t_panels() -> None:
         wgt = build_panel(t, sec)
         if wgt is None or not wgt.findChildren(QLabel):
             empty.append(sec)
-    ck("26 个 sec 都能构建出非空 QWidget（标题/行控件真实存在）", not empty, ",".join(empty))
+    ck("27 个 sec 都能构建出非空 QWidget（标题/行控件真实存在）", not empty, ",".join(empty))
 
     pq = (HERE / "panels_qt.py").read_text(encoding="utf-8")
     leaked = [k for k in ("owner_accounts", "bot_nickname", "context_tier",
@@ -450,8 +462,8 @@ def t_panels() -> None:
     for s in BATCH_SECS: # 全量走一遍：27 页全部就位（一次性预建等价语义）
         w._go(s, s)
     QApplication.processEvents()
-    ck("遍历全部 sec 后页栈页数 = 27（惰性预建闭环）",
-       st.count() == 27 and not w._lazy, f"count={st.count()} lazy_n={len(w._lazy)}")
+    ck("遍历全部 sec 后页栈页数 = 28（惰性预建闭环）",
+       st.count() == 28 and not w._lazy, f"count={st.count()} lazy_n={len(w._lazy)}")
 
     # ③ 鲸语切换对新面板文案同样生效（_orig_texts 收录新面板控件）
     w._go("model", "模型")
@@ -480,6 +492,11 @@ def t_visual() -> None:
     #    取证对象存在 —— 参数对齐断言保留，产品渲染路径不再经过它。
     for name, ok, extra in ocean._selftest():
         ck("ocean · " + name, ok, extra)
+    import config_io as _cio_self # noqa: PLC0415
+
+    for name, ok, extra in _cio_self._selftest(): # 撤销栈判据（FE-15）
+        ck(name, ok, extra)
+
     for name, ok, extra in cursor_fx._selftest():
         ck("cursor · " + name, ok, extra)
 
@@ -721,7 +738,9 @@ def t_bot_controls() -> None:
     ck("停止无打字门槛",
        'typed_word' not in pst and '"确定停止"' in pst)
     ck("重启不是危险确认（动作可逆）", "dangerous=False" in rst)
-    ck("停止是 danger 红钮", 'Btn("停止", self.t, "danger")' in ssrc)
+    # ⚠️ 不匹配到右括号：whale 下会追加 `ink=` 参数（浅底按钮档），
+    #    断言到 `"danger"` 为止，免得加参数就被判红。
+    ck("停止是 danger 红钮", 'Btn("停止", self.t, "danger"' in ssrc)
     ck("停止后果如实：原生窗口会随之关闭", "原生窗口会随之关闭" in pst)
     ck("POST 不冻结界面（经 _fire_api 线程）", "_fire_api" in rst and "_fire_api" in pst)
     ck("失败要有说法（重启/停止失败都落徽章）", "重启失败" in rst and "停止失败" in pst)
@@ -791,7 +810,8 @@ def t_bot_controls() -> None:
             data = conn.recv(65536)
             got.append(bool(data) and data.startswith(b"POST /api/shutdown"))
             conn.close() # 不回一个字节 —— os._exit(0) 的形态
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             got.append(False)
 
     threading.Thread(target=_cut, daemon=True).start()
@@ -845,7 +865,7 @@ def t_window_chrome() -> None:
     import re # noqa: PLC0415
     close_btn = re.findall(r'Btn\(\s*"[×✕✖Xx]"', ssrc)
     ck("顶栏没有关闭叉钮", not close_btn, ",".join(close_btn))
-    ck("停止钮存在（承担关停语义）", 'Btn("停止", self.t, "danger")' in ssrc)
+    ck("停止钮存在（承担关停语义）", 'Btn("停止", self.t, "danger"' in ssrc)
 
     # ③ 关窗 ≠ 停机：closeEvent 拦截 → 托盘
     i = ssrc.find("def closeEvent(")
@@ -899,6 +919,14 @@ def t_dpi_motion() -> None:
        and "def chevs_pixmap" in isrc)
     ck("收起态按钮只显示图标（清文字 +setIcon）",
        'self.btn_tight.setText("")' in ssrc and "self.btn_tight.setIcon(" in ssrc)
+    # ⛔ 光设 `setMaximumWidth(44)` **不管用**：`Btn.__init__` 在有文字时设过
+    #    `setMinimumWidth(文字宽提示)` ⇒ 最小宽 > 上限 ⇒ 上限被无视 ⇒ 收起态底部
+    #    仍是一颗**撑满侧栏的胶囊**（实测就是这样，与上面那列图标完全不搭）。
+    #    ⇒ 收起态必须先放开最小宽；展开态两个约束都要恢复。
+    ck("收起态按钮**先放开最小宽**再设 44 上限（否则上限不生效，胶囊仍撑满侧栏）",
+       re.search(r'setMinimumWidth\(0\)\s*\n\s*self\.btn_tight\.setMaximumWidth\(44\)', ssrc) is not None)
+    ck("展开态把**两个宽度约束都恢复**（最小宽放开 + 上限回 QWIDGETSIZE_MAX）",
+       "self.btn_tight.setMaximumWidth(16777215)" in ssrc and ssrc.count("self.btn_tight.setMinimumWidth(0)") >= 2)
     ck("组头窄栏整行隐藏",
        "def set_tight" in wsrc and "self.hd.setVisible(not tight)" in wsrc
        and "self.title[0]" not in wsrc)
@@ -911,16 +939,23 @@ def t_dpi_motion() -> None:
     # ③b L：按钮按压态「一眼可辨」（底色压一档 + 描边同步加深 + 压字 1px）
     #     ⚠️ 断言看的是**表达式**而不是最终字面量：颜色统一过 `qss()` 落成 Qt 合法
     #     十六进制（见 Btn._qss 的注解），所以源码里出现的是 `qss(mix(...))`。
-    ck("Btn pressed 底色往字色轴压一档（primary mix blue2→tx 0.22）",
+    ck("Btn pressed 底色从主色派生且比常态更深（现为渐变实现）",
        "QPushButton:pressed{" in wsrc
-       and 'bg_p = qss(mix(t.q("blue2"), t.q("tx"), 0.22))' in wsrc
+       # ⚠️ 只锚到 `mix(t.q,` 为止，不带具体系数、也不锚 `qss(` / `_vgrad(`：
+       # 按下底色的实现方式（纯色→渐变、单点→两点渐变）与压深幅度都属可调项，
+       # 写死它们会让"调一下手感"就误红。这里要证的是**它仍从主色派生**。
+       and 'bg_p = _vgrad2(mix(t.q("blue2"),' in wsrc
        and 'press_border = qss(mix(t.q("blue2"), t.q("tx"), 0.45))' in wsrc)
     ck("Btn pressed 三角色都有独立按压描边（ghost/primary/danger）",
        wsrc.count("QPushButton:pressed{") >= 1 # Btn._qss 三角色共用模板
        and 'press_border = qss(rgba(t.q("err"), 170))' in wsrc
        and 'press_border = qss(mix(t.q("blue"), t.q("tx"), 0.30))' in wsrc)
-    ck("Btn pressed 保留压字 1px（padding 上+1 下-1，QSS 无 transform 的等价物）",
-       "padding-top:8px;padding-bottom:6px" in wsrc)
+    ck("Btn pressed 保留压字位移（QSS 无 transform 的等价物）",
+       # ⚠️ 别再写死 `padding-top:8px;padding-bottom:6px`：tiny 档要按比例缩（8/6 → 4/2），
+       #    实现上必须是条件式 ⇒ 字面量必然失配。锚"pressed 块里成对地改了上下内边距"
+       #    这个**行为**即可，具体像素值属于可调项。
+       'f"padding-top:{' in wsrc and 'f"padding-bottom:{' in wsrc
+       and "QPushButton:pressed{" in wsrc)
     ck("NavItem 非 active 按压加深（tx 14→26 两档；毛玻璃后按压反馈不再分主题隐藏）",
        wsrc.count("QPushButton:pressed{") >= 3 # Btn + NavItem + Segmented×2
        and "rgba(t.q('tx'), 26)" in wsrc and "rgba(t.q('tx'), 14)" in wsrc)
@@ -967,8 +1002,11 @@ def t_wheel_nod() -> None:
            str(cursor_fx._nod_ms()))
         os.environ["PM_CURSOR_NOD_DEBUG"] = "0"
         ck("nod 定因开关非 1 值不触发", cursor_fx._nod_ms() == 400)
-        ck("nod 歪头帧放大 1.3x",
-           cursor_fx.NOD_SCALE == 1.3 and "_to_nod_cursor" in
+        ck("nod 歪头帧只歪头、不改尺寸（NOD_SCALE == 1.0）",
+           # ⚠️ 曾断"必须放大 1.3x"——那是当年为了让点头"看得见"故意放大的。
+           #    用户后来明确反馈「点击确实有点头动作，但**怎么变大了一圈**」⇒ 回归 1.0。
+           #    这条判据现在守着**不放大**，别再被"再强调一下"的想法顶回去。
+           cursor_fx.NOD_SCALE == 1.0 and "_to_nod_cursor" in
            (HERE / "cursor_fx.py").read_text(encoding="utf-8"))
     finally:
         if old is None:
@@ -1133,7 +1171,7 @@ def t_updbar() -> None:
                      "notes": ["修 A", "修 B"]})
     ck("updbar: newer 时胶囊可见（短文案）", bar.isVisible() and "9.9" in bar.txt.text())
     ck("updbar: 面板正文短版 + notes 逐条（明细不重复）",
-       "9.9" in bar.detail.text() and "修 A" not in bar.detail.text()
+       "9.9" in bar.txt.text() and "修 A" not in bar.txt.text()
        and "· 修 A" in bar.notes.text() and "· 修 B" in bar.notes.text())
     ck("updbar: 不再提醒仅 newer 允许", bar.btn_skip.isEnabled() is True)
     bar.apply_state({"status": "pending", "pending": ["x"]})
@@ -1202,9 +1240,11 @@ def t_pop_look() -> None:
     pm = icons.appearance_pixmap("#65676B", 20)
     ck("icons: 20px 渲染非空", not pm.isNull() and pm.width() == 40) # dpr=2
 
-    # ①b F：顶栏外观图标用全亮字色
-    ck("icons: 外观图标色调=tx（与最小化/全屏同亮档）",
-       "appearance_pixmap(self.t.tx, 20)" in (HERE / "shell.py").read_text(encoding="utf-8"))
+    # ①b F：顶栏外观图标走**顶栏文字色档**
+    #    ⚠️ 别写死 `self.t.tx`：whale 的顶栏底是浅蓝（#5B7C90 一带），
+    #    图标必须走深色档 `bar_tx`，否则浅笔画糊在浅蓝上。
+    ck("icons: 外观图标走顶栏文字色档（浅底用深色，不写死 t.tx）",
+       "appearance_pixmap(bar_tx, 20)" in (HERE / "shell.py").read_text(encoding="utf-8"))
 
     # ② 顶栏收纳（源码级）：Segmented 从顶栏布局搬进 Popover
     ssrc = ssrc_shell()
@@ -1228,7 +1268,9 @@ def t_pause_win() -> None:
 
     # ① 暂停按钮归位
     ck("pause: 按钮在顶栏（ghost 档，暂停≠停止不需要危险确认）",
-       'self.btn_pause = Btn("暂停", self.t, "ghost")' in ssrc)
+       # ⚠️ 不匹配到右括号：whale 下还会追加 `ink=` 参数（浅底按钮档），
+       #    断言到 `"ghost"` 为止，免得加参数就被判红。
+       'self.btn_pause = Btn("暂停", self.t, "ghost"' in ssrc)
     ck("pause: 顺序 = 状态徽章 → 暂停 → 重启 → 停止（用户目标形态）",
        0 < ssrc.index("self.btn_pause = Btn") < ssrc.index("self.btn_restart = Btn")
        < ssrc.index('self.btn_stop = Btn'))
@@ -1266,8 +1308,10 @@ def t_pause_win() -> None:
        "class IconBtn(QAbstractButton)" in wsrc and "def paintEvent" in wsrc)
     ck("win: 笔画 2px 圆头",
        "setWidthF(2.0)" in wsrc and "RoundCap" in wsrc)
-    ck("win: hover 浅底圆角 + token 化（tx2 常态 / tx hover）",
-       'rgba(self.t.q("tx"), 16)' in wsrc
+    ck("win: hover 浅底圆角 + token 化（tx2 常态 / tx hover；浅底可覆盖）",
+       # hover 底在浅底档下由 `_ink_ov` 覆盖（顶栏是浅蓝，白底 hover 才看得见），
+       # 所以断言"两条取值链都在"，而不是只认主题色那条。
+       'if self._ink_ov else self.t.q("tx")' in wsrc
        and 'self.t.q("tx") if self._hover else self.t.q("tx2")' in wsrc)
     ck("win: 最大化/还原双态（还原 = 双直角框交叠）",
        "isMaximized" in wsrc and "drawRect" in wsrc and "drawLine" in wsrc)
@@ -1307,7 +1351,7 @@ def t_bootstrap32() -> None:
     """qt_bootstrap._selftest 全量收录（真跑，不 mock 网络）。
 
     核心：32 位 Python 在任何 pip 动作之前被拒（PySide6 wheel 只有 win_amd64，
-     兼容性审计第③项实锤）—— 判据 struct.calcsize("P")==4（指针字节数）。
+     兼容性审计第③项实锤）—— 判据 struct.calcsize==4（指针字节数）。
     """
     root = HERE.parents[0]
     sys.path.insert(0, str(root))
@@ -1435,7 +1479,7 @@ def t_ocr9() -> None:
            in WEB_PAGE.read_text(encoding="utf-8"))
         ck("ocr9D: 新文案同步进 whale_text 字典",
            "允许真鼠标兜底" in (root / "agent" / "whale_text.py").read_text(encoding="utf-8"))
-        # 2026-09-29：使用说明已合并进 README ⇒ 这条断言改从 README 读（同一段自查必须还在）
+        # ：使用说明已合并进 README ⇒ 这条断言改从 README 读（同一段自查必须还在）
         _rd = (root / "README.md").read_text(encoding="utf-8")
         ck("ocr9D: README（原使用说明已并入）有「消息发不出去」自查小节",
            "消息发不出去" in _rd and "真鼠标兜底" in _rd)
@@ -1726,11 +1770,19 @@ def t_c10() -> None:
        "def _hit_deep(" in wsrc and "_hit_deep(" in _body(wsrc, "_blank_mode")
        and "_hit_deep(" in _body(wsrc, "_lens_rect"))
     # ── 侧栏状态框 1:1 复刻（web .side .status，assets/console/index.html L517-519/L929）
-    ck("c31: 状态框描边用 blue_line token（web --blue-line；此前拿 blue 当边框⇒一圈亮蓝）",
-       "self.t.blue_line" in _body(ssrc, "_build_side"))
-    ck("c31: 状态正文恒 tx2 灰",
-       "color:{self.t.tx2}" in _body(ssrc, "_apply_side_status")
-       and "self.t.ok if" not in _body(ssrc, "_apply_side_status"))
+    ck("c31: 状态框边框不许是整圈 blue（此前那样在深底上是一圈亮蓝）",
+       # ⚠️ 改锚"行为"而不是"实现"：原来断的是"必须出现 `self.t.blue_line`"，
+       # 但立体化之后边框换成**顶受光/底背光**的分段边（`bevel_edges`），
+       # 不再有"整圈描边色"这个东西 —— 写死 token 名会让它一改就误红。
+       # 要防的事没变：**不许出现整圈强调色边框**。
+       "QFrame#SideStatusBox{" in _body(ssrc, "_build_side")
+       and "border:1px solid transparent" in _body(ssrc, "_build_side")
+       and "border:1px solid {self.t.blue}" not in _body(ssrc, "_build_side"))
+    ck("c31: 状态正文恒 tx2 灰（不被状态色污染）",
+       # ⚠️ 原来还要求"整个方法里不许出现 `self.t.ok if`"。但窄栏图标态要给"微信"那颗
+       #    **图标**按连接态上色，`self.t.ok if` 必然出现 —— 它染的是图标，不是正文。
+       #    ⇒ 只锚**正文那一行**用的色，行为没变（正文永远是 tx2），也不再误伤。
+       "color:{self.t.tx2}" in _body(ssrc, "_apply_side_status"))
     # ── 波纹「顶栏右段无特效 + 方形分界线」二连根因防回归
     ck("c32: 模块矩形=确定性爬树（卡片优先→shell 直接子兜底；旧「关键词+尺寸」启发式"
       "让顶栏内 wrapper 截胡透镜 ⇒ 连接徽章左沿以右整条没特效）",
@@ -1840,7 +1892,7 @@ def t_hotfix1() -> None:
        min_w < 520, f"min_w={min_w}")
     lbs = card.findChildren(QLabel)
     # 人设名走 ElideLabel：**宽度未落版式时 text() 还是全文**（省略号在
-    # resizeEvent 里按实际宽度才算出），所以不能按 text().endswith("…") 找控件。
+    # resizeEvent 里按实际宽度才算出），所以不能按 text().endswith 找控件。
     # 改为按 objectName/文本前缀定位，再用 `elided()` 显式驱动一次省略计算。
     name_lb = next(lb for lb in lbs if lb.objectName() == "personaName")
     sc_lb = next(lb for lb in lbs if lb.text().startswith("模型"))
@@ -1915,8 +1967,8 @@ def t_hotfix2() -> None:
         def do_GET(self): # noqa: N802
             calls.append(self.path)
             body = _json.dumps({"ok": True, "attach_ok": True, "groups": [
-                {"name": "海绵宝宝の吸 🚫 课堂", "wxid": "50090367428@chatroom"},
-                {"name": "演示", "wxid": "58471307405@chatroom"},
+                {"name": "某中文群名の吸 🚫 课堂", "wxid": "10000000004@chatroom"},
+                {"name": "演示", "wxid": "10000000003@chatroom"},
             ]}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1968,7 +2020,7 @@ def t_hotfix2() -> None:
            len(sws) == 2 and on == [False, True], f"switches={len(sws)} on={on}")
         cards = [f for f in dlg.findChildren(QFrame) if f.objectName() == "GpCard"]
         # ⚠️ 这条原来断言「styleSheet 里含 whale 主题的 `t.card`」—— 而 whale 的 card 是
-        #    `rgba(10,27,46,0.66)`（**34% 透**）⇒ 那条断言**把缺陷写成了期望**（弹窗透着、字发虚）。
+        #    `rgba(26,58,88,0.72)`（**28% 透**）⇒ 那条断言**把缺陷写成了期望**（弹窗透着、字发虚）。
         #    现口径＝「浮层底色必须实心」：正向断 `surface_bg` 的实色值，反向锚住"那个半透值不许再出现"。
         from stylekit_qt import THEMES as _TH, surface_bg as _sb # noqa: PLC0415
         _gpss = cards[0].styleSheet() if cards else ""
@@ -2896,10 +2948,16 @@ def t_veradv() -> None:
         vp = vermat_panel(t)
         vp.show()
         QApplication.processEvents()
-        ck("vermat 新增「接管与指纹」卡五钮（取/丢指纹、拍板入口、依赖自愈、升级适配层）",
+        ck("vermat 新增「接管与指纹」卡六钮（取/丢指纹、拍板入口、依赖自愈、升级适配层、停下）",
            all(_btext(vp, x) for x in ("重新取指纹", "丢掉旧指纹", "版本不匹配怎么办",
-                                       "依赖自愈", "升级适配层")),
+                                       "依赖自愈", "升级适配层", "停下")),
            str([b.text() for b in vp.findChildren(Btn)]))
+        # ★ P0-5：没作业在跑时「停下」必须**隐藏**（显示出来就是假承诺：按了也停不了）
+        #   用 `isHidden()` 而不是 `isVisible()`：后者在父控件链未真正上屏时恒为 False，
+        #   会把"没隐藏"也判成"隐藏了"⇒ 这条闸门就白设了。
+        _stop_btns = _btext(vp, "停下")
+        ck("P0-5 「停下」钮默认隐藏（没有在跑的事时不显示）",
+           bool(_stop_btns) and _stop_btns[0].isHidden(), "")
 
         calls.clear()
         allow_btn = _btext(vp, "本次允许发送")[0]
@@ -2974,7 +3032,7 @@ def t_veradv() -> None:
            str([c for c in calls if "version/action" in c]))
 
         # ── 拍板入口：**Qt 原生四选一**（不再是"开浏览器去网页控制台拍板"）──
-        # 用户口径：网页能做的都得在 Qt 做。这里把 `ChoiceDialog` 的 exec 换掉，
+        # 网页能做的都得在 Qt 做。这里把 `ChoiceDialog` 的 exec 换掉，
         # 断言"点它 ⇒ 弹的是原生四选一弹窗、且**没有**任何 openUrl"。
         from PySide6.QtGui import QDesktopServices as _QDS # noqa: PLC0415
 
@@ -3024,7 +3082,7 @@ def t_veradv() -> None:
         _d2.close()
         _d2.deleteLater()
 
-        # ── ★「点了没反应」的选项必须置灰（用户 2026-09-30 当面指正）──
+        # ── ★「点了没反应」的选项必须置灰（用户 当面指正）──
         # 反向两条一起钉：标了 disabled 的必须**真的不可点**，没标的必须**还能点**
         # （只测前者的话，"一律置灰"也能过 —— 那会把能做的事也做废）。
         _opts_grey = [dict(o) for o in _pdmod.VERSION_OPTIONS]
@@ -3716,6 +3774,12 @@ def t_g6() -> None:
                            {"name": "记忆使用规则", "enabled": False}],
                "custom_chars": 56}
     TDY = _time.strftime("%Y-%m-%d")
+    # 上个月的某一天（"本月"相关判据要一条**不在本月**的账才测得准）。
+    # ⚠️ 不能写死日期：写死会让"勾选本月"这类判据只在某个月份成立（时间炸弹）。
+    _pm_y, _pm_m = _time.localtime().tm_year, _time.localtime().tm_mon - 1
+    if _pm_m < 1:
+        _pm_y, _pm_m = _pm_y - 1, 12
+    PMDAY = "%04d-%02d-23" % (_pm_y, _pm_m)
 
     class _H(BaseHTTPRequestHandler):
         def _send(self, obj): # noqa: N802
@@ -3754,7 +3818,7 @@ def t_g6() -> None:
                             "cost": 0.1234, "sent": 12})
             elif "/api/stats/cal_list" in self.path:
                 self._send({"ok": True, "bills": [] if list_state["empty"] else [
-                    {"day": "2026-09-23", "tokens": 100, "cost": 0.5, "calls": 2, "sessions": 1},
+                    {"day": PMDAY, "tokens": 100, "cost": 0.5, "calls": 2, "sessions": 1},
                     {"day": TDY, "tokens": 200, "cost": 1.5, "calls": 4, "sessions": 2}]})
             elif "/api/stats/cal_delete" in self.path:
                 self._send({"ok": True, "removed": list(body.get("days") or [])})
@@ -3886,21 +3950,30 @@ def t_g6() -> None:
            "ym=%s days=%d/%d today=%s" % (ym_txt, len(day_btns), n_days,
                                           bool(today_btn) and today_btn[0].styleSheet()[:40]))
 
+        # ⚠️ 翻月断言必须**按当月算**，不能写死月份：
+        #    月份会随时间滚动，写死会让判据只在某个月份成立（时间炸弹）。
+        _cal_y, _cal_m, _ = _time.localtime()[:3]
+        _after3_m = _cal_m + 3
+        _after3_y = _cal_y + (_after3_m - 1) // 12
+        _after3_m = (_after3_m - 1) % 12 + 1
         for _ in range(3):
             _btn_by_text(op, "›").click()
             QApplication.processEvents()
-        ym_after_next = "%d年%d月" % (_time.localtime().tm_year, 12)
-        ck("g6 翻月 next：9 月 → 12 月（标签同步）",
+        ym_after_next = "%d年%d月" % (_after3_y, _after3_m)
+        ck("g6 翻月 next：当月 +3 月（标签同步）",
            _btn_by_text(op, ym_after_next) is not None, ym_after_next)
         _btn_by_text(op, "›").click()
         QApplication.processEvents()
-        ck("g6 翻月跨年进位：12 月 → 次年 1 月",
-           _btn_by_text(op, "%d年1月" % (_time.localtime().tm_year + 1)) is not None,
-           "%d年1月" % (_time.localtime().tm_year + 1))
+        _after4_m = _after3_m + 1
+        _after4_y = _after3_y + (_after4_m - 1) // 12
+        _after4_m = (_after4_m - 1) % 12 + 1
+        ck("g6 翻月跨年进位：再 +1 月（跨年自动进位）",
+           _btn_by_text(op, "%d年%d月" % (_after4_y, _after4_m)) is not None,
+           "%d年%d月" % (_after4_y, _after4_m))
         for _ in range(4):
             _btn_by_text(op, "‹").click()
             QApplication.processEvents()
-        ck("g6 翻月 prev 回起点：跨年后 4 次 ‹ 回到当前月",
+        ck("g6 翻月 prev 回起点：前进 4 月后 4 次 ‹ 回到当前月",
            _btn_by_text(op, ym_txt) is not None, ym_txt)
 
         calls.clear()
@@ -3960,7 +4033,7 @@ def t_g6() -> None:
         ck("g6 勾选删弹窗：列表 2 行（day · tok · ¥cost · 次 · 会话），hint 共 2 天",
            len(bd_cks) == 2
            and bd_cks[0].text().startswith(TDY)
-           and bd_cks[1].text().startswith("2026-09-23")
+           and bd_cks[1].text().startswith(PMDAY)
            and "¥1.5000" in bd_cks[0].text() and "¥0.5000" in bd_cks[1].text()
            and any("共 2 天" in l.text() for l in bd.findChildren(QLabel)),
            "n=%d texts=%s" % (len(bd_cks), [c.text()[:24] for c in bd_cks]))
@@ -3980,9 +4053,13 @@ def t_g6() -> None:
            bsum[0].text() if bsum else "")
         _btn_by_text(bd, "勾选本月").click()
         QApplication.processEvents()
-        ck("g6 勾选本月：两条 2026-09 记录都勾上（汇总回到 2 天）",
-           bd_cks[0].isChecked() and bd_cks[1].isChecked()
-           and any(l.text().startswith("已选 2 天") for l in bd.findChildren(QLabel)), "")
+        # 夹具是「今天 + 上个月某天」⇒ 本月只该勾到今天那一条（上个月那条**不许**被勾）。
+        ck("g6 勾选本月：只勾本月的行（上个月那条不勾）",
+           bd_cks[0].isChecked() and not bd_cks[1].isChecked()
+           and any(l.text().startswith("已选 1 天") for l in bd.findChildren(QLabel)),
+           "today=%s prev=%s 勾选=%s" % (bd_cks[0].isChecked(), bd_cks[1].isChecked(),
+                                        [l.text() for l in bd.findChildren(QLabel)
+                                         if l.text().startswith("已选 ")]))
 
         _btn_by_text(bd, "清空勾选").click()
         QApplication.processEvents()
@@ -4005,7 +4082,7 @@ def t_g6() -> None:
         QApplication.processEvents()
         del_posts = _posts("/api/stats/cal_delete")
         ck("g6 真删：二次确认 → POST {days: [两日]} → 弹窗关 + note「已删除 2 天计费日志」+ 概览刷新",
-           bool(del_posts) and sorted(del_posts[-1].get("days") or []) == ["2026-09-23", TDY]
+           bool(del_posts) and sorted(del_posts[-1].get("days") or []) == sorted([PMDAY, TDY])
            and not bd.isVisible()
            and any(l.text() == "已删除 2 天计费日志" for l in op.findChildren(QLabel))
            and any("/api/status" in c for c in calls),
@@ -4817,11 +4894,11 @@ def t_g9() -> None:
         QApplication.processEvents()
         n0 = _n_posts("/api/update_reset")
         bar.btn_reset.click()
-        _wait(lambda: "已重置（原记录 9.9.9 ⇒ 现在 清空）" in bar.detail.text())
+        _wait(lambda: "已重置（原记录 9.9.9 ⇒ 现在 清空）" in bar.txt.text())
         ck("g9 updbar 重置更新状态：确认后 POST /api/update_reset + 回显原记录",
            _n_posts("/api/update_reset") > n0
-           and "已重置（原记录 9.9.9 ⇒ 现在 清空）" in bar.detail.text(),
-           "detail=%r posts=%d" % (bar.detail.text(), _n_posts("/api/update_reset")))
+           and "已重置（原记录 9.9.9 ⇒ 现在 清空）" in bar.txt.text(),
+           "detail=%r posts=%d" % (bar.txt.text(), _n_posts("/api/update_reset")))
     finally:
         QDialog.exec = _orig_exec
         agent_bridge.current_url = _orig_url
@@ -5967,7 +6044,7 @@ def t_g14() -> None:
         ck("g14 test 动作：GET /api/voice/test 到达（note 为瞬态过程记录，不作判据）",
            _g14_hit, "note=%r" % note.text())
 
-        # ④ goto 动作（video → window()._go('videogen')）
+        # ④ goto 动作（video → window()._go）
         dlg3 = _open_guide("video", b, note)
         gb = [x for x in dlg3.findChildren(Btn) if x.objectName() == "guideAct"][0]
         gb.click()
@@ -8191,7 +8268,7 @@ def t_color_token_guard() -> None:
        minimumWidth 钳宽）⇒ 标签与输入框叠字（费用计算器/拍一拍/视频通路）。
        修法 row_label：包普通策略容器，容器最小宽才被布局尊重。
     C. **挂件全透明空窗** —— 页面导航成功但鲸鱼本体没渲染时窗口 100% 透明，
-       用户什么都看不到（「没看到挂件」）。修法：页面轮询本体、超时发
+       用户什么都看不到。修法：页面轮询本体、超时发
        boot(ok=false)，宿主降级提示卡；另有 8s 单次 watchdog 兜底。
     D. **控制台最小化挂件还在** —— 挂件改独立顶层窗（无 parent），hideEvent
        不再连带隐藏；真关时 closeEvent 显式带走（否则 WebView2 成孤儿）。
@@ -9095,7 +9172,7 @@ def t_async_landing_guard() -> None:
                            or (isinstance(_c.func, _ast2.Name) and _c.func.id == "Thread")))
                 if _th:
                     _raw_sites.append("%s::%s" % (_o2.path.relpath(_p, _qdir).replace("\\", "/"), _n.name))
-    #: 棘轮已收口：这一族**硬零**（2026-09-26 迁移完成，基线 44 → 0）。
+    #: 棘轮已收口：这一族**硬零**（迁移完成，基线 44 → 0）。
     ck("手搓的跨线程落地**一处在哪都不许有**（族已收口到 async_ui.run_async）",
        not _raw_sites,
        "当前 %d 处%s" % (len(_raw_sites),
@@ -9372,9 +9449,9 @@ def t_cfg_wired_guard() -> None:
 
     def _consumed(_key):
         """键 `a.b.c` 是否被**真读过**。两种形态都要认，否则会误报成假开关：
-        ① 字面量：`get("c")` / `["c"]`；
+        ① 字面量：`get` / `["c"]`；
         ② **拼出来的键名**：如 `system_prompt.module_enabled` 里 `key = "enable_" + mid`，
-           此时用"模块 id"（`scene_rules`）去找消费点 `_mod_on("scene_rules")`。
+           此时用"模块 id"（`scene_rules`）去找消费点 `_mod_on`。
         """
         _t, _l = _key.split(".")[0], _key.split(".")[-1]
         if _t == "ui":
@@ -9454,6 +9531,8 @@ def t_cfg_wired_guard() -> None:
 #   ⚠️ 注释/取证引用（`xxx.py` 这种出处标注）**不算问题**，出包闸门对它们只报非致命 warn。
 DEV_DIR_KNOWERS = {
     "agent/update_apply.py": "更新链的 NEVER_TOUCH 白名单：语义是「别碰它」，不是「用它」",
+    "scripts/dead_code_triage.py": "判据台账：目录名出现在**条目理由/出处标注**里（不是路径使用），"
+                                   "与上面几条注释引用同性质",
     "agent/wechat.py": "注释里的取证出处",
     "agent/prompt.py": "注释里的取证出处",
     "agent/input_audit.py": "注释里的取证出处",
@@ -9469,10 +9548,10 @@ DEV_DIR_KNOWERS = {
 
 
 #: 浮层（**盖在别的内容之上**的面）的选择器 → 它在哪、为什么算浮层。
-#: 底色**必须**走 `stylekit_qt.surface_bg`（玻璃主题给实色 `#0E2136`，其余主题 `t.card`）。
-#: 为什么要有这条闸门：玻璃主题下 `t.card` 是 `rgba(10,27,46,0.66)`（**34% 透**），浮层直接拿它
+#: 底色**必须**走 `stylekit_qt.surface_bg`（玻璃主题给实色 `#16334F`，其余主题 `t.card`）。
+#: 为什么要有这条闸门：玻璃主题下 `t.card` 是 `rgba(26,58,88,0.72)`（**28% 透**），浮层直接拿它
 #: 当底，就会把下面的字叠进弹窗里 —— 观感就是「半透 + 字发虚」。此前 `confirm._apply_shell` 修过、
-#: `onboarding` 那份漏了（用户实测截的就是引导弹窗）。**手抄散了口径才会漏**，所以这里逐个点名。
+#: `onboarding` 那份漏了（截的就是引导弹窗）。**手抄散了口径才会漏**，所以这里逐个点名。
 SURFACE_BG_SELECTORS = [
     ("ui_qt/confirm.py", "#Shell", "confirm 系弹窗卡片（ConfirmDialog / InfoDialog / ChoiceDialog）"),
     ("ui_qt/onboarding.py", "#C8OnboardCard", "五步引导向导卡片"),
@@ -9671,6 +9750,9 @@ DEF_VS_EXAMPLE_OK = {
     "update.url": ("https://raw.githubusercontent.com/…", "",
                    "示例留空：不给外人指更新源（默认表里指本项目自己的 manifest）"),
     "wechat.media_dir": ("media", "", "示例留空＝用默认落点（media/）"),
+    # ⚠️ `poll_interval` 是**加了"检测 ≤1 秒"之后**把默认从 3 调到 1 的（P0-8）；
+    #    示例留 3＝**更保守**（轮询慢一点、省 CPU），照示例填的人不会误以为"必须调快"。
+    "wechat.poll_interval": (1, 3, "示例更保守：轮询慢一点省 CPU（默认 1 秒是为了「检测 ≤1 秒」）"),
 }
 
 
@@ -9790,7 +9872,7 @@ def t_dead_import_guard() -> None:
                     _scanned_imports += 1
                     _src_line = _lines[_n.lineno - 1] if _n.lineno <= len(_lines) else ""
                     # ⛔ 只有"明说不用"才豁免：带 `F401` 的 noqa，或**不带码的裸 `# noqa`**。
-                    #   `noqa: PLC0415`（"不在顶层"）/ `E402` 说的是位置，**与用没用无关** ⇒ 不豁免，
+                    #   `noqa: PLC0415`/ `E402` 说的是位置，**与用没用无关** ⇒ 不豁免，
                     #   否则函数内 import 整类免检（实测这一个字之差让 14 处死导入长期隐身）。
                     if "noqa" in _src_line.lower():
                         _ntail = _src_line.lower().split("noqa", 1)[1]
@@ -10203,6 +10285,2092 @@ def t_atomic_write_guard() -> None:
             pass
 
 
+def t_emoji_index_guard() -> None:
+    """自检：**表情语义索引面板**（web `sec-emoji` ＋ Qt `MANUAL['emoji']`）的四段接线。
+
+    自定义表情是图片，模型读不出含义 —— 这一页存在的意义只有一条：
+    让人把「这张图是什么意思」写成文字回填给模型。**四段任缺一段，用户看到的就是死页**：
+
+      ① 后端取数口 `/api/emoji_index`：必须同时登记在 `ROUTES` 与 `HANDLERS`
+         （只声明不实现 ⇒ 按表调就 404；只实现不声明 ⇒ 路由对账判据红，页面也调不到）；
+      ② web 侧**真的调用**它（GET 取清单/统计 ＋ POST 两种动作）；
+      ③ Qt 侧 `MANUAL['emoji']` 已注册（缺 ⇒ 点导航是空白页）；
+      ④ 缩略图路由 `/assets/emoticon/` **只服务「md5 ＋ 图片后缀」的文件名**
+         —— 与收藏夹同款的路径穿越防线，不因为"只是缩略图"就放宽。
+
+    另锁三条内容纪律：低把握（疑似梗）必须在清单上标出来；统计口径前后端同名；
+    页面与面板都不许用 emoji 字符当图标。
+    """
+    import sys as _sys # noqa: PLC0415
+
+    from agent.routes import HANDLERS, ROUTES # noqa: PLC0415
+
+    if str(HERE) not in _sys.path:
+        _sys.path.insert(0, str(HERE))
+    import panels_custom # noqa: PLC0415
+    import sec_meta as _sm # noqa: PLC0415
+
+    _web = WEB_PAGE.read_text(encoding="utf-8")
+    _flat = _web.replace(" ", "")
+    _wh = (HERE.parents[0] / "agent" / "webui.py").read_text(encoding="utf-8")
+    _ei = (HERE.parents[0] / "agent" / "emoji_index.py").read_text(encoding="utf-8")
+    _pc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+
+    # ① 后端：声明 ↔ 实现
+    ck("后端声明 /api/emoji_index（GET + POST）",
+       ROUTES.get("/api/emoji_index") == ("GET", "POST"), str(ROUTES.get("/api/emoji_index")))
+    ck("HANDLERS 指向的真方法在 webui.py 里存在",
+       HANDLERS.get("/api/emoji_index", {}).get("GET") == "_rapi_emoji_index"
+       and HANDLERS.get("/api/emoji_index", {}).get("POST") == "_rapi_emoji_index_post"
+       and "def _rapi_emoji_index(" in _wh and "def _rapi_emoji_index_post(" in _wh, "")
+
+    # ② web：段落在 + 真调用 + 元数据可解析
+    ck("web 侧有 sec-emoji 且标题为「表情」",
+       '<section id="sec-emoji" class="card" data-sec>' in _web and "<h2>表情</h2>" in _web, "")
+    ck("web 真调用取数口（GET ＋ action=learn / refresh）",
+       "'/api/emoji_index'" in _flat and "action:'learn'" in _flat
+       and "action:'refresh'" in _flat, "")
+    _sec_emoji = _sm.get("emoji")
+    ck("sec_meta 解析出 emoji 段（标题对、行数够）",
+       _sec_emoji.title == "表情" and len(_sec_emoji.rows) >= 5,
+       "title=%s rows=%d" % (_sec_emoji.title, len(_sec_emoji.rows)))
+
+    # ③ Qt：整页手写件已注册（这一页是清单+回填，不是 data-cfg 行，故走 MANUAL）
+    ck("Qt 侧 MANUAL['emoji'] 指向 emoji_panel（缺了导航点是空白页）",
+       panels_custom.MANUAL.get("emoji") is panels_custom.emoji_panel, "")
+    ck("Qt 面板把「把握不足」标出来（低把握＝疑似梗，含义不在画面里）",
+       "把握不足" in _pc and "把握高" in _pc, "")
+
+    # ④ 缩略图路由收口（与收藏夹同款，防免认证路径穿越）
+    ck("缩略图路由只认「md5 ＋ 图片后缀」的文件名",
+       'path.startswith("/assets/emoticon/")' in _wh
+       and "^[0-9a-fA-F]{6,}\\.(jpg|jpeg|png|gif|webp|bmp)$" in _wh, "")
+
+    # ⑤ 统计口径前后端同名（后端 stats 的键必须被前端六格真的用上）
+    ck("统计口径前后端同名",
+       all('"%s"' % k in _ei for k in ("total", "with_caption", "animated", "static"))
+       and all(("ei" + k) in _web for k in ("Total", "Done", "Todo", "Low", "Anim", "Still")), "")
+
+    # ⑥ 红线：不许用 emoji 字符当功能图标（web 段与 Qt 函数体内都扫）
+    _emo = re.compile("[\\U0001F000-\\U0001FAFF\\u2600-\\u27BF\\u2B00-\\u2BFF\\uFE0F]")
+
+    def _code_only(src: str) -> str:
+        """剥掉三引号文档串与 `#` 注释 —— 只在"有没有违规字面量"这类断言前用。
+
+        ⛔ 不剥就会把**讲这条规矩的那句注释**判成违规（本项目踩过不止一次：
+        写"不许出现某字面量"的注释本身就是那个字面量）。
+        """
+        out, i, n = [], 0, len(src)
+        while i < n:
+            if src.startswith('"""', i) or src.startswith("'''", i):
+                q = src[i:i + 3]
+                j = src.find(q, i + 3)
+                i = n if j < 0 else j + 3
+                continue
+            if src[i] == "#":
+                j = src.find("\n", i)
+                i = n if j < 0 else j
+                continue
+            out.append(src[i])
+            i += 1
+        return "".join(out)
+
+    _hit_web = re.search(r'<section id="sec-emoji".*?</section>', _web, re.S)
+    _hit_pc = re.search(r"def emoji_panel\(.*?(?=\ndef )", _pc, re.S)
+    ck("表情面板 web 段内无 emoji 字符（红线）",
+       bool(_hit_web) and not _emo.search(_hit_web.group(0)), "")
+    ck("emoji_panel 代码段内无 emoji 字符（注释与文档串已剥，红线）",
+       bool(_hit_pc) and not _emo.search(_code_only(_hit_pc.group(0))), "")
+
+    # ── 「向群友请教」（FE-2 的面板面）：配置必须真的被读走，模块常量只作兜底 ──
+    #   为什么这条重要：这一族的坑是"面板上能改、后端根本不看"（配置写了没人读 ⇒ 用户改了个寂寞）。
+    import json as _json # noqa: PLC0415
+
+    from agent import config as _cfgmod # noqa: PLC0415
+    from agent import emoji_curiosity as _EC # noqa: PLC0415
+
+    _dkeys = {"enabled", "probability", "cooldown_s", "answer_window_s"}
+    _def = (_cfgmod.DEFAULT_CONFIG.get("emoji") or {}).get("curiosity") or {}
+    ck("默认配置里有 emoji.curiosity 四键", set(_def) == _dkeys, str(sorted(_def)))
+    _ex = _json.loads((HERE.parents[0] / "config.example.json").read_text(encoding="utf-8"))
+    ck("config.example.json 同键（否则 fullcheck 的「键集相等」会红）",
+       set((_ex.get("emoji") or {}).get("curiosity") or {}) == _dkeys,
+       str(sorted(((_ex.get("emoji") or {}).get("curiosity") or {}))))
+
+    _orig_gc = _cfgmod.get_config
+    try:
+        _cfgmod.get_config = lambda: {"emoji": {"curiosity": {
+            "enabled": True, "probability": 0.42, "cooldown_s": 77, "answer_window_s": 9}}}
+        _c1 = _EC.cfg()
+        ck("cfg() 真的读配置（不是把值写死在模块里）",
+           _c1["enabled"] is True and abs(_c1["probability"] - 0.42) < 1e-9
+           and _c1["cooldown_s"] == 77 and _c1["answer_window_s"] == 9, str(_c1))
+
+        def _boom():
+            raise RuntimeError("boom")
+
+        _cfgmod.get_config = _boom
+        _c2 = _EC.cfg()
+        ck("反向锚：配置读不到 ⇒ 退回模块常量（不抛、也不误当 0 秒）",
+           _c2["cooldown_s"] == _EC.ASK_COOLDOWN_S
+           and _c2["answer_window_s"] == _EC.ANSWER_WINDOW_S
+           and _c2["probability"] == 0.0, str(_c2))
+    finally:
+        _cfgmod.get_config = _orig_gc
+
+    _st2 = _EC.stats()
+    ck("请教 stats() 给面板：四项配置 ＋ 待答 ＋ 已问数 ＋ 最近学到",
+       all(k in _st2 for k in ("enabled", "probability", "cooldown_s", "answer_window_s",
+                               "pending", "asked_count", "learned")), str(sorted(_st2)))
+    ck("web 有第 4 组「④ 向群友请教」＋ 四个 data-cfg 键",
+       "④ 向群友请教" in _web and all(('data-cfg="emoji.curiosity.%s"' % _k) in _web
+                                      for _k in _dkeys), "")
+    ck("Qt 面板声明了第 4 组锚点（mark_group emoji 3）",
+       'mark_group(page, "emoji", 3' in _pc, "")
+
+
+def t_subnav_guard() -> None:
+    """自检：**功能项内的「组 ＋ 组锚点条」**（web 第三层索引的 Qt 等价）。
+
+    web 侧两层结构（`assets/console/index.html`）：
+      · `.sub`      —— 功能项内部的**分组小标题**，把长功能项的若干 `.row` 收成一组；
+      · `.sub-nav`  —— 功能项顶部的**组锚点条**，由 JS 扫本 section 的 `.sub` 生成。
+
+    两者在 Qt 侧都要落地，否则长面板（媒体 41 行、高级 49 行）就是一整片平的行、
+    用户翻不到头。判据分四组：
+
+      · 解析：`.sub` 必须解析成 `kind="group"` 的行，且**按文档顺序**与普通行交错；
+              锚点名 `sec 键-g序号` 与 web 同口径。
+      · 渲染：`<2 组的 section 不生成锚点条`（web 同款短路）—— 这是"有没有多画一行"
+              的唯一判据，只测"有条"会漏掉单组 section 上多插的那条。
+      · 逐字：锚点条文字 = 组标题原文（不许加工/截断），条数 = 组数。
+      · 鲸语：每颗芯片的原文都要能在 `agent/whale_text.py` 里查到译文 ——
+              查不到就是"切鲸语后这一条露普通话"，一页里两套语气。
+
+    不测"点击后滚到哪"（真滚放在功能实测 `_scratch/_probe_subnav.py`）：
+    这里只钉**结构**，滚动是行为、需要真视口。
+    """
+    import re as _re # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+
+    _qt = str(HERE)
+    if _qt not in _sys.path:
+        _sys.path.insert(0, _qt)
+    import sec_meta as _sm # noqa: PLC0415
+
+    _html = (HERE.parents[0] / "assets" / "console" / "index.html").read_text(encoding="utf-8")
+
+    # ── ① 解析：`.sub` 都进了 group 行 ─────────────────────────────────
+    _secs = _sm.secs()
+    _got: dict[str, list[str]] = {}
+    for _k, _s in _secs.items():
+        _gs = [r for r in _s.rows if r.kind == "group"]
+        if _gs:
+            _got[_k] = [r.label for r in _gs]
+    # web 真值：逐 section 数 `.sub`（只在 data-sec 段内）
+    _want: dict[str, list[str]] = {}
+    for _m in _re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec>(.*?)</section>',
+                           _html, _re.S):
+        _body = _m.group(2)
+        _subs = [_re.sub(r"<[^>]+>", "", x).strip()
+                 for x in _re.findall(r'<div class="sub">(.*?)</div>', _body, _re.S)]
+        _subs = [x for x in _subs if x]
+        if _subs:
+            _want[_m.group(1)] = _subs
+    ck("组标题：5 个 section 有组，与 web `.sub` 逐 section 对齐（键集合）",
+       set(_got) == set(_want), "我方%s / web%s" % (sorted(_got), sorted(_want)))
+    ck("组标题：总数 20 条、文字逐字一致（多一条少一条都算）",
+       sum(len(v) for v in _got.values()) == sum(len(v) for v in _want.values())
+       and _got == _want,
+       "我方=%s" % {k: len(v) for k, v in _got.items()})
+    # 锚点名口径：`sec键-g序号`（web 的 `sec.id-g1` 同形）
+    _bad_anchor = []
+    for _k in _got:
+        _gs = [r for r in _secs[_k].rows if r.kind == "group"]
+        for _i, _r in enumerate(_gs):
+            if _r.anchor != "%s-g%d" % (_k, _i + 1):
+                _bad_anchor.append((_k, _i, _r.anchor))
+    ck("组锚点：命名口径 `sec键-g序号`，且序号连续从 1 起",
+       not _bad_anchor, str(_bad_anchor[:5]))
+    # 非 group 行锚点必须为空 —— 否则锚点条会指到普通行上去
+    _leak = [(s.key, r.label) for s in _secs.values() for r in s.rows
+             if r.kind != "group" and r.anchor]
+    ck("组锚点：**只有 group 行带锚点**，普通行一律为空（防锚点指错行）",
+       not _leak, str(_leak[:5]))
+
+    # ── ② 源码级：渲染层的关键口径（真控件由功能实测覆盖） ──────────────
+    _pq = (HERE / "panels_qt.py").read_text(encoding="utf-8")
+    _i = _pq.find("def _sub_nav(")
+    _body_src = _pq[_i:_i + 4000] if _i >= 0 else ""
+    # 去注释/字符串后再断言"调用了什么" —— 直接查字面会把**注释里说明"为什么不用它"**
+    # 也算成"用了它"（实测踩到：docstring 写了"不能用 ensureWidgetVisible" 而误判）。
+    _code = _re.sub(r'"""[\s\S]*?"""', "", _body_src)
+    _code = _re.sub(r"#[^\n]*", "", _code)
+    ck("渲染层：`_sub_nav` 存在", _i >= 0, "")
+    ck("渲染层：**不足 2 组短路**（web `if(subs.length < 2) return;` 同款）",
+       "if len(groups) < 2:" in _code and "return None" in _code, "")
+    ck("渲染层：滚到组用的是**对齐到顶**（直设滚动条值），不是 `ensureWidgetVisible`"
+       "（后者对已在视口内的目标不滚）",
+       "ensureWidgetVisible" not in _code and ".setValue(" in _code, "")
+    ck("渲染层：芯片是**扁平 chip**（不继承带立体投影的 `Btn`）",
+       "class _SubNavChip(QPushButton)" in _pq, "")
+    # 插到"说明之后"：靠 desc 控件上的标记反查，而不是写死下标
+    ck("渲染层：锚点条插在说明行之后（按 `c8_desc` 标记反查，不写死下标）",
+       'property("c8_desc")' in _pq
+       and 'setProperty("c8_desc", True)' in (HERE / "widgets.py").read_text(encoding="utf-8"),
+       "")
+
+    # ── ③ 鲸语：组标题与锚点条文字都要能换 ─────────────────────────────
+    _tr = None
+    try:
+        import importlib.util as _ilu # noqa: PLC0415
+
+        _wp = HERE.parents[0] / "agent" / "whale_text.py"
+        _spec = _ilu.spec_from_file_location("whale_text_guard", _wp)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _tr = lambda s: _mod.NAV.get(s) or _mod.DICT.get(s) or s # noqa: E731
+    except Exception: # noqa: BLE001
+        _tr = None
+    ck("鲸语：字典可加载（单一来源 agent/whale_text.py）", _tr is not None, "")
+    if _tr is not None:
+        _all = [t for v in _got.values() for t in v]
+        _miss = [t for t in _all if _tr(t) == t]
+        ck("鲸语：**%d 个组标题全部有译文**（查不到 = 切鲸语后这一条露普通话）" % len(_all),
+           not _miss, str(_miss[:5]))
+
+
+def t_subnav_coverage_guard() -> None:
+    """自检：**三级索引不许有盲区**：「调前端记得挂三级索引，
+    以免有些不在索引列表里面」）。
+
+    这条守的是"**以后不会再漏**"，三个最容易漏的位置：
+      ① **web 侧组数**：凡 ≥6 行的 section，组数必须 ≥ max(2, 行数 ÷ 12)
+         —— 缺了就是"那一块内容不在索引里，用户只能一路滚着找"；
+      ② **Qt 手写页**：`MANUAL` 里的页若 web 侧有组，必须用 `mark_group` 声明锚点 ——
+         没声明就**不生成锚点条**（真生成了也是"点了不动"的假索引，比没有更糟）；
+      ③ **六种组合**（3 主题 × 2 文案）：组标题与锚点芯片只许用 Token 取色 ——
+         写死颜色在另外两套主题里就脏了（文案那条轴由 `whale_selftest` 的覆盖率守）。
+    """
+    import re as _re # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+
+    _web = WEB_PAGE.read_text(encoding="utf-8")
+    _n_sec = len(_re.findall(r'<section id="sec-', _web))
+    _gaps = []
+    for _m in _re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec>(.*?)</section>',
+                           _web, _re.S):
+        _k, _b = _m.group(1), _m.group(2)
+        _n = len(_re.findall(r'<div class="row"[^>]*><label>', _b))
+        if _n < 6:
+            continue
+        _subs = len(_re.findall(r'<div class="sub">', _b))
+        _want = max(2, -(-_n // 12))
+        if _subs < _want:
+            _gaps.append("%s(行%d 组%d<%d)" % (_k, _n, _subs, _want))
+    ck("① 每个 ≥6 行的 section 组数达标（组数 ≥ max(2, 行数÷12)）", not _gaps,
+       "未达标：%s" % _gaps)
+    ck("① 分母守卫：真的扫到了全部 section（≥25 个）", _n_sec >= 25, "n=%d" % _n_sec)
+
+    if str(HERE) not in _sys.path:
+        _sys.path.insert(0, str(HERE))
+    import panels_custom as _pcmod # noqa: PLC0415
+    import sec_meta as _sm2 # noqa: PLC0415
+
+    _pc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+    _need = []
+    for _sec in _pcmod.MANUAL:
+        if len([r for r in _sm2.get(_sec).rows if r.kind == "group"]) >= 2 and not _re.search(
+                r'mark_group\w*\(page, "%s"' % _re.escape(_sec), _pc):
+            _need.append(_sec)
+    ck("② 有组的手写页都声明了锚点（没声明就不生成条 ⇒ 与 web 侧不一致）", not _need,
+       "未声明：%s" % _need)
+    ck("② 分母守卫：确实有手写页被这条覆盖到（≥1 个）",
+       len([s for s in _pcmod.MANUAL
+            if len([r for r in _sm2.get(s).rows if r.kind == "group"]) >= 2]) >= 1, "")
+
+    _pq = (HERE / "panels_qt.py").read_text(encoding="utf-8")
+    _mm = _re.search(r"class _SubNavChip\(QPushButton\):.*?(?=\nclass |\ndef )", _pq, _re.S)
+    _chip = _mm.group(0) if _mm else ""
+    # ⛔ 先剥注释行再查颜色：这一段注释里就写着「实测 dark：底 #262A44 时 4.40」
+    #   （讲对比度改动的地方本身就是那两个色值）—— 不剥就会把解释当违规（同款坑第 4 次）。
+    _chip_code = "\n".join(_l for _l in _chip.split("\n") if not _l.strip().startswith("#"))
+    _bad = [x for x in _re.findall(r"#[0-9a-fA-F]{3,6}", _chip_code)
+            if x.lower() not in ("#fff", "#000")]
+    ck("③ 锚点芯片用 Token 取色（写死颜色会在另外两套主题里脏掉；#fff/#000 是允许的例外）",
+       bool(_chip_code) and "t.q(" in _chip_code and not _bad, "写死颜色=%s" % _bad)
+
+
+def t_emoji_codes_guard() -> None:
+    """自检：**Emoji 库要可见、而且真有人用**（FE-3）。
+
+    这一族最容易做成"半成品"：把 169 个表情码摆到面板上，却**没有任何代码在用** ——
+    那就只是个好看的清单。所以同时钉三件：
+      ① 只读端点给全（微信码／情绪组／统计）；
+      ② **提示词真的摆给模型看**（否则它不知道自己能写 `[微笑]`，只会用「（微笑）」这种文字对付）；
+      ③ 两个开关**真有效**：`emoji.prompt_codes` 关掉就不摆、`emoji.allow_unicode` 关掉就不列 😄。
+    """
+    from agent import config as _cfgmod # noqa: PLC0415
+    from agent import emoji_codes as _EC # noqa: PLC0415
+    from agent.routes import HANDLERS, ROUTES # noqa: PLC0415
+
+    _web = WEB_PAGE.read_text(encoding="utf-8")
+    _wh = (HERE.parents[0] / "agent" / "webui.py").read_text(encoding="utf-8")
+    _pr = (HERE.parents[0] / "agent" / "prompt.py").read_text(encoding="utf-8")
+    _pc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+
+    ck("① 后端声明 /api/emoji_codes（只读 GET）",
+       ROUTES.get("/api/emoji_codes") == ("GET",), str(ROUTES.get("/api/emoji_codes")))
+    ck("① HANDLERS 指向的真方法存在",
+       HANDLERS.get("/api/emoji_codes", {}).get("GET") == "_rapi_emoji_codes"
+       and "def _rapi_emoji_codes(" in _wh, "")
+
+    _l1 = _EC.prompt_lines(allow_unicode=True)
+    _l2 = _EC.prompt_lines(allow_unicode=False)
+    #: ⛔ 判"有没有表情字符"必须用**真的 emoji 区段**：写成 `ord(c) > 0x2500` 会把中文汉字
+    #   （4E00-9FFF）也算成 emoji ⇒「关掉开关」那条永远红（本轮集中测真踩到）。
+    _emochar = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF]")
+    ck("② 清单里真带上微信码与情绪组（模型才知道能写 [微笑]）",
+       any("[微笑]" in _x for _x in _l1) and any("情绪组" in _x for _x in _l1), "%d 行" % len(_l1))
+    ck("② 反向锚：allow_unicode=False ⇒ 一行里都不出现表情字符（开关作用在生成侧）",
+       not any(_emochar.search(_x) for _x in _l2), "")
+    ck("② prompt.py 真把它拼进系统提示（不是摆设）",
+       "_emoji_codes_rule()" in _pr and "_ec.prompt_lines(" in _pr, "")
+    ck("② 默认配置里有 prompt_codes / allow_unicode 两键",
+       {"prompt_codes", "allow_unicode"} <= set((_cfgmod.DEFAULT_CONFIG.get("emoji") or {})), "")
+
+    import agent.prompt as _P # noqa: PLC0415
+
+    _orig = _P.get_config
+    try:
+        _P.get_config = lambda: {"emoji": {"prompt_codes": False}}
+        _a = _P._emoji_codes_rule()
+        ck("③ 关掉 emoji.prompt_codes ⇒ 这一段真的不拼（省 token 的开关是活的）",
+           _a == "", repr(_a)[:40])
+        _P.get_config = lambda: {"emoji": {"prompt_codes": True, "allow_unicode": False}}
+        _b = _P._emoji_codes_rule()
+        ck("③ 关掉 allow_unicode ⇒ 模型看到的那段里没有表情字符",
+           bool(_b) and not _emochar.search(_b), "%d 字符" % len(_b))
+        _P.get_config = lambda: {"emoji": {"prompt_codes": True, "allow_unicode": True}}
+        ck("③ 两个都开 ⇒ 摆出来且含表情字符", bool(_emochar.search(_P._emoji_codes_rule())), "")
+    finally:
+        _P.get_config = _orig
+
+    ck("④ web 有第 5 组「⑤ Emoji 库」＋ 两个 data-cfg",
+       "⑤ Emoji 库" in _web and 'data-cfg="emoji.prompt_codes"' in _web
+       and 'data-cfg="emoji.allow_unicode"' in _web, "")
+    ck("④ Qt 面板声明了第 5 组锚点（mark_group emoji 4）",
+       'mark_group(page, "emoji", 4' in _pc, "")
+
+
+def t_rhythm_guard() -> None:
+    """自检：**拟人节奏的"生效值"必须看得见、且真的按配置算出来**（FE-7）。
+
+    这一族的坑是"面板上有档位、下面还有两个单项覆盖，而真正生效的是**两者合起来**的值"——
+    只看配置项，用户会以为「我填了 3 秒怎么还慢」（其实被档位上限盖住了）。
+    所以判据钉三件：① 三档齐全且默认 gentle；② **生效值随档位变**（行为）；③ **单项覆盖真的盖过档位**（行为）。
+    """
+    from agent import config as _cfgmod # noqa: PLC0415
+    from agent import rhythm as _RH # noqa: PLC0415
+    from agent.routes import HANDLERS, ROUTES # noqa: PLC0415
+
+    _web = WEB_PAGE.read_text(encoding="utf-8")
+    _pc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+
+    ck("① 后端声明 /api/rhythm（只读 GET）",
+       ROUTES.get("/api/rhythm") == ("GET",), str(ROUTES.get("/api/rhythm")))
+    ck("① HANDLERS 指向的真方法存在",
+       HANDLERS.get("/api/rhythm", {}).get("GET") == "_rapi_rhythm"
+       and "def _rapi_rhythm(" in (HERE.parents[0] / "agent" / "webui.py").read_text(encoding="utf-8"), "")
+    ck("② 三档齐全 ＋ 默认档是 gentle（off 是「还原到加这层之前」）",
+       set(_RH.PROFILES) == {"gentle", "calm", "off"} and _RH.DEFAULT_PROFILE == "gentle",
+       str(sorted(_RH.PROFILES)))
+
+    _orig_gc = _cfgmod.get_config
+    try:
+        _cfgmod.get_config = lambda: {"rhythm": {"enabled": True, "profile": "calm"}}
+        _RH.reload()
+        _p1 = _RH.profile()
+        ck("③ 生效值随档位变：calm ⇒ 间隔 5~12 秒（不是 gentle 的 1.5~4）",
+           _p1.name == "calm" and tuple(_p1.gap) == (5.0, 12.0), "%s %s" % (_p1.name, _p1.gap))
+
+        _cfgmod.get_config = lambda: {"rhythm": {"enabled": True, "profile": "calm",
+                                                 "gap_min_seconds": 3, "gap_max_seconds": 4}}
+        _RH.reload()
+        _p2 = _RH.profile()
+        ck("③ 单项覆盖真的盖过档位（填 3/4 ⇒ 就是 3~4，不是 5~12）",
+           tuple(_p2.gap) == (3.0, 4.0), str(_p2.gap))
+
+        _cfgmod.get_config = lambda: {"rhythm": {"enabled": False, "profile": "calm"}}
+        _RH.reload()
+        ck("③ 总开关关掉 ⇒ 等价 off 档（间隔退化到 0，不加等待）",
+           _RH.profile().name == "off" and tuple(_RH.profile().gap) == (0.0, 0.0),
+           str(_RH.profile().gap))
+    finally:
+        _cfgmod.get_config = _orig_gc
+        _RH.reload()
+
+    ck("④ web 有「拟人节奏」5 行（含档位下拉 ＋ 两个单项覆盖 ＋ 生效值行）",
+       'data-cfg="rhythm.enabled"' in _web and 'data-cfg="rhythm.profile"' in _web
+       and 'data-cfg="rhythm.gap_min_seconds"' in _web
+       and 'data-cfg="rhythm.gap_max_seconds"' in _web and 'id="rhState"' in _web, "")
+    ck("④ Qt 侧 send 追加卡已接线（APPENDIX 里有 _rhythm_appendix）",
+       "_rhythm_appendix" in _pc and '"send": _rhythm_appendix' in _pc, "")
+
+
+def t_row_geometry_guard() -> None:
+    """自检：**行高缓存要看得见、要能重测**（FE-4）。
+
+    行高是"算该点第几行"的分母 —— 它错了**不报错**，只是"点了半天没反应"（安静地坏）。
+    所以这一族只认两件事：
+      ① 用户**看得见**当前记住的值与本机合法区间（不然没法判断是不是它错了）；
+      ② 用户**能清掉重测**（改了系统缩放或微信字号之后必须能回到正轨）。
+    ⛔ 并且**只许清、不许手填**：手填的数没人验过，会让"算第几行"错得毫无声息。
+    """
+    from agent.routes import HANDLERS, ROUTES # noqa: PLC0415
+
+    _web = WEB_PAGE.read_text(encoding="utf-8")
+    _wh = (HERE.parents[0] / "agent" / "webui.py").read_text(encoding="utf-8")
+    _pc = (HERE / "panels_custom.py").read_text(encoding="utf-8")
+    ck("后端声明 /api/row_geometry（GET + POST）",
+       ROUTES.get("/api/row_geometry") == ("GET", "POST"), str(ROUTES.get("/api/row_geometry")))
+    ck("HANDLERS 指向的真方法在 webui.py 里存在",
+       HANDLERS.get("/api/row_geometry", {}).get("GET") == "_rapi_row_geometry"
+       and "def _rapi_row_geometry(" in _wh and "def _rapi_row_geometry_post(" in _wh, "")
+    ck("web 有「行高缓存」行 ＋「重新测量」按钮 ＋ 真调用取数口",
+       "行高缓存" in _web and "重新测量" in _web and "rgForget" in _web
+       and "'/api/row_geometry'" in _web.replace(" ", ""), "")
+    ck("Qt 侧 wechat 追加卡已接线（APPENDIX 里有 _rowgeom_appendix）",
+       "_rowgeom_appendix" in _pc and "_rowgeom_appendix)" in _pc, "")
+    _i = _wh.find("def _rapi_row_geometry_post")
+    _j = _wh.find("def _rapi_emoji_index(")
+    _post = _wh[_i:_j] if 0 <= _i < _j else ""
+    ck("反向锚：POST 只认 forget（**不提供「手填行高」的入口**）",
+       '"forget"' in _post and "remember_row_h" not in _post, "len=%d" % len(_post))
+    ck("端点如实给出本机合法区间（面板据此判断是不是它错了）",
+       "green_expect" in _post or "green_expect" in _wh, "")
+
+    # 抓图对最小化窗口的守卫（真机踩到）：`GetWindowRect` 在最小化时仍返回占位矩形
+    # ⇒ 旧行为会交给调用方一张 **237×39 的"图"**（不是 None），照它量行高/找绿带必然没意义。
+    _ww = (HERE.parents[0] / "agent" / "wechat_windows.py").read_text(encoding="utf-8")
+    ck("抓图对最小化窗口**如实返回 None**（不给垃圾尺寸的图骗调用方）",
+       "IsIconic" in _ww and "窗口已最小化（最小化时没有有效画面）" in _ww, "")
+
+
+def t_contrast_guard() -> None:
+    """自检：**文字/底色对比度**——三主题下"字读不读得出来"。
+
+    为什么要有这条：颜色 token 改动**不会让任何既有判据变红**（判据大多只比
+    字面值或结构），于是"白底浅字、黑底灰字"这类问题只能靠人眼在截图上发现。
+    实测已出过三处真缺陷，本判据把它们逐条钉住：
+
+      ① dark 的 `tx3` 一度是 `#5A5E66`，压卡片 `#101113` 只有 **2.90** ——
+         `desc()`（说明行）用的正是 tx3，于是深色底上"最弱那一档"根本读不出来。
+      ② whale 的 `tx2` 改成实色后，`tx3` 仍是同色相加 alpha ⇒ 两档**完全同色**，
+         三级文字层级塌成两级。
+      ③ 主按钮 (`Btn` role=primary) 的渐变一度**向上提亮**（与 web 的
+         `blue → blue2`（变暗）方向相反），白字压在被提亮的上沿只剩 ~2.3。
+
+    判据口径：**只判关系，不判字面值** —— 锁死具体色值会在每次"对齐 web token"
+    时假红一次（此前 `t_fonts_rgba` 硬编码旧值就是这么坏的）。
+    阈值取 WCAG 正文档 4.5，底色按**控件实际压在什么上**取（卡片或页面底）。
+    """
+    _qt = str(HERE)
+    import sys as _sys # noqa: PLC0415
+    if _qt not in _sys.path:
+        _sys.path.insert(0, _qt)
+
+    from stylekit_qt import THEMES # noqa: PLC0415
+
+    def _lin(v: float) -> float:
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    def _lum(c) -> float:
+        return (0.2126 * _lin(c.redF()) + 0.7152 * _lin(c.greenF())
+                + 0.0722 * _lin(c.blueF()))
+
+    def _ratio(a, b) -> float:
+        la, lb = _lum(a), _lum(b)
+        if la < lb:
+            la, lb = lb, la
+        return (la + 0.05) / (lb + 0.05)
+
+    _BODY = 4.5
+
+    # ① 三级文字必须在**各自的宿主底**上过正文门槛，且严格三档递减
+    for _key, _t in THEMES.items():
+        for _name, _field, _host in (
+            ("tx", "tx", "card"),
+            ("tx2", "tx2", "card"),
+            ("tx3", "tx3", "card"),
+        ):
+            _r = _ratio(_t.q(_field), _t.q(_host))
+            ck("对比度 %s.%s 压 %s ≥ %.1f（实测 %.2f）"
+                    % (_key, _name, _host, _BODY, _r), _r >= _BODY)
+        # 字色档位的强弱方向**随主题的底色明暗翻转**：
+        #   · 深色主题（whale/dark）：底暗 ⇒ "更弱" = **更暗** ⇒ 亮度 tx > tx2 > tx3；
+        #   · 浅色主题（light）：底亮 ⇒ "更弱" = **更浅** ⇒ 亮度 tx < tx2 < tx3。
+        #     把方向写死成一个方向，白底那套必然假红（light 实测 0.013/0.101/0.124）。
+        # 判据取"相对底的对比度"来判，天然与底色无关：越弱的一档对比度越低。
+        _c1 = _ratio(_t.q("tx"), _t.q("card"))
+        _c2 = _ratio(_t.q("tx2"), _t.q("card"))
+        _c3 = _ratio(_t.q("tx3"), _t.q("card"))
+        ck("对比度 %s 三级文字严格递减 tx > tx2 > tx3（对比度 %.2f/%.2f/%.2f）"
+                % (_key, _c1, _c2, _c3), _c1 > _c2 > _c3)
+
+    # ② 锚点条芯片：文字 = tx2，底色必须是 blue_soft（不是 blue_line）
+    #    —— blue_line 是描边色、比 blue_soft 深一档，拿它填底会把对比度吃掉
+    #    一截（dark 实测 4.40 → 5.25）。
+    import panels_qt # noqa: PLC0415
+    for _key, _t in THEMES.items():
+        # ⛔ 底色写在 `_restyle()` 里，不在 `__init__()`（构造只调它）——
+        #    扫错函数会永远取不到那个常量、判据恒定假红。
+        _chip_src = panels_qt._SubNavChip._restyle.__code__.co_consts
+        _src = ""
+        for _c in _chip_src:
+            if isinstance(_c, str):
+                _src += _c
+        ck("对比度 %s 锚点条芯片底色取 blue_soft（描边才是 blue_line）" % _key,
+                't.q(\'blue_soft\')' in _src or "blue_soft" in _src)
+
+    # ③ 主按钮字色：必须"两候选比对比度、取更高"，且 whale/dark 上深字胜出
+    _w_src = (HERE / "widgets.py").read_text(encoding="utf-8")
+    ck("对比度 主按钮字色走对比度择优（非硬编码主题名）",
+            "_ink_worst" in _w_src and "_white_worst" in _w_src)
+    for _key in ("whale", "dark"):
+        _t = THEMES[_key]
+        _ends = (_t.q("blue"), _t.q("blue2"))
+        _white = min(_ratio(__import__("PySide6.QtGui", fromlist=["QColor"]).QColor(255, 255, 255), c)
+                     for c in _ends)
+        _ink = min(_ratio(__import__("PySide6.QtGui", fromlist=["QColor"]).QColor("#0A1B2E"), c)
+                   for c in _ends)
+        ck("对比度 %s 主按钮深字优于白字（深 %.2f / 白 %.2f）" % (_key, _ink, _white),
+                _ink > _white)
+
+
+def t_fingerprint_verdict_guard() -> None:
+    """自检：**B-2 —— 状态指纹（P0-1）＋ 两谓词（P0-4）**。
+
+    这两条是同一个底座的两半：指纹回答"**这份状态还是原来那份吗**"，
+    两谓词回答"**这份改动还算不算数 / 界面能不能跟着更新**"。
+
+    ### P0-1 三条验收（报告原文口径）
+      ① **同帧两次调用 ⇒ 指纹完全相同** —— 这条最容易被写坏：浮点均值会因累加顺序
+         在末位漂移，指纹"同帧不同值"⇒ 判据当场假红。本判据连调两次比字面串。
+      ② **改动任一采样分区 ⇒ 指纹必须变** —— 只改一小块，若网格太粗会被平均值抹平。
+      ③ **口径版本号 +1 ⇒ 指纹必须变** —— 口径变了旧指纹就不可比，必须自动作废。
+
+    ### P0-4 一条验收（报告原文口径）
+      构造"**发出后已切走会话**"⇒ 断言**持久层照写**（记录在）但**界面不更新**（回调没调）。
+      这一条是 P0-4 的全部意义所在，不测它等于没做。
+
+    ⚠️ `fingerprint` 依赖"类 PIL 图像"。判据里**不 import PIL**（ui_qt 侧不装），
+    而是构造一个只有 `size` / `crop` / `getdata` 的最小替身 —— 与本模块的鸭子类型契约一致。
+    """
+    import agent.fingerprint as _fp  # noqa: PLC0415
+    import agent.verdict as _vd  # noqa: PLC0415
+
+    class _Img:
+        """最小图像替身：`size` + `crop()` 返回一个带 `getdata()` 的对象。
+
+        每个像素由 `(x, y)` 决定 ⇒ 改任何一个像素，对应的分区均值就变，
+        "改分区必变"那条才有可造的条件。`bias` 用来整体提亮（模拟"状态变了"）。
+        """
+
+        def __init__(self, w=64, h=64, bias=0, patch=None):
+            self.size = (w, h)
+            self._w, self._h, self._bias = w, h, bias
+            self._patch = patch or {}
+
+        def crop(self, box):
+            x0, y0, x1, y1 = (int(v) for v in box)
+            pix = []
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    v = (x * 3 + y * 5) % 200 + self._bias
+                    if (x, y) in self._patch:
+                        v = self._patch[(x, y)]
+                    pix.append(max(0, min(255, int(v))))
+            return _Region(pix)
+
+    class _Region:
+        def __init__(self, pix):
+            self._pix = pix
+
+        def getdata(self):
+            return list(self._pix)
+
+    img = _Img()
+    f1 = _fp.state_fingerprint(img, theme="light", dpi=1.5, scroll_pos=120)
+    f2 = _fp.state_fingerprint(img, theme="light", dpi=1.5, scroll_pos=120)
+    ck("P0-1 ① 同一帧两次调用指纹完全相同", f1 == f2, "" if f1 == f2 else "%s / %s" % (f1, f2))
+
+    # ② 改任一采样分区 ⇒ 必变。改的是**同一个 4×4 网格里的第 (0,0) 格**，
+    #    即左上角 16×16 那块 —— 若网格实现有误（如拼串顺序不稳），这条会挂。
+    img2 = _Img(patch={(1, 1): 255})
+    f3 = _fp.state_fingerprint(img2, theme="light", dpi=1.5, scroll_pos=120)
+    ck("P0-1 ② 改动任一采样分区 ⇒ 指纹必变", f3 != f1, "")
+
+    # ③ 口径版本 +1 ⇒ 必变
+    f4 = _fp.state_fingerprint(img, theme="light", dpi=1.5, scroll_pos=120,
+                               schema=_fp.FINGERPRINT_SCHEMA + 1)
+    ck("P0-1 ③ 口径版本 +1 ⇒ 指纹必变", f4 != f1, "")
+
+    # ④ 五维各自都要进指纹 —— 少一维就会出现"状态变了、指纹没变"。
+    #    逐维单独改一项，断言指纹都变（这条守的是"别把某一维漏在哈希外"）。
+    _base = dict(theme="light", dpi=1.5, scroll_pos=120)
+    for _axis, _kw in (("滚动位置", {"scroll_pos": 121}),
+                       ("UI 主题", {"theme": "dark"}),
+                       ("DPI", {"dpi": 1.75})):
+        _d = dict(_base)
+        _d.update(_kw)
+        ck("P0-1 ④ 改了「%s」⇒ 指纹必变" % _axis,
+           _fp.state_fingerprint(img, **_d) != f1, "")
+
+    # ⑤ `diff_detail` 要能指出"是哪一维变了"（上层据此挑最小补救动作）
+    _da = _fp.fingerprint_detail(img, theme="light", dpi=1.5, scroll_pos=120)
+    _db = _fp.fingerprint_detail(img, theme="dark", dpi=1.5, scroll_pos=120)
+    _dd = _fp.diff_detail(_da, _db)
+    ck("P0-1 ⑤ diff_detail 指认变化的维度",
+       (not _dd["same_fingerprint"])
+       and any(c.get("axis") == "theme" for c in _dd["changed"]), "")
+
+    # ── P0-4 两个谓词 ──────────────────────────────────────────────────
+    # 强谓词：四项全对才通过
+    _ok, _ = _vd.is_mutation_valid(account="acc", chat_key="group:g1", generation=3,
+                                   ctx_account="acc", ctx_chat_key="group:g1", ctx_generation=3)
+    ck("P0-4 强谓词 四项全对 ⇒ 通过", _ok is True, "")
+    for _name, _kw in (
+        ("账号不符", {"account": "acc2"}),
+        ("会话不符", {"chat_key": "group:g2"}),
+        ("代次过期", {"generation": 4}),
+    ):
+        _kw2 = {"account": "acc", "chat_key": "group:g1", "generation": 3,
+                "ctx_account": "acc", "ctx_chat_key": "group:g1", "ctx_generation": 3}
+        _kw2.update(_kw)
+        _r, _why = _vd.is_mutation_valid(**_kw2)
+        ck("P0-4 强谓词 %s ⇒ 判无效且给出理由" % _name, (not _r) and bool(_why), "")
+    # ⛔ 空值不算"一致" —— 两侧都空时若判通过，等于"不知道是谁就当对吧"
+    _r, _ = _vd.is_mutation_valid(account="", chat_key="group:g1", generation=1,
+                                  ctx_account="", ctx_chat_key="group:g1", ctx_generation=1)
+    ck("P0-4 强谓词 账号两侧皆空 ⇒ 判无效（不许「都不知道就算对」）", not _r, "")
+
+    # 弱谓词：只要"还看着这个会话"
+    _r, _ = _vd.can_apply_to_visible(visible_chat="群A", target_chat="群A")
+    ck("P0-4 弱谓词 正在看目标会话 ⇒ 通过", _r is True, "")
+    _r, _why = _vd.can_apply_to_visible(visible_chat="群B", target_chat="群A")
+    ck("P0-4 弱谓词 已切到别的会话 ⇒ 不更新且给出理由", (not _r) and bool(_why), "")
+    _r, _ = _vd.can_apply_to_visible(visible_chat="", target_chat="群A")
+    ck("P0-4 弱谓词 读不到当前会话 ⇒ fail-closed（不更新）", not _r, "")
+
+    # ★ 核心验收：**发出后已切走会话** ⇒ 持久层照写、界面不更新
+    _d = _vd.decide(account="acc", chat_key="group:g1", generation=3,
+                    ctx_account="acc", ctx_chat_key="group:g1", ctx_generation=3,
+                    visible_chat="group:g2", visible_account="acc")
+    ck("P0-4 ★ 切走后：持久层照写（persist=True）", _d["persist"] is True, "")
+    ck("P0-4 ★ 切走后：界面不更新（visible=False）", _d["visible"] is False,
+       str(_d.get("visible_reason") or "")[:60])
+
+    # 反向：改动本身无效时，界面同样不该更新（且理由写明是"改动无效"而不是"切走了"）
+    _d2 = _vd.decide(account="acc", chat_key="group:g1", generation=9,
+                     ctx_account="acc", ctx_chat_key="group:g1", ctx_generation=3,
+                     visible_chat="group:g1", visible_account="acc")
+    ck("P0-4 改动无效 ⇒ 持久层不写且界面不更新（两个理由分开写）",
+       (not _d2["persist"]) and (not _d2["visible"])
+       and "无效" in str(_d2.get("visible_reason") or ""), "")
+
+    # 代次：单调递增，两次调用必不同（同一毫秒也不许撞）
+    _a, _b = _vd.next_generation(), _vd.next_generation()
+    ck("P0-4 代次单调递增且不重复（同一毫秒也不许撞）", _b > _a, "")
+
+    # ── 接线检查：模块必须**真的接在链路上**，不许空挂 ────────────────────
+    _s_src = (HERE.parents[0] / "agent" / "sender.py").read_text(encoding="utf-8")
+    ck("P0-4 已接进发送链路（发送记录点用 decide 的结论分账）",
+       "_verdict_for" in _s_src and 'if _vd["persist"]' in _s_src
+       and "_notify_sent" in _s_src, "")
+    _w_src = (HERE.parents[0] / "agent" / "wechat.py").read_text(encoding="utf-8")
+    ck("P0-4 已接进切会话链路（成功切会话 ⇒ 代次 +1）",
+       "after_switch_mark" in _w_src and "_chat_generation" in _w_src, "")
+
+
+def t_scope_degrade_guard() -> None:
+    """自检：**B-3 —— 身份隔离桶（P0-3）＋ 降级守卫（P0-2）**。
+
+    这两条都是"**失败路径上的防线**"，共同点是：
+    **出问题的时候一切看起来都正常** —— 没有异常、没有错误码，只是结果落错了地方。
+
+    ### P0-3 验收（报告原文口径）
+      mock「识别失败」⇒ 断言后续所有读写**都用隔离 scope**，且**不会命中上一会话的缓存/状态**。
+      本判据按三条拆开测：
+      ① 读不到身份 ⇒ 拿到的是**隔离桶**（不是空串、不是 default）；
+      ② **两个隔离桶永不相等**（同一毫秒连建两个也是），且与任何真身份都不相等；
+      ③ `is_same_resolved_scope` 在**任一侧未解析时判 False**（含两侧都未解析）。
+
+    ### P0-2 验收（报告原文口径）
+      构造"**路径 A 通过、路径 B 不通过**"⇒ 断言 B 路径下**该判据未被使用**，且结果为 fail-closed。
+      本判据按三条测：
+      ① A 允许用的判据，在 B 下**查不过**（未被使用）；
+      ② B 下沿降级链找到的**替代判据也在矩阵里**（降级不是随便挑）；
+      ③ 降级链走空 ⇒ `pick()` 返回 `None` ⇒ 调用方**必须 fail-closed**；
+         **未知组合（不在矩阵里）⇒ 允许集为空** —— 不沿用任何其它路径的判据。
+
+    ⚠️ 两组都不 import 真实 OCR/取帧：被测对象是**判定逻辑**，"读不到身份"由参数直接构造，
+    这样测的才是"逻辑对不对"，而不是"这台机器上 OCR 准不准"。
+    """
+    import agent.scope as _sc  # noqa: PLC0415
+    import agent.degrade_guard as _dg  # noqa: PLC0415
+
+    # ── P0-3 ① 读不到 ⇒ 隔离桶（不是空串 / 不是 default）─────────────────
+    ck("P0-3 读不到身份 ⇒ 拿到隔离桶（不是空串、不是 default）",
+       _sc.is_pending(_sc.scope_of("")) and _sc.scope_of("") != _sc.UNRESOLVED, _sc.scope_of(""))
+    ck("P0-3 `default` 与空串都按未解析处理（不是已解析）",
+       not _sc.is_resolved("") and not _sc.is_resolved(_sc.UNRESOLVED), "")
+    ck("P0-3 读到了 ⇒ 已解析身份**原样返回**（不加前缀，保证与裸会话 key 可比）",
+       _sc.scope_of("group:演示群") == "group:演示群"
+       and _sc.is_resolved(_sc.scope_of("group:演示群")), _sc.scope_of("group:演示群"))
+
+    # ── P0-3 ② 隔离桶之间、隔离桶与真身份之间，**永不相等** ───────────────
+    _p1, _p2 = _sc.pending_scope(), _sc.pending_scope()
+    ck("P0-3 ★ 两个隔离桶**互不相等**（同一毫秒连建两个也不许撞）", _p1 != _p2,
+       "%s / %s" % (_p1, _p2))
+    ck("P0-3 ★ 隔离桶与任何真身份都不相等（不会命中上一会话的状态）",
+       not _sc.is_same_resolved_scope(_p1, "group:演示群")
+       and not _sc.is_same_resolved_scope("group:演示群", _p1), "")
+    ck("P0-3 ★ 两个未解析态**也判不相等**（宁可多算一次，也不让 A 认成 B）",
+       not _sc.is_same_resolved_scope(_p1, _p2)
+       and not _sc.is_same_resolved_scope("", ""), "")
+    ck("P0-3 同一个已解析身份 ⇒ 判相等（反向控制：不是一律判 False）",
+       _sc.is_same_resolved_scope("group:演示群", "group:演示群"), "")
+
+    # ── P0-3 ③ 接线：`sender` 的 visible 必须过 `scope_of` ─────────────────
+    _s_src2 = (HERE.parents[0] / "agent" / "sender.py").read_text(encoding="utf-8")
+    ck("P0-3 已接进 B-2 链路（visible_chat 过 scope_of ⇒ 读不到变显式隔离桶）",
+       "scope_of" in _s_src2 and "import scope as _scope" in _s_src2, "")
+    _v_src2 = (HERE.parents[0] / "agent" / "verdict.py").read_text(encoding="utf-8")
+    ck("P0-3 弱谓词显式排除隔离桶（不靠桶名恰好长得不同这种巧合）",
+       "is_pending" in _v_src2, "")
+
+    # ── P0-2 ① 路径 A 通、路径 B 不通 ────────────────────────────────────
+    #   绿底带（色值敏感）在「列表路径 + 浅色主题」下成立；
+    #   换到「会话头路径」就**看不到会话列表** ⇒ 该判据根本不适用。
+    ck("P0-2 路径 A（列表/浅色）允许用绿底带判据",
+       _dg.is_allowed(_dg.CRIT_GREEN_BAND, "row", "light"), "")
+    ck("P0-2 ★ 路径 B（会话头）下绿底带判据**不被允许**（未被使用）",
+       not _dg.is_allowed(_dg.CRIT_GREEN_BAND, "header", "light"), "")
+    ck("P0-2 ★ 路径 B（列表/深色）下绿底带同样不被允许（深色色值不同 ⇒ 判据不成立）",
+       not _dg.is_allowed(_dg.CRIT_GREEN_BAND, "row", "dark"), "")
+
+    # ── P0-2 ② 降级到"也在矩阵里"的替代判据 ──────────────────────────────
+    _c, _why = _dg.pick(_dg.CRIT_GREEN_BAND, "header", "light")
+    ck("P0-2 ★ 降级选出的替代判据**本身也在矩阵里**（不是随便挑一条）",
+       _c is not None and _dg.is_allowed(_c, "header", "light"), "%r" % (_c,))
+    ck("P0-2 降级必须说明**换了哪一条**（调用方要据此换掉后续步骤）",
+       bool(_why) and str(_c) in _why, _why[:60])
+    ck("P0-2 首选判据允许时**不降级**（reason 为空，不多此一举）",
+       _dg.pick(_dg.CRIT_GREEN_BAND, "row", "light") == (_dg.CRIT_GREEN_BAND, ""), "")
+
+    # ── P0-2 ③ 走空 / 未知组合 ⇒ fail-closed ─────────────────────────────
+    #   ★ 造"允许集非空、但首选判据与整条降级链都不在其中"这一档是不可能的 ——
+    #     矩阵里 `header_text` / `pixel_span` 在**每一格**都在（它们主题无关），
+    #     所以任何非空允许集都至少能降级到它们。硬造这一档只能靠临时改矩阵 ⇒
+    #     那测的是"我改得对不对"，不是产品行为。**改测两条能真实成立的**：
+    #     ① 降级链**自身**为空（`pixel_span` 是最弱判据，没得再退）；
+    #     ② 未知组合 ⇒ 允许集空 ⇒ `pick` 返回 None（真正的 fail-closed 路径）。
+    ck("P0-2 ★ 最弱判据没有更弱的可退（降级链自身为空 ⇒ 只能 fail-closed）",
+       _dg.downgrade_chain(_dg.CRIT_PIXEL_SPAN) == [], str(_dg.downgrade_chain(_dg.CRIT_PIXEL_SPAN)))
+    _c3, _why3 = _dg.pick(_dg.CRIT_GREEN_BAND, "某个没见过的路径", "light")
+    ck("P0-2 ★ 未知渲染条件 ⇒ 允许集为空、pick 返回 None（**不沿用其它路径的判据**）",
+       _dg.allowed("某个没见过的路径", "light") == set() and _c3 is None, _why3[:60])
+    _c4, _why4 = _dg.pick(_dg.CRIT_GREEN_BAND, "row", "某个没见过的主题")
+    ck("P0-2 ★ 未知主题同样 fail-closed（只认矩阵里有 的组合）",
+       _c4 is None and bool(_why4), _why4[:50])
+    ck("P0-2 反向控制：矩阵非空且键数正常（防矩阵清空后全 fail-closed 也全绿）",
+       len(_dg.describe()["matrix"]) >= 6, str(sorted(_dg.describe()["matrix"]))[:80])
+
+
+def t_job_cancel_guard() -> None:
+    """自检：**B-4 —— 「取消」是第三种终态**（P0-5）。
+
+    **要解决的病**：把"用户取消"混进"失败"，会污染成功率统计，
+    也会让下次误判"上次失败了要重试"（用户明明是自己停的）。
+
+    **条款**（报告原文口径）：
+      ① 取消 ⇒ 终态 `canceled`、**`error` 为空**、且**算"已完成"**（闸门放行、能立刻重开）；
+      ② **取消本身也可能失败，必须报出来**（不许 fire-and-forget）；
+      ③ 状态色调 / 文案 / 图标全链路补齐（`canceled` ⇒ `已取消`，色调用 `stopped`）。
+
+    ⚠️ 本判据**不真起子进程**（那要 20 秒且依赖机器）——
+    子进程级的端到端在 `_scratch/_e2e_jobs_cancel.py`（**20/0**，含真杀进程树）。
+    这里测的是**状态语义**与**接线**：终态分档、中间态、闸门、以及"取消端点真的接上了"。
+    """
+    import agent.jobs as _jb  # noqa: PLC0415
+
+    # ── ① 三档终态各归各位（`_end_kind` 是唯一的命名点）────────────────
+    ck("P0-5 ★ 取消 ⇒ 终态名「已取消」（独立的一档，不并进失败）",
+       _jb._end_kind({"running": False, "canceled": True, "returncode": 1}) == "已取消", "")
+    ck("P0-5 ★ 失败（非零返回码、未取消）⇒ 终态名「失败」",
+       _jb._end_kind({"running": False, "canceled": False, "returncode": 1}) == "失败", "")
+    ck("P0-5 成功（rc=0、未取消）⇒ 终态名「成功」",
+       _jb._end_kind({"running": False, "canceled": False, "returncode": 0}) == "成功", "")
+    ck("P0-5 ★ 中间态：正跑且已发取消 ⇒ 名「正在取消」（**不许提前说已取消**）",
+       _jb._end_kind({"running": True, "canceling": True, "canceled": False}) == "正在取消", "")
+    ck("P0-5 中间态：正跑且没发取消 ⇒ 名「进行中」",
+       _jb._end_kind({"running": True, "canceling": False}) == "进行中", "")
+
+    # ── ①′ 取消**不算失败**：那是"已完成"的一种 ⇒ 闸门必须放行 ──────────
+    _jb.reset()
+    _jb._jobs["b4t"] = dict(_jb._empty(), name="b4t", running=False, canceled=True, returncode=1)
+    _r = _jb.start("b4t", "python -c \"print(1)\"", timeout=5)
+    ck("P0-5 ★ 已取消的作业**不挡**下一个（取消 = 已结束，闸门放行）",
+       bool(_r.get("ok")), str(_r.get("why"))[:60])
+    _jb.reset()
+
+    # ── ② 取消失败必须如实回报（不静默当成功）─────────────────────────
+    _jb.reset()
+    _r_missing = _jb.cancel("根本没有这个作业")
+    ck("P0-5 ★ 取消不存在的作业 ⇒ ok=False ＋ 原因（不静默当成功）",
+       (_r_missing.get("ok") is False) and bool(_r_missing.get("why")), str(_r_missing.get("why"))[:40])
+    _jb._jobs["b4t2"] = dict(_jb._empty(), name="b4t2", running=False, canceled=False, returncode=0)
+    _r_done = _jb.cancel("b4t2")
+    ck("P0-5 ★ 取消已结束的作业 ⇒ ok=False ＋ 点名它已结束（不是取消成功）",
+       (_r_done.get("ok") is False) and ("结束" in str(_r_done.get("why"))), str(_r_done.get("why"))[:40])
+    _jb._jobs["b4t3"] = dict(_jb._empty(), name="b4t3", running=True, pid=None)
+    _r_nopid = _jb.cancel("b4t3")
+    ck("P0-5 ★ 拿不到 pid ⇒ ok=False ＋ 说清'取消不了'（不假装成功）",
+       (_r_nopid.get("ok") is False) and bool(_r_nopid.get("why")), str(_r_nopid.get("why"))[:40])
+    _jb.reset()
+
+    # ── ③ 接线：取消端点真的接上了（三处同步：路由表 + 实现 + 前端可调）──
+    import agent.routes as _rt  # noqa: PLC0415
+    # ★ 两张表**都要登记**：`ROUTES`（路径→允许的方法）与 `HANDLERS`（路径→函数名）。
+    #   只加一张 ⇒ 要么路由表认不出这个方法（405），要么分派找不到实现（500）。
+    _has_route = "/api/version/job/cancel" in getattr(_rt, "ROUTES", {})
+    ck("P0-5 ★ 取消端点已登记进 `ROUTES`（路径→方法）", _has_route, "")
+    _has_handler = "/api/version/job/cancel" in getattr(_rt, "HANDLERS", {})
+    ck("P0-5 ★ 取消端点已登记进 `HANDLERS`（路径→实现）——两张表缺一不可",
+       _has_handler, "")
+    _w_src = (HERE.parents[0] / "agent" / "webui.py").read_text(encoding="utf-8")
+    ck("P0-5 ★ 取消端点实现已接上（且失败也回报 `why`）",
+       "_rapi_version_job_cancel_post" in _w_src and "_jobs7.cancel" in _w_src, "")
+
+    # ── ③′ `_empty()` 的字段契约：新增字段必须齐，否则界面读 KeyError ──
+    _e = _jb._empty()
+    ck("P0-5 `_empty()` 带齐三档终态字段（canceled / canceling / cancel_error）",
+       ("canceled" in _e) and ("canceling" in _e) and ("cancel_error" in _e),
+       str(sorted(_e.keys()))[:100])
+
+
+def t_suspend_counter_guard() -> None:
+    """自检：**B-5 / P1-3 —— 暂停/恢复用计数器，不用布尔**。
+
+    **要解决的病**：布尔暂停只能表达"暂停/未暂停"。若两个来源**各自**暂停
+    （用户按了「暂停」＋ 某个后台流程也临时挂起），先结束的那个一恢复就把整机恢复了
+    —— 另一个来源还在等，机器人却已经开始发消息（**嵌套提前恢复**）。
+
+    **条款**：① `suspend_depth` 从 0 起加；② **只有归零才真恢复**（flag 才消失）；
+    ③ 多退一次不报错也不变负（不解除别人的暂停）；④ **显式恢复**（用户按）强制归零。
+
+    ⚠️ 全程用临时档（`set_paths`）⇒ 绝不碰产品目录里的 `data/paused.flag`。
+    """
+    import agent.control as _ctl  # noqa: PLC0415
+    import tempfile as _tf  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    _td = _tf.mkdtemp(prefix="suspend-guard-")
+    _p = _os.path.join(_td, "paused.flag")
+    _s = _os.path.join(_td, "stopped.flag")
+    _old = _ctl.set_paths(paused=_p, stopped=_s)
+    try:
+        # ── ① 两层 push ⇒ 退一层**不恢复**（这正是本机制存在的理由）──────────
+        _ctl.suspend_reset()
+        ck("P1-3 ★ 起始层数为 0（没被暂停）", _ctl.suspend_depth() == 0, str(_ctl.suspend_depth()))
+        _tA = _ctl.suspend_push("来源A")
+        ck("P1-3 push 一层 ⇒ 层数 1", _ctl.suspend_depth() == 1, str(_ctl.suspend_depth()))
+        ck("P1-3 push 一层 ⇒ flag 真的落盘（既有读者不用改）",
+           _os.path.exists(_p), "")
+        _tB = _ctl.suspend_push("来源B")
+        ck("P1-3 push 两层 ⇒ 层数 2", _ctl.suspend_depth() == 2, str(_ctl.suspend_depth()))
+        ck("P1-3 ★ 每次 push 发不同的票（票号单调递增，不重号）", _tA != _tB,
+           "A=%s B=%s" % (_tA, _tB))
+        _ctl.suspend_pop(_tA)
+        ck("P1-3 ★★ 退一层 ⇒ 层数 1 且**仍在暂停**（flag 还在 ⇒ 不提前恢复）",
+           (_ctl.suspend_depth() == 1) and _os.path.exists(_p) and _ctl.is_paused(),
+           "depth=%s flag=%s" % (_ctl.suspend_depth(), _os.path.exists(_p)))
+        _ctl.suspend_pop(_tB)
+        ck("P1-3 ★ 归零 ⇒ 真的恢复（层数 0 且 flag 消失）",
+           (_ctl.suspend_depth() == 0) and (not _os.path.exists(_p)) and (not _ctl.is_paused()),
+           "depth=%s flag=%s" % (_ctl.suspend_depth(), _os.path.exists(_p)))
+
+        # ── ② 持票语义：**只有持有人能退自己那层**（裸计数做不到，多退一次会减掉别人的）──
+        _ctl.suspend_reset()
+        ck("P1-3 层数已 0 时再 pop ⇒ 仍为 0（不变负）",
+           _ctl.suspend_pop(None) == 0 and _ctl.suspend_depth() == 0, str(_ctl.suspend_depth()))
+        _t1 = _ctl.suspend_push("来源C1")
+        _t2 = _ctl.suspend_push("来源C2")
+        _ctl.suspend_pop(_t2)
+        _ctl.suspend_pop(_t2) # 同一个票退两次 ⇒ 第二次应无效果
+        ck("P1-3 ★★ 同一张票退两次 ⇒ 第二次无效（**不会把别人那一层也解掉**）",
+           (_ctl.suspend_depth() == 1) and _ctl.is_paused(), str(_ctl.suspend_depth()))
+        _ctl.suspend_pop(99999) # 不存在的票
+        ck("P1-3 ★★ 退一张**根本没有的票** ⇒ 层数不变（不误伤别人的暂停）",
+           (_ctl.suspend_depth() == 1) and _ctl.is_paused(), str(_ctl.suspend_depth()))
+        ck("P1-3 ★ 只有持有人退掉自己那层后，才真的归零",
+           (_ctl.suspend_pop(_t1) == 0) and (not _ctl.is_paused()), str(_ctl.suspend_depth()))
+
+        # ── ③ 显式恢复：用户按了恢复 ⇒ 强制归零（不受残留层数拦阻）───────────
+        _ctl.suspend_push("来源D")
+        _ctl.suspend_push("来源E")
+        _old_n = _ctl.suspend_reset()
+        ck("P1-3 ★ 显式恢复 ⇒ 不管几层一律归零、flag 清掉（用户意图高于计数）",
+           (_old_n == 2) and (_ctl.suspend_depth() == 0) and (not _os.path.exists(_p)),
+           "old=%s now=%s" % (_old_n, _ctl.suspend_depth()))
+
+        # ── ④ 接线：风险闸门必须走持票的嵌套计数（不许退回布尔直写）──────────
+        _r_src = (HERE.parents[0] / "agent" / "risk.py").read_text(encoding="utf-8")
+        ck("P1-3 ★ 风险闸门 pause() 走 `suspend_push` 并**留住票号**（嵌套计数，不是布尔直写）",
+           ("suspend_push(" in _r_src) and ("_ctl_ticket" in _r_src), "")
+        ck("P1-3 ★ 风险闸门 resume() **只退自己那层**（`suspend_pop(_tok)`，不拿别人清零）",
+           "suspend_pop(_tok)" in _r_src, "")
+        ck("P1-3 ★ 风险闸门 recover() 才是显式恢复 ⇒ `suspend_reset`（用户意图高于计数）",
+           "suspend_reset(" in _r_src, "")
+
+        # ── ⑤ 换档必须把计数归零（判据隔离；否则判据之间会互相串）────────────
+        _ctl.suspend_push("来源F")
+        _ctl.set_paths(paused=_p, stopped=_s)
+        ck("P1-3 ★ 换标记路径 ⇒ 计数归零（判据/实例之间不串）",
+           _ctl.suspend_depth() == 0, str(_ctl.suspend_depth()))
+    finally:
+        _ctl.set_paths(paused=_old["paused"], stopped=_old["stopped"])
+        _ctl._CACHE["at"] = 0.0
+        import shutil as _sh  # noqa: PLC0415
+        _sh.rmtree(_td, ignore_errors=True)
+
+
+def t_task_owner_guard() -> None:
+    """自检：**B-5 / P1-4 —— 任务槽位的所有权**（只有当前主人能写/删该槽位）。
+
+    **要解决的病**：同一个名字的活儿被**先后起两次**（重试/重启/看门线程被替换）。
+    先起的那次还活着，结束时把结果**写回同一个槽位** —— 而槽位早已换人。
+    于是"新的还在跑，界面却显示旧结果"，或者旧的收尾把新的状态**清掉**。
+    这类竞态**不常发生、过去之后无从复现**，只能靠"写之前先验证主人身份"根治。
+
+    **条款**：① 认领发唯一令牌；② **非主人写入 = 无操作**；③ **非主人释放 = 无副作用**
+    （`if tasks.get(k) is me` 的等价实现，防误删新主人）；④ 槽位不存在 ⇒ fail-closed。
+    """
+    import agent.task_owner as _own  # noqa: PLC0415
+
+    _own.reset()
+    # ── ① 认领与唯一性 ───────────────────────────────────────────────────
+    _t1 = _own.claim("slotA")
+    _t2 = _own.claim("slotB")
+    ck("P1-4 ★ 认领不同槽位 ⇒ 令牌互不相同", _t1 != _t2, "%s/%s" % (_t1, _t2))
+    ck("P1-4 ★ 认领同一槽位两次 ⇒ 令牌变（换主人）",
+       _own.claim("slotA") != _t1, "")
+
+    # ── ② 非主人写入 = 无操作（这是本条的核心）────────────────────────────
+    _own.reset()
+    _old = _own.claim("job")
+    _new = _own.claim("job") # 换主人
+    ck("P1-4 ★★ 旧令牌**不再是**主人（写入前会被挡下）",
+       (not _own.is_owner("job", _old)) and _own.is_owner("job", _new),
+       "old=%s new=%s cur=%s" % (_old, _new, _own.current("job")))
+
+    # ── ③ 非主人释放 = 无副作用（防误删新主人的槽位）─────────────────────
+    _r_old = _own.release("job", _old)
+    ck("P1-4 ★★ 非主人释放 ⇒ 返回 False 且**槽位仍在**（旧线程退不掉新主人的槽位）",
+       (_r_old is False) and (_own.current("job") == _new),
+       "released=%s cur=%s" % (_r_old, _own.current("job")))
+    _r_new = _own.release("job", _new)
+    ck("P1-4 ★ 主人自己释放 ⇒ 返回 True 且槽位清掉",
+       (_r_new is True) and (_own.current("job") is None), "")
+
+    # ── ④ fail-closed：槽位不存在时任何人都不是主人 ─────────────────────
+    _own.reset()
+    ck("P1-4 ★ 槽位不存在 ⇒ `is_owner` 一律 False（拿不准就不写）",
+       not _own.is_owner("never-claimed", 1), "")
+    ck("P1-4 ★ 释放一个不存在的槽位 ⇒ False（不假装成功）",
+       _own.release("never-claimed", 1) is False, "")
+
+    # ── ⑤ 接线：两个真实竞态点真的用了所有权 ────────────────────────────
+    _j_src = (HERE.parents[0] / "agent" / "jobs.py").read_text(encoding="utf-8")
+    ck("P1-4 ★ 一键作业：起跑时认领（`_owner.claim`）", "_owner.claim(" in _j_src, "")
+    ck("P1-4 ★ 一键作业：写终态前核对主人（`is_owner`）——旧一代不许覆盖",
+       _j_src.count("is_owner(") >= 2, str(_j_src.count("is_owner(")))
+    ck("P1-4 ★ 一键作业：reset 时连所有权槽位一起清（防'清空了又冒出来'）",
+       "_owner.reset()" in _j_src, "")
+    _w_src = (HERE.parents[0] / "agent" / "window_borrow.py").read_text(encoding="utf-8")
+    ck("P1-4 ★ 窗口看门线程：每轮先核对主人（防两个看门线程互抢还原）",
+       "_owner.is_owner(" in _w_src and "token" in _w_src, "")
+
+
+def t_idempotent_close_guard() -> None:
+    """自检：**B-5 / P1-5 —— 幂等关闭**（同一句柄被多处调 `close()` 只关一次）。
+
+    **要解决的病**：`close()` 调用点很多（切会话收尾／失败分支／超时兜底），同一浮层句柄
+    可能被两条路径各关一次。第二次 `WM_CLOSE` 本身通常无害，但 Windows 会把**已销毁窗口的
+    句柄值回收给新窗** —— 此时"再关一次同一个数字"会朝一个**完全无关的新窗口**发关窗消息。
+
+    **条款**：① TTL 内重复关 ⇒ 跳过（返回 True，结果对调用方一致）；② TTL 过期 ⇒ 允许再关
+    （句柄被回收后不永久挡死）；③ 记忆有界（防长跑内存涨）；④ **判据用假 hwnd + 打桩
+    PostMessageW**，绝不真发 `WM_CLOSE`。
+    """
+    import agent.winops as _wo  # noqa: PLC0415
+    import ctypes as _ct  # noqa: PLC0415
+
+    _wo.reset_idempotent()
+    # ── 打桩：拦下真的 PostMessageW，只记"发了几枪"；同时让 hwnd 看起来是个普通子窗 ──
+    _sent = {"n": 0, "hwnds": []}
+
+    class _FakeU32:  # noqa: D401
+        def PostMessageW(self, hwnd, msg, w, l):  # noqa: N802
+            _sent["n"] += 1
+            # ⛔ 不要把 hwnd 转 int：`close()` 传进来的是 `ctypes.c_void_p`，
+            #   而 `int(c_void_p)` 在本解释器上抛 `ValueError`（不是 `int` 能接的那种）——
+            #   那会从桩里抛出、被 `close()` 的兜底 except 吞成 False，看起来像"关窗失败"。
+            #   桩要模仿真实 `PostMessageW`：**只记账、不抛**。
+            _sent["hwnds"].append(hwnd)
+            return 1
+
+    _saved = None
+    try:
+        _saved = _ct.windll.user32
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _ct.windll.user32 = _FakeU32()
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ok_to_close 在没装 pywin32 时也可能放行；这里直接打桩成"允许"，把被测面收窄到幂等逻辑。
+    _saved_ok = _wo.ok_to_close
+    _wo.ok_to_close = lambda hwnd, why="": True
+    try:
+        _H = 0x123456
+        _r1 = _wo.close(_H, "第一次")
+        ck("P1-5 ★ 第一次关 ⇒ 真的发了一枪 WM_CLOSE", _r1 and _sent["n"] == 1,
+           "sent=%d" % _sent["n"])
+        _r2 = _wo.close(_H, "第二次（同一句柄）")
+        ck("P1-5 ★★ 同一句柄再关 ⇒ **跳过**（没有发出第二枪）",
+           (_r2 is True) and _sent["n"] == 1, "sent=%d" % _sent["n"])
+        _r3 = _wo.close(_H, "第三次")
+        ck("P1-5 ★ 重复再多次也仍然只关过一次", _sent["n"] == 1, "sent=%d" % _sent["n"])
+
+        # 另一个句柄照样能关（幂等是"按句柄"的，不是"全局只关一次"）
+        _H2 = 0x654321
+        _wo.close(_H2, "另一个句柄")
+        ck("P1-5 ★ 幂等是**按句柄**的（不同句柄照常关）", _sent["n"] == 2, "sent=%d" % _sent["n"])
+
+        # ── TTL 过期 ⇒ 允许再关 ──────────────────────────────────────────
+        _wo._closed_at[int(_H)] = _wo.time.time() - (_wo._IDEMPOTENT_TTL_S + 5)
+        _wo.close(_H, "过期后再关")
+        ck("P1-5 ★ TTL 过期后 ⇒ 允许再关（句柄被回收后不永久挡死）",
+           _sent["n"] == 3, "sent=%d" % _sent["n"])
+
+        # ── 记忆有界 ─────────────────────────────────────────────────────
+        _wo.reset_idempotent()
+        for _i in range(600):
+            _wo._mark_closed(0x100000 + _i)
+        ck("P1-5 ★ 「已关过」记忆有界（长跑不涨内存）",
+           len(_wo._closed_at) <= 512, "size=%d" % len(_wo._closed_at))
+        _wo.reset_idempotent()
+        ck("P1-5 清空接口可用（判据隔离）", len(_wo._closed_at) == 0, "")
+    finally:
+        _wo.ok_to_close = _saved_ok
+        _wo.reset_idempotent()
+        if _saved is not None:
+            try:
+                _ct.windll.user32 = _saved
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def t_retry_policy_guard() -> None:
+    """自检：**B-5 / P1-7 —— 只重试可重试的 errno + 显式退避表 + 每轮重查代数**。
+
+    **要解决的病**：
+      ① 什么都重试（把"路径不存在/参数非法"当瞬态）⇒ 白等 + 真因被噪声盖住；
+      ② 退避是"每次乘 1.6"的经验公式 ⇒ 节奏随实现而变、判据钉不住；
+      ③ 重试期间**前提变了**（文件换了版本/会话切了）却拿着旧前提继续干 ⇒ 比不重试更糟。
+
+    **条款**：① 白名单外的 errno **一次都不重试**；② 退避取**显式表**、走完用最后一档；
+    ③ 代数不一致 ⇒ 抛 `StaleGeneration`（停），不静默继续。
+    """
+    import agent.retry_policy as _rp  # noqa: PLC0415
+    import errno as _er  # noqa: PLC0415
+
+    # ── ① 可重试白名单 ───────────────────────────────────────────────────
+    ck("P1-7 ★ EPERM/EACCES/EBUSY/EEXIST 在白名单里（可重试）",
+       all(_er.EPERM == e or e in _rp.RETRYABLE_ERRNOS
+           for e in (_er.EPERM, _er.EACCES, _er.EBUSY, _er.EEXIST)), "")
+    ck("P1-7 ★ 构造 Windows winerror 32（被占用）⇒ 判可重试",
+       _rp.is_retryable(OSError(13, "x", None, 32)), "")
+    ck("P1-7 ★★ ENOENT（不存在）**不在**白名单 ⇒ 不可重试",
+       not _rp.is_retryable(FileNotFoundError(2, "no such file")), "")
+    ck("P1-7 ★★ EINVAL（参数非法）**不在**白名单 ⇒ 不可重试",
+       not _rp.is_retryable(OSError(_er.EINVAL, "bad arg")), "")
+    ck("P1-7 ★ ENOSPC（磁盘满）**不在**白名单 ⇒ 不可重试（重试也满）",
+       not _rp.is_retryable(OSError(_er.ENOSPC, "no space")), "")
+    ck("P1-7 ★ 完全无关的异常（ValueError）⇒ 不可重试",
+       not _rp.is_retryable(ValueError("x")), "")
+
+    # ── ② 显式退避表 ─────────────────────────────────────────────────────
+    ck("P1-7 ★ 退避表是显式的一串（不是算出来的）",
+       tuple(_rp.BACKOFF_MS) == (25, 50, 100, 200, 400, 800), str(_rp.BACKOFF_MS))
+    ck("P1-7 第 0 轮 ⇒ 25ms；第 5 轮 ⇒ 800ms",
+       (_rp.backoff_ms(0) == 25) and (_rp.backoff_ms(5) == 800),
+       "%s/%s" % (_rp.backoff_ms(0), _rp.backoff_ms(5)))
+    ck("P1-7 ★ 超出表长 ⇒ 用**最后一档**（不无限翻倍）",
+       _rp.backoff_ms(99) == 800, str(_rp.backoff_ms(99)))
+    ck("P1-7 负数/脏输入 ⇒ 退回第一档（不抛）", _rp.backoff_ms(-3) == 25, "")
+
+    # ── ③ call_with_retry：重试次数 / 代数复核 ───────────────────────────
+    _calls = {"n": 0}
+
+    def _always_busy():
+        _calls["n"] += 1
+        raise OSError(_er.EBUSY, "busy")
+
+    _ok, _v, _e = _rp.call_with_retry(_always_busy, tries=3, total_budget_s=0.05, what="test")
+    ck("P1-7 ★ 一直忙 ⇒ 试满 3 轮后停（不是无限）",
+       (_ok is False) and (_calls["n"] == 3), "calls=%d" % _calls["n"])
+
+    _calls["n"] = 0
+
+    def _never_retryable():
+        _calls["n"] += 1
+        raise OSError(_er.EINVAL, "bad")
+
+    _ok2, _v2, _e2 = _rp.call_with_retry(_never_retryable, tries=5, what="test")
+    ck("P1-7 ★★ 不可重试的错 ⇒ **只试 1 次**（不当瞬态反复试）",
+       (_ok2 is False) and (_calls["n"] == 1), "calls=%d" % _calls["n"])
+
+    _calls["n"] = 0
+
+    def _ok_fn():
+        _calls["n"] += 1
+        return "done"
+
+    _ok3, _v3, _e3 = _rp.call_with_retry(_ok_fn, tries=3, what="test")
+    ck("P1-7 成功 ⇒ 直接返回、不重试", (_ok3 is True) and (_v3 == "done"), str(_v3))
+
+    # ── ③′ 代数复核：重试前过了代 ⇒ 停（StaleGeneration）────────────────
+    _gen = {"v": 1}
+    _tries = {"n": 0}
+
+    def _bump_then_fail():
+        _tries["n"] += 1
+        _gen["v"] += 1 # 每轮把代数推走（模拟"前提变了"）
+        raise OSError(_er.EBUSY, "busy")
+
+    _raised = False
+    try:
+        _rp.call_with_retry(_bump_then_fail, gen=1, gen_getter=lambda: _gen["v"],
+                            tries=5, total_budget_s=0.05, what="test")
+    except _rp.StaleGeneration:
+        _raised = True
+    ck("P1-7 ★★ 重试前代数已变 ⇒ 抛 `StaleGeneration` 停手（不带着过期前提继续）",
+       _raised, "tries=%d" % _tries["n"])
+    ck("P1-7 ★ 代数变了就**不再进第二轮**（第一轮发现即停）", _tries["n"] <= 2,
+       "tries=%d" % _tries["n"])
+
+    # ── ④ 接线：`persist._replace_retry` 走同一套口径 ────────────────────
+    _p_src = (HERE.parents[0] / "agent" / "persist.py").read_text(encoding="utf-8")
+    ck("P1-7 ★ 换档重试改用统一口径（`retry_policy`）",
+       "retry_policy" in _p_src and "_rp.is_retryable" in _p_src and "_rp.backoff_ms" in _p_src, "")
+    # 真行为：把 `os.replace` 打桩成"永远撞占用"，看它是否按退避表重试、且最终如实失败。
+    import agent.persist as _ps  # noqa: PLC0415
+    import tempfile as _tf  # noqa: PLC0415
+    import os as _os2  # noqa: PLC0415
+    _td = _tf.mkdtemp(prefix="p17-")
+    _src = _os2.path.join(_td, "a.tmp")
+    _dst = _os2.path.join(_td, "a.json")
+    open(_src, "w").close()
+    _real_replace = _os2.replace
+    _hit = {"n": 0}
+
+    def _fake_replace(a, b):
+        _hit["n"] += 1
+        raise PermissionError(13, "被占用", a, 32)
+
+    _os2.replace = _fake_replace
+    try:
+        _r = _ps._replace_retry(_src, _dst, budget_s=0.05)
+    finally:
+        _os2.replace = _real_replace
+    ck("P1-7 ★ 撞占用 ⇒ 按退避表真的重试了多轮（不是一次就放弃）",
+       _hit["n"] >= 2, "hits=%d" % _hit["n"])
+    ck("P1-7 ★ 重试耗尽 ⇒ 如实回 False（不假装成功）", _r is False, str(_r))
+
+
+def t_reconnect_once_guard() -> None:
+    """自检：**B-5 / P1-6 —— 已知错误码自愈：重连一次，不无限重试**。
+
+    **要解决的病**：微信主窗被重建/重启后旧句柄失效 ⇒ 投递失败。这类失败**重连一次就好**；
+    但要么"完全不重试"（用户看到一次莫名失败），要么"无限重试"（真·窗口关了就一直转）。
+    两者都不对：**认得出是句柄问题 ⇒ 重取句柄再试一次；认不出 ⇒ 一次都不重试**。
+
+    **条款**：① 命中已知措辞 ⇒ 重取句柄；② **只重连一次**；③ 句柄没变 ⇒ 不重试（问题不在句柄）；
+    ④ 非句柄类失败 ⇒ 一次都不重试（不浪费）。
+    """
+    import agent.input_backend as _ib  # noqa: PLC0415
+
+    # ── ①② 像句柄过期 + 句柄真的变了 ⇒ 重试一次、成功 ─────────────────────
+    _saved_find = _ib.find_main_window
+    _saved_refresh = _ib.refresh_main_window
+    _state = {"hwnd": 111, "new": 222}
+    _calls = {"n": 0}
+    try:
+        _ib.find_main_window = lambda *a, **k: _state["hwnd"]
+        _ib.refresh_main_window = lambda: _state["new"]
+
+        def _fail_then_ok(hwnd):
+            _calls["n"] += 1
+            if hwnd == _state["new"]:
+                return True, ""
+            return False, "窗口句柄失效（IsWindow=False）"
+
+        _ok, _why, _retried = _ib.with_reconnect_once(_fail_then_ok, what="test")
+        ck("P1-6 ★ 像句柄过期 + 新句柄可用 ⇒ 重连后成功",
+           _ok and _retried and _calls["n"] == 2, "calls=%d retried=%s" % (_calls["n"], _retried))
+
+        # ── ③ 句柄没变 ⇒ 不重试（问题不在句柄）────────────────────────────
+        _calls["n"] = 0
+        _ib.refresh_main_window = lambda: _state["hwnd"] # 和当前一样
+        _ok2, _why2, _retried2 = _ib.with_reconnect_once(_fail_then_ok, what="test")
+        ck("P1-6 ★★ 句柄**没变** ⇒ 不重试（重试也白搭，如实回原因为止）",
+           (not _ok2) and (not _retried2) and (_calls["n"] == 1),
+           "calls=%d retried=%s" % (_calls["n"], _retried2))
+
+        # ── ④ 非句柄类失败 ⇒ 一次都不重试 ────────────────────────────────
+        _calls["n"] = 0
+
+        def _other_fail(hwnd):
+            _calls["n"] += 1
+            return False, "内容级证据与强档证据都没有 ⇒ 这条不发"
+
+        _ok3, _why3, _retried3 = _ib.with_reconnect_once(_other_fail, what="test")
+        ck("P1-6 ★★ 非句柄类失败 ⇒ **一次都不重试**（不浪费一次投递）",
+           (not _ok3) and (not _retried3) and (_calls["n"] == 1),
+           "calls=%d retried=%s" % (_calls["n"], _retried3))
+
+        # ── ⑤ 成功 ⇒ 不重试 ──────────────────────────────────────────────
+        _calls["n"] = 0
+        _ok4, _why4, _retried4 = _ib.with_reconnect_once(lambda h: (True, ""), what="test")
+        ck("P1-6 第一次就成功 ⇒ 不重试", _ok4 and (not _retried4) and _calls["n"] == 0,
+           "calls=%d" % _calls["n"])
+
+        # ── ⑥ 措辞白名单：认不出的原因一律不重试 ──────────────────────────
+        ck("P1-6 ★ 认得出的措辞 ⇒ True（白名单命中）",
+           _ib.stale_handle_like("窗口句柄失效") and _ib.stale_handle_like("invalid handle"), "")
+        ck("P1-6 ★ 认不出的措辞 ⇒ False（不猜同义词）",
+           (not _ib.stale_handle_like("发送失败")) and (not _ib.stale_handle_like("")), "")
+    finally:
+        _ib.find_main_window = _saved_find
+        _ib.refresh_main_window = _saved_refresh
+
+    # ── ⑦ 接线：投递失败若像句柄问题 ⇒ 重取句柄重投一次 ──────────────────
+    _u_src = (HERE.parents[0] / "agent" / "ui_adapt.py").read_text(encoding="utf-8")
+    ck("P1-6 ★ 投递点击失败时接上了自愈（`stale_handle_like` + `refresh_main_window`）",
+       ("stale_handle_like" in _u_src) and ("refresh_main_window" in _u_src), "")
+
+
+def t_popup_open_guard() -> None:
+    """自检：**开独立窗这条路的三条硬约束**（双击是唯一可行手法，别被改坏）。
+
+    **为什么这是"入口级"判据**：所有发送只走独立窗 ⇒ 独立窗开不出来 = 消息发不出去。
+    而开窗只有"双击会话行"一条路（投递档；拖拽做不到，见下），它有三条**实测得来**的
+    硬约束，违反任何一条都会**静默开不出窗**（表现为"发不出去"，最难排查）：
+
+      ① **两枪间隔必须是手速真值（约 175ms）**：微信按"间隔 + 位置"判双击。
+         间隔拉长（如 0.6s 停顿）会被结算成**两次独立单击** ⇒ 高亮被取消 ⇒ 开不出窗。
+      ② **目标行必须处于"未选中"**：高亮正压在目标行上时，第一枪会被判成"重选该会话"，
+         双击被拆散 ⇒ 开不出窗。⇒ 双击前必须先把选中态挪走。
+      ③ **落点必须在列表顶之下**：落点落到顶栏/搜索框时，双击 = 微信**全屏**（不是开窗）；
+         且"绿带行身份读不出"时必须**默认拒点**（否则 DB 序号被当成屏幕行号 ⇒ 点到别的会话）。
+
+    另两条同等重要的护栏：
+      ④ **"已有窗直接用"必须排在最前** —— 已有窗时**不点任何东西**（零动作、零风险）。
+      ⑤ **收回被独立出去的窗时，绝不关微信主窗** —— 主窗被 Qt 重建后 hwnd 会变，
+         旧的"白名单"失效 ⇒ 曾把用户主窗当浮动窗关掉。
+
+    ⛔ **为什么不用"拖拽"替代双击**：微信是 Qt 应用，拖放走 **OLE `IDropTarget`**
+      （不认老式 `WM_DROPFILES`，投了会被静默丢弃）。OLE 拖放由**操作系统鼠标驱动**——
+      目标的 `DragEnter/DragOver/Drop` 是 COM 接口调用、**不是窗口消息**，
+      `PostMessage` 造不出来 ⇒ 要用拖拽**必须真鼠标**（抢前台 + 占用户光标），
+      与本项目"不动用户光标"的最高目标直接冲突。⇒ **拖拽不可用，双击是唯一路径。**
+    """
+    _ww = (HERE.parents[0] / "agent" / "wechat_windows.py").read_text(encoding="utf-8")
+    _wc = (HERE.parents[0] / "agent" / "wechat.py").read_text(encoding="utf-8")
+
+    # ── ① 间隔必须是手速真值（解析出数值，不靠字符串猜）──────────────
+    _m = re.search(r"^DOUBLE_GAP_S\s*=\s*([\d.]+)", _ww, re.M)
+    _gap = float(_m.group(1)) if _m else -1.0
+    ck("① ★★ 双击间隔取手速真值（0.10~0.30s）—— 拉长会变成两次独立单击、开不出窗",
+       0.10 <= _gap <= 0.30, "DOUBLE_GAP_S=%s" % _gap)
+    _pm = re.search(r"^PRESS_MS_DOUBLE\s*=\s*([\d.]+)", _ww, re.M)
+    _press = float(_pm.group(1)) if _pm else -1.0
+    ck("① 单枪按下时长取手速真值（20~100ms）", 20 <= _press <= 100, "PRESS_MS_DOUBLE=%s" % _press)
+    # ⚠️ 这一条是"改一处、判据要跟"的实例：真值原来写在 `ensure_popup` 函数里，
+    #   提到模块级后，**按函数内正则去抓会抓到别处的 `press_ms=150`**（切会话的慢节奏点击）
+    #   ⇒ 断言必须跟着名字走。同时锁住"真值只有一份"（防将来又在别处另写数字）。
+    _wc_src = (HERE.parents[0] / "agent" / "wechat.py").read_text(encoding="utf-8")
+    ck("① ★★ 手速真值**只此一份**（`wechat.py` 的双击是引用它，不是另写数字）",
+       "from .wechat_windows import DOUBLE_GAP_S as _DGS" in _wc_src
+       and re.search(r"DOUBLE_GAP_S\s*=\s*0\.\d+", _wc_src) is None, "")
+
+    # ── ② 目标行已选中 ⇒ 必须先挪走（头号开不出窗原因）───────────────
+    ck("② ★★ 有「把选中态从目标行挪走」的实现（已选中时双击必然失败）",
+       "def _deselect_target_row" in _ww, "")
+    ck("② ★★ 双击前**真的调用了**它（不是只定义不接）",
+       "_ds_ok, _ds_note = _deselect_target_row()" in _ww, "")
+    ck("② 挪走的手法说明在案（为什么不原地取消：单击已选中行第一次不取消、两次才取消）",
+       "为什么不\"原地单击取消\"" in _ww or "原地单击取消" in _ww, "")
+
+    # ── ③ 落点两条安全阀 ──────────────────────────────────────────
+    ck("③ ★★ 落点在列表顶之上 ⇒ 拒点（落到顶栏时双击=微信全屏）",
+       'y_phys < int(list_top_phys)' in _ww and 'step="guard"' in _ww, "")
+    ck("③ ★★ 绿带行身份读不出 ⇒ 默认拒点（否则 DB 序号当屏幕行号 ⇒ 点到别的会话）",
+       'step="unsafe_fallback"' in _ww and "allow_fallback_click" in _ww, "")
+
+    # ── ④ 「已有窗直接用」排在最前（零动作优先）────────────────────
+    _ep = _ww.split("def ensure_popup", 1)[-1] if "def ensure_popup" in _ww else ""
+    _i_exists = _ep.find('how="exists"')
+    _i_geo = _ep.find("measure_row_geometry")
+    ck("④ ★★ 已有独立窗 ⇒ 直接用、不点任何东西（排在建/量/点之前）",
+       _i_exists >= 0 and (_i_geo < 0 or _i_exists < _i_geo),
+       "exists@%d geometry@%d" % (_i_exists, _i_geo))
+
+    # ── ⑤ 收回飞窗：绝不关主窗 ────────────────────────────────────
+    # ⚠️ 要剥掉**文档字符串与注释行**再判 —— 那段注释正是在解释"为什么必须走咽喉点"
+    #   （里面提了 `WM_CLOSE` 这个词）⇒ 拿它当违规，等于判据在禁止写解释
+    #   （同 `t_whale_guard` 的"只查代码、不查文档字符串"口径）。
+    _rt_all = _wc.split("def _reattach_if_floating", 1)[-1].split("\n    def ", 1)[0] \
+        if "def _reattach_if_floating" in _wc else ""
+    _rt_doc = _rt_all.split('"""', 2)[2] if _rt_all.count('"""') >= 2 else _rt_all
+    _rt = "\n".join(l for l in _rt_doc.splitlines() if not l.strip().startswith("#"))
+    ck("⑤ ★★ 收回浮动窗走统一咽喉点（代码里不许裸 WM_CLOSE）",
+       "_win_close(" in _rt and "WM_CLOSE" not in _rt, _rt[:60].replace("\n", " "))
+    ck("⑤ ★★ 咽喉点会**当场重取主窗**（hwnd 被 Qt 重建后旧白名单失效 ⇒ 曾误关主窗）",
+       "def ok_to_close" in (HERE.parents[0] / "agent" / "winops.py").read_text(encoding="utf-8")
+       and "find_main_window" in (HERE.parents[0] / "agent" / "winops.py").read_text(encoding="utf-8"), "")
+
+    # ── ⑥ 切会话时的"防双击闸"（全局最小间隔 + 位置判据）─────────────
+    ck("⑥ ★★ 会话行点击有全局最小间隔 + 位置判据（防两枪挨太近被判成双击、把会话拖飞）",
+       "_row_click_last" in _wc and "_dt < 1.2" in _wc and "_dx <= 40" in _wc, "")
+
+    # ── ⑦ 失败有一轮自愈 ─────────────────────────────────────────
+    ck("⑦ 开窗失败会自愈重试一轮并如实标注", 'out["retried"] = True' in _ww, "")
+
+    # ── ⑧ ★★ 判据只用"有没有窗"，**不许**用"当前在哪个会话" ──────────
+    #   为什么单列一条：这两者极易被当成同一件事，而它们**不是**——
+    #   "已在目标会话"只说主窗打开着它，**独立窗可能仍然没有**；
+    #   而项目架构是"发送只走独立窗" ⇒ 拿"已在目标会话"当"不用做事"的理由，
+    #   会让调用方以为万事俱备、实际一个窗都没开。
+    _ep_src = _ww.split("def ensure_popup", 1)[-1].split("\ndef ", 1)[0]
+    ck("⑧ ★★ 开窗判据只用「有没有那个窗口」，**不用**「当前在哪个会话」",
+       "chat_is_open" not in _ep_src and 'how="exists"' in _ep_src, "")
+
+    # ── ⑨ ★★ 开不出来时给用户一条**可照做的引导** ───────────────────
+    #   开独立窗是全部自动化的唯一入口，而它靠"双击列表行"这条手势路
+    #   ⇒ 受可见性/滚动/手势判定影响。拖一次就成，比程序反复试更省事。
+    ck("⑨ ★★ 开窗失败会给用户一条可照做的引导（`user_action`）",
+       'out["user_action"]' in _ww and "拖出来" in _ww, "")
+
+    # ⚠️ 下面这几条要查"代码里有没有某写法" ⇒ **必须先剥掉注释与文档字符串** ——
+    #   否则"解释这个坑的那行注释"会被当成违规（这条坑本项目踩过不止一次）。
+    def _code_only(src: str) -> str:
+        keep, in_doc = [], False
+        for ln in src.splitlines():
+            s = ln.strip()
+            if in_doc:
+                if '"""' in s:
+                    in_doc = False
+                continue
+            if s.startswith('"""'):
+                if s.count('"""') == 1:
+                    in_doc = True
+                continue
+            if s.startswith("#"):
+                continue
+            keep.append(ln.split("  #")[0])
+        return "\n".join(keep)
+
+    _wc2 = (HERE.parents[0] / "agent" / "wechat.py").read_text(encoding="utf-8")
+    _ww_code = _code_only(_ww)
+    _wc_code = _code_only(_wc2)
+
+    # ── ⑩ ★★ 目标行不可见时**走搜索**（不许只报"需要先滚动"就放弃）─────────
+    #   真机链路（两步都已实测）：搜索定位 ⇒ 单击结果行（切到该会话）⇒ 双击列表里的**高亮行**开窗。
+    #   为什么这条路更稳：高亮行的 y 是**读出来的**，不做 DB 序号换算 ⇒
+    #   天然不受「置顶会话」「DB 落库延迟」影响（那两者会破坏"DB 顺序 = 屏幕顺序"这个前提）。
+    ck("⑩ ★★ 目标行不在可见区 ⇒ 改走搜索（不再只报「需要先滚动」就放弃）",
+       "_open_popup_via_search" in _ww_code
+       and 'how="search_then_highlight"' in _ww_code
+       and "需要先滚动" not in _ww_code, "")
+    ck("⑩ ★ 搜索开窗**不用** `double_click_result`（实测双击搜索结果行不开窗，只切会话）",
+       "double_click_result=True" not in _ww_code, "")
+
+    # ── ⑪ ★★ 搜索框里打的是**完整名**（名字相似时不至于选错）───────────────
+    #   传入名来自 `resolve_title_name` / `display_name`（都是"显示名"＝完整名），
+    #   不是缩写、不是 username（username 在浮层里根本搜不出来）。
+    _wc2 = (HERE.parents[0] / "agent" / "wechat.py").read_text(encoding="utf-8")
+    ck("⑪ ★★ 搜索用的是完整显示名（`display_name` / `resolve_title_name`），不是缩写",
+       "name = name or self.display_name(chat_id) or chat_id" in _wc2
+       and "resolve_title_name" in _ww, "")
+
+    # ── ⑫ ★★ 结果行匹配是**三级**：精确 → 包含 → 兜底（不许"没精确命中就取第一行"）──
+    #   为什么：搜「张三」时浮层里可能有「张三」和「张三丰」，**取第一行可能取错人**。
+    _co = (HERE.parents[0] / "agent" / "chat_ocr.py").read_text(encoding="utf-8")
+    ck("⑫ ★★ 结果行匹配有「包含命中」层（挡名字相似的干扰）",
+       "contains_hit" in _co and "OCR 包含命中" in _co, "")
+
+    # ── ⑬ ★★ 投字**先试浮层、无效再投主窗**（且投主窗前必须确认浮层还在）─────
+    #   实测：这个微信版本里投给**浮层窗口**是**假成功**（接口返回 True、浮层画面不变）；
+    #   投给**主窗**才有效。安全前提：浮层在 ⇒ 焦点在搜索框 ⇒ 字不会落进聊天输入框。
+    ck("⑬ ★★ 投字有「浮层无效 ⇒ 改投主窗」兜底，且改投前确认浮层仍开着",
+       "_p2 = self._find_search_popover(main)" in _wc2
+       and "backend.send_text(main, name)" in _wc2, "")
+
+    # ── ⑭ ★★ 搜索入口**不许按形态分流**（box/icon 只决定"点在哪"）──────────
+    ck("⑭ ★★ 搜索入口不按形态分流（`box` 与 `icon` 同一条路）",
+       'if variant == "icon":' not in _wc_code and "if variant:" in _wc_code, "")
+
+
+def t_backend_down_shortcircuit_guard() -> None:
+    """自检：**后端不可达时不许逐个接口空等超时**（快速失败）。
+
+    **要解决的病**：面板构建会连着问好几个后端口（人设页一次 5 个），
+    后端没起时每个都要等满 timeout —— 实测单次 `get_json` **2.9s**，
+    ⇒ 一次绘制白等十几秒，**用户每次打开面板都要再等一遍**（不只是自检慢）。
+
+    **条款**：
+      ① 连接类失败（拒连/超时/DNS）⇒ 进入"不可达记忆"，同业地址后续请求立即返回 None；
+      ② **HTTP 错误码（服务活着）⇒ 不进入记忆** —— 后续接口必须照常尝试；
+      ③ 记忆**按地址绑定**：换了地址立即失效（否则会误伤新后端，含自检的假服务器）；
+      ④ 地址为空 / 记忆无归属 ⇒ **一律不拦**（无主记忆会误伤后来者）；
+      ⑤ 一次成功 ⇒ 记忆立即清掉。
+    """
+    import config_io as _cio # noqa: PLC0415
+
+    _cio._reset_backend_state()
+    _A = "http://127.0.0.1:59991/?token=a"
+    _B = "http://127.0.0.1:59992/?token=b"
+
+    # ── ① 连接类失败 ⇒ 记忆生效 ────────────────────────────────
+    _cio._note_unreachable(ConnectionRefusedError("Connection refused"), _A)
+    ck("① 连接被拒 ⇒ 同地址后续请求被短路（不再逐个空等超时）",
+       _cio._backend_down(_A) is True, "")
+
+    # ── ③ 换地址 ⇒ 记忆立即失效（关键：自检的假后端不能被上一条的记忆拦掉）──
+    ck("③ 换了地址 ⇒ 旧记忆立即失效（不误伤新后端）",
+       _cio._backend_down(_B) is False, "")
+
+    # ── ④ 无主记忆：地址为空 / 记忆没归属 ⇒ 都不拦 ────────────────
+    _cio._reset_backend_state()
+    _cio._note_unreachable(ConnectionRefusedError("Connection refused"), "")
+    ck("④ 地址为空 ⇒ 不记忆（无主记忆会误伤后来者）",
+       _cio._backend_down(_A) is False, "")
+    _cio._note_unreachable(ConnectionRefusedError("Connection refused"), _A)
+    ck("④ 查询地址为空 ⇒ 不拦（拿不准就别拦）",
+       _cio._backend_down("") is False, "")
+
+    # ── ② HTTP 错误码 ⇒ 不进记忆（服务活着）──────────────────────
+    _cio._reset_backend_state()
+    import urllib.error as _ue # noqa: PLC0415
+    _cio._note_unreachable(_ue.HTTPError(_A, 500, "boom", {}, None), _A)
+    ck("② HTTP 500 ⇒ **不**进记忆（服务在、只是这个口报错，后续接口要照常试）",
+       _cio._backend_down(_A) is False, "")
+
+    # ── ②之二 ★★ 中文 Windows 上的真实异常形状必须被认出来 ────────
+    #   `urlopen` 抛 `URLError`，其 `.reason` 是 `WinError 10061`，
+    #   而 `str()` 在中文系统上是"由于目标计算机积极拒绝，无法连接。"
+    #   ⇒ 早先靠英文关键词匹配**一个都命不中**、短路完全失效（实测：5 个口各等 2s）。
+    #   这里三重保证：真造一个 URLError 形状、中文文案、纯错误码。
+    import socket as _sk # noqa: PLC0415
+    _cn = _ue.URLError(OSError(10061, "由于目标计算机积极拒绝，无法连接。"))
+    _cio._reset_backend_state()
+    _cio._note_unreachable(_cn, _A)
+    ck("②之二 ★★ 中文系统的 URLError（“积极拒绝”+ WinError 10061）⇒ 认得出来",
+       _cio._backend_down(_A) is True, str(_cn)[:56])
+
+    class _NoMsg(Exception):
+        """只有错误码、没有任何可读文案 —— 只能靠代码判定。"""
+        errno = 10061
+
+    _cio._reset_backend_state()
+    _cio._note_unreachable(_NoMsg(), _A)
+    ck("②之二 ★ 只有错误码、文案为空 ⇒ 也认得出来（判定不靠文案）",
+       _cio._backend_down(_A) is True, "")
+
+    # 超时族：同样要认（连不通有时表现为超时而非拒连）
+    _cio._reset_backend_state()
+    _cio._note_unreachable(_sk.timeout("timed out"), _A)
+    ck("②之二 ★ 连接超时（socket.timeout）⇒ 也进记忆",
+       _cio._backend_down(_A) is True, "")
+
+    # ── ⑤ 通了 ⇒ 记忆清掉 ──────────────────────────────────────
+    _cio._note_unreachable(ConnectionRefusedError("Connection refused"), _A)
+    _cio._note_reachable()
+    ck("⑤ 一次成功 ⇒ 不可达记忆立即清掉", _cio._backend_down(_A) is False, "")
+
+    # ── 接线：get_json / post_json 都真的走了这套判定 ──────────────
+    _src = (HERE.parents[0] / "ui_qt" / "config_io.py").read_text(encoding="utf-8")
+    ck("⑥ `get_json` 与 `post_json` 都接进了短路（不是只改一处）",
+       _src.count("_backend_down(base)") >= 2 and _src.count("_note_unreachable(e, locals()") >= 1,
+       "get_json=%d" % _src.count("_backend_down(base)"))
+
+    # ── 地址解析也有缓存（同一地址不被反复探测）────────────────────
+    _addr = (HERE.parents[0] / "ui_qt" / "addr.py").read_text(encoding="utf-8")
+    ck("⑦ `resolve_base_url()` 结果进程内缓存（一次面板几十次问地址只探一次）",
+       "_URL_CACHE_TTL_S" in _addr and "_url_cache" in _addr, "")
+    _nu = (HERE.parents[0] / "agent" / "notify_ui.py").read_text(encoding="utf-8")
+    ck("⑧ `agent.notify_ui.console_url()` 同样有缓存（两处口径一致）",
+       "_CONSOLE_URL_TTL_S" in _nu and "_console_url_cache" in _nu, "")
+
+    _cio._reset_backend_state()
+
+
+def t_config_stamp_content_guard() -> None:
+    """自检：**B-5 / P1-8 —— 不用 mtime 判变化，改逐字节内容指纹**。
+
+    **要解决的病**：`get_config()` 靠 `(mtime_ns, size)` 判断"盘上那份变没变"。
+    两种情形会**漏判**：
+      · **同一秒内改写**（`os.replace` 换档极快）⇒ mtime_ns 可能相同；
+      · **等长改写**（改一个字、开关 `true`→`false`）⇒ size 相同。
+    叠加 ⇒ 认为"没变"、**一直用旧值**。改内容哈希后，一个字节不同就必然变。
+
+    **条款**：① 同大小、同 mtime 但内容不同 ⇒ 指纹**不同**；② 内容相同 ⇒ 指纹相同（幂等）；
+    ③ 读不到（文件不存在）⇒ 返回 None；④ 读失败（被独占）⇒ 抛带"怎么办"的 OSError，
+    且 `get_config()` 不会因此把内存那份换成默认值。
+    """
+    import os as _os
+    import tempfile
+    import agent.config as _cfg  # noqa: PLC0415
+
+    _d = tempfile.mkdtemp(prefix="cfg_stamp_")
+    _p = _os.path.join(_d, "c.json")
+    try:
+        # ── ①② 等长、同 mtime、内容不同 ⇒ 指纹必须不同 ────────────────────
+        with open(_p, "w", encoding="utf-8") as fh:
+            fh.write('{"a": true}')
+        _s1 = _cfg._stamp(_p)
+        _st = _os.stat(_p)
+        with open(_p, "w", encoding="utf-8") as fh:
+            fh.write('{"a": false}')   # 长度一样（true→false 差 1？这里手动对齐长度）
+        # 对齐到与上一份**等长**：用等长的两个值
+        with open(_p, "w", encoding="utf-8") as fh:
+            fh.write('{"a": tru0}')
+        _os.utime(_p, ns=(_st.st_atime_ns, _st.st_mtime_ns))  # 强行把 mtime 掰回上一个
+        _st2 = _os.stat(_p)
+        _s2 = _cfg._stamp(_p)
+        ck("P1-8 ★★ 同大小 + 同 mtime、内容不同 ⇒ 内容指纹**必须不同**（旧法会漏判）",
+           (_st2.st_size == _st.st_size) and (_st2.st_mtime_ns == _st.st_mtime_ns) and (_s1 != _s2),
+           "size %d/%d mtime %d/%d" % (_st.st_size, _st2.st_size, _st.st_mtime_ns, _st2.st_mtime_ns))
+
+        # ── ② 内容相同 ⇒ 指纹相同（不因"又写了一遍"而误判变化）────────────
+        _s3 = _cfg._stamp(_p)
+        ck("P1-8 内容没变 ⇒ 指纹相同（幂等，不会白重读）", _s3 == _s2, "")
+
+        # ── ③ 文件不存在 ⇒ None（与"读失败"区分开）────────────────────────
+        ck("P1-8 文件不存在 ⇒ 指纹 None", _cfg._stamp(_os.path.join(_d, "nope.json")) is None, "")
+
+        # ── ④ 读失败 ⇒ 抛 OSError（不把"读不到"伪装成"没变"）──────────────
+        _saved_open = _cfg.__builtins__["open"] if isinstance(_cfg.__builtins__, dict) else open
+        _raised = {"n": 0}
+
+        def _boom(*a, **k):
+            _raised["n"] += 1
+            raise PermissionError("被独占")
+
+        _saved = _cfg.open if hasattr(_cfg, "open") else None
+        _cfg.open = _boom  # type: ignore[attr-defined]
+        try:
+            _err = ""
+            try:
+                _cfg._stamp(_p)
+            except OSError as e:
+                _err = str(e)
+            ck("P1-8 ★★ 读失败 ⇒ 抛 OSError，且文案带“怎么办”",
+               ("稍后重试" in _err) or ("重试" in _err), _err[:60])
+            # 容错包装：读失败 ⇒ 哨兵，**不**等于 None（否则会被当成"文件不存在"）
+            _safe = _cfg._stamp_safe(_p)
+            ck("P1-8 ★ 容错包装：读失败 ⇒ 哨兵（≠ None，保证“读不到”被当成“可能变了”）",
+               _safe is _cfg._STAMP_UNREADABLE and _safe is not None, "")
+        finally:
+            if _saved is not None:
+                _cfg.open = _saved  # type: ignore[attr-defined]
+            else:
+                try:
+                    del _cfg.open  # type: ignore[attr-defined]
+                except Exception: # noqa: BLE001
+                    pass
+
+        # ── ⑤ 接线：get_config 走的是 `_stamp_safe` 而不是 `_stamp` ────────
+        _src = (HERE.parents[0] / "agent" / "config.py").read_text(encoding="utf-8")
+        ck("P1-8 ★ `get_config()` 比对走容错包装（读失败不许伪装成“没变”）",
+           "_stamp_safe(CONFIG_FILE) != _config_stamp" in _src, "")
+    finally:
+        try:
+            import shutil as _sh
+            _sh.rmtree(_d, ignore_errors=True)
+        except Exception: # noqa: BLE001
+            pass
+
+
+def t_config_changed_broadcast_guard() -> None:
+    """自检：**B-5 / P1-10 —— 写配置即广播（`config-changed`）**。
+
+    **要解决的病**：配置的消费方（Qt 重绘、后台线程、控制台回填）各自轮询 `get_config()`
+    ⇒ 要么慢（界面/行为滞后）、要么贵（白耗 CPU），且漏读一次就"显示与生效不一致"。
+    改成**写配置那一刻就广播**，订阅方不必轮询。
+
+    **条款**：① `set_config` 换值后订阅者**收到**通知；② 载荷是**变了哪些键**、不带值；
+    ③ 没变就不广播（不制造噪音）；④ 单个订阅者抛异常**不影响**其余订阅者；
+    ⑤ 退订幂等、按令牌退（同函数两次订阅互不干扰）；⑥ `reload_config` 也广播。
+    """
+    import agent.config as _cfg  # noqa: PLC0415
+    import agent.config_events as _ce  # noqa: PLC0415
+
+    _saved_cfg = _cfg._current_config
+    _saved_stamp = _cfg._config_stamp
+    try:
+        _ce.reset()
+        _got = []
+        _tok = _ce.subscribe(lambda keys: _got.append(list(keys)))
+
+        # ── ① 换值后订阅者收到；② 载荷只带"变了哪些键" ────────────────────
+        _base = {"a": 1, "n": {"x": True, "y": "s"}}
+        _cfg._current_config = dict(_base)   # 先给内存一份初值，否则 `_old is None` 不广播
+        _cfg.set_config(dict(_base, a=2))
+        ck("P1-10 ★ 写配置 ⇒ 订阅者**收到**变更通知", len(_got) == 1, "n=%d" % len(_got))
+        _keys = _got[-1] if _got else []
+        ck("P1-10 ★★ 载荷只带“变了哪些键”（点号路径），不带具体值",
+           _keys == ["a"] and all(not isinstance(k, dict) for k in _keys), repr(_keys))
+
+        # ── ③ 没变 ⇒ 不广播（不制造噪音）──────────────────────────────────
+        _n_before = len(_got)
+        _cfg.set_config(dict(_base, a=2))   # 一模一样
+        ck("P1-10 ★ 内容没变 ⇒ **不广播**（订阅方不会被无谓唤醒）",
+           len(_got) == _n_before, "n=%d→%d" % (_n_before, len(_got)))
+
+        # ── ② 嵌套键的路径形态正确 ────────────────────────────────────────
+        _cfg.set_config(dict(_base, a=2, n={"x": False, "y": "s"}))
+        ck("P1-10 ★ 嵌套键用点号路径（`n.x`）", _got and (_got[-1] == ["n.x"]), repr(_got[-1] if _got else None))
+
+        # ── ④ 单个订阅者抛异常 ⇒ 不影响其余订阅者 ─────────────────────────
+        _other = []
+        _ce.subscribe(lambda keys: (_ for _ in ()).throw(RuntimeError("订阅者内部炸了")))
+        _tok2 = _ce.subscribe(lambda keys: _other.append(1))
+        _cfg.set_config(dict(_base, a=3))
+        ck("P1-10 ★★ 一个订阅者抛异常 ⇒ 其余订阅者**照常收到**（通知失败不回滚配置）",
+           len(_other) >= 1, "other=%d" % len(_other))
+
+        # ── ⑤ 退订幂等、按令牌退 ──────────────────────────────────────────
+        _n_b = len(_got)
+        ck("P1-10 退订按令牌：退到 True、重复退 False（幂等）",
+           _ce.unsubscribe(_tok) is True and _ce.unsubscribe(_tok) is False, "")
+        _cfg.set_config(dict(_base, a=4))
+        ck("P1-10 退订后**不再**收到通知", len(_got) == _n_b, "n=%d→%d" % (_n_b, len(_got)))
+        ck("P1-10 同函数两次订阅互不干扰（另一份仍在收）",
+           (_ce.unsubscribe(_tok2) is True) and (len(_other) >= 1), "")
+
+        # ── ⑥ reload_config 也广播（同进程被动发现盘上变了 ⇒ 也要通知）────
+        _ce.reset()
+        _got2 = []
+        _ce.subscribe(lambda keys: _got2.append(list(keys)))
+        _cfg._current_config = {"a": 1}
+        _saved_read = _cfg._read_config_once
+        _saved_load = _cfg.load_config
+        _saved_stamp_f = _cfg._stamp_safe
+        # 连 `load_config` 一起打桩：`reload_config` 是"读一次 → load_config → 取指纹"，
+        # 只桩 `_read_config_once` 的话 `load_config` 还会把整份默认配置合并进来 ⇒ 差异变成全部键。
+        _cfg._read_config_once = lambda p: ({"a": 9}, None, False)
+        _cfg.load_config = lambda p=None: {"a": 9}
+        _cfg._stamp_safe = lambda p: "FAKE"
+        try:
+            _cfg.reload_config()
+        finally:
+            _cfg._read_config_once = _saved_read
+            _cfg.load_config = _saved_load
+            _cfg._stamp_safe = _saved_stamp_f
+        ck("P1-10 ★ `reload_config()`（被动发现盘上变了）也广播", _got2 == [["a"]], repr(_got2))
+
+        # ── ⑦ 接线：set_config / reload_config 都真的调了 emit ────────────
+        _src = (HERE.parents[0] / "agent" / "config.py").read_text(encoding="utf-8")
+        ck("P1-10 ★ `set_config` 与 `reload_config` 都接线到 `emit`",
+           _src.count("_cfgev.emit(") >= 2, "count=%d" % _src.count("_cfgev.emit("))
+    finally:
+        _ce.reset()
+        _cfg._current_config = _saved_cfg
+        _cfg._config_stamp = _saved_stamp
+
+
+def t_restart_handover_guard() -> None:
+    """自检：**B-5 / P1-9 —— 单实例锁 + 立即重启（先 kill + 等锁放开再启）**。
+
+    **要解决的病**：单实例锁保证不双开，但"我想马上换上新版/怀疑它卡住"这类主动重启
+    以前没有可复用件 ⇒ 旧实例还持锁，新实例取锁必失败，只能让用户自己去点「停止机器人」。
+    该自愈的**关键**不是"杀掉"，而是"杀完**等到锁真空出来**再启" —— 内核回收互斥体、
+    锁文件被清、端口退出 `TIME_WAIT` 都要一点时间，杀完立刻取锁会误判成"已有实例"。
+
+    **条款**：① 没锁 ⇒ 无需动手、直接 ok；② 有锁 ⇒ 先 kill 再等；③ kill 目标**只取锁文件里的 pid**
+    （绝不按进程名扫杀，避免误杀用户别的 Python）；④ 拒绝自杀（pid==本进程）；
+    ⑤ 等不到锁放开 ⇒ **如实报失败**（不硬启）；⑥ 旧实例自己退了 ⇒ 也 ok（目标状态达成）。
+    """
+    import agent.restart as _rs  # noqa: PLC0415
+
+    # ── ① 没锁 ⇒ ok、无动作（语义＝"现在可以不冲突地启了"）────────────────
+    _saved_locked = _rs.is_locked
+    _saved_holder = _rs.holder_pid
+    _saved_kill = _rs.kill_pid
+    _saved_wait = _rs.wait_release
+    _killed = []
+    try:
+        _rs.is_locked = lambda p: False
+        _rs.holder_pid = lambda p: 0
+        _r0 = _rs.stop_for_restart("X:/nope/bot.lock")
+        ck("P1-9 ★ 启动前没有实例持锁 ⇒ 直接 ok、一个进程都不杀",
+           _r0["ok"] and (not _r0["killed"]) and (_r0["waited_s"] == 0.0), repr(_r0["reason"])[:50])
+
+        # ── ②③ 有锁 ⇒ 只对锁文件里的 pid 动手 ─────────────────────────────
+        _rs.is_locked = lambda p: True
+        _rs.holder_pid = lambda p: 4242
+        _rs.wait_release = lambda p, timeout_s=0.0: (True, 0.3)
+        _killed.clear()
+        _rs.kill_pid = lambda pid: (_killed.append(pid), (True, "已结束"))[1]
+        _r1 = _rs.stop_for_restart("X:/nope/bot.lock", watchdog_pids=[777])
+        ck("P1-9 ★★ kill 目标＝锁文件 pid + 看门狗 pid（**不按进程名扫杀**）",
+           sorted(_killed) == [777, 4242] and _r1["ok"], "killed=%s" % _killed)
+
+        # ── ④ 拒绝自杀（pid==本进程 ⇒ 不杀、也不报"成功杀了"）──────────────
+        import os as _os
+        _rs.kill_pid = _saved_kill   # 用真的 kill_pid 做"拒绝目标"的判定
+        _ok_self, _why_self = _rs.kill_pid(_os.getpid())
+        ck("P1-9 ★ 拒绝结束自己（pid==本进程）", (not _ok_self) and ("拒绝" in _why_self), _why_self[:50])
+        _ok_bad, _why_bad = _rs.kill_pid(0)
+        ck("P1-9 拒绝非法 pid（0 / 负数）", (not _ok_bad) and ("拒绝" in _why_bad or "非法" in _why_bad), _why_bad[:50])
+
+        # ── ⑤ 等不到锁放开 ⇒ 如实失败（不硬启）────────────────────────────
+        _rs.kill_pid = lambda pid: (True, "已结束")
+        _rs.wait_release = lambda p, timeout_s=0.0: (False, 10.0)
+        _r2 = _rs.stop_for_restart("X:/nope/bot.lock")
+        ck("P1-9 ★★ 等不到锁放开 ⇒ ok=False + 说清卡在哪（绝不硬启造成双开）",
+           (not _r2["ok"]) and (not _r2["released"]) and ("锁仍未放开" in _r2["reason"]), _r2["reason"][:60])
+
+        # ── ⑥ 旧实例自己退了（没杀掉但锁放开了）⇒ 也算 ok ────────────────
+        _rs.kill_pid = lambda pid: (True, "该进程已经不在了，无需结束")
+        _rs.wait_release = lambda p, timeout_s=0.0: (True, 0.2)
+        _r3 = _rs.stop_for_restart("X:/nope/bot.lock")
+        ck("P1-9 旧实例自行退出（锁已放开）⇒ 也算 ok（目标状态已达成）", _r3["ok"] and _r3["released"], "")
+
+        # ── wait_release 的有界性（真跑一次，别只看桩）────────────────────
+        _rs.wait_release = _saved_wait
+        _t0 = __import__("time").time()
+        _rel, _el = _rs.wait_release("X:/nope/bot.lock", timeout_s=1.0)
+        _dur = __import__("time").time() - _t0
+        ck("P1-9 ★ `wait_release` 有界：等不到就按时返回（不无限挂住启动流程）",
+           (not _rel) and (_dur < 3.0), "rel=%s dur=%.2f" % (_rel, _dur))
+    finally:
+        _rs.is_locked = _saved_locked
+        _rs.holder_pid = _saved_holder
+        _rs.kill_pid = _saved_kill
+        _rs.wait_release = _saved_wait
+
+    # ── ⑦ 接线：onestart 支持「立即重启」，且用 `stop_for_restart` 做接管 ──
+    _os_src = (HERE.parents[0] / "scripts" / "onestart.py").read_text(encoding="utf-8")
+    ck("P1-9 ★ 一键启动提供 `--restart` / `WX_ONESTART_RESTART` 立即重启入口",
+       ("--restart" in _os_src) and ("WX_ONESTART_RESTART" in _os_src), "")
+    ck("P1-9 ★ 立即重启走 `stop_for_restart`（先停 + 等锁放开），不是直接硬启",
+       "stop_for_restart" in _os_src, "")
+    ck("P1-9 ★ 收尾失败时不硬启（如实退出、让用户知道卡在哪）",
+       _os_src.count("立即重启未完成") >= 1, "")
+
+
+def t_a11y_four_guard() -> None:
+    """自检：**B-5 / P1-11 —— 无障碍四件**。
+
+    四件＝① 触摸目标 ≥44px；② 键盘焦点环（`focus-visible`）；③ 尊重"减少动效"；
+    ④ 动区通告（错误用 assertive、普通状态用 polite）。
+
+    **两个实现面都要覆盖**：web 控制台（`assets/console/index.html`，真值）与 Qt 壳（`ui_qt/`）。
+    Qt 侧没有 CSS 媒体查询/aria，对应物分别是 `motion_ok()` 与 `setAccessibleName`。
+
+    **条款**：① web 有 `--tap-min:44px` 且按钮基础规则用它；② 勾选框靠隐形热区扩到 44px
+    （视觉仍 17px，不许把勾本身画大）；③ toast＝assertive、侧栏状态＝polite；
+    ④ Qt 有 `motion_ok()` 且在关键动画点（换主题淡出、弹层）接线；⑤ Qt 按钮有可访问名。
+    """
+    _root = HERE.parents[0]
+    _web = (_root / "assets" / "console" / "index.html").read_text(encoding="utf-8")
+
+    # ── ① web 触摸目标 token + 按钮用它 ────────────────────────────────
+    ck("P1-11 ★ web 定义触摸目标 token（`--tap-min:44px`）", "--tap-min:44px" in _web, "")
+    ck("P1-11 ★★ web 按钮基础规则用 `min-height:var(--tap-min)`（整块按钮够高）",
+       "min-height:var(--tap-min)" in _web, "")
+
+    # ── ② 勾选框：热区扩到 44px、但视觉尺寸不许跟着变大 ─────────────────
+    ck("P1-11 ★★ 勾选框用**隐形热区**扩到 44px（`::before` + `--tap-min`），视觉仍 17px",
+       ("input[type=checkbox])::before" in _web) and ("width:var(--tap-min)" in _web)
+       and ("width:17px;height:17px" in _web), "")
+
+    # ── ③ 动区通告：assertive / polite 各就各位 ─────────────────────────
+    ck("P1-11 ★★ `#toast`（即时反馈）＝ aria-live=assertive",
+       'id="toast" role="status" aria-live="assertive"' in _web, "")
+    ck("P1-11 ★★ 侧栏运行状态（普通状态）＝ aria-live=polite",
+       'aria-live="polite"' in _web and "sideStatus" in _web, "")
+
+    # ── ④ 减少动效：web 的 prefers-reduced-motion 仍在 ──────────────────
+    ck("P1-11 web 保留 `prefers-reduced-motion` 关动效", "prefers-reduced-motion" in _web, "")
+
+    # ── ⑤ Qt 侧 `motion_ok()` 存在且被关键动画点接线 ────────────────────
+    try:
+        from ui_qt.stylekit_qt import motion_ok # noqa: PLC0415
+        ck("P1-11 ★ Qt 提供 `motion_ok()`（无 QApplication 时按“允许动效”兜底）",
+           callable(motion_ok) and motion_ok() in (True, False), "")
+    except Exception as e: # noqa: BLE001
+        ck("P1-11 ★ Qt 提供 `motion_ok()`", False, str(e)[:60])
+
+    _shell = (HERE / "shell.py").read_text(encoding="utf-8")
+    _pop = (HERE / "popover.py").read_text(encoding="utf-8")
+    ck("P1-11 ★★ 换主题淡出尊重减少动效（跳过动画、直接给终态）",
+       "motion_ok" in _shell and "_fade_veil_done()" in _shell, "")
+    ck("P1-11 ★★ 弹层下滑动画尊重减少动效（直接落终点，不位移）",
+       "motion_ok" in _pop, "")
+    # ⛔ 回归钉：跳过动画的那条路必须先存 veil 引用，否则覆盖层永久留在最上层
+    ck("P1-11 ★★ 跳过动画分支前已存 veil 引用（否则覆盖层残留）",
+       _shell.index("self._fade_veil = veil") < _shell.index("if not _motion:"), "")
+
+    # ── ⑥ Qt 按钮有可访问名 + 高度走 `ui.tap_min` ───────────────────────
+    _w = (HERE / "widgets.py").read_text(encoding="utf-8")
+    ck("P1-11 ★ Qt 按钮设可访问名（屏幕阅读器读的是它，不是画上去的字）",
+       "setAccessibleName" in _w, "")
+    ck("P1-11 ★★ Qt 按钮高度走 `ui.tap_min`（默认 34、上限夹到 44，触摸设备可调）",
+       "_tap_min_from_config" in _w and "_TAP_MIN_MAX = 44" in _w, "")
+    ck("P1-11 ★ 读配置失败回退默认（按钮构造是界面必经之路，不许抛）",
+       "_TAP_MIN_DEFAULT" in _w and "return _TAP_MIN_DEFAULT" in _w, "")
+
+
+def t_clear_before_fill_guard() -> None:
+    """自检：**B-5 / P1-2 —— 清空优先于填充**。
+
+    **要解决的病**：微信按会话保存草稿 / 上一轮若所有枪都落空，字就留在输入框里。
+    不清就打字 ⇒ 残留与新内容被微信拼成**一条**发出去（`'hello'` → `'hellohello'`）——
+    收信人看到的是一条**内容错误**的消息，且发出即撤不回。
+    旧行为是"清不干净也继续打字，只记一笔日志"，等于**明知会串字还是发**。
+
+    **条款**：① 切会话成功后**第一步就擦**草稿（`clear_composer_after_switch`）；
+    ② 打字前再判一次（纵深，不是重复）；③ 清不干净 ⇒ **不填**（如实失败，把风险交给重试）；
+    ④ 状态判不了 ⇒ **不当成空的**、也不填；⑤ 清空手法不用 `Ctrl+A`（投递不带修饰键，会退化成字面字母）。
+    """
+    _w = (HERE.parents[0] / "agent" / "wechat.py").read_text(encoding="utf-8")
+
+    # ── ① 切会话成功 ⇒ 第一件事是擦 ────────────────────────────────────
+    ck("P1-2 ★★ 切会话成功后先擦输入框（`clear_composer_after_switch` 存在且被调用）",
+       ("def clear_composer_after_switch" in _w) and ("self.clear_composer_after_switch(" in _w), "")
+    # 顺序钉：擦的动作必须排在"换代次"之前（切完会话立刻擦，而不是等后面发完再说）
+    _i_call = _w.index("self.clear_composer_after_switch(")
+    _i_gen = _w.index("self._chat_generation = _vd.after_switch_mark()")
+    ck("P1-2 ★★ 擦草稿排在“切会话成功”当口（早于后续任何发送动作）",
+       _i_call < _i_gen, "call@%d gen@%d" % (_i_call, _i_gen))
+
+    # ── ② 三态处理齐全 ────────────────────────────────────────────────
+    _m = _w.index("def clear_composer_after_switch")
+    _body = _w[_m:_m + 2600]
+    ck("P1-2 ★★ 三态：`empty` 直接成功 / `has` 才擦 / `unknown` 如实报告",
+       ('== "empty"' in _body) and ('== "unknown"' in _body) and ("_composer_state" in _body), "")
+    ck("P1-2 ★★ `unknown` 明确“不当作空”（判不了 ≠ 干净）",
+       "不当作空" in _body or "不当成空" in _body, "")
+
+    # ── ③ 打字前：清不干净 ⇒ 不填（旧行为是"继续打字"，已改）────────────
+    _i_clear_call = _w.index('tag="打字前清残留"')
+    _seg = _w[_i_clear_call:_i_clear_call + 1600]
+    ck("P1-2 ★★★ 清不干净 ⇒ **本轮不发**（旧行为“继续打字、只记一笔”已改为如实失败）",
+       "return False" in _seg and "清空优先于填充" in _seg, "")
+    ck("P1-2 ★★ 状态判不了 ⇒ 也不打字（宁可延迟，不冒串字险）",
+       "本轮不打字" in _seg, "")
+    # 回归钉：不许退回"继续打字（但可能与残留串成一条）"那句老注释
+    ck("P1-2 ★ 不残留旧行为（“清不干净也继续打字”的旧注释已删）",
+       "继续打字，但可能与残留串成一条" not in _w, "")
+
+    # ── ④ 清空手法：不用 Ctrl+A ───────────────────────────────────────
+    ck("P1-2 ★ 清空手法不许用 `Ctrl+A`（投递不带修饰键 ⇒ 退化成字面字母，越清越脏）",
+       "不能用 `Ctrl+A`" in _w or "不用 `Ctrl+A`" in _w or "**不能用 `Ctrl+A`**" in _w, "")
+
+
+def t_landing_discipline_guard() -> None:
+    """自检：**落盘纪律三条 ＋ 隐私分层事实**（P0-6 / P0-7 / P0-8 / P0-9）。
+
+    为什么合成一条：这四条同属"**不修也不会立刻出事、但出事就很难查**"的那类 ——
+    半截文件被当成成功、同名会话互相覆盖、外部产物读半份、文档里写绝对承诺。
+    它们没有共同的实现点，但有共同的性质：**每条都必须能用一次"造坏条件"的实测判否**，
+    否则就是"写了模块没人用"。
+
+    判据分四组，逐条都要**真造条件**（不是查字符串在不在）：
+      · P0-6 原子写：中断/空内容 ⇒ 目标不存在且不留临时档；成功 ⇒ 内容与字节数对得上；
+      · P0-7 文件名：同名不同会话 ⇒ 名字不同；同一会话重跑 ⇒ 名字稳定；
+      · P0-8 产物核对：缺末行、读取期间被追加、字节数/行数不符 ⇒ **一律拒**（返回空/抛错）；
+      · P0-9 文档：README 的分层事实四要素齐全，且"绝对承诺"一律带条件（不得无条件声称）。
+    """
+    import os as _os # noqa: PLC0415
+    import tempfile as _tf # noqa: PLC0415
+
+    _root = HERE.parents[0]
+    from agent import atomic_io as _aio  # noqa: PLC0415
+    from agent import safe_name as _sn  # noqa: PLC0415
+    from agent import verify_artifact as _va  # noqa: PLC0415
+
+    _td = _tf.mkdtemp(prefix="landing-discipline-")
+    try:
+        # ── P0-6 原子写 ──────────────────────────────────────────────────
+        _ok_png = _os.path.join(_td, "ok.bin")
+        ck("P0-6 原子写：成功落档（字节数对得上、无临时档残留）",
+           _aio.atomic_write_bytes(_ok_png, b"x" * 128, halt_check=False)
+           and _os.path.getsize(_ok_png) == 128
+           and _aio.list_partials(_td) == [], "")
+        _empty = _os.path.join(_td, "empty.bin")
+        ck("P0-6 原子写：**空内容判失败**且目标路径不存在（零字节不算成功）",
+           not _aio.atomic_write_bytes(_empty, b"") and not _os.path.exists(_empty), "")
+        _boom = _os.path.join(_td, "boom.bin")
+        def _raise_writer(_fh):
+            _fh.write(b"half")
+            raise RuntimeError("写入中途炸了")
+        ck("P0-6 原子写：writer 中途抛异常 ⇒ 目标不存在、临时档已清",
+           not _aio.atomic_write(_boom, _raise_writer, halt_check=False)
+           and not _os.path.exists(_boom) and _aio.list_partials(_td) == [], "")
+        # 喊停就不发布：造"已暂停"状态（路径注入到 %TEMP%，不碰产品目录）
+        from agent import control as _ctl  # noqa: PLC0415
+        _old_paths = _ctl.set_paths(paused=_os.path.join(_td, "paused.flag"))
+        try:
+            with open(_os.path.join(_td, "paused.flag"), "w", encoding="utf-8") as _fh:
+                _fh.write("1")
+            _ctl._CACHE["at"] = 0.0
+            _halt = _os.path.join(_td, "halt.bin")
+            ck("P0-6 原子写：已喊停 ⇒ 不换档（目标不存在），临时档也清干净",
+               not _aio.atomic_write_bytes(_halt, b"y" * 32)          # 默认 halt_check=True
+               and not _os.path.exists(_halt) and _aio.list_partials(_td) == [], "")
+            # 反向控制：同一次调用把 halt_check 关掉 ⇒ 写得进去（否则上一条可能只是"恒 False"）
+            _halt2 = _os.path.join(_td, "halt2.bin")
+            ck("P0-6 反向控制：喊停状态下 `halt_check=False` 仍可落档（不是恒失败）",
+               _aio.atomic_write_bytes(_halt2, b"z" * 16, halt_check=False)
+               and _os.path.getsize(_halt2) == 16, "")
+        finally:
+            _ctl.set_paths(paused=_old_paths["paused"])
+            _ctl._CACHE["at"] = 0.0
+
+        # ── P0-7 文件名指纹 ─────────────────────────────────────────────
+        _n1 = _sn.build_output_name("wxid_aaa", "张三", "png")
+        _n2 = _sn.build_output_name("wxid_bbb", "张三", "png")
+        ck("P0-7 两个不同会话、**同名昵称** ⇒ 文件名不同（不会互相覆盖）", _n1 != _n2, "%s / %s" % (_n1, _n2))
+        ck("P0-7 同一会话重跑 ⇒ 文件名**稳定不变**",
+           _sn.build_output_name("wxid_aaa", "张三", "png") == _n1, _n1)
+        ck("P0-7 非法字符被清掉、不留路径分隔符",
+           "/" not in _sn.build_output_name("wxid_aaa", "a/b:c*d", "png")
+           and "\\" not in _sn.build_output_name("wxid_aaa", "a/b:c*d", "png"), "")
+        ck("P0-7 全是非法字符的主干 ⇒ 退回 `unnamed`（不会得到空名）",
+           _sn.sanitize("///") == "unnamed", _sn.sanitize("///"))
+        ck("P0-7 `is_same_session_name` 认指纹、且**认不出时不误判同一**",
+           _sn.is_same_session_name(_n1, _n1) and not _sn.is_same_session_name(_n1, _n2)
+           and not _sn.is_same_session_name("无指纹.png", "无指纹.png"), "")
+        # 反向控制：指纹长度与十六进制形态（防"截 10 位"被改成截 1 位还不报错）
+        ck("P0-7 指纹 = 10 位小写十六进制（反向控制）",
+           len(_sn.session_fingerprint("x")) == 10
+           and all(c in "0123456789abcdef" for c in _sn.session_fingerprint("x")), "")
+
+        # ── P0-8 外部产物核对 ────────────────────────────────────────────
+        _jl = _os.path.join(_td, "ok.jsonl")
+        with open(_jl, "w", encoding="utf-8") as _fh:
+            _fh.write('{"a": 1}\n{"a": 2}\n')
+        _rows = _va.read_verified_jsonl(_jl, {"path": _jl, "bytes": _os.path.getsize(_jl), "lines": 2})
+        ck("P0-8 正常 JSONL：核对通过、逐行解析出 2 条", len(_rows) == 2 and _rows[1]["a"] == 2, "")
+        # ① 缺最后一行（末字节不是 \n）
+        _jl2 = _os.path.join(_td, "half.jsonl")
+        with open(_jl2, "w", encoding="utf-8") as _fh:
+            _fh.write('{"a": 1}\n{"a": 2}')      # 最后一行没换行 = 没写完
+        _why2 = ""
+        try:
+            _va.read_verified_jsonl(_jl2)
+        except _va.ArtifactError as e: # noqa: PERF203
+            _why2 = e.reason
+        ck("P0-8 缺最后一行（末字节非换行）⇒ **拒**且原因说得清",
+           "换行" in _why2 or "末字节" in _why2, _why2[:60])
+        # ② 字节数与清单不符
+        _why3 = ""
+        try:
+            _va.read_verified_jsonl(_jl, {"bytes": 999999})
+        except _va.ArtifactError as e:
+            _why3 = e.reason
+        ck("P0-8 字节数与清单不符 ⇒ 拒", "字节数不符" in _why3, _why3[:60])
+        # ③ 行数不符
+        _why4 = ""
+        try:
+            _va.read_verified_jsonl(_jl, {"lines": 9})
+        except _va.ArtifactError as e:
+            _why4 = e.reason
+        ck("P0-8 行数与清单不符 ⇒ 拒", "行数不符" in _why4, _why4[:60])
+        # ④ 路径不符（清单写 A、实参给 B）—— 最容易"顺手传旧清单"绕过的一道
+        _why5 = ""
+        try:
+            _va.read_verified_jsonl(_jl, {"path": _os.path.join(_td, "另一个.jsonl")})
+        except _va.ArtifactError as e:
+            _why5 = e.reason
+        ck("P0-8 清单路径与实参不符 ⇒ 拒（防传旧清单绕过）", "路径不符" in _why5, _why5[:60])
+        # ⑤ 一条坏行 ⇒ 整份拒（不静默跳过）
+        _jl3 = _os.path.join(_td, "bad.jsonl")
+        with open(_jl3, "w", encoding="utf-8") as _fh:
+            _fh.write('{"a": 1}\n这不是 JSON\n')
+        _why6 = ""
+        try:
+            _va.read_verified_jsonl(_jl3)
+        except _va.ArtifactError as e:
+            _why6 = e.reason
+        ck("P0-8 一条坏行 ⇒ **整份拒**（不悄悄少几条）", "不是合法 JSON" in _why6, _why6[:60])
+        # ⑥ 空文件 ⇒ 视为未写完
+        _jl4 = _os.path.join(_td, "zero.jsonl")
+        open(_jl4, "w", encoding="utf-8").close()
+        _why7 = ""
+        try:
+            _va.read_verified_jsonl(_jl4)
+        except _va.ArtifactError as e:
+            _why7 = e.reason
+        ck("P0-8 0 字节文件 ⇒ 视为未写完（不是\"空数据\"）", "0 字节" in _why7, _why7[:60])
+        # ⑦ 反向控制：正常文件在**不给清单**时也能读（判据不是"任何读都失败"）
+        ck("P0-8 反向控制：不给清单也能读正常文件（不是恒拒）",
+           len(_va.read_verified_jsonl(_jl)) == 2, "")
+
+        # ── P0-9 隐私分层事实 ───────────────────────────────────────────
+        _readme = (_root / "README.md").read_text(encoding="utf-8")
+        ck("P0-9 README 有「分层事实」节，且四要素齐全（默认在哪/何时外发/发什么/哪些不发）",
+           "分层事实" in _readme
+           and "默认留在本机" in _readme
+           and "什么条件下、什么会出去" in _readme
+           and "明确不会发出去的" in _readme, "")
+        ck("P0-9 「分层事实」节带更新日期（文档不再是无日期的绝对陈述）",
+           "更新日期" in _readme, "")
+        ck("P0-9 逐项列出外发条件（云模型/搜索/生图/反馈/上云/自定义工具至少 6 行）",
+           _readme.count("模型厂商") >= 1 and _readme.count("反馈栏提交") >= 1
+           and _readme.count("自定义工具") >= 1, "")
+        # ⛔ 绝对承诺扫描：这几句一旦**无条件**出现就是虚假陈述。
+        #   允许的形态是"带条件的"（同句里有 条件/当/若/只有/除非 之类限定词）。
+        _banned = ("完全不出网", "绝不出网", "永远不出网", "一个字都不出网", "不上传任何东西")
+        _hits = []
+        for _i, _line in enumerate(_readme.split("\n"), 1):
+            for _b in _banned:
+                if _b in _line:
+                    _cond = any(_k in _line for _k in ("当", "若", "只有", "除非", "这一档", "条件下", "本检验"))
+                    if not _cond:
+                        _hits.append("L%d:%s" % (_i, _b))
+        ck("P0-9 绝对承诺**一律带条件**（无条件的\"完全不出网/不上传任何东西\"= 0 处）",
+           not _hits, "无条件绝对句：%s" % "、".join(_hits[:4]))
+    finally:
+        try:
+            for _x in _os.listdir(_td):
+                _p = _os.path.join(_td, _x)
+                if _os.path.isfile(_p):
+                    _os.remove(_p)
+            _os.rmdir(_td)
+        except OSError:
+            pass
+
+
 def t_inject_surface_guard() -> None:
     """自检：**键鼠注入只有一条路**（F12）。
 
@@ -10238,6 +12406,10 @@ def t_inject_surface_guard() -> None:
             "把文本打进**当前聚焦窗口**（朋友圈那种独立窗，主窗输入框不对）⇒ 需要发给焦点窗口的真键盘；"
             "目前 `input_backend` 没有「真键盘」这一路（`MessageBackend.keys` 是投递）⇒ 记跟进项",
         ("wechat.py", "moments_publish_text"): "误触浮层的 ESC 收尾（同上：没有共享的真键盘原语）",
+        ("wechat_windows.py", "popup_paste_blind"):
+            "触发微信粘贴：只投递 `V` 会退化成字面字母（微信读 `GetKeyState` 的真实修饰键态），"
+            "必须用 `keybd_event` 真按一下 Ctrl 再投 `V` ⇒ 这条真按键**是功能本身**、不是绕路；"
+            "它不抢窗口、不点鼠标、不产字符，且**前后各有一道「微信不在前台就拒绝」的安全闸门**",
     }
     _MOUSE = ("mouse_event", "SetCursorPos")
     _KB = ("keybd_event", "SendInput")
@@ -10278,7 +12450,7 @@ def t_inject_surface_guard() -> None:
     #: 分母守卫：扫不到文件时上面两条会"全绿"
     ck("上述扫描真的扫到了文件（分母守卫）", _files > 100, "扫到 %d 个 .py" % _files)
     #: 白名单自身要有内容且每条理由都写得下
-    ck("豁免清单非空且理由具体", len(_FILES_OK) == 2 and len(_KB_OK) == 4
+    ck("豁免清单非空且理由具体", len(_FILES_OK) == 2 and len(_KB_OK) == 5
        and all(len(str(v)) > 12 for v in list(_FILES_OK.values()) + list(_KB_OK.values())), "")
     #: 反向控制：判定器必须**能认出**注入调用，且**不被注释/字符串骗到**
     _probe = ('def f():\n'
@@ -10294,7 +12466,7 @@ def t_inject_surface_guard() -> None:
 def t_foreground_borrow_guard() -> None:
     """自检：**借前台必须配还**，且"读前台"与"借前台"不是同一件事（F4）。
 
-    口径先校准（实测）：这一族里那 4 个名字是**三个不同问题**，不是一个问题的四份实现 ——
+    口径先校准：这一族里那 4 个名字是**三个不同问题**，不是一个问题的四份实现 ——
       · `notify_ui.foreground()`：**读**当前前台句柄（getter）；
       · `wechat._fg_enter()/_fg_exit()`：**引用计数式**借用（`fg_hold` 上下文管理器 + `_send_with_foreground`
         的 try/finally），支持嵌套 —— 发送链用；
@@ -10351,6 +12523,65 @@ def t_foreground_borrow_guard() -> None:
     ck("`notify_ui.foreground` 仍是**读**前台（不抢前台、不还前台）——与 `_fg_enter` 同名异义、不许合并",
        bool(_nf) and "GetForegroundWindow" in _nf and "SetForegroundWindow" not in _nf
        and "_fg_enter" not in _nf, _nf.strip().split("\n")[0][:60] if _nf else "没找到该函数")
+
+    # ── 第二组：`wechat_windows` 的「临时借一次前台」族（收编 Akasha WS-1 时补）──
+    #   这一族的危险不在"借"，而在**还**：原先还前台的语句写在正常路径里，
+    #   中途任何一步抛异常就从 except 出口 return ⇒ 用户的焦点被留在微信窗口上
+    #   （Akasha 的原版就是「finally 里只解挂 AttachThreadInput、不还原原前台」）。
+    #   ⇒ 现在收口成 `fg_stash()`：出块（正常 / 异常 / 提前 return）一定还。
+    #   判据分三层：① 收口机制本身的行为（桩）；② 两个会夺前台的函数**结构上用了收口**；
+    #   ③ 反向锚（没登记就不许还 —— 否则会把本该在前台的窗口又置一次）。
+    import agent.wechat_windows as _ww # noqa: PLC0415
+
+    _calls: list = []
+    _orig_rf = _ww._restore_foreground_now
+    try:
+        _ww._restore_foreground_now = lambda prev, **k: (_calls.append(int(prev)), True)[1]
+        _sink: dict = {}
+        with _ww.fg_stash(_sink) as _st:
+            _st.note(4242)
+        ck("收口：出块即还（正常路径），并把结果写进 sink",
+           _calls == [4242] and _sink.get("fg_restored") is True, "%s / %s" % (_calls, _sink))
+        _calls.clear()
+        try:
+            with _ww.fg_stash({}) as _st2:
+                _st2.note(777)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        ck("收口：**块内抛异常也还**（这是原先真漏的那条路）", _calls == [777], "%s" % _calls)
+        _calls.clear()
+        with _ww.fg_stash({}) as _st3:
+            pass
+        ck("反向锚：没登记就不还（否则会把本该在前台的窗口又置一次）", _calls == [], "%s" % _calls)
+        _calls.clear()
+        with _ww.fg_stash({}) as _st4:
+            _st4.note(0)
+        ck("反向锚：登记 0（= 没有原前台）同样不还", _calls == [], "%s" % _calls)
+    finally:
+        _ww._restore_foreground_now = _orig_rf
+
+    _wsrc = (_root / "agent" / "wechat_windows.py").read_text(encoding="utf-8")
+    _wtree = _ast.parse(_wsrc)
+    _need = ("popup_paste_blind", "popup_fire_paste_send")
+    _seg = {}
+    for _n in _ast.walk(_wtree):
+        if isinstance(_n, _ast.FunctionDef) and _n.name in _need:
+            _seg[_n.name] = _ast.get_source_segment(_wsrc, _n) or ""
+    ck("两个「会夺前台」的函数都用收口（`fg_stash(` ＋ `note(`）",
+       set(_seg) == set(_need) and all("fg_stash(" in _v and ".note(" in _v for _v in _seg.values()),
+       str(sorted(_seg)))
+    #: ⚠️ 这一条**必须用 AST 找 Call 节点**，不能数文本 —— 文本会把 docstring 里那句
+    #   「用完必须 `_restore_foreground_now` 还回去」算成一次调用（本轮就这么假红过一次）。
+    _manual = []
+    for _n in _ast.walk(_wtree):
+        if isinstance(_n, _ast.FunctionDef) and _n.name in _need:
+            for _c in _ast.walk(_n):
+                if (isinstance(_c, _ast.Call) and isinstance(_c.func, _ast.Name)
+                        and _c.func.id == "_restore_foreground_now"):
+                    _manual.append(_n.name)
+    ck("这两个函数里**不再手工**调 `_restore_foreground_now`（还的事只在收口里做一处）",
+       not _manual, "手工还前台出现在：%s" % sorted(set(_manual)))
 
 
 def t_default_value_guard() -> None:
@@ -10493,7 +12724,7 @@ def t_delivery_ledger_guard() -> None:
 
 
 def t_g23_fbnotice() -> None:
-    """常驻公告条（web `#noticeBar` 的 Qt 等价）—— 用户反馈「原本有个公告栏的，没有看到」。
+    """常驻公告条（web `#noticeBar` 的 Qt 等价）—— 实测「原本有个公告栏的，没有看到」。
 
     落点与版式是用户直接点过名的两处：
       · 「我想要的是公告显示在我指的箭头和画的红线那个位置，你放顶栏上了。顶栏空间不够」
@@ -10526,7 +12757,7 @@ def t_g23_fbnotice() -> None:
     ck("② 落点在**内容区顶部**：公告加在页栈之前（页栈那行自身也在，说明是同一版式）",
        _sh.count("wl.addWidget(self.stack, 1)") == 1
        and 0 <= _sh.find("self._build_notice()") < _sh.find("wl.addWidget(self.stack, 1)"), "")
-    ck("② 顶栏里**不再**挂公告（用户点名的那个位置错误不许回潮）",
+    ck("② 顶栏里**不再**挂公告（那个位置错误不许回潮）",
        _sh.count("lay.addWidget(self.fbNotice)") == 0
        and _sh.count("QFrame#fbNotice{") == 1, "")
     ck("② 版式换掉了圆角胶囊：近直角 2px + 左侧 3px 色条 + 水平淡出渐变",
@@ -10648,7 +12879,7 @@ def t_g24_fbnotice_dismiss() -> None:
 
 
 def t_g26_web_parity_actions() -> None:
-    """网页控制台的动作按钮**一律要有 Qt 原生实现**（用户口径：网页能做的都得在 Qt 做）。
+    """网页控制台的动作按钮**一律要有 Qt 原生实现**（网页能做的都得在 Qt 做）。
 
     做法：把每个面板**真建出来**，收集所有渲染出来的动作按钮（`web_action` property），
     逐个按 `_btn_group` 的**同一套分支判据**分类（ACT_CUSTOM / _ACT_API / codeCheck / 跳过集 /
@@ -10730,7 +12961,1424 @@ def t_g27_native_pieces() -> None:
        _ss.count("请到网页控制台") == 0)
 
 
+# ---------------------------------------------------------------- 热词统计（W7）
+
+def t_hot_words_guard() -> None:
+    """自检：**热词统计**（群梗词典的第一步）。
+
+    三条纪律：① **不把整段当一个词**（实测踩过：整句「今天的考试好难啊」被算成热词）；
+              ② **真值**：三条都含"考试"的历史 ⇒「考试」必须排第一；
+              ③ 无历史 ⇒ **返回空**（不编）；测试数据**自己清**。
+    """
+    import json as _json
+    import shutil as _sh
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "memory.py").read_text(encoding="utf-8")
+    ck("能取到 `agent/memory.py`（分母守卫）", bool(src.strip()))
+    try:
+        sys.path.insert(0, str(root))
+        from agent import memory as _M
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.memory`", False, "%s" % str(e)[:60])
+        return
+    ck("`hot_words` 在位", callable(getattr(_M, "hot_words", None)))
+
+    _k = "__selftest_hot_guard__"
+    _hp = _M._history_file(_k)
+    try:
+        os.makedirs(os.path.dirname(_hp), exist_ok=True)
+        with open(_hp, "w", encoding="utf-8") as fh:
+            for _t in ("今天的考试好难啊", "考试考试真难", "明天又要考试了"):
+                fh.write(_json.dumps({"text": _t}, ensure_ascii=False) + "\n")
+        _hw = _M.hot_words(_k, 5)
+        ck("真值：三条都含「考试」⇒「考试」排第一", bool(_hw) and _hw[0][0] == "考试",
+           "得到 %s" % (_hw[:3],))
+        ck("**不把整段当一个词**（最长 4 字）", all(len(w) <= 4 for w, _ in _hw),
+           "最长 %d" % (max((len(w) for w, _ in _hw), default=0)))
+        ck("无历史 ⇒ **返回空**（不编）", _M.hot_words("__根本不存在的会话__", 5) == [])
+    finally:
+        try:
+            os.remove(_hp)
+        except Exception: # noqa: BLE001
+            pass
+        for _d in (_M._chat_dir(_k), os.path.dirname(_hp)):
+            _sh.rmtree(_d, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- 表情码与挑选（第 11/12 项）
+
+def t_emoji_code_guard() -> None:
+    """自检：**方括号表情码解析** ＋ **按频次挑一个**。
+
+    为什么要它：微信**自带** `[呲牙]` 这套码（发送时微信自己渲染）⇒ 不用鼠标、不用找坐标；
+    「挑一个」以前永远取候选第一个 ⇒ 表现成「**只会发呲牙、不会发别的**」。
+    ⛔ 两条纪律：① 表情码**只认白名单形态**（认不出不许猜，否则把普通方括号文字当表情发）；
+                ② 没记过频次时**保持原顺序**（行为可预期，不许乱跳）。
+    """
+    root = HERE.parents[0]
+    src = (root / "agent" / "emoji_index.py").read_text(encoding="utf-8")
+    ck("能取到 `agent/emoji_index.py`（分母守卫）", bool(src.strip()))
+    try:
+        sys.path.insert(0, str(root))
+        from agent import emoji_index as _E
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.emoji_index`", False, "%s" % str(e)[:60])
+        return
+
+    _p = _E.parse_codes("哈喽[呲牙]在吗")
+    ck("认得出表情码 `[呲牙]`（返回名称与位置）",
+       bool(_p) and _p[0][0] == "呲牙", "得到 %s" % (_p[:2],))
+    # ⛔ 反向对照：**过长的方括号文字不算表情码**（否则会把正常文字当表情发出去）
+    ck("反向对照：**长括号文字不认**（`[这是一段很长的说明文字]` ⇒ 空）",
+       _E.parse_codes("看这个[这是一段很长的说明文字]") == [])
+    _sp = _E.split_codes("哈喽[呲牙]在吗")
+    ck("切成「文字/表情」段（三段：文字·表情·文字）",
+       [x[0] for x in _sp] == ["text", "emoji", "text"], "得到 %s" % (_sp,))
+    ck("纯文字 ⇒ 只有一段、且走老路（行为不变）",
+       _E.split_codes("普通一句话") == [("text", "普通一句话")])
+
+    # 按频次挑：没记录 ⇒ 第一个（可预期）
+    ck("按频次挑：**都没记录过 ⇒ 返回第一个**（不许乱跳）",
+       _E.pick_by_usage(["a", "b", "c"]) == "a")
+    _k = "__selftest_pick__"
+    try:
+        _E.bump_usage(_k, 7)
+        ck("按频次挑：**记过 7 次的那个优先**（治「只会发第一个」）",
+           _E.pick_by_usage(["a", _k, "b"]) == _k)
+    finally:
+        try:
+            import json as _j
+            if os.path.isfile(_E.USAGE_PATH):
+                _d = _j.load(open(_E.USAGE_PATH, encoding="utf-8"))
+                _d.pop(_k, None)
+                _j.dump(_d, open(_E.USAGE_PATH, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception: # noqa: BLE001
+            pass
+
+
+# ---------------------------------------------------------------- 表情使用频次
+
+def t_emoji_usage_guard() -> None:
+    """自检：**表情使用频次**（"发哪个表情"该有据可依：群友常用的优先）。
+
+    三条：· 真写真读（写两个 key ⇒ 读回**按次数降序**）；
+          · **读不到返回空**（不许编）；
+          · 测试用 key **自己清掉**（判据不许弄脏工作树）。
+    """
+    import json as _json
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "emoji_index.py").read_text(encoding="utf-8")
+    ck("能取到 `agent/emoji_index.py`（分母守卫）", bool(src.strip()))
+    try:
+        sys.path.insert(0, str(root))
+        from agent import emoji_index as _E
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.emoji_index`", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+    ck("`bump_usage` 与 `top_used` 都在位",
+       callable(getattr(_E, "bump_usage", None)) and callable(getattr(_E, "top_used", None)))
+
+    _k1, _k2 = "__selftest_a__", "__selftest_b__"
+    try:
+        _E.bump_usage(_k1, 5)
+        _E.bump_usage(_k2, 1)
+        _top = dict(_E.top_used(20))
+        ck("真写真读：写了 5 次和 1 次 ⇒ 读回**按次数降序**（多的在前）",
+           (_k1 in _top) and (_k2 in _top) and (_top[_k1] > _top[_k2]),
+           "读到 %s=%s / %s=%s" % (_k1, _top.get(_k1), _k2, _top.get(_k2)))
+        ck("**读不到就返回空**（不编数据）", _E.top_used(0) == [] or isinstance(_E.top_used(1), list))
+    finally:
+        # 自己清掉：判据不许在工作区留测试数据
+        try:
+            _p = getattr(_E, "USAGE_PATH", "")
+            if _p and os.path.isfile(_p):
+                _d = _json.load(open(_p, encoding="utf-8"))
+                for _k in (_k1, _k2):
+                    _d.pop(_k, None)
+                _json.dump(_d, open(_p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        except Exception: # noqa: BLE001
+            pass
+
+
+# ---------------------------------------------------------------- 投影补行接线
+
+def t_session_rows_projection_guard() -> None:
+    """自检：**`session_rows` 已接入「投影补行」**，且三条纪律都在。
+
+    为什么要钉：OCR 只认得 69% 的会话行 ⇒ 漏行会让「数第几条 → 点它」**点错行**（可能点到相邻行）。
+      · 补行必须**用投影**（不依赖识别 ⇒ 不漏行）；
+      · 补出来的行**名字如实留空**（**不许编名字**）；
+      · 投影**失败必须退回** OCR 行（不许把整条链弄坏）。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "chat_ocr.py").read_text(encoding="utf-8")
+    ck("能取到 `agent/chat_ocr.py`（分母守卫）", bool(src.strip()), "长度 %d" % len(src))
+    _seg = ""
+    for _n in _ast.walk(_ast.parse(src)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "session_rows":
+            _seg = _ast.get_source_segment(src, _n) or ""
+            break
+    ck("`session_rows` 在位", bool(_seg), "长度 %d" % len(_seg))
+    ck("补行用的是**投影**（`project_row_edges` ⇒ 不依赖 OCR）", "project_row_edges" in _seg)
+    ck("投影**有、OCR 没有**的行 ⇒ `name` 留空（**不编名字**）",
+       ('"name": ""' in _seg) and ("from_projection" in _seg))
+    ck("投影失败**退回** OCR 行（`except` 之后仍 `return rows`）",
+       ("except Exception" in _seg) and ("return rows" in _seg))
+
+
+# ---------------------------------------------------------------- 目录监听
+
+def t_filewatch_guard() -> None:
+    """自检：**目录监听**（替代定时轮询）—— 真建目录、真写文件、真等到事件；且**装不上要如实报**。
+
+    ⛔ 最关键的一条：**监听起不来时不许"假装在监听"**（返回的 Event 永不 `set`，
+      同时 `error` 写明原因）⇒ 否则调用方会**永远等不到**，把"变化了"当成"没变化"。
+    """
+    import tempfile as _tf
+    import time as _t
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "filewatch.py").read_text(encoding="utf-8")
+    ck("能取到 `agent/filewatch.py`（分母守卫）", bool(src.strip()), "长度 %d" % len(src))
+    try:
+        sys.path.insert(0, str(root))
+        from agent import filewatch as _fw
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.filewatch`", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+
+    # ① 坏路径 ⇒ 永不 set + error 写明原因（**不许假装在监听**）
+    _bad = _fw.watch(os.path.join(str(root), "no_such_dir_xyz"))
+    ck("坏路径 ⇒ `error` 非空（**如实报「没监听到」，不假装**）", bool(getattr(_bad, "error", "")))
+    ck("坏路径 ⇒ Event 未被 set（调用方据此退回轮询）", not _bad.is_set())
+
+    # ② 真建目录 ⇒ 真写文件 ⇒ 应等到事件
+    with _tf.TemporaryDirectory(prefix="dirwatch-") as _td:
+        _ev = _fw.watch(_td)
+        if getattr(_ev, "error", ""):
+            ck("当前环境支持目录监听（Windows）⇒ 应无 error", False, _ev.error)
+        else:
+            _t.sleep(0.2)
+            open(os.path.join(_td, "hello.txt"), "w", encoding="utf-8").write("x")
+            _got = _ev.wait(timeout=3.0)
+            ck("真写一个文件 ⇒ 监听器应在 3 秒内通知（实测）", bool(_got),
+               "等到了" if _got else "3 秒没等到")
+            stop = getattr(_ev, "_stop", None)
+            if stop is not None:
+                stop.set()
+
+
+# ---------------------------------------------------------------- 并发预取
+
+def t_prefetch_parallel_guard() -> None:
+    """自检：**并发预取** —— 只并发「下载」，装的时候仍串行（pip 不许同环境并发写）。
+
+    为什么：默认"一个包一个包解析＋下载"，高延迟下要十几分钟；切份并发能压掉这段。
+    ⛔ 两条必须成立：① 下载用 `--no-deps`（不触发依赖解析，省往返）；
+                    ② **失败不致命**（函数自己不抛，调用方有 try 兜底）⇒ 不许因为预取失败把安装流程弄坏。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "scripts" / "setup_deps.py").read_text(encoding="utf-8")
+    ck("能取到 `scripts/setup_deps.py`（分母守卫）", bool(src.strip()), "长度 %d" % len(src))
+    try:
+        sys.path.insert(0, str(root))
+        sys.path.insert(0, str(root / "scripts"))
+        import setup_deps as _S
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `setup_deps`", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+    ck("`prefetch_wheels_parallel` 在位", callable(getattr(_S, "prefetch_wheels_parallel", None)))
+
+    _seg = ""
+    for _n in _ast.walk(_ast.parse(src)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "prefetch_wheels_parallel":
+            _seg = _ast.get_source_segment(src, _n) or ""
+            break
+    ck("预取用 `--no-deps`（不触发依赖解析，才省得下往返）", "--no-deps" in _seg)
+    ck("预取**真并发**（起了线程）", ("Thread(" in _seg) and ("join()" in _seg))
+    ck("预取**只下载不安装**（不许出现 `pip`, `install` 的组合）",
+       ("download" in _seg) and ("\"install\"" not in _seg))
+    ck("主流程里**预取有 try 兜底**（失败不影响安装）",
+       ("prefetch_wheels_parallel(py_exe, req, best" in src) and ("并发预取跳过" in src))
+
+
+# ---------------------------------------------------------------- 搜索框粘贴
+
+def t_search_paste_guard() -> None:
+    """自检：**搜索框改走「粘贴」绕开 IME 串字母，且粘贴失败能退回逐字投递**。
+
+    为什么要钉：开微软拼音时逐字投 `WM_CHAR`，会**在首个汉字前串一个 `a`** ⇒ 搜索词永远是 `a测试` ⇒ 搜不到会话。
+    ⛔ 两条必须**同时**成立：① 搜索链**先粘贴**；② 粘贴失败**退回投字**（不能因为换通道把整条链弄坏）。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    _ib = (root / "agent" / "input_backend.py").read_text(encoding="utf-8")
+    _wx = (root / "agent" / "wechat.py").read_text(encoding="utf-8")
+    ck("能取到两个源文件（分母守卫）", bool(_ib.strip()) and bool(_wx.strip()))
+
+    _seg = ""
+    for _n in _ast.walk(_ast.parse(_ib)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "paste_text":
+            _seg = _ast.get_source_segment(_ib, _n) or ""
+            break
+    ck("`input_backend.paste_text` 在位", bool(_seg), "长度 %d" % len(_seg))
+    ck("粘贴实现里**投了 `WM_PASTE`**（不是继续用 WM_CHAR）", "WM_PASTE" in _seg)
+    ck("粘贴实现里**有等待**（`WM_PASTE` 是异步的，立刻恢复会把原文贴进去）",
+       "restore_ms" in _seg and "time.sleep" in _seg)
+    ck("粘贴实现里**会还原剪贴板**（剪贴板不是我们的资源）",
+       ("write_text" in _seg) and ("saved" in _seg))
+
+    _n_paste = _wx.count("backend.paste_text(")
+    ck("搜索链**至少两处**改成先粘贴（两个搜索入口）", _n_paste >= 2, "命中 %d 处" % _n_paste)
+    # ⛔ 关键兜底：粘贴失败必须退回 send_text
+    ck("粘贴失败**有退回逐字投递**的兜底（不能因为换通道把搜索链弄坏）",
+       ("粘贴没成" in _wx) and ("backend.send_text(int(pop_hwnd), name)" in _wx))
+
+
+# ---------------------------------------------------------------- 工作树洁净（第 6 步）
+
+def t_clean_tree_guard() -> None:
+    """自检：**跑完判据不许在工作树里留下未跟踪产物**（可离线判定的三条）。
+
+    为什么要有：判据会截图、会写临时文件；产物一旦落在**没被 ignore 的目录**里，
+    就会混进提交、混进包，用户那边多出一堆莫名文件。三条口径：
+      · 判据的截图目录（`ui_qt/shots/`）**必须在 `.gitignore` 里**；
+      · 临时脚本/中间产物**只在 `_scratch/`**（该目录约定不进 git）；
+      · `scripts/` 里**不许有 `_` 开头的一次性脚本**（它们属于 `_scratch/`）。
+    """
+    import re as _re
+
+    root = HERE.parents[0]
+    _gi = root / ".gitignore"
+    ck(".gitignore 存在（分母守卫）", _gi.is_file(), str(_gi))
+    if not _gi.is_file():
+        return
+    _gi_txt = _gi.read_text(encoding="utf-8", errors="replace")
+    _lines = [l.strip() for l in _gi_txt.split("\n") if l.strip() and not l.strip().startswith("#")]
+    ck("判据截图目录 `ui_qt/shots/` 在 `.gitignore` 里（否则截图会混进提交）",
+       any(l.rstrip("/") == "ui_qt/shots" for l in _lines), "命中：%s" % [l for l in _lines if "shots" in l][:2])
+    ck("`_scratch/` 在 `.gitignore` 里（临时脚本的家，不该进库）",
+       any(l.rstrip("/") == "_scratch" for l in _lines), "命中：%s" % [l for l in _lines if "scratch" in l][:2])
+
+    _bad = []
+    for p in sorted((root / "scripts").glob("_*.py")):
+        # ⚠️ `_` 开头**不等于**一次性 —— `_srcslice.py` 这类是**被产品 import 的模块**
+        #    （`PLAN` 里点名"取函数源码一律用 `_srcslice.func_src`"）⇒
+        #    **判定要看"有没有被引用"，不能只看文件名前缀**（这条是判据自己踩出来的）。
+        _used = False
+        for _f in list((root / "scripts").glob("*.py")) + list((root / "agent").glob("*.py")):
+            if _f.name == p.name:
+                continue
+            try:
+                if p.stem and p.stem in _f.read_text(encoding="utf-8", errors="replace"):
+                    _used = True
+                    break
+            except Exception: # noqa: BLE001
+                continue
+        if not _used:
+            _bad.append(p.name)
+    ck("`scripts/` 里没有**没人引用**的 `_` 开头脚本（一次性脚本应待 `_scratch/`）",
+       not _bad, "命中：%s" % (_bad[:4] or "无"))
+
+
+# ---------------------------------------------------------------- 投影补行（第 7 步）
+
+def t_projection_rows_guard() -> None:
+    """自检：**投影补行**（不依赖 OCR 也能数出行数，且**不硬造行**）。
+
+    为什么要钉：OCR **只认得 69% 的会话行** ⇒ 漏行会让"数第几条 → 点它"**点错行**（可能点到相邻行）。
+    口径：**投影负责"有几行、每行在哪"（不依赖识别 ⇒ 不会漏），OCR 只负责"这行叫什么"**。
+    """
+    import ast as _ast
+    import tempfile as _tf
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "row_geometry.py").read_text(encoding="utf-8")
+    ck("取到 `row_geometry.py`（分母守卫）", bool(src.strip()), "长度 %d" % len(src))
+    try:
+        sys.path.insert(0, str(root))
+        from agent import row_geometry as _RG
+        from PIL import Image, ImageDraw
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.row_geometry` 与 PIL", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+
+    _seg = ""
+    for _n in _ast.walk(_ast.parse(src)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "project_row_edges":
+            _seg = _ast.get_source_segment(src, _n) or ""
+            break
+    ck("`project_row_edges` **不调用 OCR**（投影必须独立于识别）",
+       bool(_seg) and ("recognize" not in _seg), "长度 %d" % len(_seg))
+
+    with _tf.TemporaryDirectory(prefix="projrows-"):   # ⛔ 不弄脏工作树
+        _want = 5
+        im = Image.new("RGB", (600, 600), (35, 35, 36))
+        _d = ImageDraw.Draw(im)
+        for i in range(_want):
+            _y = 60 + i * 100
+            for k in range(12):                      # 画"字"：一排短竖条
+                _x = 80 + k * 30
+                _d.rectangle([_x, _y, _x + 14, _y + 30], fill=(230, 230, 230))
+        _edges = _RG.project_row_edges(im, pane=560)
+        ck("真值：图里画了 %d 行 ⇒ 投影找出 %d 行（不依赖 OCR）" % (_want, _want),
+           len(_edges) == _want, "得到 %d 行：%s" % (len(_edges), _edges[:6]))
+
+        _blank = Image.new("RGB", (600, 600), (35, 35, 36))
+        ck("反向对照：**纯色图 ⇒ 投影返回空**（不硬造行）",
+           _RG.project_row_edges(_blank, pane=560) == [])
+
+        _r = _RG.merge_rows_with_projection(im, [("张三", 80, 60, 200, 30)], pane=560)
+        _named = [x for x in _r["rows"] if x["text"]]
+        _noname = [x for x in _r["rows"] if not x["text"]]
+        ck("合并：OCR 只认 1 行 ⇒ 仍输出 %d 行（**补回 %d 行**；没名字的如实为空、不编）"
+           % (_want, _want - 1),
+           (_r["merged_n"] == _want) and (len(_named) == 1) and (len(_noname) == _want - 1),
+           "合并=%d 有名字=%d 无名字=%d 补回=%d" % (_r["merged_n"], len(_named), len(_noname), _r["补回"]))
+
+
+# ---------------------------------------------------------------- 通用下载提速（DL-1）
+
+def t_mirror_fetch_guard() -> None:
+    """自检：**多源竞速选最快 ＋ 失败自动换源**（DL-1：把自举那套做成通用的）。
+
+    要钉四条（都能**离线纯函数**验证，不依赖网络）：
+      · `pick_mirrors` **只取通的**并按**实测耗时升序**（让 pip 去试一个已 403 的源 = 白等一轮）；
+      · `pip_install_args` **必须带 `-i <源>`**、**不带 `--trusted-host`**（我们全是 https 源）；
+      · `403` 只是"该源没过"——`probe_once` 里 HTTPError 一律返回"不通 + 原因"，**不当终态**；
+      · **失败要逐源列原因**（`diag_lines` 产出人话，不裸 traceback）。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "mirror_fetch.py").read_text(encoding="utf-8")
+    ck("能取到 `agent/mirror_fetch.py`（分母守卫）", bool(src.strip()), "长度 %d" % len(src))
+    try:
+        sys.path.insert(0, str(root))
+        from agent import mirror_fetch as _MF
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.mirror_fetch`", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+
+    # ① 选源：只取通的 + 按耗时升序（**纯函数**，喂假 probe）
+    _fake = {"a": (True, 0.9, ""), "b": (False, 0.1, "HTTP 403（源拒绝）"), "c": (True, 0.2, "")}
+    _order = _MF.pick_mirrors(_fake)
+    ck("选源：**只取通的**且按**实测耗时升序**（挂的不进单）",
+       _order == ["c", "a"], "得到 %s" % _order)
+    ck("全挂时 `pick_mirrors` 返回空（调用方据此走「逐源诊断」而不是硬试）",
+       _MF.pick_mirrors({"x": (False, 1.0, "HTTP 403")}) == [])
+
+    # ② 命令行：必须带 -i，且不带 --trusted-host
+    _args = _MF.pip_install_args(["llvmlite>=0.50"], "https://mirrors.aliyun.com/pypi/simple/")
+    ck("安装命令带 `-i <源>`（不指源就等于没走竞速）",
+       "-i" in _args and any("aliyun" in a for a in _args))
+    ck("安装命令**不带** `--trusted-host`（我们全是 https 源，带了是多余放行）",
+       "--trusted-host" not in _args)
+    ck("安装命令带 `--disable-pip-version-check`（少一次出网）",
+       "--disable-pip-version-check" in _args)
+
+    # ③ 403 不当终态：探到 HTTPError 一律"不通 + 原因"
+    _seg = ""
+    for _n in _ast.walk(_ast.parse(src)):
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "probe_once":
+            _seg = _ast.get_source_segment(src, _n) or ""
+            break
+    ck("`probe_once` 把 `HTTPError` 判成**不通 + 原因**（403 只是「该源没过」，不是终态）",
+       ("HTTPError" in _seg) and ("源拒绝" in _seg) and ("return False" in _seg))
+
+    # ④ 失败讲人话
+    _diag = _MF.diag_lines(_fake)
+    ck("失败诊断是**逐源人话**（哪条、什么错），不是裸异常",
+       ("403" in _diag) and ("；" in _diag), _diag[:70])
+
+
+# ---------------------------------------------------------------- Qt 壳：不许系统 MessageBox
+
+def t_qt_no_msgbox_guard() -> None:
+    """自检：**整个 `ui_qt/` 的实际代码里不许出现系统 `QMessageBox`**（硬规矩第 1 条：0 系统 MessageBox）。
+
+    ⛔ 为什么单独一条：原先只有"`_btn_stub` 那段用 `InfoDialog`"的断言 ⇒ **别处新增的
+    `QMessageBox` 抓不到**（**我自己就踩过**：在 `_channels_howto` 里写了 `QMessageBox.information`，
+    既有那条判据照样全绿）。要求「**Qt 端才是用户看到的，要把 Qt 端做稳**」⇒ 补这条兜底。
+    ⚠️ 判前**先剥注释与 docstring**：`confirm.py` 里满是「不许用 QMessageBox」的说明文字，
+    不剥就会把说明当成违规（本项目判据在这上面已踩过三次）。
+    ⚠️ 且**必须按"调用形态"判**（`QMessageBox(`），不能按"出现过这个词"判 ——
+    `confirm.py` 里有一行**自检代码** `"QMessageBox" not in mod`（字符串字面量里提到它），
+    按"出现即违规"会把这行**自检**判成违规（这条盲区是这次真的踩出来的）。
+    """
+    import re as _re
+
+    # ⚠️ 形态要包两种：**直接调用** `QMessageBox(...)` 与**属性调用** `QMessageBox.information(...)`
+    #    —— 后者才是实际最常用的写法（第一版正则只写了 `QMessageBox(`，被反向对照抓出来了）。
+    _pat = _re.compile(r"\bQMessageBox\s*[.(]")
+    _bad = []
+    _root = HERE.parents[0] / "ui_qt"
+    for _f in sorted(_root.glob("*.py")):
+        if _f.name == "selftest.py":
+            continue                       # 判据自己会提这个名字，不算违规
+        _txt = _f.read_text(encoding="utf-8")
+        _s = _re.sub(r'"""(?:.|\n)*?"""', "", _txt)
+        _s = _re.sub(r"'''(?:.|\n)*?'''", "", _s)
+        _s = "\n".join(l for l in _s.split("\n") if not l.strip().startswith("#"))
+        if _pat.search(_s):
+            _bad.append(_f.name)
+    ck("整个 `ui_qt/` 的实际代码里没有系统 `QMessageBox(` 调用（弹窗统一走自绘 `InfoDialog`/`ConfirmDialog`）",
+       not _bad, "命中：%s" % (_bad[:3] or "无"))
+    # 反向对照：把"真的有 QMessageBox 调用"的样本喂给同一套剥壳+判定，必须被判违规
+    _sample = 'def f(p):\n    QMessageBox.information(p, "t", "b")\n'
+    _s2 = "\n".join(l for l in _sample.split("\n") if not l.strip().startswith("#"))
+    ck("反向对照：样本里的 `QMessageBox(` 调用必须被这套判定抓出来", bool(_pat.search(_s2)))
+    # ⚠️ 另一条反向对照：**样式检查代码**（字符串里提到 QMessageBox）**不许**被判违规
+    _s3 = 'rows.append(("x", "QMessageBox" not in mod, ""))\n'
+    ck("反向对照：字符串里提到 `QMessageBox` 的**自检代码**不算违规（防误判）",
+       not _pat.search(_s3))
+
+
+# ---------------------------------------------------------------- 水位：多读一条 ＋ 台账核对（B7）
+
+def t_watermark_latest_minus1_guard() -> None:
+    """自检：**水位"多读一条防漏" ＋ 台账核对"回过就放掉"**（这两件必须成对）。
+
+    · **起点取 `latest - 1`**：取 `latest` 时，"启动瞬间正好落库的那一条"可能被跳过（竞态）；
+    · **台账核对**（`already_sent_recently`，窗口 120 秒）：多读的那条若**是我方发出的** ⇒ 放掉，
+      且**算已处理**（水位照推，否则同一行会被反复重读）。
+    ⛔ 只做前者 ⇒ 会**回自己**（回声事故）；只做后者 ⇒ 竞态那条仍会丢。
+    """
+    root = HERE.parents[0]
+    src = (root / "scripts" / "persona_morph.py").read_text(encoding="utf-8")
+
+    ck("水位起点取 `latest - 1`（多读一条防漏）",
+       ("int(_seq0) - 1" in src) or ("_seq0) - 1" in src),
+       "没找到 `_seq0 - 1`")
+    ck("台账核对在场（复用 `already_sent_recently`，不新加机制）",
+       "already_sent_recently" in src)
+    ck("台账命中时**算已处理**（返回 dropped，水位才能推过去）",
+       ('"dropped": "sent-by-us"' in src) or ("'dropped': 'sent-by-us'" in src))
+    # 顺序：台账核对必须**在**"往下走"之前（即 `_handle_one` 内部靠前）
+    _i_skip = src.find('if nm.get("skip"):')
+    _i_ledger = src.find("already_sent_recently")
+    ck("台账核对紧跟在「归一化跳过」之后（在真正处理之前，别等进了上下文再判）",
+       (-1 < _i_skip < _i_ledger) and ((_i_ledger - _i_skip) < 1600),
+       "skip@%d ledger@%d 相距 %d" % (_i_skip, _i_ledger, _i_ledger - _i_skip))
+
+
+# ---------------------------------------------------------------- ASR 后端选择（V-5）
+
+def t_asr_backend_guard() -> None:
+    """自检：**语音识别优先真 ASR、SAPI 只当兜底**，且**如实报告在用哪个**。
+
+    ⛔ 为什么必须钉：SAPI 是**听写**引擎（本职是"对着麦说一句、转成字"），
+    拿它当"把长音频转字幕"用会**又慢又不准**；而"装没装 whisper"是**环境事实** ⇒
+    代码必须**现算**并如实说，不能在提示词/面板里声称"有语音识别"而实际用的是听写。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "video_read.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    seg = ""
+    for n in _ast.walk(tree):
+        if isinstance(n, _ast.FunctionDef) and n.name == "asr_backend":
+            seg = _ast.get_source_segment(src, n) or ""
+            break
+    ck("取到 `video_read.asr_backend` 的源码（分母守卫）", bool(seg.strip()), "长度 %d" % len(seg))
+    if not seg.strip():
+        return
+
+    # 优先顺序：faster_whisper → whisper → sapi（顺序写反就等于"永远用兜底"）
+    _i_fw = seg.find("faster_whisper")
+    _i_w = seg.find("import whisper")
+    _i_sapi = seg.find("asr_status()")
+    ck("真 ASR 优先于 SAPI（faster-whisper → whisper → SAPI 的先后顺序）",
+       -1 < _i_fw < _i_sapi and -1 < _i_w < _i_sapi,
+       "fw=%d w=%d sapi=%d" % (_i_fw, _i_w, _i_sapi))
+    ck("SAPI 那条带**如实说明**（「听写」引擎/仅兜底），不是悄悄当主力",
+       ("听写" in seg) or ("兜底" in seg))
+
+    try:
+        sys.path.insert(0, str(root))
+        from agent import video_read as _V
+        _b = _V.asr_backend()
+        ck("`asr_backend()` 返回合法结构（含 ok / kind / detail）",
+           isinstance(_b, dict) and ("ok" in _b) and ("kind" in _b) and ("detail" in _b),
+           str(_b)[:90])
+        ck("`probe()` 把后端信息带出去了（面板/工具能看到在用哪个）",
+           "backend" in (_V.probe() or {}))
+    except Exception as e: # noqa: BLE001
+        ck("能调用 `asr_backend()`（分母守卫）", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+
+
+# ---------------------------------------------------------------- 按场景采帧（V-4）
+
+def t_scene_frames_guard() -> None:
+    """自检：**按场景采帧（帧间差分选点）**，而不是均匀抽。
+
+    为什么要钉：均匀抽 4 张，在"大半时间画面是同一个场景"的视频里**常常 4 张全在同一场景**；
+    按差分取才能落到"画面真的换了"的地方。**真值测试**（造一条三段色测试片，切换点在 6s/12s）
+    是这条判据最硬的部分 —— 它证明"选点真的落在变化处"，而不只是"函数跑完了"。
+    """
+    import ast as _ast
+    import os as _os
+    import subprocess as _sp
+    import tempfile as _tf
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "video_read.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    seg = ""
+    for n in _ast.walk(tree):
+        if isinstance(n, _ast.FunctionDef) and n.name == "extract_scene_frames":
+            s = _ast.get_source_segment(src, n) or ""
+            if (n.body and isinstance(n.body[0], _ast.Expr)
+                    and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                ds = n.body[0].value.value
+                if isinstance(ds, str) and ds:
+                    s = s.replace(ds, "")
+            seg = "\n".join(l for l in s.split("\n") if not l.strip().startswith("#"))
+            break
+    ck("取到 `video_read.extract_scene_frames` 的源码（分母守卫）", bool(seg.strip()),
+       "长度 %d" % len(seg))
+    if not seg.strip():
+        return
+    ck("场景采帧：帧间差分选点 ＋ 小图探/大图取两段 ＋ 相邻点去重",
+       ("difference" in seg) and ("scene_small" in seg) and ("scene_big" in seg)
+       and ("abs(i - u)" in seg))
+
+    # 真值：造"6s 红 + 6s 蓝 + 6s 绿"，切换点应在 ≈6s 与 ≈12s
+    try:
+        sys.path.insert(0, str(root))
+        from agent import video_read as _V
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.video_read`（分母守卫）", False, "%s" % str(e)[:60])
+        return
+    _ff = _V.ffmpeg_path()
+    if not _ff:
+        ck("真值测试需要 ffmpeg（本机没有 ⇒ 跳过真值，但静态断言已过）", True, "no_ffmpeg")
+        return
+    with _tf.TemporaryDirectory(prefix="scenefix-") as _td:   # ⛔ 不弄脏工作树
+        _mp4 = _os.path.join(_td, "s.mp4")
+        try:
+            _sp.run([_ff, "-hide_banner", "-loglevel", "error",
+                     "-f", "lavfi", "-i", "color=c=red:s=160x120:d=6",
+                     "-f", "lavfi", "-i", "color=c=blue:s=160x120:d=6",
+                     "-f", "lavfi", "-i", "color=c=green:s=160x120:d=6",
+                     "-filter_complex", "[0][1][2]concat=n=3:v=1:a=0", "-y", _mp4],
+                    capture_output=True, timeout=60)
+        except Exception:
+            pass
+        if not _os.path.isfile(_mp4):
+            ck("真值测试的测试片造出来了", False, "ffmpeg 没产出测试片")
+            return
+        _r = _V.extract_scene_frames(_mp4, _os.path.join(_td, "f"), 4)
+        _cues = _r.get("cues") or []
+        _hit6 = any(abs(c - 6.0) <= 1.0 for c in _cues)
+        _hit12 = any(abs(c - 12.0) <= 1.0 for c in _cues)
+        ck("真值：场景切换点在 6s/12s ⇒ 采出的线索必须命中这两处（±1s）",
+           bool(_r.get("ok")) and _hit6 and _hit12, "cues=%s" % _cues)
+
+
+# ---------------------------------------------------------------- 外部平台下载（V-1 / V-11 / V-12）
+
+def t_external_download_guard() -> None:
+    """自检：**平台注册器 ＋ 视频号按路径识别 ＋ 下不了就给替代**。
+
+    要钉的三条：
+      · **注册器是"现算"不是"写死"** —— 写死"能下"是骗人开关，写死"不能下"则在装了之后仍说不行；
+      · **视频号按路径判、不并进域名表** —— `weixin.qq.com` 是通用域名，并进去必然把
+        普通链接/公众号文章认成视频号（**认错平台比认不出更糟**）；
+      · **下不了必须给用户能照做的替代**，不许只回一句"暂不支持"。
+    """
+    root = HERE.parents[0]
+    src = (root / "agent" / "bilibili.py").read_text(encoding="utf-8")
+    try:
+        sys.path.insert(0, str(root))
+        from agent import bilibili as _B
+    except Exception as e: # noqa: BLE001
+        ck("能导入 `agent.bilibili`（分母守卫）", False, "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+
+    ck("平台注册器：有 `_PLATFORM_DL` 表，且 `can_download` 是**现算**（调 `ytdlp_available()`，不写死）",
+       ("_PLATFORM_DL" in src) and ("def can_download" in src) and ("ytdlp_available()" in src))
+
+    _bad = []
+    for _u, _want in (("https://b23.tv/abc", "bilibili"),
+                      ("https://www.youtube.com/watch?v=x", "youtube"),
+                      ("https://example.com/v", "unknown")):
+        _got = (_B.media_download_plan(_u) or {}).get("platform")
+        if _got != _want:
+            _bad.append("%s→%s" % (_u[:26], _got))
+    ck("认平台：B站/YouTube 认得出，陌生域名**如实 unknown**（不硬认）", not _bad, "；".join(_bad))
+
+    _bad2 = [u for u, w in (("https://weixin.qq.com/sph/Ab1", True),
+                            ("https://weixin.qq.com/other/page", False),
+                            ("https://mp.weixin.qq.com/s/x", False))
+             if bool(_B.is_wechat_channels(u)) != w]
+    ck("视频号按**路径**判：普通 weixin 链接与公众号文章**都不被误判**", not _bad2,
+       "误判：%s" % _bad2[:2])
+
+    _hosts_seg = ""
+    if "PLATFORM_HOSTS" in src:
+        _hosts_seg = src.split("PLATFORM_HOSTS", 1)[1].split("\n}", 1)[0]
+    ck("视频号**没有**被塞进按域名认平台的 `PLATFORM_HOSTS`（塞进去必然误判）",
+       "weixin" not in _hosts_seg)
+
+    _p, _why = _B.download_external("https://weixin.qq.com/sph/Ab1", "_scratch/_x")
+    # ⚠️ 断言锚**意图**，不锚文案字面 —— 文案会改（"保存"→"存"），
+    #    锚字面就会变成"改文案必假红"（本项目 C22 那条纪律：断言锚意图，不锚写法）。
+    ck("下不了时**给用户能照做的替代**（而不是一句「暂不支持」）",
+       (_p is None) and ("成本地文件" in _why), str(_why)[:70])
+
+
+# ---------------------------------------------------------------- 视频探流与探帧（V-3 / V-8 / V-14）
+
+def t_video_probe_guard() -> None:
+    """自检：**探流岔路 ＋ 探帧定位字幕带 ＋ 错误路由表**三项接线齐全。
+
+    · **V-3 探流岔路**：纯音频（语音条/播客）压根没有画面可抽 ⇒ 必须先判 `has_video`，
+      否则白跑"抽帧＋OCR"；
+    · **V-8 探帧定位**：录屏类视频**字幕不一定在底部**（实测抖音常在 y≈0.72）⇒
+      写死裁切比例必然裁错；
+    · **V-14 错误路由表**：失败时给**用户能直接照做**的一句话，而不是内部异常名。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "video_read.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+
+    def _seg(name: str) -> str:
+        for n in _ast.walk(tree):
+            if isinstance(n, _ast.FunctionDef) and n.name == name:
+                s = _ast.get_source_segment(src, n) or ""
+                if (n.body and isinstance(n.body[0], _ast.Expr)
+                        and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                    ds = n.body[0].value.value
+                    if isinstance(ds, str) and ds:
+                        s = s.replace(ds, "")
+                return "\n".join(l for l in s.split("\n") if not l.strip().startswith("#"))
+        return ""
+
+    kind, band, subs = _seg("media_kind"), _seg("probe_subtitle_band"), _seg("extract_subtitles")
+    ck("取到三处源码（分母守卫：media_kind / probe_subtitle_band / extract_subtitles）",
+       bool(kind.strip()) and bool(band.strip()) and bool(subs.strip()),
+       "kind=%d band=%d subs=%d" % (len(kind), len(band), len(subs)))
+    if not (kind.strip() and band.strip() and subs.strip()):
+        return
+
+    ck("V-3 探流：解析 `Video:`/`Audio:` 两根轨，且**探不出算失败**（不假装没有视频）",
+       ("Video:" in kind) and ("Audio:" in kind) and ('"ok": False' in kind)
+       and ("has_video" in kind))
+    ck("V-8 探帧：找'文字最密的横带'且 **top 有上下界**（不会裁到天上或裁没）",
+       ("下四分位" in band or "ys[int" in band) and ("0.30" in band) and ("0.90" in band))
+    ck("V-8 ↔ 字幕：`extract_subtitles` 接受 `crop_top`（探帧结果能喂进去）",
+       "crop_top" in subs and "crop_top or" in subs)
+    ck("V-14 错误路由表：有 `VIDEO_READ_HINTS` 且 `no_subtitle` 那条被真用上",
+       ("VIDEO_READ_HINTS" in src) and ('"hint"' in subs) and ('no_subtitle' in src))
+
+
+# ---------------------------------------------------------------- 下载校验：文件头 magic
+
+def t_download_magic_guard() -> None:
+    """自检：**下载结果必须过"文件头 magic"**（防把风控/错误页当媒体存下来）。
+
+    ⛔ 为什么必须钉：**HTTP 200 ＋ Content-Type 正常，仍然可能是错误页** ——
+    CDN 用 200 返回一段 HTML/JSON 是很常见的做法。外部技能那套"四重校验"里
+    我方原先只有 3 重半（状态码／体积／超时／不落半成品 ＋ 安全层），**独缺这一重**。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "bilibili.py").read_text(encoding="utf-8")
+
+    # ① 纯函数存在（**真值测试**，不联网、不伪造 CDN）
+    try:
+        sys.path.insert(0, str(root))
+        from agent.bilibili import media_magic_ok as _ok
+    except Exception as e:  # noqa: BLE001
+        ck("能导入 `agent.bilibili.media_magic_ok`（分母守卫）", False,
+           "%s: %s" % (type(e).__name__, str(e)[:60]))
+        return
+    _cases = [
+        (b"\x00\x00\x00\x24ftypiso5\x00\x00\x02\x00", True, "真 m4a/mp4 头"),
+        (b"ID3\x04\x00\x00\x00\x00", True, "ID3（mp3 标签）"),
+        (b"<!DOCTYPE html><html><head>", False, "HTML 错误页"),
+        (b'{"code":-403,"message":"risk"}', False, "JSON 风控回包"),
+        (b"", False, "空文件"),
+    ]
+    _bad = [n for h, w, n in _cases if bool(_ok(h)) != w]
+    ck("文件头 magic 判定：真媒体头认、HTML/JSON/空文件拒（%d 个样本）" % len(_cases),
+       not _bad, "判错：%s" % "、".join(_bad))
+
+    # ② `_download` 真的调了它（不然纯函数再好也没接线）
+    _tree = _ast.parse(src)
+    _seg = ""
+    for n in _ast.walk(_tree):
+        if isinstance(n, _ast.FunctionDef) and n.name == "_download":
+            _seg = _ast.get_source_segment(src, n) or ""
+            break
+    ck("`_download` 里接了这道校验（分母守卫）", bool(_seg.strip()),
+       "长度 %d" % len(_seg))
+    ck("`_download` 在返回成功之前调用了 `media_magic_ok`",
+       "media_magic_ok(" in _seg)
+
+
+# ---------------------------------------------------------------- 视频字幕：画面字幕优先
+
+def _subtitles_missing(seg: str) -> list:
+    """检查 `extract_subtitles` 的五个要点（**纯函数**，便于反向对照）。
+
+    这条路治的是"发视频会卡住"的大头：**字幕本来就画在画面里**（官方文字），
+    读它比"抽音频 ＋ SAPI 转写"快一个数量级、且不受音乐/多人干扰。
+    但少了下面任何一条，效果就塌掉：
+      · 不裁字幕带 ⇒ 顶部作者/点赞等 UI 全被读进来；
+      · 不过滤中文 ⇒ 时间戳、数字、英文混进来；
+      · 不去重 ⇒ 字幕一秒内不变，会刷出几百条重复；
+      · 不放大 ⇒ 小字**实测会漏字**。
+    """
+    miss = []
+    if ("fps=" not in seg) or ("-frames:v" not in seg):
+        miss.append("不是一次抽帧（缺 `-vf fps=` 或 `-frames:v`）")
+    if "SUBTITLE_CROP_TOP" not in seg:
+        miss.append("没裁字幕带（整帧 OCR 会被顶部 UI 干扰）")
+    if "_has_cjk" not in seg:
+        miss.append("没过滤非中文（时间/数字/英文 UI 会混进来）")
+    if "!= prev" not in seg:
+        miss.append("没做相邻去重（字幕一秒内不变 ⇒ 刷出几百条重复）")
+    if "resize" not in seg:
+        miss.append("没放大（小字会漏 —— 已实测过）")
+    return miss
+
+
+#: 反向对照样本：没有裁带/去重/放大的"朴素版"。
+_SUB_OLD_SAMPLE = '''
+def extract_subtitles(path, out_dir):
+    lines = []
+    for i, fp in enumerate(frames):
+        items = ocr(fp)
+        lines.append({"t": i, "text": " ".join(items)})
+    return lines
+'''
+
+
+def t_video_subtitles_guard() -> None:
+    """自检：**画面字幕优先**这条路必须"一次抽帧 ＋ 裁带 ＋ 只留中文 ＋ 去重 ＋ 放大"。"""
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "video_read.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    seg = ""
+    for n in _ast.walk(tree):
+        if isinstance(n, _ast.FunctionDef) and n.name == "extract_subtitles":
+            s = _ast.get_source_segment(src, n) or ""
+            if (n.body and isinstance(n.body[0], _ast.Expr)
+                    and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                ds = n.body[0].value.value
+                if isinstance(ds, str) and ds:
+                    s = s.replace(ds, "")
+            seg = "\n".join(l for l in s.split("\n") if not l.strip().startswith("#"))
+            break
+    ck("取到 `video_read.extract_subtitles` 的源码（分母守卫）", bool(seg.strip()),
+       "长度 %d" % len(seg))
+    if not seg.strip():
+        return
+    miss = _subtitles_missing(seg)
+    ck("字幕优先：一次抽帧 ＋ 裁字幕带 ＋ 只留中文 ＋ 相邻去重 ＋ 放大",
+       not miss, "缺：%s" % "；".join(miss))
+    old = _subtitles_missing(_SUB_OLD_SAMPLE)
+    ck("反向对照：朴素版（不裁带/不过滤/不去重/不放大）必须被判缺项",
+       len(old) >= 4, "检出 %d 项：%s" % (len(old), "；".join(old[:2])))
+
+
+# ---------------------------------------------------------------- 视频抽帧：一次调用出多帧
+
+def _frame_batch_missing(seg: str) -> list:
+    """检查 `extract_frames` 是不是"一次 ffmpeg 出多帧"（**纯函数**，便于反向对照）。
+
+    为什么要钉：老写法**每帧起一个 ffmpeg 进程**（`-ss t -i 文件 -frames:v 1`）⇒
+    **同一个文件被重新打开、重新解码 count 次**（默认 4 次，每帧还各带 60 秒超时）。
+    这是"发视频给机器人会卡住"里最容易拿掉的一段（实测 60 秒片：0.30s → 0.17s；
+    文件越大、差距越大 —— 每次重开都要重新 seek + 解头部）。
+    """
+    miss = []
+    if ("-vf" not in seg) or ("fps=" not in seg):
+        miss.append("没有用 `-vf fps=` 一次抽多帧")
+    if "-frames:v" not in seg:
+        miss.append("没有 `-frames:v` 上限（可能产出比要的多）")
+    if "for i in range(count)" in seg:
+        miss.append("还在循环里逐帧起进程（同一文件被重开 count 次）")
+    if seg.count("_run(") > 1:
+        miss.append("`_run(` 出现 %d 次（应当只有**一次**调用）" % seg.count("_run("))
+    return miss
+
+
+#: 反向对照样本：旧写法（每帧起一个 ffmpeg）。
+_FRAME_OLD_SAMPLE = '''
+def extract_frames(path, out_dir, count=4):
+    frames = []
+    for i in range(count):
+        t = dur * (i + 0.5) / count
+        out = os.path.join(out_dir, "frame_%02d.png" % i)
+        r = _run([ff, "-ss", "%.3f" % t, "-i", path, "-frames:v", "1", "-y", out], timeout=60)
+        if r.returncode == 0:
+            frames.append(out)
+    return frames
+'''
+
+
+def t_video_frame_batch_guard() -> None:
+    """自检：**抽帧必须"一次 ffmpeg 出多帧"**（不许逐帧起进程）。"""
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "video_read.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    seg = ""
+    for n in _ast.walk(tree):
+        if isinstance(n, _ast.FunctionDef) and n.name == "extract_frames":
+            s = _ast.get_source_segment(src, n) or ""
+            if (n.body and isinstance(n.body[0], _ast.Expr)
+                    and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                ds = n.body[0].value.value
+                if isinstance(ds, str) and ds:
+                    s = s.replace(ds, "")
+            seg = "\n".join(l for l in s.split("\n") if not l.strip().startswith("#"))
+            break
+    ck("取到 `video_read.extract_frames` 的源码（分母守卫）", bool(seg.strip()),
+       "长度 %d" % len(seg))
+    if not seg.strip():
+        return
+    miss = _frame_batch_missing(seg)
+    ck("视频抽帧：一次 ffmpeg 调用出多帧（不逐帧起进程）", not miss, "缺：%s" % "；".join(miss))
+    old = _frame_batch_missing(_FRAME_OLD_SAMPLE)
+    ck("反向对照：旧写法（逐帧起进程）必须被判缺项", len(old) >= 2,
+       "检出 %d 项：%s" % (len(old), "；".join(old[:2])))
+
+
+# ---------------------------------------------------------------- 朋友圈：先读库、再考虑开窗
+
+def _moments_db_first_missing(surf: str, read_fn: str, adapter: str) -> list:
+    """检查「朋友圈先读库」这条链的三处接线是否齐全（**纯函数**，便于反向对照）。
+
+    为什么要钉：朋友圈原本是「开窗 → 滚动 → **截图**」——
+    那条路要**抢前台**、而且把内容交给模型去"认字"（小字中文 OCR 会错字）。
+    走读库这条：**不开窗、不动鼠标**，给的是**结构化字段**（含评论的「谁回复谁」，截图认不出层次）。
+    """
+    miss = []
+    if "moments_read(" not in surf:
+        miss.append("surf 没调 moments_read（没走读库＝还是纯截图）")
+    else:
+        _i_read = surf.find("moments_read(")
+        _i_open = surf.find("moments_open(")
+        if _i_open >= 0 and _i_open < _i_read:
+            miss.append("surf 里 moments_open 出现在 moments_read 之前（截图跑到了读库前面）")
+    if "visual" not in surf:
+        miss.append("surf 没有 visual 出口（想只看画面时无路可走）")
+    if ("replica_adapter" not in read_fn) or ("load_moments(" not in read_fn):
+        miss.append("moments_read 没走适配层 load_moments（绕过了唯一适配点）")
+    if "return False" not in read_fn:
+        miss.append("moments_read 失败时没回传原因（调用方无法决定要不要降级）")
+    if "MomentDB" not in adapter:
+        miss.append("适配层没走公开 API MomentDB")
+    if "reply_to" not in adapter:
+        miss.append("适配层没留住 reply_to（评论的「谁回复谁」会丢）")
+    return miss
+
+
+#: 反向对照样本：接线上线前的旧写法（只截图）。
+_MOMENTS_OLD_SAMPLE = '''
+def _exec_moments_surf(ctx, args):
+    ok, msg = ctx["wechat"].moments_open()
+    parts = ctx["wechat"].moments_screenshot()
+    return {"content": parts}
+'''
+
+
+def t_moments_db_first_guard() -> None:
+    """自检：**朋友圈先读库**（不开窗、结构化），截图降为 `visual=1` 的出口。"""
+    import ast as _ast
+
+    root = HERE.parents[0]
+
+    def _fn_seg(path: str, name: str) -> str:
+        src = (root / path).read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for n in _ast.walk(tree):
+            if isinstance(n, _ast.FunctionDef) and n.name == name:
+                s = _ast.get_source_segment(src, n) or ""
+                # ⛔ 必须先剥 docstring：这几段说明里就写着 moments_read / reply_to 等词
+                if (n.body and isinstance(n.body[0], _ast.Expr)
+                        and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                    ds = n.body[0].value.value
+                    if isinstance(ds, str) and ds:
+                        s = s.replace(ds, "")
+                return "\n".join(l for l in s.split("\n")
+                                 if not l.strip().startswith("#"))
+        return ""
+
+    surf = _fn_seg("agent/tools.py", "_exec_moments_surf")
+    read_fn = _fn_seg("agent/wechat.py", "moments_read")
+    # 适配层这一侧要连**辅助函数**一起看：评论的归一在 `_moment_comments` 里
+    # （`reply_to` 就是在那里留住的）—— 只看 `load_moments` 会误判"丢了层次"。
+    adapter = _fn_seg("agent/replica_adapter.py", "load_moments") + "\n" + \
+        _fn_seg("agent/replica_adapter.py", "_moment_comments")
+    ck("取到三处源码（分母守卫：surf / moments_read / load_moments）",
+       bool(surf.strip()) and bool(read_fn.strip()) and bool(adapter.strip()),
+       "surf=%d read=%d adapter=%d" % (len(surf), len(read_fn), len(adapter)))
+    if not (surf.strip() and read_fn.strip() and adapter.strip()):
+        return
+    miss = _moments_db_first_missing(surf, read_fn, adapter)
+    ck("朋友圈：先读库（不开窗）＋ 保留看画面的出口 ＋ 结构化留 reply_to",
+       not miss, "缺：%s" % "；".join(miss))
+
+    # 反向对照：旧写法（只截图）必须被判缺项（证明上面那条不是"写成绿的"）
+    old = _moments_db_first_missing(_MOMENTS_OLD_SAMPLE, "", "")
+    ck("反向对照：旧写法（开窗+截图、无读库、无 visual 出口）必须被判缺项",
+       len(old) >= 3, "检出 %d 项：%s" % (len(old), "；".join(old[:3])))
+
+
+# ---------------------------------------------------------------- 群成员名录：走群成员表，不看通讯录
+
+def _group_members_missing(adapter: str, wrap: str, exec_fn: str) -> list:
+    """检查「群成员名录」这条链的接线（**纯函数**，便于反向对照）。
+
+    核心要钉住的是一条**能力边界**：名录必须走**群成员表**——
+    它覆盖"没加你好友的人"；而通讯录（`contact`）与"最近活跃成员"（消息流统计）
+    **都会漏**：前者没有非好友，后者只有发过言的人。
+    """
+    miss = []
+    if "get_group_members" not in adapter:
+        miss.append("适配层没走公开 API get_group_members")
+    if "has_api(" not in adapter:
+        miss.append("适配层没有能力守卫（老驱动库会直接 AttributeError）")
+    if ("remark" not in adapter) or ("is_owner" not in adapter):
+        miss.append("适配层没保留 remark / is_owner（备注与群主身份会丢）")
+    if "@chatroom" not in adapter:
+        miss.append("适配层没做非群聊短路（私聊 wxid 进去会白查一遍）")
+    if "replica_adapter" not in wrap:
+        miss.append("wechat 封装没走适配层（绕过唯一适配点）")
+    if "return False" not in wrap:
+        miss.append("封装失败时没回传原因（调用方无法区分「不是群」与「读失败」）")
+    if "store" in exec_fn:
+        miss.append("执行器还在从消息流统计发言者（那是 active_members 的活）")
+    if "不是群聊" not in exec_fn:
+        miss.append("执行器没说清「非群聊」（会把空列表当答案糊弄过去）")
+    return miss
+
+
+#: 反向对照样本：旧写法（只统计发言者 ⇒ 没发过言的人永远看不见）。
+_GROUPMEM_OLD_SAMPLE = '''
+def _exec_get_members(ctx, args):
+    members = ctx["store"].active_members(ctx["chat_key"], 10)
+    return {"members": members}
+'''
+
+
+def t_group_members_db_guard() -> None:
+    """自检：**群成员名录走群成员表**（覆盖"不在通讯录、也没发过言"的人）。"""
+    import ast as _ast
+
+    root = HERE.parents[0]
+
+    def _fn_seg(path: str, name: str) -> str:
+        src = (root / path).read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for n in _ast.walk(tree):
+            if isinstance(n, _ast.FunctionDef) and n.name == name:
+                s = _ast.get_source_segment(src, n) or ""
+                if (n.body and isinstance(n.body[0], _ast.Expr)
+                        and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                    ds = n.body[0].value.value
+                    if isinstance(ds, str) and ds:
+                        s = s.replace(ds, "")
+                return "\n".join(l for l in s.split("\n")
+                                 if not l.strip().startswith("#"))
+        return ""
+
+    adapter = _fn_seg("agent/replica_adapter.py", "load_group_members")
+    wrap = _fn_seg("agent/wechat.py", "group_members")
+    exec_fn = _fn_seg("agent/tools.py", "_exec_get_group_members")
+    ck("取到三处源码（分母守卫：load_group_members / group_members / 执行器）",
+       bool(adapter.strip()) and bool(wrap.strip()) and bool(exec_fn.strip()),
+       "adapter=%d wrap=%d exec=%d" % (len(adapter), len(wrap), len(exec_fn)))
+    if not (adapter.strip() and wrap.strip() and exec_fn.strip()):
+        return
+    miss = _group_members_missing(adapter, wrap, exec_fn)
+    ck("群成员名录：走群成员表（含非好友）＋ 能力守卫 ＋ 非群聊明说", not miss,
+       "缺：%s" % "；".join(miss))
+
+    # 工具 schema 里要同时存在两个成员工具，且说明点明分工（否则模型会挑错）
+    tsrc = (root / "agent" / "tools.py").read_text(encoding="utf-8")
+    ck("两个成员工具并存且说明点明分工（名录 vs 最近活跃）",
+       ('"name": "get_group_members"' in tsrc) and ('"name": "get_active_members"' in tsrc)
+       and ("没发过言" in tsrc or "发过言" in tsrc),
+       "get_group_members=%s get_active_members=%s"
+       % ('"name": "get_group_members"' in tsrc, '"name": "get_active_members"' in tsrc))
+
+    # 反向对照：旧写法（只统计发言者）必须被判缺项
+    old = _group_members_missing("", "", _GROUPMEM_OLD_SAMPLE)
+    ck("反向对照：旧写法（从消息流统计发言者）必须被判缺项",
+       len(old) >= 4, "检出 %d 项：%s" % (len(old), "；".join(old[:2])))
+
+
+# ---------------------------------------------------------------- 图片下载：档位与失败可定位
+
+def _image_tier_missing(seg: str, diag: str = "") -> list:
+    """检查图片下载那条链缺哪些接线（**纯函数**，便于反向对照）。
+
+    三项都是"少一行就差很多"的接线：
+      ① 不传 `tier` ⇒ 旧行为只看 `.dat`/缩略图，**可能把缩略图喂给模型**；
+      ② 取不到时不去诊断 ⇒ 排障只剩"下载失败"四个字；
+      ③ 旧包兜底不精确 ⇒ 一个 `except TypeError` 会把别的类型错误一起吞掉。
+
+    `diag` 传**诊断函数**（`_note_image_fail`）的函数体：诊断本身允许独立成函数，
+    但里面必须真的问过 `image_status` —— 只"调了诊断函数"而诊断是空壳，等于没接。
+    """
+    miss = []
+    if 'tier="best"' not in seg:
+        miss.append('没传 tier="best"（旧行为可能只拿到缩略图）')
+    if "_note_image_fail(" not in seg:
+        miss.append("取不到时没走诊断（无法定位卡在哪一步）")
+    elif "image_status" not in diag:
+        miss.append("诊断函数里没问 image_status（空壳诊断）")
+    if '"tier" not in str(' not in seg:
+        miss.append("旧包兜底不精确（TypeError 会被整体吞掉）")
+    return miss
+
+
+#: 反向对照样本：接线上线前的旧写法（只用于证明判据会咬人）。
+_IMAGE_OLD_SAMPLE = '''
+def download_image(self, chat_id, local_id):
+    if self._md is None:
+        return None
+    try:
+        return self._md.download_image(chat_id, int(local_id), save_dir=media_dir)
+    except Exception:
+        return None
+'''
+
+
+def t_image_tier_guard() -> None:
+    """自检：**图片下载要显式要「本机最好的那一档」，且失败时能定位**。
+
+    ⚠️ 前提认知（驱动库 1.2.4.x）：一条图片在本机最多三档 —— `_t.dat` 预览图 / `.dat`
+    微信下发的那一份（**可能本身就是预览版**）/ `_h.dat` 真原件。不传 `tier` 时驱动库走的是
+    `.dat → 缩略图`，**压根不看原件那一档**；而调用方（把图喂给模型）最怕拿到的是缩略图。
+    """
+    import ast as _ast
+
+    root = HERE.parents[0]
+    src = (root / "agent" / "wechat.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+
+    def _fn_seg(name: str) -> str:
+        """取某个函数的源码段，并**剥掉 docstring 与注释行**。
+
+        ⛔ 必须先剥：本函数的说明里就写着 `tier='best'`（讲为什么），
+        不剥掉的话下面那条断言会**自己把自己判过**。
+        """
+        for n in _ast.walk(tree):
+            if isinstance(n, _ast.FunctionDef) and n.name == name:
+                s = _ast.get_source_segment(src, n) or ""
+                if (n.body and isinstance(n.body[0], _ast.Expr)
+                        and isinstance(getattr(n.body[0], "value", None), _ast.Constant)):
+                    ds = n.body[0].value.value
+                    if isinstance(ds, str) and ds:
+                        s = s.replace(ds, "")
+                return "\n".join(l for l in s.split("\n")
+                                 if not l.strip().startswith("#"))
+        return ""
+
+    seg = _fn_seg("download_image")
+    diag = _fn_seg("_note_image_fail")
+    ck("取到了 `wechat.py::download_image` 的源码（分母守卫）", bool(seg.strip()),
+       "长度 %d" % len(seg))
+    if not seg.strip():
+        return
+    ck("失败诊断函数 `_note_image_fail` 存在（分母守卫）", bool(diag.strip()),
+       "长度 %d" % len(diag))
+    miss = _image_tier_missing(seg, diag)
+    ck("图片下载：显式要最好的一档 ＋ 失败可定位 ＋ 旧包兜底精确（三处接线齐全）",
+       not miss, "缺：%s" % "；".join(miss))
+
+    # 反向对照：旧写法必须被判缺三项（证明上面那条不是"写成绿的"）
+    old = _image_tier_missing(_IMAGE_OLD_SAMPLE)
+    ck("反向对照：旧写法（不传 tier、无诊断、宽 except）必须被判缺三项",
+       len(old) == 3, "检出 %d 项：%s" % (len(old), "；".join(old)))
+
+
+# ---------------------------------------------------------------- 窗口纪律：不许"欺负"别人的窗口
+
+#: ⛔ 为什么钉这条：上游 `wechatauto` 的 `guia._minimize_blockers()` 会把**压在微信上面的
+#:   别人的窗口**（浏览器等）直接 `ShowWindow(h, 6)` ＝ `SW_MINIMIZE` 收起来，注释原文是
+#:   「**替代『手动最小化 Chrome 再置顶微信』的步骤**」。
+#:   我方**明确不走这条路** —— 现场故障「微信窗口疯狂闪就是不回复」正是"收-放-收-放"循环
+#:   造成的（见 `agent/wechat.py::_minimize_back_if_needed`：现在只 `SetWindowPos(HWND_BOTTOM)`，
+#:   **绝不改可见性**，并带三条安全线：没登记过不动 / 已最小化不动 / 正在前台不动）。
+#:   这条判据把**已经形成的纪律**钉住，防下一次"顺手加一处清场"。
+_WINBULLY_EXEMPT: dict = {
+    ("agent/ui_adapt.py", "dismiss_overlays"):
+        "隐藏的是**系统输入叠加层**（TouchKeyboard 那一族），收窄手段是「类名 + 标题白名单」，"
+        "目标是别人的浮层，且只 `SW_HIDE`（不最小化、不动 Z 序）",
+}
+
+
+def _win_bully_scan(src: str):
+    """静态扫一段源码里的"欺负窗口"写法。返回 `(违禁, 需白名单, 调用数)`。
+
+    只认**真实调用**（`ast` 解析）—— 注释/docstring 里提到常量不算数：
+    `agent/wechat.py` 的历史说明里就原样写着 `ShowWindow(hwnd, 6)`（讲它为什么被取消）。
+    """
+    import ast as _ast
+    bad, hide, n = [], [], 0
+    try:
+        tree = _ast.parse(src)
+    except SyntaxError:
+        return bad, hide, n
+
+    def _num(a):
+        if isinstance(a, _ast.Constant) and isinstance(a.value, int):
+            return int(a.value)
+        # ⛔ `-1` 在 AST 里是 `UnaryOp(USub, Constant(1))`，**不是** `Constant(-1)`
+        #    —— 这一条是反向对照样本先咬出来的（当时只认出 SW_MINIMIZE、漏了 HWND_TOPMOST）。
+        if (isinstance(a, _ast.UnaryOp) and isinstance(a.op, _ast.USub)
+                and isinstance(a.operand, _ast.Constant)
+                and isinstance(a.operand.value, int)):
+            return -int(a.operand.value)
+        return None
+
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        fn = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        args = list(node.args)
+        if fn in ("ShowWindow", "ShowWindowAsync"):
+            n += 1
+            v = _num(args[1]) if len(args) > 1 else None
+            if v == 6:
+                bad.append("SW_MINIMIZE（把窗口收起来 ⇒ 用户会以为被关了）")
+            elif v == 0:
+                hide.append("SW_HIDE（隐藏，需白名单 + 收窄手段）")
+        elif fn == "SetWindowPos":
+            n += 1
+            v = _num(args[1]) if len(args) > 1 else None
+            if v == -1:
+                bad.append("HWND_TOPMOST（把别人的窗永久钉在最上层）")
+    return bad, hide, n
+
+
+#: 反向对照样本：上游 `_minimize_blockers` 的形状（只用于证明判据会咬人，不进产品代码）。
+_WINBULLY_UPSTREAM_SAMPLE = '''
+def _minimize_blockers(self):
+    for h in targets:
+        u.ShowWindow(h, 6)
+        u.SetWindowPos(h, -1, 0, 0, 0, 0, 0)
+'''
+
+
+def t_no_window_bully_guard() -> None:
+    """自检：**不许"欺负"不属于本项目的窗口**（与上游 `_minimize_blockers` 划清界限）。
+
+    - **违禁（零容忍）**：`ShowWindow(x, 6=SW_MINIMIZE)`、`SetWindowPos(x, -1=HWND_TOPMOST, …)`；
+    - **需白名单**：`ShowWindow(x, 0=SW_HIDE)`（必须在 `_WINBULLY_EXEMPT` 里写明理由）；
+    - **反向对照**：把上游式样本喂进同一个检测函数，必须报红 —— 判据自己要会咬人。
+    """
+    import ast as _ast
+    import textwrap as _tw
+
+    root = HERE.parents[0]
+    bad, bare_hide, counted, files = [], [], 0, 0
+    for f in sorted((root / "agent").glob("*.py")):
+        if f.name == "winops.py":
+            continue                      # 实现点自身：窗口操作就该长在这里
+        files += 1
+        src = f.read_text(encoding="utf-8")
+        # 预筛：不碰窗口 API 的文件直接跳过（否则 140 个文件逐个 walk + dedent + 再 parse，
+        # 单跑要 27 秒；判据本身只关心这几处调用）
+        if ("ShowWindow" not in src) and ("SetWindowPos" not in src):
+            continue
+        _b, _h, _n = _win_bully_scan(src)
+        if _n:
+            counted += _n
+        if not _b and not _h:
+            continue          # 文件级已无「违禁 / SW_HIDE」⇒ 不必再做（很贵的）函数级定位
+        # 逐个函数定位（白名单是 (文件, 函数) 粒度）
+        try:
+            tree = _ast.parse(src)
+        except SyntaxError:
+            continue
+        for node in _ast.walk(tree):
+            if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            seg = _ast.get_source_segment(src, node) or ""
+            seg = _tw.dedent(seg)
+            b, h, _ = _win_bully_scan(seg)
+            key = ("agent/%s" % f.name, node.name)
+            if b:
+                bad.append("%s::%s %s" % (key[0], key[1], "；".join(b)))
+            if h and key not in _WINBULLY_EXEMPT:
+                bare_hide.append("%s::%s %s" % (key[0], key[1], "；".join(h)))
+
+    ck("不许对「别人的窗口」用 `SW_MINIMIZE` / `HWND_TOPMOST`（上游那套「清场」我方明确不跟）",
+       not bad, "违禁：%s" % "、".join(bad[:3]))
+    ck("用 `SW_HIDE` 隐藏窗口必须进白名单并写明理由",
+       not bare_hide, "未白名单：%s" % "、".join(bare_hide[:3]))
+    #: 分母守卫：一条都没扫到时上面两条会"全绿"（判据自身失效而不自知）
+    ck("窗口操作扫描真的扫到了调用（分母守卫 > 0）", counted > 0,
+       "扫了 %d 个文件、命中 %d 处窗口操作" % (files, counted))
+
+    # 反向对照：上游式样本必须被判红（证明这两条判据不是"写成绿的"）
+    _b2, _h2, _n2 = _win_bully_scan(_WINBULLY_UPSTREAM_SAMPLE)
+    ck("反向对照：上游式「清场」样本必须被判红", len(_b2) == 2,
+       "检出：%s" % "；".join(_b2))
+    _b3, _h3, _n3 = _win_bully_scan("def f(u, h):\n    u.ShowWindow(h, 0)\n")
+    ck("反向对照：只 `SW_HIDE` 落在「需白名单」档（不与违禁混淆）",
+       not _b3 and len(_h3) == 1, "hide=%d bad=%d" % (len(_h3), len(_b3)))
+
+    # 两条**已修的历史**要钉住（防回改）
+    _ua = (root / "agent" / "ui_adapt.py").read_text(encoding="utf-8")
+    ck("`ui_adapt` 挡路窗口用的是 `HWND_BOTTOM`(1) 而不是 `HWND_TOPMOST`(-1)"
+       "（-1 那次把挡路的控制台永久钉在了最上层）",
+       "SetWindowPos(h, 1, 0, 0, 0, 0, 0x0001 | 0x0002)" in _ua)
+    _wc = (root / "agent" / "wechat.py").read_text(encoding="utf-8")
+    try:
+        _wt = _ast.parse(_wc)
+        _fn = next(n for n in _ast.walk(_wt)
+                   if isinstance(n, _ast.FunctionDef) and n.name == "_minimize_back_if_needed")
+        _seg = _tw.dedent(_ast.get_source_segment(_wc, _fn) or "")
+        _calls, _hh, _ = _win_bully_scan(_seg)
+        ck("`_minimize_back_if_needed` 绝不改可见性（只压 Z 序底层，不 ShowWindow）",
+           not _calls and not _hh and "HWND_BOTTOM" in _seg)
+    except StopIteration:
+        ck("`_minimize_back_if_needed` 仍存在（改名要同步这条判据）", False, "没找到该函数")
+
+
+#: 判据全表。`main()` 按此顺序执行；`--only` 按名字筛、`--fast` 按下面的慢表跳。
+#  顺序即执行顺序（部分判据依赖前面判据留下的现场，勿随意重排）。
+ALL_TESTS = (
+    t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
+    t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
+    t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
+    t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
+    t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
+    t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_g23_fbnotice,
+    t_g24_fbnotice_dismiss, t_g25_whale_boot, t_g26_web_parity_actions,
+    t_g27_native_pieces, t_ocr_fuzzy,
+    t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
+    t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
+    t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
+    t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
+    t_surface_bg_guard,
+    t_field_guard,
+    t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
+    t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
+    t_landing_discipline_guard,
+    t_subnav_guard, t_subnav_coverage_guard, t_emoji_index_guard, t_emoji_codes_guard,
+    t_row_geometry_guard, t_rhythm_guard, t_contrast_guard, t_fingerprint_verdict_guard,
+    t_scope_degrade_guard, t_job_cancel_guard, t_suspend_counter_guard,
+    t_task_owner_guard, t_idempotent_close_guard,
+    t_retry_policy_guard, t_reconnect_once_guard,
+    t_popup_open_guard,
+    t_backend_down_shortcircuit_guard,
+    t_config_stamp_content_guard, t_config_changed_broadcast_guard,
+    t_restart_handover_guard, t_a11y_four_guard, t_clear_before_fill_guard,
+    t_inject_surface_guard, t_foreground_borrow_guard,
+    t_whale_roles, t_whale_assets, t_whale_usage,
+    t_no_window_bully_guard, t_image_tier_guard, t_moments_db_first_guard,
+    t_group_members_db_guard, t_video_frame_batch_guard, t_video_subtitles_guard,
+    t_download_magic_guard, t_video_probe_guard, t_external_download_guard,
+    t_scene_frames_guard, t_asr_backend_guard, t_watermark_latest_minus1_guard,
+    t_qt_no_msgbox_guard, t_mirror_fetch_guard, t_projection_rows_guard, t_clean_tree_guard,
+    t_search_paste_guard, t_prefetch_parallel_guard, t_filewatch_guard, t_session_rows_projection_guard, t_emoji_usage_guard, t_emoji_code_guard, t_hot_words_guard,
+)
+
+#: `--fast` 跳过的判据：**按最近一次全量的逐条计时选出来的当前最慢几名**。
+#  ⚠️ 这是一份"会过期的名单"——慢条会变（曾经最慢的 `t_g26`(264s)/`t_panels`(226s)
+#     在修掉"后端没就绪时空等超时"后已降到 8~16s）。**每次全量后看一眼计时输出，
+#     名单与实际不符就更新**（判据本身只负责"跳过最贵的几条"，不负责永远正确）。
+#  ⚠️ 跳过它们**只影响"快速自查"**；交付/提交前必须跑**不带参数**的完整全量。
+SLOW_TESTS = {
+    "t_ocr_fuzzy",                # 约 40s（波动大：本机 5~40s，受帧质量影响）
+    "t_winops_guard",             # 约 27s
+    "t_foreground_borrow_guard",  # 约 19s
+}
+
+
+def _pick_tests(argv: list[str]) -> tuple[list, int]:
+    """按命令行参数挑本轮要跑的判据。
+
+    参数：
+      `--only=a,b`  只跑名字列为 a、b 的判据（名字可写全称，也可写去掉 `t_` 前缀的短名）
+      `--fast`      跳过 SLOW_TESTS 里那三条重活，其余照跑
+      `--list`      只打印判据清单与慢表，不执行
+    返回 `(选中的判据列表, 退出码)`；退出码非 None 表示不进执行阶段（清单/选错名）。
+    默认（无参数）＝全表，即"提交前必须跑一次"的完整全量。
+    """
+    only_raw = ""
+    fast = False
+    want_list = False
+    for a in argv:
+        if a.startswith("--only="):
+            only_raw = a[len("--only="):]
+        elif a == "--fast":
+            fast = True
+        elif a == "--list":
+            want_list = True
+
+    if want_list:
+        for f in ALL_TESTS:
+            mark = "  ← 慢(--fast 跳过)" if f.__name__ in SLOW_TESTS else ""
+            print(f"  {f.__name__}{mark}")
+        print(f"\n共 {len(ALL_TESTS)} 条；慢表 {len(SLOW_TESTS)} 条。"
+              f"用法：--only=t_a,t_b  |  --fast  |  --list")
+        return [], 0
+
+    picked = list(ALL_TESTS)
+    if fast:
+        picked = [f for f in picked if f.__name__ not in SLOW_TESTS]
+
+    if only_raw:
+        # 允许写短名（`a11y_four_guard`）或全名（`t_a11y_four_guard`），两者都能对上。
+        want = [s.strip() for s in only_raw.split(",") if s.strip()]
+        by_short = {f.__name__[2:]: f for f in ALL_TESTS if f.__name__.startswith("t_")}
+        by_full = {f.__name__: f for f in ALL_TESTS}
+        chosen, miss = [], []
+        for w in want:
+            f = by_full.get(w) or by_short.get(w)
+            if f is None:
+                miss.append(w)
+            elif f not in chosen:
+                chosen.append(f)
+        if miss:
+            print("判据名不认识：" + ", ".join(miss))
+            print("用 --list 看全部判据名。")
+            return [], 2
+        # 保持全表的相对顺序，避免手工顺序打乱依赖
+        picked = [f for f in ALL_TESTS if f in chosen]
+
+    return picked, None
+
+
 def main() -> int:
+    picked, _code = _pick_tests(sys.argv[1:])
+    if _code is not None:
+        return _code
+
+    # ⭐ 项目根入 `sys.path`：部分判据（`import agent.config` / `import ui_qt.*`）依赖它。
+    #   完整全量里它是被前序判据顺带插进去的；`--only` 单跑时缺了这一步 ⇒
+    #   会报 `ModuleNotFoundError: No module named 'agent'` 这种**假失败**（不是产品问题）。
+    #   ⇒ 在执行前无条件保证一次，两种跑法结果一致。
+    _root = str(HERE.parent)
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+
     # ⭐ 测试隔离（N1 残余的收口）：`logs/console.url` 是**产品运行时**写的
     #   （含随机端口+token），自检跑在产品目录里会读到它——轻则刷几百行「端口连不上」噪音，
     #   重则让依赖 current_url 的断言随工作区残留漂移。⇒ 开跑前把它临时挪开，收尾还原。
@@ -10747,29 +14395,16 @@ def main() -> int:
         except OSError:
             pass
 
+    timings: list[tuple[str, float, int]] = []
     try:
-        for fn in (t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
-                   t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
-                   t_wheel_nod, t_updbar, t_pop_look, t_pause_win, t_no_touch, t_bootstrap32, t_ocr9,
-                   t_c10, t_c13, t_hotfix1, t_hotfix2, t_catmgr, t_medialocal, t_commfb,
-                   t_veradv, t_g5, t_g6, t_g7, t_g8, t_g9, t_g10, t_g11, t_g12, t_g13, t_g14,
-                   t_g15, t_g16, t_g17, t_g18, t_g19, t_g20, t_g21, t_g22, t_g23_fbnotice,
-                   t_g24_fbnotice_dismiss, t_g25_whale_boot, t_g26_web_parity_actions,
-                   t_g27_native_pieces, t_ocr_fuzzy,
-                   t_audit_r3, t_dialog_drag, t_whale_guard, t_color_token_guard,
-                   t_button_label_guard, t_placeholder_guard, t_dupdef_guard,
-                   t_attr_shadow_guard, t_async_landing_guard, t_screen_guards,
-                   t_gate_middle, t_cfg_wired_guard, t_delivery_ledger_guard, t_dev_dir_guard,
-                   t_surface_bg_guard,
-                   t_field_guard,
-                   t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
-                   t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
-                   t_inject_surface_guard, t_foreground_borrow_guard,
-                   t_whale_roles, t_whale_assets, t_whale_usage):
+        for fn in picked:
+            _t0 = time.time()
+            _n0 = len(ROWS)
             try:
                 fn()
             except Exception as e: # noqa: BLE001
                 ck(f"{fn.__name__} 执行未抛异常", False, f"{type(e).__name__}: {e}"[:110])
+            timings.append((fn.__name__, time.time() - _t0, len(ROWS) - _n0))
     finally:
         if _cu_moved:
             try:
@@ -10781,7 +14416,16 @@ def main() -> int:
     for name, ok, extra in ROWS:
         print(("  OK  " if ok else "  FAIL") + "  " + name + (("   [" + extra + "]") if extra else ""))
     print()
-    print(f"{len(ROWS) - len(bad)} 通过 / {len(bad)} 失败")
+    total_s = sum(t for _, t, _ in timings)
+    print(f"{len(ROWS) - len(bad)} 通过 / {len(bad)} 失败   （跑了 {len(timings)} 条判据，"
+          f"合计 {total_s:.1f}s）")
+    slow = sorted(timings, key=lambda x: -x[1])[:10]
+    if slow and slow[0][1] >= 1.0:
+        print("\n最慢的几条（改一处自检时优先用 --fast 或 --only 跳过它们）：")
+        for nm, dt, nc in slow:
+            if dt < 1.0:
+                break
+            print(f"  {dt:7.2f}s  {nm}   ({nc} 条断言)")
     return 1 if bad else 0
 
 

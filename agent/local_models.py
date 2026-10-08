@@ -20,6 +20,9 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+import logging
+
+log = logging.getLogger("persona-morph")
 
 #: 常见本机 OpenAI 兼容端点（端口是各家的默认值；配置里可追加）
 DEFAULT_ENDPOINTS = [
@@ -162,7 +165,8 @@ def test_chat(base_url, model, timeout=20, api_key=""):
         text = ""
         try:
             text = (data["choices"][0]["message"].get("content") or "")[:40]
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return {"ok": True, "ms": ms, "model": (data or {}).get("model") or model, "reply": text,
                 "capability": CAPABILITY_NOTE,
@@ -171,7 +175,8 @@ def test_chat(base_url, model, timeout=20, api_key=""):
         body = ""
         try:
             body = e.read().decode("utf-8", "replace")[:200]
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         return {"ok": False, "ms": int((time.time() - t0) * 1000),
                 "error": "HTTP %s %s" % (e.code, body)}

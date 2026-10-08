@@ -14,6 +14,9 @@ import os
 import threading
 import time
 from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "data", "tool_stats.json")
@@ -29,7 +32,8 @@ def _load() -> dict:
             d.setdefault("last", {})
             d.setdefault("errors", {})
             return d
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     return {"counts": {}, "last": {}, "errors": {}}
 
@@ -47,11 +51,12 @@ def note(name: str, ok: bool = True) -> None:
             d["errors"][n] = int(d["errors"].get(n) or 0) + 1
         try:
             os.makedirs(os.path.dirname(PATH), exist_ok=True)
-            tmp = PATH + ".tmp"
+            tmp = persist.tmp_for(PATH)
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(d, fh, ensure_ascii=False, indent=1)
             persist.replace_into(tmp, PATH)
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
 

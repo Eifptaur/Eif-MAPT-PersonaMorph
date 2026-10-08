@@ -7,7 +7,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE = r'C:\Users\ptmou\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\local'
+BASE = r'%USERPROFILE%\Desktop\WX-chatbot\dev-workspace\persona-morph\ocr-samples\local'
 OUT = os.path.join(os.path.dirname(__file__), '..', '报告', 'ocr瓶颈-20260930')
 
 from agent import chat_ocr as co  # noqa: E402

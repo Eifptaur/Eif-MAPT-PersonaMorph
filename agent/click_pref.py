@@ -72,12 +72,12 @@ def _save(d: dict) -> None:
     try:
         ks = [(k, v) for k, v in (d.get("keys") or {}).items() if isinstance(v, dict)]
         if len(ks) > MAX_KEYS: # 只留最近的 MAX_KEYS 条
-            # ⛔ 排序键原来直接 `int(v.get("at"))` —— 一条脏条目（`at` 不是数字）
+            # ⛔ 排序键原来直接 `int(v.get)` —— 一条脏条目（`at` 不是数字）
             #   就会让**读整段**抛错，被本函数的 except 吞掉 ⇒ 之后每次记录都写不进盘。
             ks.sort(key=lambda t: _safe_int((t[1] or {}).get("at")), reverse=True)
             d["keys"] = dict(ks[:MAX_KEYS])
         os.makedirs(os.path.dirname(PATH) or ".", exist_ok=True)
-        tmp = PATH + ".tmp"
+        tmp = persist.tmp_for(PATH)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=1)
             f.flush()

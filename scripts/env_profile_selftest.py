@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
 
 import _srcmatch as _sm # noqa: E402
-import _srcslice as _ss # noqa: E402
+
 from agent import env_profile as EP # noqa: E402
 
 PASS = FAIL = 0
@@ -124,17 +124,44 @@ finally:
     EP.PATH = _old_path
     EP.auto_apply_enabled = _real_aa
 
-print("\n── D. 配置与接线 ──")
+print("\n── D0. 配置与接线 ──")
 _cfg = src("agent/config.py")
 _ocr = src("agent/chat_ocr.py")
-ok("D1 配置里有 `env_profile.auto_apply` 且**默认 True**（用户口径：适配不该让用户动手）",
+# ⚠️ 口径（**当前**，别再改回来）：
+#   产品默认 ＝ **开**（`auto_apply: True`）—— 取向是「**适配就该自动完成，不该要求用户动手**」；
+#   关掉仍是合法选择（只探测/给建议/记事实，不许自适应改行为）——那条**反向锚由 C 段守着**
+#     （`auto_apply` 关 ⇒ `route_order` 原样返回）。
+#   ⛔ **三处必须一致**：`agent/config.py` 的默认 / `config.example.json` / 这里的断言。
+#     这三处曾经互相矛盾；而这**一条判据本身也被写反过**（写成"产品默认必须 False"＝在逼人打开自适应）
+#     ⇒ 两个方向都错过一次。⇒ 现在**双向钉死**：默认必须是"开"，示例必须与默认**同值**。
+ok("D1 产品默认是 **开**（`auto_apply: True`；改方向必须同时改这三处）",
    _sm.has(_cfg, '"env_profile"') and _sm.has(_cfg, '"auto_apply": True'))
+ok("D1b 示例文件与产品默认**同值**（不许更保守/更激进 —— 否则照抄示例的人行为跟默认不一样）",
+   _sm.has(src("config.example.json"), '"auto_apply": true'))
 ok("D2 `config.example.json` 同步了（fullcheck 那条闸门会查）",
    "env_profile" in src("config.example.json"))
 ok("D3 OCR 双引擎接了自适应顺序（`_ocr_route_order` 真被用上）",
    _sm.has(_ocr, "for _name in _ocr_route_order():") and _sm.has(_ocr, "def _ocr_route_order()"))
 ok("D4 OCR 顺序在 `auto_apply` 关着时**恒为 winrt 优先**（反向锚）",
    _sm.has(_ocr, "if not _ep.auto_apply_enabled():") and _sm.has(_ocr, 'return order'))
+
+print("\n── D2. 显示度量：预热**不许把「测不到」当「测到了」** ──")
+_dm = src("agent/display_metrics.py")
+_pm = src("scripts/persona_morph.py")
+ok("D5 ★ `warmup` 只有**从窗口真测到**（来源 `window`）才写盘 —— 不许拿 `system`/`fallback` 覆盖档案",
+   _sm.has(_dm, '_src == "window"') and _sm.has(_dm, "if _src == \"window\" and float(s or 0) > 0:"))
+ok("D6 ★ 反向锚：`warmup` 里**没有**无条件 `remember(scale=...)` 的老写法（那会把真值冲掉）",
+   not _sm.has(_dm, "remember(scale=s, src=ssrc)") and not _sm.has(_dm, "remember(now, src=src)\n    return s"))
+ok("D7 预热接进**启动链**（`_attach_wechat` 里，接上微信就先量一次）",
+   _sm.has(_pm, "display_metrics as _dm") and _sm.has(_pm, "_dm.warmup(_hw)"))
+ok("D8 ★ 预热**不许建界面**（句柄走只读枚举 `find_main_window`，不是 `_get_gui()` 懒建窗口）",
+   _sm.has(_pm, "_ib.find_main_window()") and not _sm.has(_pm, "_get_gui().main_hwnd"))
+ok("D9 ★ 预热整段 try 罩住 ⇒ 失败**不影响启动**（行为与接线前一致）",
+   _sm.has(_pm, "屏幕度量预热跳过（不影响启动）"))
+ok("D10 ★ 度量模块自己**不许动窗口**（无 SetForegroundWindow / SetWindowPos / ShowWindow）",
+   all(k not in _dm for k in ("SetForegroundWindow", "SetWindowPos", "ShowWindow")))
+ok("D11 度量只读 `GetDpiForWindow` / `GetDpiForSystem` / `GetWindowRect` / `GetClientRect`",
+   all(k in _dm for k in ("GetDpiForWindow", "GetDpiForSystem", "GetWindowRect", "GetClientRect")))
 
 print("\n── E. 红线：只调路线，不碰约束 ──")
 _ep_body = "\n".join(l for l in EP_SRC.splitlines() if not l.strip().startswith("#"))

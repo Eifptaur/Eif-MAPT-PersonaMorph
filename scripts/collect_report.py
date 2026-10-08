@@ -28,6 +28,9 @@ import platform
 import sys
 import threading
 import time
+import logging
+
+log = logging.getLogger("persona-morph")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -64,7 +67,8 @@ def redact(s):
         node = platform.node()
         if node:
             s = s.replace(node, "%COMPUTERNAME%")
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if _scrub_text is not None:
         s = _scrub_text(s)
@@ -102,7 +106,8 @@ def _os_registry():
                             ("EditionID", "edition")):
             try:
                 out[field] = str(winreg.QueryValueEx(key, name)[0])
-            except Exception:
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
         winreg.CloseKey(key)
         # ⚠️ 注册表的 `ProductName` 在 **Windows 11** 上仍然写着 "Windows 10"（微软一直没改，
@@ -110,10 +115,12 @@ def _os_registry():
         #    **按 build 号判代际**（≥22000 即 Win11），别拿 ProductName 当文件名。
         try:
             out["family"] = "Windows 11" if int(out.get("build", "0")) >= 22000 else "Windows 10"
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             out["family"] = ""
         return out
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return {}
 
 
@@ -142,7 +149,8 @@ def sec_system():
             u32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
             u32.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
             aware = bool(u32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)))
-        except Exception:
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             aware = False
         gdi = ctypes.windll.gdi32
         gdi.GetDeviceCaps.restype = ctypes.c_int
@@ -212,7 +220,8 @@ def sec_wechat():
             if os.path.exists(pat):
                 exes.append(pat)
         lines.append("  常见安装路径命中: %s" % (exes or "无（可能在其它盘，看上面的 path）"))
-    except Exception:
+    except Exception as _e:
+        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     # 窗口枚举（不依赖库）
     try:
@@ -688,7 +697,7 @@ def sec_delivery():
     except Exception as e:
         lines.append("  语音音源: 读不到（%s）" % type(e).__name__)
     try:
-        # ⚠️ 这里原来只 `which("ffmpeg")`（只查 PATH）⇒ 干净机器上报告写着"没找到"，
+        # ⚠️ 这里原来只 `which`（只查 PATH）⇒ 干净机器上报告写着"没找到"，
         #    而 `requirements.txt` 里的 imageio-ffmpeg **本来就自带一份**（`agent/ffmpeg_bin.py`
         #    是唯一解析入口：配置 → PATH → 自带）⇒ 那条结论是假的，会把人指向"去装 ffmpeg"。
         from agent import ffmpeg_bin as _FB
@@ -710,7 +719,7 @@ def sec_delivery():
         if not base:
             lines.append("  模型端点: 没填地址")
         else:
-            u = join_url(base, "/models") # ⚠️ 必须带前导斜杠：join_url 只 rstrip("/") 再拼，不补斜杠
+            u = join_url(base, "/models") # ⚠️ 必须带前导斜杠：join_url 只 rstrip 再拼，不补斜杠
             req = _ur.Request(u, headers=_auth_headers(str(api.get("api_key") or "")))
             with _ur.urlopen(req, timeout=10) as r:
                 d = json.loads(r.read().decode("utf-8", "replace"))
@@ -766,7 +775,7 @@ def sec_delivery():
 def sec_compat():
     """七、兼容性指纹：**每台机器都不一样**的那些事实（只读，任何一节失败都不影响其它节）。
 
-    ⛔ 为什么要单独一节（
+    ⛔ 为什么要单独一节
       的情况都不一样」）：报障里最常见的对不上，就是"我这台是那样、你那台是这样"——
       Windows 版本/DPI/微信主窗类名/Python/端口/WebView2/消息库目录与分片/库页1 是明文头还是全加密。
       这几行**一贴出来，多半不用再问**。同一份口径也在 `agent\\compat.py`（唯一实现）。
