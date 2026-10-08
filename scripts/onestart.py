@@ -35,6 +35,24 @@ os.makedirs(LOG_DIR, exist_ok=True)
 GUI = os.environ.get("WX_GUI") == "1"
 
 
+def _dbg(fmt, *args, **kw):
+    """把"宽捕处"的诊断写进 logger（**不能用 `log` 这个名字**）。
+
+    ⛔ 本模块下面第 53 行 `def log(msg)` **把顶部的 logger 覆盖掉了** ——
+      于是在那之后写 `log.debug(...)` 会抛
+      `AttributeError: 'function' object has no attribute 'debug'`。
+      而所有"宽捕处"（`except Exception` 的兜底）恰恰用的就是 `log.debug(...)`
+      ⇒ **兜底本身会二次崩溃**：本来只该吞掉的小异常，会把整个启动脚本炸掉，
+      用户看到的是"点了没反应/闪一下就没了"。
+    ⇒ 这里给"宽捕处"一个**不会与 `log` 撞名的替身**；全模块 18 处 `log.debug` 都改调它。
+    """
+    try:
+        log.debug(fmt, *args, **kw)
+    except Exception:  # noqa: BLE001
+        # 诊断信息写不出去不是失败（它本来就只在"已经出错"时用）
+        pass
+
+
 def evt(kind, *args):
     """GUI 事件行（ASCII）：stdout（安装器读取）+ 日志文件（installer 轮询日志，无事件线程）。"""
     line = "@@%s:%s" % (kind, ":".join(str(a) for a in args))
@@ -42,7 +60,7 @@ def evt(kind, *args):
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     try:
         print(line, flush=True)
@@ -56,7 +74,7 @@ def log(msg):
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     if not GUI:
         try:
@@ -88,7 +106,7 @@ def _prog(prefix, done, total):
             bar = ""
         print("  ┃ %s %3d%% [%s] (%d/%d)" % (prefix, pct, bar, done, total), flush=True)
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -173,7 +191,7 @@ def run_stream(cmd, timeout=900, on_line=None):
                 except Exception:
                     pass
         except Exception as _e:
-            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
         finally:
             done.set()
@@ -304,7 +322,7 @@ def popup_fail(reason, tail=""):
             msg += "—— 最近日志（看前几行即可定位）：\n" + tail[-1500:]
         ctypes.windll.user32.MessageBoxW(0, msg, "Persona Morph 启动失败", 0x10)
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -316,7 +334,7 @@ def _mark_browser_opened():
         with open(os.path.join(LOG_DIR, "browser_opened.txt"), "w", encoding="utf-8") as f:
             f.write(str(time.time()))
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
 
 
@@ -326,7 +344,7 @@ def _build_tag_local():
         mt = os.path.getmtime(os.path.join(ROOT, "assets", "console", "index.html"))
         return "b." + datetime.datetime.fromtimestamp(mt).strftime("%m%d-%H%M")
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "b?"
 
 
@@ -357,7 +375,7 @@ def _probe_console_window():
         import ctypes
         return h if ctypes.windll.user32.IsWindow(ctypes.c_void_p(h)) else 0
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return 0
 
 
@@ -381,7 +399,7 @@ def _probe_running_instance(timeout=2):
             _d = _j.loads(_r.read().decode("utf-8", "replace"))
             return "same" if str(_d.get("ver") or "") == _build_tag_local() else "old"
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return "none"
 
 
@@ -626,7 +644,7 @@ def main():
                         % (len(_bad_kick),
                            "、".join("PID=%s rc=%s" % (x.get("pid"), x.get("rc")) for x in _bad_kick)))
         except Exception as _e:
-            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
     log("[1/3] 依赖检查（缺则自动安装；已装自动跳过）")
@@ -653,7 +671,7 @@ def main():
         _req_n = len([_l for _l in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8")
                       if _l.strip() and not _l.strip().startswith("#")])
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _req_n = 21
     deps_install = [0]
 
@@ -762,7 +780,7 @@ def main():
         _held, _hpid = _si_probe(lock_path=_lk)
         existing = ((_hpid or -1) if _held else (_si_legacy(_lk) or None))
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         existing = None
     # ⛔ **残留的旧包实例不算"已在运行"**。
     #    旧包更新完可能没人接替（旧看门狗还在、机器人已死），这时如果这里直接 return 0，
@@ -784,7 +802,7 @@ def main():
             log("发现**旧包残留实例**（watchdog.pid 记的版本=%r ≠ 本包 %r）⇒ 不跳过，拉起新看门狗接管"
                 % (_rec or "(读不出，多半是旧版格式)", _cur))
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         _stale = False
     # ⛔ 「已在运行」不能只信单实例互斥体 —— 互斥体只证明「有进程持锁」，
     #    不证明「控制台起来了」。真机出现过：互斥体被半死不活的机器人/看门狗占着，
@@ -807,7 +825,7 @@ def main():
                     _server = (_pj.load(_pcf).get("server", {}) or {})
                 _cfg_port = int(_server.get("port") or 3210)
             except Exception as _e:
-                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 _cfg_port = 3210
             # 候选口 2：顺延口 —— webui 在端口被占时会静默顺延（3210→3211…），往上多试 5 个
             for _p in range(_cfg_port, _cfg_port + 6):
@@ -836,7 +854,7 @@ def main():
                 except Exception:
                     continue
         except Exception as _e:
-            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             _port_up = False
     if existing is not None and not _stale:
         _who = ("pid=%s" % existing) if (existing and existing > 0) else "pid 未知"
@@ -854,7 +872,7 @@ def main():
                 if _wl and _wl[0].isdigit():
                     _wd_pids.append(int(_wl[0]))
             except Exception as _e:
-                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             try:
                 from agent import restart as _rs
@@ -1007,7 +1025,7 @@ def main():
                     opened = True
                     break
             except Exception as _e:
-                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 pass
             spent = int(time.time() - t0)
             if spent >= _nxt_hint:
@@ -1021,7 +1039,7 @@ def main():
             except Exception:
                 pass
     except Exception as _e:
-        log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        _dbg("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         pass
     log("一键启动完成。")
     _ask_shortcut()

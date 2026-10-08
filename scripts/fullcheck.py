@@ -784,6 +784,56 @@ except Exception as e:
     check("`log` 的定义都在**使用之前**（AST 口径：没有定义、或定义落在使用之后，都会在运行期抛 `NameError` ⇒ 被宽捕吞掉）",
           False, str(e)[:80])
 
+# ── `log` 的模块级定义**不许被同名函数覆盖**（AST 口径）──
+#    为什么：本判据是紧接着上面那条补的 —— 上面只查"有没有 `log = ...`"，
+#    于是 `scripts/onestart.py` 这种写法（顶部 `log = logging.getLogger(...)` 是 logger、
+#    下面又来一个 `def log(msg):` 把 logger **覆盖成函数**）**查不出来**，
+#    而它的 18 处"宽捕处"写的正是 `log.debug(...)` ⇒ 真触发时
+#    `AttributeError: 'function' object has no attribute 'debug'` ⇒ **兜底自己炸，
+#    把整个启动脚本带走**（用户看到"点了没反应/闪一下就没"）。
+#    ⇒ 判据补成"logger 定义之后，不许再有模块级 `def log(`"。
+def _log_shadowed(root):
+    """→ 「模块级 `log` 被 `def log(...)` 覆盖」的文件（AST 口径）。"""
+    out = []
+    for sub in ("agent", "scripts", "ui_qt", "lib"):
+        base = os.path.join(root, sub)
+        if not os.path.isdir(base):
+            continue
+        for dp, dn, fns in os.walk(base):
+            dn[:] = [d for d in dn if d != "__pycache__"]
+            for fn in fns:
+                if not fn.endswith(".py"):
+                    continue
+                p = os.path.join(dp, fn)
+                try:
+                    tree = ast.parse(io.open(p, encoding="utf-8", errors="ignore").read())
+                except Exception: # noqa: BLE001
+                    continue
+                _def_ln = None
+                _fun_ln = None
+                for n in tree.body:                     # ⛔ 只看模块级（缩进内的局部函数不算）
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "log":
+                        if _fun_ln is None:
+                            _fun_ln = n.lineno
+                    elif isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == "log":
+                        _def_ln = n.lineno
+                    elif isinstance(n, (ast.Import, ast.ImportFrom)) and \
+                            any((a.asname or a.name) == "log" for a in n.names):
+                        _def_ln = n.lineno
+                if _fun_ln is not None and _def_ln is not None:
+                    out.append("%s(log=@%s 被 def log 覆盖@%d)"
+                               % (os.path.relpath(p, root).replace("\\", "/"), _def_ln, _fun_ln))
+    return out
+
+
+try:
+    _shadow = _log_shadowed(ROOT)
+    check("模块级 `log` 没被 `def log(...)` 覆盖（覆盖后 `log.debug(...)` 会抛 AttributeError ⇒ 宽捕变炸点）",
+          not _shadow, ("%d 个：" % len(_shadow)) + "、".join(_shadow[:5]) if _shadow else "0 个")
+except Exception as e:
+    check("模块级 `log` 没被 `def log(...)` 覆盖（覆盖后 `log.debug(...)` 会抛 AttributeError ⇒ 宽捕变炸点）",
+          False, str(e)[:80])
+
 # ── 「插了日志却没有 logger」闸（精确口径：只看含本批留栈标记的文件）──
 _MARK_LOGGED = "宽捕处出错（留栈"
 try:
