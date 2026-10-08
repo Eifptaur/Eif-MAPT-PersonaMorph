@@ -30,6 +30,9 @@ namespace WxLauncher
         bool _asking;
         public bool ProbeMode = false; // 取证探针用：只渲染界面、不跑安装流程
         Form _askHolder;
+        // 内容区顶边 = 页签实测底边 + 间距；**构造期算一次、多处要用**（布局与按钮定位）
+        //   ⇒ 必须是字段，不能是 `BuildXxx` 里的局部变量（第 267 项改造后跨方法使用过）。
+        int contentTop;
 
         // ── 安装向导（四页）────────────────────────────────────────────
         // ⛔ 页序与"每页说一件事"的口径见 PLAN 第 267 项；这里只落结构。
@@ -159,7 +162,7 @@ namespace WxLauncher
             Controls.Add(tabs);
 
             // ⚠️ 内容区的顶边**跟着页签的实测底边走**（不再写死 104）—— 页签高度是算出来的。
-            int contentTop = tabs.Bottom + StyleKit.Space.x4;
+            contentTop = tabs.Bottom + StyleKit.Space.x4;
             int cardW = 620 - StyleKit.Space.x6 * 2;
 
             // ── 页 0：欢迎 ──────────────────────────────────────────────
@@ -668,7 +671,7 @@ namespace WxLauncher
             //   先当路径试，能命中就直接用；命不中再走"命令 + 参数"的切分（`py -3` 那种）。
             if (File.Exists(cmd))
             {
-                ver = RunPy(cmd, "", "-c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"");
+                ver = PyRunner.RunPy(cmd, "", "-c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"");
                 if (ver.Length == 0) { why = "跑不起来：" + cmd; return false; }
                 exe = cmd; pre = "";
                 why = "Python " + ver + "（" + cmd + "）";
@@ -689,30 +692,13 @@ namespace WxLauncher
             }
             bool looksPath = first.IndexOf('\\') >= 0 || first.IndexOf('/') >= 0 || first.IndexOf(':') >= 0;
             if (looksPath && !File.Exists(first)) { why = "路径不存在：" + first; return false; }
-            ver = RunPy(first, rest, "-c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"");
+            ver = PyRunner.RunPy(first, rest, "-c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"");
             if (ver.Length == 0) { why = "跑不起来：" + cmd; return false; }
             exe = first; pre = rest;
             why = "Python " + ver + "（" + cmd + "）";
             return true;
         }
 
-        /// 试跑一次 Python（拿版本号用）；跑不起来 / 超时都返回空串，绝不抛。
-        static string RunPy(string exe, string preArgs, string tailArgs)
-        {
-            try
-            {
-                var psi = new ProcessStartInfo(exe, ((preArgs ?? "") + " " + (tailArgs ?? "")).Trim());
-                psi.UseShellExecute = false; psi.CreateNoWindow = true;
-                psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
-                using (var p = Process.Start(psi))
-                {
-                    if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return ""; }
-                    string o = p.StandardOutput.ReadToEnd();
-                    return (o ?? "").Trim();
-                }
-            }
-            catch { return ""; }
-        }
 
         /// 跑一次准备脚本，**返回退出码**（-1＝没跑起来）。原来只 `WaitForExit()` 就写"准备 Python 完成"
         /// —— 那句是假的：脚本失败了我们也照样打"完成"。
@@ -1674,13 +1660,37 @@ static class Program
                             + "from agent.wechat import dep_check as _d;"
                             + "rows,ok=_d('all');"
                             + "print('DEPS_OK' if ok else 'DEPS_MISSING:'+','.join(r[0] for r in rows if not r[3]))";
-                string outp = RunPy(py, "-X utf8", "-c \"" + code.Replace("\"", "\\\"") + "\"");
+                string outp = PyRunner.RunPy(py, "-X utf8", "-c \"" + code.Replace("\"", "\\\"") + "\"");
                 if (string.IsNullOrEmpty(outp)) return false;
                 return outp.IndexOf("DEPS_OK", StringComparison.Ordinal) >= 0
                     && outp.IndexOf("DEPS_MISSING", StringComparison.Ordinal) < 0;
             }
             catch { return false; }
         }
+    }
+
+    /// 试跑一次外部程序（拿版本号 / 探测依赖用）；跑不起来或超时都返回空串，绝不抛。
+    /// 独立成静态工具类（不是挂在 UI 类上）：`LauncherForm` 与 `Program` 都要用，
+    /// 挂在任一个上都会让另一个跨类访问（第 267 项改造后编译失败过一次）。
+    internal static class PyRunner
+    {
+    /// 试跑一次 Python（拿版本号用）；跑不起来 / 超时都返回空串，绝不抛。
+    internal static string RunPy(string exe, string preArgs, string tailArgs)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe, ((preArgs ?? "") + " " + (tailArgs ?? "")).Trim());
+            psi.UseShellExecute = false; psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+            using (var p = Process.Start(psi))
+            {
+                if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return ""; }
+                string o = p.StandardOutput.ReadToEnd();
+                return (o ?? "").Trim();
+            }
+        }
+        catch { return ""; }
+    }
     }
 
     public class NoticeForm : Form
@@ -2170,7 +2180,7 @@ static class Program
         {
             // ⛔ 探针模式（`--shot` / `--dlgprobe`）**不写存档**：探针要的是"按工作区算出来的那个尺寸"，
             //    把探针窗的位置落盘，等于**用探针尺寸覆盖用户调好的窗口位置**（跑一次判据就把用户状态改了）。
-            if (ProbeMode) return;
+            if (ProbeOnly) return;
             try
             {
                 string p = GeoFile();

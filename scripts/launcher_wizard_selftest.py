@@ -221,11 +221,14 @@ ok("⑦b 有 `ProbePage(int)` 入口（探针靠它切页，⛔ 不靠真跑流�
 
 print("\n── ⑧ 探针不许改用户状态（跑判据不能把窗口位置写脏）──")
 # `data\\console_window.txt` 是"用户把控制台窗调成什么样"的存档；探针一关窗就 `SaveGeo()` ⇒ 覆盖它。
-# 反例锚：去掉那句 guard 后 ⑧a 必然变红（源码里 `if (ProbeMode) return;` 在 SaveGeo 内首行）。
+# ⚠️ 这条锚**只锚意图**（"用了本类自己的探针标志"），⛔ 不锚具体标识符名 ——
+#    `SaveGeo` 后来随 `ConsoleForm` 独立出去，而 `ConsoleForm` 的探针字段叫 `ProbeOnly`
+#    （`ProbeMode` 是 `LauncherForm` 的）⇒ 锚字面名会把"改对了"判成红（实测过一次）。
+# 反例锚：去掉那句 guard 后 ⑧a 必然变红。
 _SAVEGEO = _L[_L.index("void SaveGeo()"):] if "void SaveGeo()" in _L else ""
 _SAVEGEO = _SAVEGEO[: _SAVEGEO.index("catch { }") if "catch { }" in _SAVEGEO else len(_SAVEGEO)]
 ok("⑧a ★`SaveGeo` 在探针模式下直接返回（不写 `data\\console_window.txt`）",
-   bool(re.search(r"void SaveGeo\(\)\s*\{[^}]*?if\s*\(\s*ProbeMode\s*\)\s*return", _SAVEGEO, re.S)),
+   bool(re.search(r"void SaveGeo\(\)\s*\{[^}]*?if\s*\(\s*Probe(?:Mode|Only)\s*\)\s*return", _SAVEGEO, re.S)),
    "去掉它 ⇒ 用真 exe 跑一次 `--shot` 就把用户调好的窗口位置覆盖掉")
 ok("⑧b ★反例锚：`SaveGeo` 里确实有写盘语句（⑧a 那条 guard 不是空过）",
    "File.WriteAllText(p," in _SAVEGEO, "")
