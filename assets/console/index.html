@@ -6124,7 +6124,7 @@ async function onboarding(){
   _onboardOnce = true;
   const m = document.createElement('div'); m.className='mask'; m.id='onboard';
   m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 五步上手</h1>'+
-    '<p id="obDesc">第 1 步/共 5 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。</p>'+
+    '<p id="obDesc">第 1 步/共 6 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。</p>'+
     '<div class="mid" style="text-align:left">'+
       '<div class="row"><label>模型厂商</label><div class="grow"><select id="obProvider">'+
         Object.keys(PROVIDERS).filter(k=>k!=='custom').map(k=>'<option value="'+k+'">'+PROVIDERS[k].label+'</option>').join('')+
@@ -6166,7 +6166,7 @@ async function onboarding(){
         await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
         toast('已保存 '+p.label+' 配置（'+model+'）');
  // ── 第 2 步：机器人昵称＝你自己微信的原名 ──
-        $('obDesc').textContent='第 2 步/共 5 步：把「机器人昵称」改成**你自己微信的原名**——就是你那个号在微信里显示的名字。群里 @ 到这个名字，它才知道是在叫它。';
+        $('obDesc').textContent='第 2 步/共 6 步：把「机器人昵称」改成**你自己微信的原名**——就是你那个号在微信里显示的名字。群里 @ 到这个名字，它才知道是在叫它。';
         $('obProvider').closest('.mid').style.display='none';
         const body=$('obBody');
         const _curNick = getPath(cfg,'wechat.bot_nickname')||'';
@@ -6197,7 +6197,7 @@ async function onboarding(){
  // 同一个接口的「选择监听的群」按钮 已经判了 `r.ok`，向导这条被漏了。
  //   ⇒ 现在：如实说原因 + 告诉他不勾也能先跑（不勾＝监听所有群），并让人点「下一步」重试。
         if(r && r.ok === false){
-          $('obDesc').textContent = '第 3 步/共 5 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
+          $('obDesc').textContent = '第 3 步/共 6 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
           $('obBody').innerHTML = '<div class="hint" style="line-height:2">读不到群列表时这一步勾不了，'
             + '但**不影响先把程序跑起来**：不勾＝监听所有群（等你之后在「微信」面板里勾也行）。<br>'
             + '要现在勾：先确认微信已登录的是你要的那个号、那个号里确实有群，然后点下面的「重试读取」。</div>'
@@ -6210,7 +6210,7 @@ async function onboarding(){
           return;
         }
         const groups = r.groups||[];
-        $('obDesc').textContent = '第 3 步/共 5 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
+        $('obDesc').textContent = '第 3 步/共 6 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
         const body=$('obBody'); body.innerHTML='';
         picked = []; // 重新开始（防重复调用残留）
         const pickSet = new Set((wlList||[]));
@@ -6221,8 +6221,17 @@ async function onboarding(){
       }
       if(step===3){
         if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
- // ── 第 4 步：点「恢复」它才开始工作（默认是暂停的）──
-        $('obDesc').textContent='第 4 步/共 5 步：点下面的「恢复」——程序默认是**暂停**的，点了它才开始监听群消息。';
+ // ── 第 4 步：环境引导 —— 把"要你自己装的东西"逐项列清（GET /api/env-guide）──
+ //   口径：**只检测 + 指路**，不替你装驱动、不改系统设置（守项目红线）。
+        $('obDesc').textContent='第 4 步/共 6 步：环境检查 —— 这几样要是缺了，某些功能就用不了。每项都写清「为什么需要 / 你现在缺不缺 / 怎么补」，缺的装完点「重新检测」。**我们只检测和指路，不替你装驱动、也不改你的系统设置。**';
+        $('obBody').innerHTML='<div id="obEnv" style="text-align:left;max-height:230px;overflow:auto;font-size:12px;line-height:1.7">检测中…</div>'
+          +'<div class="btns" style="justify-content:flex-start;margin-top:8px"><button class="ghost" id="obEnvRecheck">重新检测</button></div>';
+        $('obEnvRecheck').onclick = ()=>obRenderEnv();
+        $('obNext').textContent='下一步'; step=4; obRenderEnv(); return;
+      }
+      if(step===4){
+ // ── 第 5 步：点「恢复」它才开始工作（默认是暂停的）──
+        $('obDesc').textContent='第 5 步/共 6 步：点下面的「恢复」——程序默认是**暂停**的，点了它才开始监听群消息。';
         $('obBody').innerHTML='<div class="btns" style="justify-content:flex-start;margin-top:6px">'+
           '<button class="pri" id="obResume">恢复（开始工作）</button>'+
           '<span class="hint" id="obResumeHint" style="align-self:center">点一下就开始了；之后想停，顶部有「暂停」。</span></div>';
@@ -6234,12 +6243,12 @@ async function onboarding(){
             loadStatus();
           }catch(e){ $('obResumeHint').textContent='恢复失败：'+e.message+'（也可以稍后在控制台顶部点「恢复」）'; }
         };
-        $('obNext').textContent='下一步'; step=4; return;
+        $('obNext').textContent='下一步'; step=5; return;
       }
-      if(step===4){
-        $('obDesc').textContent = '第 5 步/共 5 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
+      if(step===5){
+        $('obDesc').textContent = '第 6 步/共 6 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
         $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
-        $('obNext').textContent='完成'; step=5;
+        $('obNext').textContent='完成'; step=6;
         const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"code"}',timeoutMs:60000});
         let lines=[r.summary||'',''];
         for(const c of (r.checks||[])){
@@ -6249,7 +6258,7 @@ async function onboarding(){
         $('obCheck').textContent = lines.join('\n');
         return;
       }
-      if(step===5){
+      if(step===6){
         maskClose(m); m.remove();
         _onboardOnce = true; // 完成：不再弹（即便 Key 仍空也不再打扰）
         loadStatus();
@@ -6259,6 +6268,30 @@ async function onboarding(){
     }catch(e){ toast('出错：'+e.message); }
   };
   $('obLater').onclick = ()=>{ maskClose(m); m.remove(); _onboardOnce = true; };
+  /* 第 4 步：环境清单渲染（GET /api/env-guide）——只显示，不替用户动手 */
+  async function obRenderEnv(){
+    const box = $('obEnv'); if(!box) return;
+    box.innerHTML = '检测中…';
+    let r = null;
+    try{ r = await getJSON('/api/env-guide'); }catch(e){ r = {ok:false,items:[],why:'环境清单读不到：'+e.message}; }
+    const items = (r && r.items) || [];
+    if(!items.length){
+      box.innerHTML = '<div class="hint">'+esc((r && r.why) || '环境清单读不到（后台没连上）')+'</div>';
+      return;
+    }
+    const colOf = {ok:'var(--ok-tx)', fail:'var(--err-tx)'};
+    let h = '';
+    items.forEach(function(it){
+      const mark = it.state==='ok' ? '✓' : (it.state==='fail' ? '✗' : '·');
+      const col = colOf[it.state] || 'var(--tx3)';
+      h += '<div style="margin:2px 0"><span style="color:'+col+'">'+mark+' <b>'+esc(it.title)+'</b></span>'
+        + (it.why ? '<div style="color:var(--tx2)">　'+esc(String(it.why).replace(/\*\*/g,''))+'</div>' : '')
+        + ((it.how && it.state!=='ok') ? '<div style="color:var(--tx2)">　怎么补：'+esc(String(it.how).replace(/\*\*/g,''))+'</div>' : '')
+        + '</div>';
+    });
+    h += '<div class="hint" style="margin-top:6px">'+esc((r.why||'').replace(/\*\*/g,''))+'</div>';
+    box.innerHTML = h;
+  }
 }
 
 /* 事件绑定 */

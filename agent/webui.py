@@ -1539,6 +1539,18 @@ def _make_handler(parent):
             except Exception as _e:
                 self._json({"ok": False, "error": str(_e)}, 500)
 
+        def _rapi_env_guide(self, path, data, parsed, method):
+            """环境引导清单（新手引导「环境」那一步 / 状态面板共用）。
+
+            只读检测：把"要用户自己装的东西"（虚拟声卡 / ffmpeg / 语音识别 / 依赖 …）汇成一张
+            带「有没有 / 怎么装」的清单。**不装驱动、不改系统设置**（守项目红线）。
+            """
+            try:
+                from . import env_guide as _eg
+                self._json(_eg.status())
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "items": [], "why": "环境清单读不出：%s" % str(e)[:120]})
+
         def _rapi_verifiers(self, path, data, parsed, method):
             # 原 do_GET:984
             try:

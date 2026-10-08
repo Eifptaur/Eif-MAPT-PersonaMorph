@@ -6486,13 +6486,14 @@ def t_g16() -> None:
 
 
 def t_g17() -> None:
-    """首次引导向导（web onboarding :5427 的 Qt 等价）。
+    """首次引导向导（web onboarding :6118-6262 的 Qt 等价）。
 
-    web 有一整套五步上手向导（选厂商/命名/勾群/恢复/体检），Qt 侧此前**完全缺失**
-    ⇒ 新用户拿不到「填 Key → 起名字 → 选群 → 开始」的路径。本组钉死：
+    web 有一整套六步上手向导（选厂商/命名/勾群/**环境引导**/恢复/体检），Qt 侧此前**完全缺失**
+    ⇒ 新用户拿不到「填 Key → 起名字 → 选群 → 补环境 → 开始」的路径。本组钉死：
     ① 厂商清单/模型列表/Key 前缀运行时解析 web PROVIDERS（不复制）；
-    ② 五步各自的渲染与落盘（第 1 步 vendor→model→key，第 3 步群勾选，第 4/5 步）；
-    ③ 「已配置 Key 不打扰」的判定（对齐 web :5429-5432）。
+    ② 六步各自的渲染与落盘（第 1 步 vendor→model→key，第 3 步群勾选，第 4 步环境，第 5/6 步）；
+    ③ 「已配置 Key 不打扰」的判定（对齐 web :6120-6123）；
+    ④ 第 4 步环境引导：接 `/api/env-guide`，按项显示状态与补法（守"只检测+指路"红线）。
     """
     import os # noqa: PLC0415
     import re as _re # noqa: PLC0415
@@ -6511,8 +6512,8 @@ def t_g17() -> None:
     ROOT = _P(__file__).resolve().parent.parent
     WEB = WEB_PAGE.read_text(encoding="utf-8")
 
-    # ① web 真值：五步向导函数齐备 + 关键 id 在册
-    ck("g17 web 真值：onboarding() 与五步 id 齐备",
+    # ① web 真值：六步向导函数齐备 + 关键 id 在册
+    ck("g17 web 真值：onboarding() 与六步 id 齐备",
        all(s in WEB for s in ("async function onboarding()", 'id="obBody"', 'id="obNext"',
                               'id="obLater"', 'id="obProvider"', 'id="obModel"', 'id="obKey"',
                               'id="obNick"', 'id="obResume"', 'id="obCheck"')),
@@ -6604,20 +6605,56 @@ def t_g17() -> None:
     ck("g17 第 3 步保存：勾中群写 wechat.group_name_white_list",
        captured2.get("wechat.group_name_white_list") == ["群甲"],
        str(captured2.get("wechat.group_name_white_list")))
-    ck("g17 第 3 步保存后进入第 4 步", w.step == 4, "step=%d" % w.step)
+    ck("g17 第 3 步保存后进入第 4 步（环境引导）", w.step == 4, "step=%d" % w.step)
 
-    # ⑦ 第 4/5 步渲染
-    w._render_step4()
-    ck("g17 第 4 步：恢复按钮 + 提示在场（开始工作）",
+    # ⑦ 第 4 步环境引导：接 /api/env-guide，按项渲染状态 + 补法（守"只检测+指路"红线）
+    _env_calls = {"n": 0}
+    _orig_eg = onboarding.config_io.get_json
+
+    def _fake_env(url, *a, **k):
+        _env_calls["n"] += 1
+        assert url.startswith("/api/env-guide"), url
+        return {"ok": False, "n_ok": 1, "n_fail": 1, "n_total": 2,
+                "why": "1 项还没就绪（补齐后点重检）：虚拟声卡（发真语音条）",
+                "items": [
+                    {"key": "wechat", "title": "微信本体", "need": "要先有微信",
+                     "ok": True, "state": "ok", "why": "已检测到微信 4.1.15.13",
+                     "how": "", "install_kind": "none", "action": ""},
+                    {"key": "vmic", "title": "虚拟声卡（发真语音条）", "need": "发语音条要它",
+                     "ok": False, "state": "fail", "why": "没有可用的虚拟麦克风",
+                     "how": "装一块成对的虚拟声卡（如 VB-CABLE）；我们不替你装驱动",
+                     "install_kind": "driver", "action": "recheck"}]}
+
+    onboarding.config_io.get_json = _fake_env
+    try:
+        w._render_step4_env()
+    finally:
+        onboarding.config_io.get_json = _orig_eg
+    _env_text = "".join(lb.text() for lb in w._env_rows.findChildren(
+        __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))
+    ck("g17 第 4 步：拉 /api/env-guide", _env_calls["n"] >= 1, "n=%d" % _env_calls["n"])
+    ck("g17 第 4 步：逐项渲染（微信本体 + 虚拟声卡都在）",
+       "微信本体" in _env_text and "虚拟声卡" in _env_text, _env_text[:80])
+    ck("g17 第 4 步：缺的项摊开「怎么补」且写明不替装驱动",
+       "怎么补" in _env_text and "不替你装驱动" in _env_text, _env_text[-80:])
+    ck("g17 第 4 步：说明文案点明「只检测和指路，不替你装驱动」",
+       "不替你装驱动" in w.desc.text() and "只检测" in w.desc.text(), w.desc.text()[-40:])
+    ck("g17 第 4 步：下一步按钮", w.b_next.text() == "下一步", w.b_next.text())
+
+    # ⑧ 第 5 步（恢复）/ 第 6 步（体检）渲染
+    w._render_step5_resume()
+    ck("g17 第 5 步：恢复按钮 + 提示在场（开始工作）",
        "恢复" in w.desc.text() and w.b_next.text() == "下一步",
        w.desc.text()[:30])
-    w.step = 5
-    w._render_step5()
-    ck("g17 第 5 步：体检输出区 + 完成按钮",
+    w.step = 6
+    w._render_step6_check()
+    ck("g17 第 6 步：体检输出区 + 完成按钮",
        isinstance(w.check_out, QPlainTextEdit) and w.b_next.text() == "完成",
        w.b_next.text())
+    ck("g17 流程推进：第 5→6 步走 resume→check（step 递增到 6 后 accept）",
+       w.step == 6, "step=%d" % w.step)
 
-    # ⑧ 已配置 Key → maybe_show 不弹（web :5429 同口径）
+    # ⑨ 已配置 Key → maybe_show 不弹（web :6120-6123 同口径）
     class _FakeDlg:
         def __init__(self, *a, **k):
             pass
@@ -6643,7 +6680,7 @@ def t_g17() -> None:
         onboarding._Wizard = orig_wiz
     ck("g17 已配置真实 Key → 不弹向导（不打扰老用户）", opened["n"] == 0, str(opened))
 
-    # ⑨ 未配置 Key → 弹（且本进程只弹一次）
+    # ⑩ 未配置 Key → 弹（且本进程只弹一次）
     onboarding._ONBOARD_ONCE = False
     onboarding.config_io.read_path = lambda *a, **k: ""
     opened["n"] = 0

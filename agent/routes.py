@@ -148,6 +148,7 @@ ROUTES = {
     "/api/update_apply": ("POST",),
     "/api/update_reset": ("POST",),
     "/api/update_skip": ("POST",),
+    "/api/env-guide": ("GET",),
     "/api/verifiers": ("GET", "POST"),
     "/api/verify": ("GET", "POST"),
     "/api/version": ("GET",),
@@ -538,6 +539,9 @@ HANDLERS = {
     },
     "/api/update_skip": {
         "POST": "_rapi_update_skip_post",
+    },
+    "/api/env-guide": {
+        "GET": "_rapi_env_guide",
     },
     "/api/verifiers": {
         "GET": "_rapi_verifiers",

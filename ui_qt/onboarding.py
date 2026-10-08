@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
-"""首次引导向导 —— 五步上手（对齐 web `onboarding()`，assets/console/index.html:5427-5570）。
+"""首次引导向导 —— 六步上手（对齐 web `onboarding()`，assets/console/index.html:6118-6262）。
 
 触发时机与 web 一致：配置载入后调用，**仅当「还没配好 Key」才弹**
-（打码 `••••` / 占位符 / 空 → 弹；真实 Key → 不打扰）。五步：
+（打码 `••••` / 占位符 / 空 → 弹；真实 Key → 不打扰）。六步：
 
   1. 选厂商 → 选模型 → 填密钥（写 api.api_key / api.model / api.base_url /
      api.provider_keys.<prov>，并把 api.provider 清空走顶层）；
   2. 机器人昵称 = 你自己微信的原名（写 wechat.bot_nickname）；
   3. 勾选要监听的群（不勾 = 监听所有群；写 wechat.group_name_white_list）；
-  4. 点「恢复」开始工作（POST /api/resume）；
-  5. 代码与依赖体检（POST /api/selfcheck mode=code，只读展示）。
+  4. **环境引导**（GET /api/env-guide）：把"要你自己装的东西"逐项列清 ——
+     虚拟声卡（发微信语音条）、ffmpeg、语音识别、依赖补齐 …每项给「为什么需要 +
+     怎么装 + 装完点重检」。**只检测 + 给指引，不替你装驱动、不改系统设置**；
+  5. 点「恢复」开始工作（POST /api/resume）；
+  6. 代码与依赖体检（POST /api/selfcheck mode=code，只读展示）。
 
 厂商清单/模型列表/接口地址/Key 前缀一律**运行时解析 web 源码**（`_providers_from_web`），
 不往 Qt 复制一份 —— web 改厂商，向导自动跟。
@@ -214,14 +217,14 @@ class _Wizard(DraggableDialog, QDialog):
                 self._drop_layout(sub)
 
     def _render_step1(self) -> None:
-        self.desc.setText("第 1 步/共 5 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。")
+        self.desc.setText("第 1 步/共 6 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。")
         self.mid.setVisible(True)
         self._clear_body()
         self.b_next.setText("下一步")
 
     def _render_step2(self) -> None:
         t = self.t
-        self.desc.setText("第 2 步/共 5 步：把「机器人昵称」改成你自己微信的原名"
+        self.desc.setText("第 2 步/共 6 步：把「机器人昵称」改成你自己微信的原名"
                           "——就是你那个号在微信里显示的名字。群里 @ 到这个名字，"
                           "它才知道是在叫它。")
         self.mid.setVisible(False)
@@ -246,7 +249,7 @@ class _Wizard(DraggableDialog, QDialog):
 
     def _render_step3_groups(self, groups: list) -> None:
         t = self.t
-        self.desc.setText(f"第 3 步/共 5 步：勾选需要机器人监听的群"
+        self.desc.setText(f"第 3 步/共 6 步：勾选需要机器人监听的群"
                           f"（全不勾=监听所有群）。检测到 {len(groups)} 个群聊。")
         self.mid.setVisible(False)
         self._clear_body()
@@ -281,7 +284,7 @@ class _Wizard(DraggableDialog, QDialog):
 
     def _render_step3_error(self, err: str) -> None:
         t = self.t
-        self.desc.setText(f"第 3 步/共 5 步：这台机器上暂时读不到群列表 —— {err}")
+        self.desc.setText(f"第 3 步/共 6 步：这台机器上暂时读不到群列表 —— {err}")
         self.mid.setVisible(False)
         self._clear_body()
         self.body_lay.addWidget(desc(
@@ -309,9 +312,120 @@ class _Wizard(DraggableDialog, QDialog):
         self.step = 3
         self._on_next()
 
-    def _render_step4(self) -> None:
+    # ── 第 4 步：环境引导（要用户自己装的东西，一屏看全）──
+    def _render_step4_env(self) -> None:
+        """环境引导：GET /api/env-guide 拉清单，逐项显示「要什么/有没有/怎么装」+ 重检。
+
+        口径（与 `agent/env_guide.py` 一致）：**只检测 + 给指引**，不替你装驱动、不改系统设置。
+        每项按 `state` 上色（ok 绿 / fail 红 / unknown 灰），缺的项把 `how` 摊开写给人看。
+        """
         t = self.t
-        self.desc.setText("第 4 步/共 5 步：点下面的「恢复」——程序默认是暂停的，"
+        self.desc.setText(
+            "第 4 步/共 6 步：环境检查 —— 这几样要是缺了，某些功能就用不了。"
+            "每项都写清「为什么需要 / 你现在缺不缺 / 怎么补」，装完点「重新检测」即可。"
+            "**我们只检测和指路，不替你装驱动、也不改你的系统设置。**")
+        self.mid.setVisible(False)
+        self._clear_body()
+        self._env_rows = QWidget()
+        self._env_lay = QVBoxLayout(self._env_rows)
+        self._env_lay.setContentsMargins(0, 0, 0, 0)
+        self._env_lay.setSpacing(6)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QScrollArea.Shape.NoFrame)
+        sc.setStyleSheet("QScrollArea{background:transparent;border:none;}")
+        sc.setWidget(self._env_rows)
+        sc.setMinimumHeight(200)
+        self.body_lay.addWidget(sc)
+        row = QHBoxLayout()
+        b_re = Btn("重新检测", t, "ghost")
+        b_re.clicked.connect(self._load_env_guide)
+        row.addWidget(b_re)
+        row.addStretch(1)
+        self.body_lay.addLayout(row)
+        self.b_next.setText("下一步")
+        self._load_env_guide()
+
+    def _load_env_guide(self) -> None:
+        """拉 /api/env-guide 并按项渲染（重检按钮也走这里）。"""
+        t = self.t
+        if not hasattr(self, "_env_lay"):
+            return
+        self._clear_layout(self._env_lay)
+        tip = QLabel("检测中…")
+        tip.setFont(qfont(t, t.body_size - 1))
+        tip.setStyleSheet(f"color:{t.tx3};background:transparent;")
+        self._env_lay.addWidget(tip)
+        try:
+            r = config_io.get_json("/api/env-guide", timeout=20.0)
+        except Exception as e:  # noqa: BLE001
+            r = {"ok": False, "items": [], "why": "环境清单读不到：%s" % e}
+        r = r if isinstance(r, dict) else {}
+        self._clear_layout(self._env_lay)
+        items = r.get("items") or []
+        if not items:
+            tip2 = QLabel(str(r.get("why") or "环境清单读不到（后台没连上）"))
+            tip2.setWordWrap(True)
+            tip2.setFont(qfont(t, t.body_size - 1))
+            tip2.setStyleSheet(f"color:{t.tx3};background:transparent;")
+            self._env_lay.addWidget(tip2)
+            return
+        for it in items:
+            self._env_lay.addWidget(self._env_item_widget(it))
+        self._env_lay.addWidget(self._env_summary(str(r.get("why") or "")))
+
+    def _env_summary(self, why: str) -> QLabel:
+        t = self.t
+        lb = QLabel(why)
+        lb.setWordWrap(True)
+        lb.setFont(qfont(t, t.body_size - 1))
+        lb.setStyleSheet(f"color:{t.tx3};background:transparent;")
+        return lb
+
+    def _env_item_widget(self, it: dict):
+        """单条环境项：标题 + 状态点 + why + how（缺的项才摊开 how）。"""
+        t = self.t
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(2)
+        state = str(it.get("state") or "unknown")
+        mark, color = {"ok": ("✓", t.ok), "fail": ("✗", t.err)}.get(state, ("·", t.tx3))
+        head = QLabel("%s %s" % (mark, str(it.get("title") or "")))
+        head.setFont(qfont(t, t.body_size))
+        head.setStyleSheet(f"color:{color};background:transparent;")
+        lay.addWidget(head)
+        why = str(it.get("why") or "").replace("**", "")
+        if why:
+            wl = QLabel("    " + why)
+            wl.setWordWrap(True)
+            wl.setFont(qfont(t, t.body_size - 1))
+            wl.setStyleSheet(f"color:{t.tx2};background:transparent;")
+            lay.addWidget(wl)
+        how = str(it.get("how") or "").replace("**", "")
+        if how and state != "ok":
+            hl = QLabel("    怎么补：" + how)
+            hl.setWordWrap(True)
+            hl.setFont(qfont(t, t.body_size - 1))
+            hl.setStyleSheet(f"color:{t.tx2};background:transparent;")
+            lay.addWidget(hl)
+        return box
+
+    def _clear_layout(self, lay) -> None:
+        while lay.count():
+            it = lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+                w.setParent(None)
+            sub = it.layout()
+            if sub is not None:
+                sub.deleteLater()
+
+    # ── 第 5 步：点「恢复」开始工作 ──
+    def _render_step5_resume(self) -> None:
+        t = self.t
+        self.desc.setText("第 5 步/共 6 步：点下面的「恢复」——程序默认是暂停的，"
                           "点了它才开始监听群消息。")
         self.mid.setVisible(False)
         self._clear_body()
@@ -335,9 +449,10 @@ class _Wizard(DraggableDialog, QDialog):
         except Exception as e: # noqa: BLE001
             self.resume_hint.setText(f"恢复失败：{e}（也可以稍后在控制台顶部点「恢复」）")
 
-    def _render_step5(self) -> None:
+    # ── 第 6 步：代码与依赖体检 ──
+    def _render_step6_check(self) -> None:
         t = self.t
-        self.desc.setText("第 5 步/共 5 步：代码与依赖检测（不动鼠标，几秒完成："
+        self.desc.setText("第 6 步/共 6 步：代码与依赖检测（不动鼠标，几秒完成："
                           "环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」"
                           "可在检测中心用单独按钮。")
         self.mid.setVisible(False)
@@ -371,7 +486,6 @@ class _Wizard(DraggableDialog, QDialog):
 
     # ── 流程推进 ──
     def _on_next(self) -> None:
-        t = self.t
         if self.step == 1:
             self._step1_save()
         elif self.step == 2:
@@ -379,9 +493,12 @@ class _Wizard(DraggableDialog, QDialog):
         elif self.step == 3:
             self._step3_save()
         elif self.step == 4:
-            self._render_step5()
+            self._render_step5_resume()
             self.step = 5
         elif self.step == 5:
+            self._render_step6_check()
+            self.step = 6
+        elif self.step == 6:
             self.accept()
 
     def _step1_save(self) -> None:
@@ -435,7 +552,7 @@ class _Wizard(DraggableDialog, QDialog):
             picked = list(self.picked)
         if picked:
             config_io.write_patch({"wechat.group_name_white_list": picked})
-        self._render_step4()
+        self._render_step4_env()
         self.step = 4
 
     def _on_later(self) -> None:
