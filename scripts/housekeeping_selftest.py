@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -107,7 +107,13 @@ try:
     import glob as _glob
     import re as _re
     _pat = _re.compile(r"mkdtemp\(\s*prefix\s*=\s*[\"']([^\"']+)[\"']")
+    # ⛔ **`dir=` 形态不归 TEMP 清扫管**：临时目录建在**自己的目录里**（如 `tools.d/`），
+    #    清理责任在**建它的那段代码**（`finally: shutil.rmtree`），而不是"系统 TEMP 清扫名单"。
+    #    ⇒ 这类前缀如果也要求进名单，等于把**两套清理职责混成一套**（名单只会越长越假）。
+    #    ⚠️ 但**"有 `dir=`"不等于"有人清"**：只在**同一个函数里**能看到 `rmtree` 才算数（见下）。
+    _pat_dir = _re.compile(r"mkdtemp\([^)]*\bdir\s*=")
     _found = set()
+    _found_dir = set()
     _scanned = 0
     for _sub in ("agent", "ui_qt"):
         for _p in _glob.glob(os.path.join(ROOT, _sub, "**", "*.py"), recursive=True):
@@ -118,16 +124,34 @@ try:
                 continue
             _scanned += 1
             _found.update(_pat.findall(_s))
+            # 逐个判"这个 mkdtemp 是不是自带 `dir=`、且同函数里有人 rmtree"
+            for _m in _pat_dir.finditer(_s):
+                _head = _s.rfind("\ndef ", 0, _m.start())
+                _head = _head + 1 if _head >= 0 else 0
+                _tail = _s.find("\ndef ", _m.start())
+                _body = _s[_head:_tail if _tail > 0 else len(_s)]
+                if "rmtree" in _body:
+                    _pm = _pat.search(_s[max(0, _m.start() - 200):_m.start() + 200])
+                    if _pm:
+                        _found_dir.add(_pm.group(1))
     # ⛔ **前置断言（防空过）**：这条判据一旦"扫到 0 个文件"就会**静默通过** ——
     #   我第一次写就踩了（漏了 `io` 导入 ⇒ 每份文件都读失败 → `continue` → `_found` 空 ⇒ 绿）。
     #   ⛔ 空过的断言比红更坏：它给人"已经守住了"的错觉。
     ok("⭐ 防漂前置：真的扫到了产品源码（否则下面那条会空过）",
        _scanned >= 100 and len(_found) >= 3,
        "扫了 %d 个 .py，找到 %d 种前缀" % (_scanned, len(_found)))
-    _uncovered = sorted(_x for _x in _found if not str(_x).startswith(HK.TEMP_PREFIXES))
-    ok("⭐ 防漂：产品代码里**所有** `mkdtemp` 前缀都在清扫名单里（实测源码 %d 种）" % len(_found),
+    _uncovered = sorted(_x for _x in _found
+                        if not str(_x).startswith(HK.TEMP_PREFIXES) and _x not in _found_dir)
+    ok("⭐ 防漂：产品代码里**所有** `mkdtemp` 前缀**要么在清扫名单里、要么自带 `dir=` ＋ `rmtree`**"
+       "（实测源码 %d 种，其中自带收口 %d 种）" % (len(_found), len(_found_dir)),
        not _uncovered,
        "未覆盖：%s" % (_uncovered[:6] if _uncovered else "无 ✅"))
+    # ⛔ 反向锚：把"自带收口"那类**也**要求进名单 ⇒ 上面那条会变红（证明这个例外是真在生效，
+    #    而不是把判据写松了 —— 判据写松的典型长相就是"怎么改都绿"）。
+    #    锚的**通过条件＝「严格要求下确实有文件报红」**（有例外 ⇒ 严格要求必然更严 ⇒ 必红）。
+    _strict = sorted(_x for _x in _found if not str(_x).startswith(HK.TEMP_PREFIXES))
+    ok("⭐ 反向锚：无视「自带 `dir=`＋`rmtree`」这个例外时，上面那条**确实会红**（例外真在生效）",
+       bool(_strict), "严格要求下会报：%s" % (_strict[:4] if _strict else "无 ⇒ 锚无效"))
 
     # ── B. 刚出炉的不动 ─────────────────────────────────────────────────────
     sect("B. 刚出炉的不动（可能正在被发送）")

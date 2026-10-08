@@ -23,7 +23,7 @@ import _srcslice
 import _iso14 # noqa: E402
 _iso14.all_() # 判据不许写产品的 data/ 与 logs/
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 

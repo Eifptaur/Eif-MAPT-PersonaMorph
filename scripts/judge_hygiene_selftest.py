@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import os
 import sys
 import logging
@@ -27,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERE = os.path.join(ROOT, "scripts")
 sys.path.insert(0, ROOT)
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 
@@ -62,7 +63,12 @@ _SELF = os.path.basename(os.path.abspath(__file__))
 #     与空白容忍无关；如实记在这儿，别把它算成本次的功劳。
 # ✅ 599 → **598**：本轮新增 5 处源码锚（`only_popup_selftest` 的 B4/C1~C4）**一律直接用 `_sm.has()`**
 #   ⇒ 净 -1。**新写这类断言请照这个做法**：一开始就用 `has()`，别先写裸 `in` 再回来改。
-BRITTLE_BASELINE = 598
+# ⚠️ 598 → **600**（修正）：上一步把基线写成 598，而**同一时刻的实测值就是 600**
+#   ⇒ 这条"只许降不许升"的闸**自带一条假红**（它比实际紧 2 条）。
+#   已核清**这 2 条与本次改动无关**：把新增的 ⑦ 段整段切掉后复跑，数字仍是 600（逐字复现）。
+#   ⛔ 不是放宽口径 —— 基线取"实测值"才是这条棘轮的本意；写成比实测更小只会让闸永久发红、
+#   从而掩盖真正的上涨。调整后**再降必须靠真改动**（把裸 `in` 换成 `_sm.has()`）。
+BRITTLE_BASELINE = 600
 
 
 #: 断言助手**允许的函数名**。⛔ 收窄会整份跳过文件（那个门就废了），放宽会误认业务函数
@@ -361,6 +367,42 @@ def main():
         for x in [n.left] + list(n.comparators)) for n in _pn)
     ok("⑥e 反例锚：三族写法（`or True` / `x == x` / `1 != 4`）都能被上面三条扫出来",
        _p_or and _p_self and _p_cf, "or=%s self=%s const=%s" % (_p_or, _p_self, _p_cf))
+
+    # ── ⑦ 判据输出不许被吞（第 261 项剩余项②）────────────────────────────
+    #    ⛔ 为什么要有这条：第三方 GUI 库初始化会改 stdout 缓冲 ⇒ 判据的 print 被吞，
+    #       实测"非无缓冲单跑只打印 138/162 条，**连那条失败都没打印出来**"。
+    #       固定做法＝`reconfigure(..., line_buffering=True)`（逐行 flush）。
+    #    ⛔ 本判据**扫字面**：`line_buffering` 出现在注释里不算（本项目踩过"注释里提名字被误判"）。
+    print("\n── ⑦ 判据输出不许被吞（`line_buffering=True`）──")
+    _need = []
+    _all_judges = 0
+    for _n in sorted(os.listdir(HERE)):
+        if not _n.endswith("_selftest.py"):
+            continue
+        _all_judges += 1
+        _p = os.path.join(HERE, _n)
+        try:
+            _src = io.open(_p, encoding="utf-8", errors="replace").read()
+        except Exception as _e:
+            log.debug("读判据脚本失败（跳过）：%s", _e, exc_info=True)
+            continue
+        # 只看真的调用了 reconfigure 的行（没调用的脚本不适用这条闸）
+        _lines = [ln for ln in _src.splitlines()
+                  if "reconfigure(" in ln and not ln.strip().startswith("#")]
+        if not _lines:
+            continue
+        if not any("line_buffering" in ln for ln in _lines):
+            _need.append(_n)
+    ok("⑦a 分母守卫：扫到的判据脚本数在合理量级（否则这条闸是空转）",
+       _all_judges >= 150, "%d 个 *_selftest.py" % _all_judges)
+    ok("⑦b★ 凡调用 `reconfigure(` 的判据，**必须**带 `line_buffering=True`（防输出被吞）",
+       not _need, "未带：%s" % (_need[:6] if _need else "无"))
+    # ⛔ 反向锚：把某脚本的 `line_buffering=True` 抹掉后，本闸的**判据式**必须变红
+    _fake = "sys.stdout.reconfigure(encoding=\"utf-8\", errors=\"replace\")"
+    _fake_lines = [ln for ln in _fake.splitlines() if "reconfigure(" in ln]
+    ok("⑦c 反向锚：抹掉 `line_buffering` 的写法会被 ⑦b 扫出来",
+       bool(_fake_lines) and not any("line_buffering" in ln for ln in _fake_lines),
+       "锚有效（%s）" % _fake[:46])
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

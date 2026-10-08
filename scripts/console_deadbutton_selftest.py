@@ -18,7 +18,7 @@ import sys
 # ⛔ 同上：判据里印 `✔/✘/⇒`，在 GBK 代码页的子进程里会 UnicodeEncodeError ⇒ 整个脚本红。
 for _s in (sys.stdout, sys.stderr):
     try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
+        _s.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     except Exception:
         pass
 

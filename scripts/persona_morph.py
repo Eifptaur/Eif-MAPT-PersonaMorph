@@ -361,6 +361,37 @@ class Orchestrator:
             log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass
 
+    # ── 主动私聊（第 122 项）────────────────────────────────────────────
+    #   与上面 `proactive`（群里找冷场群开话题）是**两件事**：这里只对**一个明确会话**开口，
+    #   且六条闸门缺一不可（见 `agent/proactive.py` 模块头）。
+    #   ⛔ 本方法**只排程与记账**；"该不该发"由 `proactive.should_fire()` 说了算，
+    #     "发什么"由 `proactive.topic_line()` 说了算 —— 判定逻辑全在那边（判据可全量验）。
+    def tick_private_proactive(self, now_ts: float = 0.0) -> dict:
+        """主循环里每轮调一次：过全部闸门才真的排一次唤醒 ⇒ `{fired, why, gate}`。"""
+        from agent import proactive as _pp
+        try:
+            cfg = get_config()
+            _mins, st = _pp.plan_for_today(_pp.load_state(), now=now_ts or None, cfg=cfg)
+            _pp.save_state(st)
+            if self.paused or self.stopped:
+                return {"fired": False, "why": "已暂停/正在退出", "gate": ""}
+            if not _pp.due_now(st, now=now_ts or None, cfg=cfg):
+                return {"fired": False, "why": "这轮没到排程时刻", "gate": ""}
+            target = _pp._target_of(_pp._cfg(cfg))
+            if not target:
+                return {"fired": False, "why": "没配目标会话", "gate": "G2"}
+            _topic = _pp.topic_line(self.memory, target, cfg=cfg, now=now_ts or None)
+            v = _pp.should_fire(target, store=self.store, state=st, now=now_ts or None, cfg=cfg,
+                                has_topic=bool(_topic), asked_today=False)
+            if not v.get("fire"):
+                return {"fired": False, "why": str(v.get("why") or ""), "gate": str(v.get("gate") or "")}
+            log.info("主动私聊：对 [%s] 开口（%s）", target, _topic or "无话题")
+            self._schedule_proactive_wake(target)
+            return {"fired": True, "why": "已排一次主动开口", "gate": ""}
+        except Exception as e:  # noqa: BLE001
+            log.warning("主动私聊 tick 异常（不影响监听）：%s", e)
+            return {"fired": False, "why": "异常：%s" % str(e)[:80], "gate": ""}
+
     # ── 主动开话题（proactive，默认关）──────────────────────────────────
 
     def start_proactive_loop(self):
@@ -476,6 +507,20 @@ class Orchestrator:
                 self.run_agent(chat_key, [], tier_result, session, proactive=True)
             except Exception as e:
                 log.warning("主动话题运行异常：%s", e)
+            # ⭐ **真发出去了才记账**（第 122 项）：`session["sent"]` 是这一轮实际发出的消息。
+            #   ⛔ 不记账的后果不是"少记一笔"，而是**封顶永远不生效**（每次都能再发一条）。
+            #   ⛔ 也不能"跑了就算"：模型完全可以选择"不想聊就直接结束"（提示词里就这么写的）
+            #     ⇒ 那一轮一条都没发，记进去会让封顶提前耗尽、后面真想说时反而说不了。
+            try:
+                if session.get("sent"):
+                    from agent import proactive as _pp
+                    _st = _pp.load_state()
+                    _pp.save_state(_pp.note_fired(chat_key, state=_st))
+                    log.info("主动私聊：已记账（%s 今天第 %d 条）", chat_key,
+                             int(((_pp.load_state().get("day") or {}).get("per_chat") or {})
+                                 .get(chat_key) or 0))
+            except Exception as _e_note:
+                log.debug("主动开口记账失败（只影响封顶口径）：%s", _e_note)
         except Exception as e:
             log.warning("主动话题异常：%s", e)
 
@@ -780,7 +825,11 @@ class Orchestrator:
         last_all = self.store.recent(chat_key, limit=10)
         last_message_at = last_all[-1]["ts"] if last_all else now
 
-        system_prompt = build_system_prompt()
+        # ⭐ 按 @ 选人设（第 110 项 W4）：把这一轮的触发文本一起传进去 ——
+        #    @ 到某个槽位名就**只有那个人设回话**（多个人设共享同一套记忆，见 role_agent 模块头）。
+        #    没 @ / @ 的不是槽位名 ⇒ `role_text_of` 内部回落"当前生效的那一个"，行为不变。
+        _trig_text = "\n".join(str(t.get("text") or "") for t in (trigger or []))
+        system_prompt = build_system_prompt(text=_trig_text)
         user_prompt = build_user_prompt({
             "chat_key": chat_key, "kind": kind, "chat_id": chat_id, "chat_name": chat_name,
             "trigger_entries": trigger, "store": self.store, "memory": self.memory,
@@ -3502,6 +3551,14 @@ def main():
                     log.warning("切号后重连失败：%s（旧账号的库已经不写了，"
                                 "多半是还在登录/密钥没就绪，60 秒后再试）",
                                 wechat_attach_status()["reason"])
+        # ── 主动私聊（第 122 项）：每轮过一遍排程（默认关 ⇒ 这里恒不触发）──────
+        #   放在**所有重连/切号检查之后、扫群之前**：这样"微信没接上"的那些轮次
+        #   不会因为目标会话的真身不在而误开口；`should_fire` 内部还有风控闸兜底。
+        try:
+            if wechat_box[0] is not None:
+                orch.tick_private_proactive()
+        except Exception as _e_pp:
+            log.debug("主动私聊 tick 失败（不影响监听）：%s", _e_pp)
         try:
             for g in targets:
                 wxid = g["wxid"]

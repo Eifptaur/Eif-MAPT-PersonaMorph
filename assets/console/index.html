@@ -633,8 +633,21 @@ body.locked{overflow:hidden}
   color:var(--tx2);letter-spacing:.02em;scroll-margin-top:84px}
 .sub::before{content:"";width:var(--subbar-w,3px);height:13px;border-radius:2px;background:var(--blue);flex:none}
 .sub:first-child{margin-top:0}
-/* ── .sub-nav：功能项顶部的**组锚点条**（第三层索引的入口）────────────────────
-   由 JS 扫本 section 的 .sub 自动生成；**没有 .sub 的 section 不生成**（零副作用）。
+/* 「最近」组（三套索引之一）：容器与头**借鉴** .nav-grp 的外观，但独立成一套类名 ——
+   它由 JS 按访问历史生成，不属于「分类」那 5 组静态分组（Qt 侧以"5 组 28 项"全等比对）。
+   ⛔ 借外观可以（`:is()` 共享选择器），借语义不行（不许混进 .nav-grp）。 */
+.nav-recent-grp{margin:2px 0}
+.nav-recent-hd{display:flex;align-items:center;gap:6px;width:100%;background:transparent;border:0;
+  padding:8px 10px 5px;cursor:pointer;color:var(--tx3);font:inherit}
+.nav-recent-hd .gt{flex:1;text-align:left;font-size:12px;font-weight:700;letter-spacing:.02em}
+.nav-recent-hd .gc{width:12px;height:12px;flex:none;transition:transform .18s}
+.nav-recent-grp.collapsed .gc{transform:rotate(-90deg)}
+.nav-recent-grp.collapsed .nav-recent-bd{display:none}
+.side .nav .nav-recent{position:relative}
+.side .nav .nav-recent::before{content:'';position:absolute;left:2px;top:50%;transform:translateY(-50%);
+  width:2px;height:14px;border-radius:1px;background:var(--tx3);opacity:.45}
+.side.tight .nav .nav-recent::before{left:50%;margin-left:-1px}
+/* ── .sub-nav：功能项顶部的**组锚点条**（第三层索引的入口）────────────────────   由 JS 扫本 section 的 .sub 自动生成；**没有 .sub 的 section 不生成**（零副作用）。
    ⚠️ 圆角用 8px 而不是 999px —— 控制台**没有 pill 按钮**，那是本项目的既有外观约定。
    ⚠️ 条上的文字由 JS 从 .sub 取 ⇒ 要进鲸语字典，否则鲸语下这里露出正常文案。 */
 .sub-nav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
@@ -990,6 +1003,17 @@ th{color:var(--tx2);font-weight:500}
       <div class="nav-find-res" id="navFindRes"></div>
     </div>
     <nav class="nav" id="nav">
+      <!-- 三套索引之「最近」：这里由 JS 填（看过的功能按时间倒序，点一下跳回去）。
+           注意：空的时候**整组隐藏**（不留一个空壳标题）；只记**功能项**，不记"看了哪个小项"。
+           与「分类」（下面的 nav-grp 分组）和「搜索」（上面的 navFind）是三件不同的事：
+           分类＝按主题找，搜索＝按名字找，最近＝**回到刚才那个**。
+           注意：这一组**故意不用 `class="nav-grp" data-grp=…"`** —— 那套是「分类」的静态分组，
+              Qt 侧 `NAV` 与 `ui_qt/selftest.py` 都以"5 组 28 项"为准全等比对；
+              这组是**运行时按历史生成**的，不属于那 28 项，混进去会让两边的对齐判据误红。 -->
+      <div class="nav-recent-grp" id="navRecentGrp" style="display:none">
+        <button class="nav-recent-hd" type="button"><span class="gt">最近</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        <div class="nav-recent-bd" id="navRecentBd"></div>
+      </div>
       <div class="nav-grp" data-grp="day">
         <button class="nav-grp-hd" type="button"><span class="gt">日常</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
         <div class="nav-grp-bd">
@@ -8058,6 +8082,91 @@ $('memSearch').addEventListener('keydown', (e)=>{
   window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
   window.addEventListener('resize', ()=>requestAnimationFrame(sync));
   document.addEventListener('nav-recalc', ()=>requestAnimationFrame(sync));
+  // ── 三套索引之「最近」：记住最近看过的功能，倒序排在最上面一组 ──────────────
+  //   立场：**分类**＝按主题找（下面那些 nav-grp）；**搜索**＝按名字找（上面的 navFind）；
+  //         **最近**＝回到刚才那个（本段）。三者互补，不是同一件事的三种皮肤。
+  //   ⛔ 只记**功能项（section）**：小项（.sub/.row）几十上百个，记了反而没重点。
+  //   ⛔ 存 localStorage：刷新/换页保持；坏档当空档（不抛，别让增强项拖垮整页）。
+  //   ⛔ 空的时候**整组 hidden**（不留空壳标题）；不在当前页的功能（老版本配置）**自动剔除**。
+  try{
+    const RK = 'navRecentSeen';
+    const RK_OPEN = 'navRecentOpen';
+    const MAX_RECENT = 5;
+    const grpEl = document.getElementById('navRecentGrp');
+    const bdEl = document.getElementById('navRecentBd');
+    // 组头可折叠（状态持久化）——与其余分组的手感一致
+    try{
+      const hd = grpEl && grpEl.querySelector('.nav-recent-hd');
+      if(hd){
+        if(localStorage.getItem(RK_OPEN) === '0') grpEl.classList.add('collapsed');
+        hd.addEventListener('click', ()=>{
+          const now = !grpEl.classList.contains('collapsed');
+          grpEl.classList.toggle('collapsed', now);
+          try{ localStorage.setItem(RK_OPEN, now ? '0' : '1'); }catch(e){}
+        });
+      }
+    }catch(e){}
+    const secOrder = Array.from(document.querySelectorAll('section[data-sec]'));
+    const secTitle = {};
+    secOrder.forEach(s=>{
+      const h = s.querySelector('h2');
+      secTitle[s.id] = ((h ? h.textContent : '') || '').trim();
+      // 用导航里那个 icon（自绘 SVG）与名字，跟其余分组长一个样
+      const a = links.find(x => x.getAttribute('href') === '#' + s.id);
+      if(a) secTitle[s.id + '_a'] = a;
+    });
+    function loadSeen(){
+      let arr = [];
+      try{ arr = JSON.parse(localStorage.getItem(RK) || '[]') || []; }catch(e){ arr = []; }
+      if(!Array.isArray(arr)) arr = [];
+      // 剔除已经不在本页的（配置不同/改名），并去重保序
+      const out = [];
+      arr.forEach(id=>{ id = String(id||''); if(secTitle[id] !== undefined && out.indexOf(id) < 0) out.push(id); });
+      return out;
+    }
+    function saveSeen(arr){ try{ localStorage.setItem(RK, JSON.stringify(arr)); }catch(e){} }
+    function renderRecent(){
+      if(!grpEl || !bdEl) return;
+      const arr = loadSeen();
+      if(!arr.length){ grpEl.style.display = 'none'; return; }
+      bdEl.innerHTML = '';
+      arr.forEach(id=>{
+        const srcA = secTitle[id + '_a'];
+        const a = document.createElement('a');
+        a.href = '#' + id;
+        a.className = 'nav-recent';
+        a.title = '最近看过：' + (secTitle[id] || id);
+        // 图标沿用原导航项那一枚（同一个自绘 SVG），别另造一套
+        if(srcA){ const sv = srcA.querySelector('svg'); if(sv) a.appendChild(sv.cloneNode(true)); }
+        const sp = document.createElement('span');
+        sp.className = 'lb'; sp.textContent = secTitle[id] || id;
+        a.appendChild(sp);
+        bdEl.appendChild(a);
+      });
+      grpEl.style.display = '';
+    }
+    let _lastSeenId = '';
+    function noteSeen(){
+      try{
+        const cur = currentSection && currentSection();
+        if(!cur || cur.id === _lastSeenId) return;
+        _lastSeenId = cur.id;
+        const arr = loadSeen().filter(x=>x !== cur.id);
+        arr.unshift(cur.id);                      // 最新在最上
+        saveSeen(arr.slice(0, MAX_RECENT));
+        renderRecent();
+      }catch(e){}
+    }
+    // 停顿一下再记（滚动经过的不算"看过"，别把整列都记上）
+    let _seenT = 0;
+    window.addEventListener('scroll', ()=>{
+      try{ clearTimeout(_seenT); }catch(e){}
+      _seenT = setTimeout(noteSeen, 700);
+    }, {passive:true});
+    window.addEventListener('hashchange', ()=>{ setTimeout(noteSeen, 60); });
+    renderRecent();
+    setTimeout(noteSeen, 900);   // 首屏落点也记一次
+  }catch(e){ /* 「最近」是增强项：失败不拖累控制台其余部分 */ }
   navEl.addEventListener('click', (e)=>{
     const a = e.target.closest ? e.target.closest('a[href^="#sec-"]') : null;
     if(!a) return;

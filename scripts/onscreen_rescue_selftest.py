@@ -191,6 +191,57 @@ ok("C5 ⭐ 它**查过前台闸**（`fg_allowed` 是「能不能置前/置顶」
    "—— 本函数只用不激活API，查它是为了决定要不要额外激活",
    "fg_allowed" in _put_src)
 
+print("\n══ D. 屏外档 与「出屏就拉回」的自愈**不许互相打架** ══")
+# 起因：`ui_adapt.prepare_screen()` 里有一条"窗口跑到屏幕外 ⇒ 自动拉回可见区"的自愈
+#   （判据是 `r.right < 20 or r.bottom < 20 ⇒ ShowWindow(hwnd, 9) + SetWindowPos(90,90)`），
+#   而 `_OffscreenShown` 的屏外档**正是**把窗口摆到"右/下都 < 20"的位置 ⇒ 两者必然相遇：
+#     ① **屏外档当场被破坏** —— 它的全部意义是"显示着但不上屏"（最小化档投递的前提），
+#        被拉回屏内 ⇒ 之后按屏外坐标算出来的点击**落点全错**；
+#     ② 窗口会在**用户眼前**跳到 (90,90) 并被激活（那两处用的是 `SW_RESTORE`，**会激活**）。
+#   ⇒ 修法：那两处挪窗口之前**先问** `voice_strip.offscreen_active(hwnd)`（我方自己摆的 ⇒ 别动）。
+_hd = u.CreateWindowExW(0, "STATIC", "pm-offscreen-vs-rescue", 0x00CF0000,
+                        260, 190, 640, 480, None, None, None, None)
+_HD = int(getattr(_hd, "value", _hd) or 0)
+try:
+    ok("D0 造出了测试窗（自造；不碰微信）", bool(_HD), "hwnd=%s" % _HD)
+    ok("D1 没进屏外档时 `offscreen_active` 回 False（否则下面那条是恒真）",
+       VS.offscreen_active(_HD) is False)
+    _box = VS._OffscreenShown(_HD)
+    _box.__enter__()
+    ok("D2 进了屏外档 ⇒ `offscreen_active` 回 True（自愈据此让路）",
+       VS.offscreen_active(_HD) is True, "why=%s" % str(_box.why)[:40])
+    ok("D3 且窗口**真的**在屏外（屏外档自己的自检没被绕过）", not _box.why)
+    _box._restore()
+    ok("D4 退出屏外档 ⇒ `offscreen_active` 回 False（登记被清掉，不留幽灵）",
+       VS.offscreen_active(_HD) is False)
+    ok("D5 别的句柄不受影响（按句柄判，不是全局开关）",
+       VS.offscreen_active(_HD + 987654) is False)
+finally:
+    try:
+        u.DestroyWindow(wt.HWND(_HD))
+    except Exception:  # noqa: BLE001
+        pass
+
+_ua = io.open(os.path.join(ROOT, "agent", "ui_adapt.py"), encoding="utf-8").read()
+_prep = _ss.func_src(_ua, "prepare_screen")
+_lines_prep = _prep.split("\n")
+# ⛔ 只数**真调用**（行首就是那句 `_user32.ShowWindow(hwnd, 9)`）：
+#   本函数的 docstring 里**也**写着 `ShowWindow(hwnd, 9)`（讲它是怎么被降级的）——
+#   把叙述算成违规，正是本项目的老坑"别把注释/docstring 当违规"。
+_unguarded = 0
+for _i, _l in enumerate(_lines_prep):
+    if _l.strip().startswith("_user32.ShowWindow(hwnd, 9)"):
+        if "_offscreen_by_us" not in "\n".join(_lines_prep[max(0, _i - 6):_i]):
+            _unguarded += 1
+ok("D6 ⛔ 每一处「`SW_RESTORE` 挪窗口」都在 `_offscreen_by_us` 守卫之下（未守卫 %d 处）" % _unguarded,
+   _unguarded == 0)
+ok("D7 反向对照：同一段源码把闸名换掉后计数归零 ⇒ D6 不是恒真",
+   _prep.count("_offscreen_by_us(") >= 2
+   and _prep.replace("_offscreen_by_us(", "_NEVER_USED(").count("_offscreen_by_us(") == 0,
+   "装闸 %d 处" % _prep.count("_offscreen_by_us("))
+ok("D8 查询口在案且有 docstring 讲清「为什么」（否则后人会把这道守卫当多余）",
+   _sm.has(_pr, "def offscreen_active(") and "屏外档" in _pr)
+
 print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
 if FAIL:
     print("失败项：")

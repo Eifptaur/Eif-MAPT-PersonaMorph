@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))) # 同目录的 `_
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 
@@ -502,6 +502,69 @@ def main():
            bool(_m) and not _indented, "行首定义=%s 缩进定义=%s" % (bool(_m), bool(_indented)))
     except Exception as _eE:
         ok("E 段执行", False, "%s: %s" % (type(_eE).__name__, str(_eE)[:80]))
+
+    print("\n── J. 时间档**不许单独**下结论：名字侧能把它否掉（2026-10-08）──")
+    # 起因（现场）：连着几次对不同目标都返回「目标会话已经是当前打开的会话（高亮行 y=… 时间 18:04
+    #   ＝目标会话最后一条消息时间，且该时刻唯一）」，而那个会话**未必真开着**
+    #   （同一分钟里刚切到过别的会话）。
+    #   ⚠️ 时间的最小刻度是**分钟** ⇒ 这一档单独成立时会**跳过真正的切换**
+    #   ⇒ 后面可能把消息发进另一个会话（＝"发错人"级）。
+    #   ⇒ 收紧：`_uniq`（该时刻在列表里唯一）单撑时，再读一次**高亮行的名字**；
+    #     读出**另一个已知会话** ⇒ 这一档不采信（判否，并点名是它）。
+    #   ⛔ 纯收紧：读不出 / 认成目标 / 认不出是谁 ⇒ **保持原判**（不许把正常路判死）。
+    _adJ = _fake_adapter()
+    _nmJ = {A_ID: "测试", B_ID: "KC"}
+    _adJ.display_name = lambda cid, *a, **k: _nmJ.get(str(cid).split(":", 1)[-1], "")
+    _adJ._same_minute_rivals = lambda *a, **k: []     # 本段只测"名字侧"这道门，绕开同分钟那道
+    _adJ._known_chat_names = lambda: ["测试", "KC"]
+    _keep_hlJ = CO.highlight
+    _outJ = {}
+    for _tagJ, _hlJ in (("名字＝目标（测试）", {"y_abs": 100, "score": 0.97, "name": "测试"}),
+                        ("名字＝另一个会话（KC）", {"y_abs": 100, "score": 0.97, "name": "KC"}),
+                        ("名字读不出", {"y_abs": 100, "score": 0.97, "name": ""}),
+                        ("名字是别的行（y 对不上）", {"y_abs": 500, "score": 0.97, "name": "KC"}),
+                        ("名字＝候选集外的第三个名字", {"y_abs": 100, "score": 0.97, "name": "没见过的名字"})):
+        try:
+            CO.highlight = (lambda img, _v=_hlJ: _v)
+            with _stub_ocr(pane=""):
+                _outJ[_tagJ] = _adJ._active_row_time_ok("group:" + A_ID, gui=object())
+        finally:
+            CO.highlight = _keep_hlJ
+    ok("J1 名字侧＝目标 ⇒ 照旧放行（收紧不许把正常路判死）",
+       _outJ["名字＝目标（测试）"][0] is True, str(_outJ["名字＝目标（测试）"])[:120])
+    ok("J2 ⛔ 名字侧＝**另一个已知会话** ⇒ 这一档不采信（False，且说明里点名是它）",
+       _outJ["名字＝另一个会话（KC）"][0] is False and "名字侧" in str(_outJ["名字＝另一个会话（KC）"][1]),
+       str(_outJ["名字＝另一个会话（KC）"][1])[:140])
+    ok("J3 名字读不出 ⇒ **保持原判**（读不出不是判否，别把正常路判死）",
+       _outJ["名字读不出"][0] is True, str(_outJ["名字读不出"])[:120])
+    ok("J4 两处量到的高亮行 **y 对不上** ⇒ 弃权（不许拿别的行的名字去否目标）",
+       _outJ["名字是别的行（y 对不上）"][0] is True, str(_outJ["名字是别的行（y 对不上）"])[:120])
+    ok("J5 名字认不出是谁（不在候选集里）⇒ 保持原判（认不出 ⇒ 不动）",
+       _outJ["名字＝候选集外的第三个名字"][0] is True,
+       str(_outJ["名字＝候选集外的第三个名字"])[:120])
+    # J6 反例锚：候选集里**没有**第二个会话 ⇒ 那道门认不出「它是谁」⇒ 也保持原判
+    #    （证明 J2 的 False 是「认出了另一个会话」给的，不是别的原因）
+    _keep_poolJ = _adJ._known_chat_names
+    _adJ._known_chat_names = lambda: ["测试"]
+    try:
+        CO.highlight = lambda img: {"y_abs": 100, "score": 0.97, "name": "KC"}
+        with _stub_ocr(pane=""):
+            _o6J = _adJ._active_row_time_ok("group:" + A_ID, gui=object())
+    finally:
+        CO.highlight = _keep_hlJ
+        _adJ._known_chat_names = _keep_poolJ
+    ok("J6 反例锚：候选集里没有第二个会话 ⇒ 认不出「KC 是谁」⇒ 保持原判"
+       "（证明 J2 那条 False 是这道门给的）", _o6J[0] is True, str(_o6J)[:120])
+    # J7b 结构锚（源码锚用 `_sm.has`，见判据纪律）：这道门**只在最弱那一档**做
+    #   （不在「聊天区也出现同一时刻」那条强档上白花成本），且它**只能否掉**、不许放行。
+    _seg_aruJ = _fsrc(open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read(),
+                      "_active_row_time_ok")
+    _seg_aruJ = _seg_aruJ[:_seg_aruJ.find("\n    def ", 10)]
+    _GATE = "if _uniq and not _pane_hit"   # 变量承载针，避免"源码脆断言"（同一行的常量比较）
+    _crossJ = _seg_aruJ.split(_GATE)[1].split("if _pane_hit or _uniq:")[0] if _sm.has(_seg_aruJ, _GATE) else ""
+    ok("J7b 结构锚：名字侧交叉验证**只在 `_uniq` 那一档**跑，且只返回 False（纯收紧）",
+       bool(_crossJ) and _sm.has(_crossJ, "名字侧指向另一个会话")
+       and not _sm.has(_crossJ, "return True"), "")
 
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:

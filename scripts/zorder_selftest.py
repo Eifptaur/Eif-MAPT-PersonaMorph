@@ -17,7 +17,7 @@ import os
 import re
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -85,6 +85,58 @@ ok("有取消置顶的入口（restore_zorder / NOTOPMOST 至少一个）",
    ("restore_zorder" in SRC) or ("NOTOPMOST" in SRC) or ("restore_zorder" in _read(os.path.join(ROOT, "agent", "wechat.py"))),
    "ui_adapt 或 wechat 里有")
 ok("发送后收尾会调取消置顶", "restore_zorder" in _read(os.path.join(ROOT, "agent", "wechat.py")))
+
+print("\n── D. 关窗纪律（全仓）：`WM_CLOSE` 只许出自「关窗唯一入口」及其两处已声明例外 ──")
+# 口径 = `agent/winops.py` 模块头写的那两条事故教训：**关微信的窗**一律走 `winops.close()`
+# （它内部先过 `ok_to_close()`：当场重取主窗/渲染子窗，命中就拒绝）。
+# 两处**已声明**的例外（关的**不是**微信的窗，理由写在各自模块头）：
+#   · `tray.py`      —— 我们自己的托盘窗；
+#   · `ui_adapt.py`  —— 系统输入叠加层（TouchKeyboard 一族，收窄手段＝类名 + 标题白名单）。
+# 另有 `winops.py` 自己就是那个入口（`PostMessageW(h, WM_CLOSE, …)` 就在它里面）。
+# ⚠️ **已知边界**：`_scratch/` 不纳入本闸门 —— 那里放着**产品文件的历史快照**
+#   （`wechat.after-flip.py` 那类整份拷贝），扫进来会出一堆"快照命中"的假红，
+#   而快照不是活代码。真要有探针在 `_scratch/` 里关窗，得靠人看（**如实记边界，不假装覆盖**）。
+import glob as _glob
+
+_ALLOW_CLOSE = {"winops.py", "tray.py", "ui_adapt.py"}
+_RX_CLOSE = re.compile(r"PostMessageW?\s*\([^,]*,\s*(?:WM_CLOSE|0x0010)\s*,")
+
+
+def _scan_raw_close(src: str, fname: str):
+    """返回这份源码里"裸投 `WM_CLOSE`"的行号（注释不算；白名单文件名不算）。"""
+    out = []
+    if fname in _ALLOW_CLOSE:
+        return out
+    for i, line in enumerate(src.splitlines(), 1):
+        if _RX_CLOSE.search(line.split("#")[0]):
+            out.append(i)
+    return out
+
+
+_PATS = ("agent/*.py", "scripts/*.py", "launcher-src/*.py", "launcher-src/*.cs")
+_raw_hits, _n_scanned = [], 0
+for _pat in _PATS:
+    for _p in sorted(_glob.glob(os.path.join(ROOT, _pat))):
+        _f = os.path.basename(_p)
+        if _f.endswith("_selftest.py") or _f == "zorder_selftest.py":
+            continue  # 判据自己会把这个写法写进合成样例里，别自命中
+        _n_scanned += 1
+        for _ln in _scan_raw_close(_read(_p), _f):
+            _raw_hits.append("%s:%d" % (_f, _ln))
+ok("分母守卫：真的扫到了产品源码与打包装侧（否则下面那条测的是空气）",
+   _n_scanned >= 250, "%d 个文件" % _n_scanned)
+ok("⛔ 除 `winops.py`/`tray.py`/`ui_adapt.py` 外没有裸投 `WM_CLOSE`（关微信窗只许走 winops.close）",
+   not _raw_hits, "、".join(_raw_hits[:6]) or "干净")
+ok("反向对照：合成一段「裸投 `WM_CLOSE`」⇒ 同一个检测必须报出来",
+   _scan_raw_close("u.PostMessageW(h, WM_CLOSE, 0, 0)\n", "wechat.py") == [1],
+   str(_scan_raw_close("u.PostMessageW(h, WM_CLOSE, 0, 0)\n", "wechat.py")))
+ok("反向对照的阴性侧：白名单内的文件用同样写法**不报**（证明白名单按文件生效，不是恒空）",
+   _scan_raw_close("u.PostMessageW(h, WM_CLOSE, 0, 0)\n", "tray.py") == [])
+_WINOPS = _read(os.path.join(ROOT, "agent", "winops.py"))
+ok("⭐ 「唯一入口」里**真的装着那道闸**（`close()` 先过 `ok_to_close()` 才投消息）",
+   bool(re.search(r"def close\(", _WINOPS))
+   and _WINOPS.find("ok_to_close(h, why)") > 0
+   and _WINOPS.find("ok_to_close(h, why)") < _WINOPS.find("PostMessageW(ctypes.c_void_p(h), WM_CLOSE"))
 
 print("\n窗口 Z 序判据：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

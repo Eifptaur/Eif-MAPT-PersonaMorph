@@ -13,7 +13,7 @@
 import os
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ⛔ 隔离：判据不许写产品 data/ 与 logs/（台账指到临时区）。

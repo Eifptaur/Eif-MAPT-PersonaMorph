@@ -18,7 +18,7 @@ import io
 import os
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -104,6 +104,30 @@ ok("C2★ 槽位里**留空的项不覆盖**（b 没写 `role_text` ⇒ 不产�
    "role_text" not in _s, str(sorted(_s.keys())))
 ok("C3 没配槽位 / 名字不存在 ⇒ **空 dict**（不抛、不编）",
    PC.slot_card({"persona": {}}) == {} and PC.slot_card(_slots, active="zzz") == {}, "")
+
+# ── C4~C7：接线判据（第 262 项）—— 多槽位**真的影响回复链**，不只是能取出来 ──
+#    ⛔ 为什么要这四条：`slot_card()` 建好之后一直**没有任何产品调用点**
+#      ⇒ "多槽位"是悬空的，"切了槽位但回复链读的还是旧文案"这类 bug 没人拦。
+from agent import prompt as _PR  # noqa: E402
+
+_ok_slots = {"persona": {"active": "b", "role_text": "我是旧的单槽位文案",
+                         "slots": {"a": {"bot_name": "甲", "role_text": "我是甲的人设"},
+                                   "b": {"bot_name": "乙", "role_text": "我是乙的人设"}}}}
+ok("C4★ 分母守卫：夹具**真的**有槽位与 `active`（否则下面几条恒真）",
+   bool(_ok_slots["persona"]["slots"]) and bool(_ok_slots["persona"]["active"]),
+   "slots=%s active=%s" % (list(_ok_slots["persona"]["slots"]), _ok_slots["persona"]["active"]))
+ok("C5★ **切槽位后回复链跟着变**：`role_text_of` 取到的是**槽位**的文案，不是 `role_text`",
+   _PR.role_text_of(_ok_slots["persona"]) == "我是乙的人设",
+   "实得=%r" % _PR.role_text_of(_ok_slots["persona"]))
+_ok_lack = {"persona": {"active": "b", "role_text": "我是旧的单槽位文案",
+                        "slots": {"b": {"bot_name": "乙"}}}}  # b 槽位**没写** role_text
+ok("C6★ 槽位没写正文 ⇒ **回落到 `role_text`**（口径＝留空的项不覆盖）",
+   _PR.role_text_of(_ok_lack["persona"]) == "我是旧的单槽位文案",
+   "实得=%r" % _PR.role_text_of(_ok_lack["persona"]))
+_rel = _PR.role_text_of(_ok_slots["persona"])
+ok("C7 反向锚：把接线摘掉（强行走 `role_text`）⇒ C5 那条**必须变红**",
+   _rel != str(_ok_slots["persona"].get("role_text") or ""),
+   "槽位=%r / 单槽位=%r 两者不同 ⇒ 锚有效" % (_rel, _ok_slots["persona"]["role_text"]))
 
 print("\n── D. 导出 / 导入 ──")
 _pack = PC.export_card(_f, pid="p1")

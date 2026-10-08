@@ -7,7 +7,7 @@
        `gui.open_chat` 真鼠标）、点击用 `MessageBackend.click`、**关伪激活**；
     ③ **绝不回真鼠标**：投递档拿不到 / 点击失败 ⇒ 立刻 `None`（不许偷偷找 `real_click`）；
     ④ `download_media(video)` 三步顺序：先查缓存 → 再触发 → 最后退回库的等待式；
-    ⑤ 关预览窗走 `_wm_close_safe` + `WM_CLOSE` 投递（**不发 Esc**）；
+    ⑤ 关预览窗走 `winops.close`（关窗唯一入口，内部先过 `ok_to_close`；**不发 Esc**）；
     ⑥ 配置键 `video_read.wait_download_s` 存在且默认 15。
 
 **怎么判**
@@ -97,8 +97,11 @@ ok("B11 关预览窗走 `_close_video_preview_windows`（投递，不发 Esc）"
 
 print("\n== C. `_close_video_preview_windows`：投递关窗、不碰键盘 ==")
 _cvp = _strip_comments(_method_src(WX, "WeChatAdapter", "_close_video_preview_windows"))
-ok("C1 用 `_wm_close_safe` 咽喉点", "_wm_close_safe" in _cvp)
-ok("C2 用 `WM_CLOSE`（0x0010）投递", "0x0010" in _cvp)
+ok("C1 走**关窗唯一入口** `winops.close`（它内部先过 `ok_to_close` 咽喉点，绝不关主窗）",
+   "_win_close(" in _cvp)
+ok("C2 ⛔ **不自己裸投 `WM_CLOSE`**（绕过唯一入口即丢掉「同一句柄只关一次」的登记，"
+   "而句柄会被系统回收给新窗 ⇒ 重复关可能误伤无关的窗）",
+   "0x0010" not in _cvp and "PostMessage" not in _cvp)
 ok("C3 **不发 Esc 键盘**", "Esc" not in _cvp and "key(" not in _cvp, "")
 ok("C4 baseline 为 None 时**不乱关**", "return 0" in _cvp)
 

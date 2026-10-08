@@ -3259,9 +3259,9 @@ def t_g5() -> None:
             "utImport", "utReload", "utBarProblems", "fsAdd", "wavefxApply",
             "utGuide", "utBarGuide", "ttsGuide", "igGuide", "vgGuide", "vsGuide",
             "irGuide", "fsGuide"}
-    ck("g5 注册表：19 个新 aid 全部接入（ACT_CUSTOM 34 键：新增「更多（联系邮箱/提交记录）」），"
+    ck("g5 注册表：19 个新 aid 全部接入（ACT_CUSTOM 35 键：新增「资源市场」marketOpen），"
        "wxRecheck 不进 ACT_CUSTOM（它在追加区已有原生实现，走 _AIDS_COVERED_ELSEWHERE 跳过）",
-       need <= set(ACT_CUSTOM) and len(ACT_CUSTOM) == 34 and "wxRecheck" not in ACT_CUSTOM,
+       need <= set(ACT_CUSTOM) and len(ACT_CUSTOM) == 35 and "wxRecheck" not in ACT_CUSTOM,
        "ACT_CUSTOM=%d 缺=%s" % (len(ACT_CUSTOM), sorted(need - set(ACT_CUSTOM))))
 
     guides = _web_guides()

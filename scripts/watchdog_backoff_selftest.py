@@ -30,7 +30,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 for _s in (sys.stdout, sys.stderr):
     try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
+        _s.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     except Exception:
         pass
 

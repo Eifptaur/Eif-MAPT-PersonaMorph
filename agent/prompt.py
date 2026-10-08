@@ -116,6 +116,10 @@ def _scene_rules() -> str:
         if _meme_on:
             lines.append("- 群友问某个**梗/网络用语/热词**是什么意思、什么来头，或聊到「最近有什么新梗」时，用 search_meme(topic=那个词或不填) 去查实时来源，再据返回的标题/摘要自己总结「是什么梗、怎么用、现在还火不火」，并说明来源；**它是检索工具，不是梗百科——拿不到结果或不确定就说不确定，绝不编释义**。")
             lines.append("- search_meme 别乱调：只在**被 @ 到、被引用问梗、有人明确问某个梗/最新热梗，或这个话题你确实不懂又没有把握**时才用；普通寒暄/日常闲聊不要为了用工具而用（同一话题短时间内它会走缓存，但也别反复调）。它**跟随当前响应档位**——档位够回这条消息、且话题确实不懂才查，不要再为它单设触发门槛。")
+            lines.append("- 还有一种自己群里的词（外面查不到、只有这几个人懂）：`meme_dict`。`action=detect` 看本群有哪些高频词、哪些还没查过；`action=explain`（带 `word`）查一个词是什么意思——它**会先看笔记，查过就不出网**，返回带来源的材料由你自己总结；`action=timeline`（带 `word`）看这个词在我们群里什么时候开始出现。⛔ **别有事没事 detect/explain**（没有新词也去查＝一直出网、白烧 token）；只在有人明确问、或这个词确实需要解释时才用。**拿不到就照实说，绝不编释义**。")
+        lines.append("- 有人让你**推荐首歌**（「来点适合下雨天的」「有没有像 XXX 那样的」）时用 `recommend_music`：给 **2~3 首就够了，别一次列十首**；**每首要写一句为什么推它**（没有理由的推荐看起来就像随机，而且**不许编理由**）。⛔ **只给「歌名 + 艺人」**——**不发音频文件、不转发、不绕平台版权**，让用户自己去放。它说「我还不太熟这块」时**照实转达**，**绝不编歌名**。有人告诉你「这首适合雨天」这类信息时，用 `remember` 把它记下来（下次就能推了）。")
+        lines.append("- 群里有人转来**「XX 千万别吃」「某地出大事了」这类消息**、你想核一下时用 `rumor_check`：它抓正文 + 检索公开来源，给六档结论（真实/大概率真实/存疑/大概率不实/已证实谣言/**信息不足**）+ 来源 + 免责。⛔ **查不到就落「信息不足」**——**绝不许倒向真或假任何一边，绝不编来源**。⭐ **私聊共情优于当众打脸**：群里用「我刚查了一下…」把信息补上就好，**别点名、别说对方传谣**，一两句点到为止；只有私聊时才可以直说「这条可能不太准」。⛔ 别见到转发就自动去核（那是刷屏），**没被问到、或这条明显是玩笑/日常闲聊就别用**。")
+        lines.append("- 群里有人说「今年最难忘的是哪句」「来点名场面」「这个人该上年度之最」这类**回看群里历史**的话时用 `yearbook`：`action=pick` 从本群历史里挑几条名场面（按长度/深夜/表情/点名机械挑，**不是「最好的」**，是「最有信息量的」）；群友明确说「这条留着」时用 `action=save`（带 `id`/`text`/`who`）把它存进精华簿；要翻旧账用 `action=book`。⛔ **只读历史、不改任何消息**；⛔ 库里没数据就**如实说没数据**，**绝不硬凑**几条出来（那等于编）。")
     else:
         lines.append("- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。")
     lines.append("- 消息里的 [语音] [视频] [文件] [位置] [红包] 是占位符：**语音**可以用 transcribe_voice 转成文字（本机离线识别；没有引擎时它会返回原因，照实说、别猜语音内容）；**视频**可以用 read_video 读（抽几帧画面 + 本机离线识别视频里的说话；读不了它会说原因，照实说）；**文件**可以用 download_media 下到本机、用 forward_media 转发（转发会短暂抢一次前台，默认关，关了就照实说）；**位置/红包**看不到内容，不要编造。链接不用下载——直接用 send_message 把链接发出去是纯后台的。")
@@ -319,25 +323,67 @@ def _mod_on(mid: str) -> bool:
         return True
 
 
-def role_text_of(cfg: dict | None = None) -> str:
+def role_text_of(cfg: dict | None = None, text: str = "") -> str:
     """**取"当前生效的角色卡正文"的唯一实现**（留空＝内置小鲸鱼）。
 
     这段回落原来在两处各写了一遍——`build_system_prompt()` 与 `webui` 的
     「角色卡行为推荐」；后者还多读了一个**从来没被写入过**的 `persona.prefer_key`
     （`config.py` 里连默认值都没有）⇒ 同一语义两份实现。今天两者都回落成小鲸鱼，所以看不出问题；
     但只要将来有人写一次 `prefer_key`，**推荐结果就会与真正生效的卡静默不一致**。
+
+    ⭐ **多槽位优先（第 262 项接线）**：`persona.active` 选中槽位时，**槽位的 `role_text` 优先**
+    （槽位与全局**同键名** —— 见第 102 项的设计：`active_persona(cfg)` 按 `active` 选槽位合并）；
+    ⛔ **槽位没写 `role_text` ⇒ 回落到全局 `role_text`**（口径＝"留空的项不覆盖"）。
+    这样"切了槽位但回复链读的还是旧文案"这类"点了没变"的 bug 不会发生 ——
+    人设包的"多份"形态（第 265-b 项）要靠它才能真正生效。
+
+    ⭐ **按 @ 选人设（第 110 项，W4 角色代理）**：给了 `text`（这一轮要回的那条消息）时，
+    先问 `role_agent`「**被 @ 的是哪个槽位**」——
+      · @ 到了某个槽位名 ⇒ **用那一个**槽位的卡（多个人设共享同一套记忆：本函数不碰记忆层）；
+      · 没 @ / @ 的不是槽位名 / 任何异常 ⇒ **一律回落**到"当前生效的那一个"（判不出来就不改行为）。
+    `text` 缺省为空 ⇒ **行为与加这个参数之前完全一致**（老调用点一个字都不用改）。
     """
     c = cfg if cfg is not None else (get_config().get("persona", {}) or {})
+    # ── 先看"这一条消息 @ 的是哪个槽位"（第 110 项）──
+    _at_slot = ""
+    if str(text or "").strip():
+        try:
+            from . import role_agent as _ra
+            _at_slot = _ra.pick_slot(text, {"persona": c})
+        except Exception as _e:
+            log.debug("按 @ 选人设失败（回落当前生效的那一个）：%s", _e, exc_info=True)
+            _at_slot = ""
+    try:
+        from .persona_card import slot_card as _slot_card
+        # ⛔ `slot_card()` 的入参是**整个配置**（它内部再取 `.get("persona")`）——
+        #    而本函数的 `cfg` 是**persona 段本身** ⇒ 这里必须包一层，否则永远取不到槽位
+        #    （第 262 项：这正是"两套口径并存"最容易出的错）。
+        _sc = _slot_card({"persona": c}, active=_at_slot)
+        _st = str(_sc.get("role_text") or "").strip() if _sc else ""
+        if _st:
+            return _st
+        # @ 到了槽位、但那张卡没写 `role_text`：用**卡里其余字段渲染**出正文（而不是回落全局）
+        if _at_slot and _sc:
+            try:
+                from .persona_card import render_prompt as _rp
+                _rt = str(_rp(_sc) or "").strip()
+                if _rt:
+                    return _rt
+            except Exception as _e2:
+                log.debug("渲染被 @ 的槽位卡失败（回落当前生效的那一个）：%s", _e2, exc_info=True)
+    except Exception as _e:
+        # 槽位读不到 ⇒ 回落单槽位（**不许因此让回复链挂掉**）；留栈便于定位配置写坏的情形。
+        log.debug("读多槽位人设失败（回落单槽位 role_text）：%s", _e, exc_info=True)
     t = str(c.get("role_text") or "").strip()
     if not t:
         t = str((PERSONAS.get("xiaojingyu") or {}).get("text") or "")
     return t
 
 
-def build_system_prompt(persona: dict | None = None) -> str:
+def build_system_prompt(persona: dict | None = None, text: str = "") -> str:
     cfg = persona or get_config().get("persona", {})
     # 留空 = 使用内置"小鲸鱼"角色卡（完整保留自 qq-agent 的默认人设）——回落逻辑只有一处
-    role_text = role_text_of(cfg)
+    role_text = role_text_of(cfg, text=text)
     parts = [
         "你是「%s」，一个混在微信群里的普通群友（不是助手、不是客服）。你的所有行为都通过工具完成，发言必须像真人。" % str(cfg.get("bot_name") or "小鲸鱼"),
         "",
@@ -942,6 +988,29 @@ def build_user_prompt(ctx) -> str:
         _seeds = ""
     if _seeds:
         parts.append(_seeds)
+
+    # 第 127 项：**空窗延续** —— 隔久了重新开口 ⇒ 提醒"别像失忆重启"（接上次的话头）。
+    #   ⛔ 阈值在 `memory.gap_hours`（<=0 ⇒ 关）；拿不到时间/没超阈值 ⇒ 空串，**什么都不加**。
+    #   放在【你记得的事】**之后**：先给"记得什么"，再说"这次该怎么开口"。
+    try:
+        _gap = ctx["memory"].gap_hint(
+            ctx["chat_key"], ctx.get("store"),
+            [m.get("id") for m in (ctx.get("trigger_entries") or [])], cfg=cfg)
+    except Exception: # noqa: BLE001
+        _gap = ""
+    if _gap:
+        parts.append(_gap)
+
+    # 第 128 项：**看脸色** —— 对方低落/忙/敷衍 ⇒ 换口吻与长度（判不出 ⇒ 空串，什么都不加）。
+    #   排在【本次唤醒】之后、成员备注之前：紧挨着"要回的那批消息"，又不打断前面的稳定前缀。
+    try:
+        _tone = ctx["memory"].tone_hint(
+            ctx["chat_key"], ctx.get("store"),
+            [m.get("id") for m in (ctx.get("trigger_entries") or [])], cfg=cfg)
+    except Exception: # noqa: BLE001
+        _tone = ""
+    if _tone:
+        parts.append(_tone)
 
     # 成员备注
     notes = cfg.get("member_notes") or {}

@@ -36,6 +36,13 @@ _RE_FUNC = re.compile(r"^([a-z_][A-Za-z0-9_]{2,})\(\)$")
 #: **运行期路径**：这些目录里的文件是跑起来才生成的 ⇒ 检查它们存在与否没有意义（不算对不上）
 _RUNTIME_PREFIX = ("data/", "logs/", "wechatauto_logs/", "runtime/", "offline/")
 
+#: `（新建）` 标记：条目明确写着这个落点**还没写出来、要新建**
+#   ⇒ 它"不存在"是**预期的**，不是"锚失效"。标了这一句的那一行整行跳过检查。
+#   ⛔ 反过来也要防：标了"新建"却**已经存在** ⇒ 那是标记过期（要么删标记，要么条目该重看）
+#     —— 这正是"标记不许当挡箭牌"，所以下面把这种情况单独列出来。
+_NEW_MARK = "（**新建**）"
+_NEW_MARK_ALT = "（新建）"
+
 
 def _is_runtime(rel: str) -> bool:
     r = rel.replace("\\", "/").lstrip("./")
@@ -80,9 +87,19 @@ def main() -> int:
             continue
         if "代码怎么写" in ln:
             items[cur]["howto"] = ln
-    miss_file, miss_sym = [], []
+    miss_file, miss_sym, planned_new, stale_mark = [], [], [], []
     for n, it in sorted(items.items()):
-        for raw in _RE_TICK.findall(it["howto"]):
+        _how = it["howto"]
+        if (_NEW_MARK in _how) or (_NEW_MARK_ALT in _how):
+            # 这一行声明了"落点要新建" ⇒ 不存在是预期的（但仍要核"标记没过期"）
+            for raw in _RE_TICK.findall(_how):
+                ref = raw.strip()
+                if _RE_FILE.match(ref):
+                    planned_new.append((n, ref))
+                    if (not _is_runtime(ref)) and _exists_path(ref):
+                        stale_mark.append((n, ref))
+            continue
+        for raw in _RE_TICK.findall(_how):
             ref = raw.strip()
             if _RE_FILE.match(ref):
                 if _is_runtime(ref):
@@ -102,7 +119,15 @@ def main() -> int:
     print("\n=== ❌ 指向**找不到的函数** ===")
     for n, r in miss_sym:
         print("  [%4d] %-24s  ← %s" % (n, r, items[n]["title"][:44]))
-    print("\n汇总：文件对不上 %d 处 · 函数对不上 %d 处" % (len(miss_file), len(miss_sym)))
+    print("\n=== ✔ 标了「（新建）」的落点（不参与上面的「对不上」，但要核标记没过期）===")
+    for n, r in planned_new:
+        print("  [%4d] %-38s  ← %s" % (n, r, items[n]["title"][:44]))
+    if stale_mark:
+        print("\n=== ⚠ 标记过期：标了「（新建）」可文件**已经存在**（要么删标记，要么条目该重看）===")
+        for n, r in stale_mark:
+            print("  [%4d] %-38s" % (n, r))
+    print("\n汇总：文件对不上 %d 处 · 函数对不上 %d 处 · 待新建 %d 处 · 标记过期 %d 处"
+          % (len(miss_file), len(miss_sym), len(planned_new), len(stale_mark)))
     return 0
 
 

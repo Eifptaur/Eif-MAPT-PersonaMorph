@@ -26,7 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace") # 名称里有「⇒」等非 GBK 字符
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)  # 名称里有「⇒」等非 GBK 字符
 except Exception:
     pass
 

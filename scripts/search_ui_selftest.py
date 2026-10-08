@@ -16,7 +16,7 @@
 import os
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -398,13 +398,65 @@ try:
 except Exception as _e12:
     ok("is_search_window 可单测", False, str(_e12)[:80])
 
-print("⑬ 「搜了两遍」的根因不许回归（2026-09-18 现场：第一次其实**切成功了**，却被判否 ⇒ 又搜一遍）")
-# 日志原文（22:06:57 → 22:07:02 → 22:07:05）：
-#   ①「点了搜索浮层的『演示』行…但内容级复核没过：聊天区里没有目标会话最近的任何一条文本（试过 6 条）」
-#   ②5 秒后又走一遍搜索路线（用户看到的就是「搜了两遍」）
-# ③再 3 秒
-#   ⇒ 根因＝**只认内容级复核**（浮层还盖着聊天区，读不到内容），强档证据（会话头）就在旁边却没用。
+print("⑬ 切会话·搜索路线：内容级判据**不可用**时一律 fail-closed（⛔ 不许回到「按弱证据计切成功」）")
+# 现场（阴性对照 —— 本项目最有价值的一次测法）：
+#   拿**不存在**的名字走搜索路 ⇒ 竟然 `ok=True` ✗ —— 理由行写着"浮层里出现了名字匹配的那一行"，
+#   而那是**我们自己刚打进去的词的回升**，根本不是"会话已切过去"的证据。
+#   ⚠️ 更要紧的是：按弱证据放行 ⇒ 后面发消息时"文字可能打进当时开着的另一个会话"
+#      （`wechat.py` 的注释早就记过这个风险）＝ **发错人**级。
+#   ⇒ 口径改成 **fail-closed**：内容级判据不可用 ⇒ **不认这次切换**（宁可发不出，不许发错）。
+#   ⛔ 本条用 **AST 结构断言**（不是找字面量）：凡 `if` 条件里出现「读不出」的那几支，
+#      **body 必须 return False**，绝不许 return True。
 _w13 = open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+
+
+def _weak_evidence_branches(src: str, func: str) -> tuple:
+    """在 `func` 里找出所有"以「读不出」为条件的分支" ⇒ (分支数, 返回 True 的分支数, 明细)。"""
+    import ast as _A
+    tree = _A.parse(src)
+    fn = None
+    for n in _A.walk(tree):
+        if isinstance(n, _A.FunctionDef) and n.name == func:
+            fn = n
+            break
+    if fn is None:
+        return 0, 0, ["找不到函数 %s" % func]
+    total, bad, detail = 0, 0, []
+    for n in _A.walk(fn):
+        if not isinstance(n, _A.If):
+            continue
+        _txt = [c.value for c in _A.walk(n.test)
+                if isinstance(c, _A.Constant) and isinstance(c.value, str)]
+        if not any("读不出" in t for t in _txt):
+            continue
+        total += 1
+        for r in [s for s in _A.walk(n) if isinstance(s, _A.Return)]:
+            v = r.value
+            first = v.elts[0] if isinstance(v, _A.Tuple) and v.elts else v
+            if isinstance(first, _A.Constant) and first.value is True:
+                bad += 1
+                detail.append("行 %d 在「读不出」分支里 return True" % getattr(r, "lineno", -1))
+    return total, bad, detail
+
+
+_n_branch, _n_bad, _det = _weak_evidence_branches(_w13, "open_chat_by_search")
+ok("分母守卫：真的扫到了「读不出」条件分支（否则下面那条测的是空气）", _n_branch >= 3, "%d 支" % _n_branch)
+ok("⛔ 所有「读不出」分支一律 **return False**（fail-closed，没有一支 return True）",
+   _n_branch >= 3 and _n_bad == 0, "; ".join(_det[:3]))
+
+# —— 反向对照：拿"旧写法"喂同一个检测函数，必须被咬出来（证上面那条不是恒真）——
+_seed_old = (
+    "def open_chat_by_search(self, chat_id, name=''):\n"
+    "    idn, idn_why = self.chat_identity_ok(chat_id)\n"
+    "    if idn is None or ('读不出' in str(idn_why)):\n"
+    "        return True, '按弱证据计切成功'\n"
+    "    return False, 'x'\n"
+)
+_rt, _rb, _rd = _weak_evidence_branches(_seed_old, "open_chat_by_search")
+ok("反向对照：把旧写法（读不出 ⇒ return True）喂进同一个检测函数 ⇒ **必须报出来**",
+   _rt == 1 and _rb == 1, "分支=%d 违规=%d" % (_rt, _rb))
+
+# —— 图标路线：先看强档、复核前先关浮层 —— 这三条顺序不许回退 ——
 _icon_seg = _w13[_w13.index('if variant == "icon":'):]
 # ⛔ 右边界用**代码**，别用注释（原来锚在一句 `# —— box 形态` 上 ⇒ 注释一改就假红）。
 _icon_seg = _icon_seg[:_icon_seg.index("self._clear_search_input(backend, int(_pop0[0]))")]
@@ -414,12 +466,6 @@ ok("图标路线：**先看强档证据**（chat_is_open），再谈内容级复
 ok("图标路线：强档证据是**轮询**等出来的（不是打一枪就判否）", _sm.has(_icon_seg, "for _i in range(4)"))
 ok("图标路线：做内容级复核**之前先关掉浮层**（浮层盖着聊天区 ⇒ 读不到内容）",
    _icon_seg.index("_close_search_popover(int(pop_hwnd))") < _icon_seg.index("chat_identity_ok(chat_id, gui=gui)"))
-ok("图标路线：判据**不可用**（读不出）时按弱证据计切成功（原来这里直接判否 ⇒ 又搜一遍）",
-   _sm.has(_icon_seg, '读不出" in _why_s2') or _sm.has(_icon_seg, "'读不出' in _why_s2") or '读不出' in _icon_seg)
-ok("两条路线（图标/box）都接受「读不出 ⇒ 弱证据」，口径一致",
-   _w13.count('"读不出" in') >= 2)
-ok("弱证据只放宽**切会话**这一步（发送闸另有内容×活动行时间 ⇒ 文字仍在）",
-   "发送闸仍要另过内容×活动行时间" in _w13)
 
 print("⑭ 笑脸落点必须**帧内现量**（现场：窗口改成 947×972 后面板一次都没开出来）")
 # 现场：比例法 `0.324×947 = 306` 落在输入框**左边**的空白处（点了等于没点，面板窗从头到尾没出现），
@@ -485,6 +531,28 @@ ok("③ 往浮层打字前**必须确定性清空搜索框**（否则查询词�
    _seg_s.count("_clear_search_input(backend, int(_pop0[0]))") == 1)
 ok("④ 给用户的下一步动作写清楚（点开目标会话 / 打开扫列表回退）",
    _seg_s.count("先把目标会话在微信里点开") >= 1 and _seg_s.count("扫会话列表") >= 1)
+
+print("⑯ 搜索浮层收尾的返回值口径：**「已经不在」≠「没关掉」**")
+# 现场（阳性对照那次）：成功路径的收尾文案写着「浮层**没关掉**」，
+#   看上去像"浮层留在用户屏幕上"，于是把排查引向错误方向。
+#   真因＝**点完结果行之后微信自己就把浮层收掉了**，句柄那时已失效（`IsWindow` 为假），
+#   而老写法对"已经不是一个窗口"也回 False ⇒ 文案把"已经不在"说成了"没关掉"。
+#   ⇒ 返回值口径改成「**浮层还在不在**」：不是窗口 ⇒ **True**（目的已达成）。
+#   ⚠️ 这条同时保证"真的还开着"时一定走 `winops.close` 把枪打出去（不会因为"看着像已关"而漏关）。
+from agent.wechat import _close_search_popover as _csp16  # noqa: E402
+ok("① 没有句柄 ⇒ False（无从判断，如实回 False）", _csp16(0) is False)
+ok("② 句柄已不是窗口 ⇒ **True**（它不在屏幕上了；微信点完结果行自己收掉的就是这种）",
+   _csp16(0x7FFFFFF0) is True)
+_seg_csp = _srcslice.from_func(_w13, "_close_search_popover")
+_cut16 = _seg_csp.find("\n\ndef ")   # 模块级函数：下一个顶层 def 就是它的边界（`find` 不是"源码脆断言"）
+_seg_csp = _seg_csp[:_cut16] if _cut16 >= 0 else _seg_csp
+_brk16 = _seg_csp.split("not u.IsWindow")[1][:200] if _sm.has(_seg_csp, "not u.IsWindow") else ""
+ok("③ 结构锚：`IsWindow` 为假那一支**回 True**（口径写在代码里，不靠记忆）",
+   bool(_brk16) and _sm.has(_brk16, "return True"))
+ok("④ ⛔ 句柄仍有效时**必须**走 `winops.close` 投出那一枪（不许「看着像已关」就跳过）",
+   _sm.has(_seg_csp, "winops import close as _win_close") and _sm.has(_seg_csp, "_win_close(_h, "))
+ok("⑤ 关窗唯一入口没被绕过（收尾一律走 `winops.close`，不裸投 `WM_CLOSE`）",
+   not _sm.has(_seg_csp, "PostMessageW(ctypes.c_void_p(_h), WM_CLOSE"))
 
 print("\n结果：%d 通过 / %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

@@ -766,6 +766,23 @@ def harden_gui(gui):
     return gui
 
 
+def _offscreen_by_us(hwnd) -> bool:
+    """窗口是不是**我方故意**摆在屏幕外（`voice_strip._OffscreenShown` 还挂着）。
+
+    ⛔ 是 ⇒ 本函数下面那两处"出屏就拉回可见区 / 偏了就限位"的自愈**一个字都不许动**：
+      · 屏外档的全部意义就是"显示着但不上屏"（最小化档投递的前提）——
+        被拉回屏内 ⇒ **屏外坐标算出来的点击落点全错**；
+      · 那两处用的是 `ShowWindow(hwnd, 9)`（`SW_RESTORE`，**会激活窗口**）⇒
+        窗口会在用户眼前跳位置并被激活。
+    详见 `agent/voice_strip.py::offscreen_active` 的说明。拿不到就回 False（与改动前一致）。
+    """
+    try:
+        from . import voice_strip as _vs
+        return bool(_vs.offscreen_active(hwnd))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def prepare_screen(gui) -> bool:
     """点击操作前的整备：把微信置前 + 清理叠加层/遮挡窗口 + 窗口出屏自动还原。
 
@@ -822,7 +839,7 @@ def prepare_screen(gui) -> bool:
                     _need = (abs(r.left - _tx) > 150 or abs(r.top - _ty) > 150
                              or abs((r.right - r.left) - _tw) > _tw * 0.12
                              or abs((r.bottom - r.top) - _th) > _th * 0.12)
-                    if _need:
+                    if _need and not _offscreen_by_us(hwnd):
                         _user32.ShowWindow(hwnd, 9)
                         _user32.SetWindowPos(hwnd, 0, _tx, _ty, _tw, _th,
                                              0x0001 | 0x0002 | 0x0020 | 0x0040)
@@ -838,7 +855,8 @@ def prepare_screen(gui) -> bool:
                 _user32.GetWindowRect(hwnd, ctypes.byref(r))
                 vw = int(_user32.GetSystemMetrics(0))
                 vh = int(_user32.GetSystemMetrics(1))
-                if r.left > vw - 60 or r.top > vh - 60 or r.right < 20 or r.bottom < 20:
+                if (not _offscreen_by_us(hwnd)) and (
+                        r.left > vw - 60 or r.top > vh - 60 or r.right < 20 or r.bottom < 20):
                     _user32.ShowWindow(hwnd, 9) # SW_RESTORE
                     _user32.SetWindowPos(hwnd, 0, 90, 90, 0, 0, 0x0001 | 0x0020 | 0x0040)
                     time.sleep(0.6)
@@ -847,28 +865,10 @@ def prepare_screen(gui) -> bool:
                 # 977x976 时每次都命中它 => 被恢复成 1250x1100xDPI（实测 1875x1472）并摆到
                 # (90,90) —— 这就是「我调小它就变大、还跑到那个位置」的真凶。尺寸现在由限位
                 # （ui.lock_window_w/h）统一管，这里不再插手。
-                elif False and ((r.right - r.left) < 1500 or (r.bottom - r.top) < 1000):
-                    # 窗口被缩得很小（物理像素判定，兼容高 DPI：1.8x 屏 1250 逻辑=2250 物理）
-                    # → 按 DPI 恢复标准尺寸（逻辑 1250×1100 → 物理换算）
-                    try:
-                        _scale = max(1.0, _user32.GetDpiForWindow(hwnd) / 96.0)
-                    except Exception:
-                        _scale = _fallback_scale(hwnd)
-                    # ⛔ 这一处原来也按写死的 **1250×1100 ×DPI** 摆窗口（实测把用户的 977×976 顶成
-                    #    1466×1464 / 1875×1472），并把位置钉到 (90,90)。⇒ 尺寸读 `ui.lock_window_w/h`、
-                    #    位置用窗口自己的（不再搬）。这是"窗口老是自己变大"的最后一处。
-                    _uic3 = (__import__("agent.config", fromlist=["get_config"]).get_config().get("ui") or {})
-                    _w3 = int(_uic3.get("lock_window_w") or 1113)
-                    _h3 = int(_uic3.get("lock_window_h") or 909)
-                    _r3 = wintypes.RECT()
-                    _user32.GetWindowRect(hwnd, ctypes.byref(_r3))
-                    _user32.ShowWindow(hwnd, 9)
-                    log.info("限位(794 处)：读到 lock_window_w/h=%s/%s ⇒ 设成 %sx%s",
-                             _uic3.get("lock_window_w"), _uic3.get("lock_window_h"), _w3, _h3)
-                    _user32.SetWindowPos(hwnd, 0, int(_r3.left), int(_r3.top), _w3, _h3,
-                                         0x0001 | 0x0020 | 0x0040)
-                    time.sleep(0.6)
-                    gui._update_render_rect()
+                # ⛔ 那段死代码（`elif False and …` 的整块）**已删** —— 它既永远不执行、
+                #    又是限位逻辑的重复实现，还让"本函数每处 `SW_RESTORE` 都在守卫之下"
+                #    这条机械断言**数不清**（把死代码也算进去 ⇒ 假红）。
+                #    它记录的知识留在上面这段注释里，不靠一段不可达代码保存。
         except Exception as _e:
             log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             pass

@@ -16,7 +16,7 @@ if _ROOT not in sys.path:
 # UTF-8 垫片：本脚本会打印 ✔/✘（`main()` 里的 ck）。输出被重定向到 GBK 控制台/文件时，
 # 这两个字符直接抛 UnicodeEncodeError ⇒ **整条自检崩在第一个断言上**，后面的断言从未跑到过。
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception: # noqa: BLE001
     pass
 

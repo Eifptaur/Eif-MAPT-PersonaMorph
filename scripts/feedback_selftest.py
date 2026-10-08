@@ -19,7 +19,7 @@ import sys
 
 import logging
 log = logging.getLogger("persona-morph")
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -322,8 +322,20 @@ ok("联系方式与提交记录在「更多」折叠区之后",
    _ui.find('id="fbContact"') > _i_adv and _ui.find('id="fbRecent"') > _i_adv, "")
 ok("顶部提示默认隐藏（只在发不出去 / 有积压时出现）",
    'id="fbWarn"' in _ui and 'id="fbWarn" style="display:none' in _ui, "")
-ok("**用户界面里没有任何通道配置**",
-   'data-cfg="feedback.' not in _ui, "")
+# ⛔ 这条的**原意**是"**通道凭据**不许出现在用户界面里"（把 key 摆上网页＝把钥匙贴在门上），
+#   而不是"`feedback` 段一个键都不许有"。
+#   ⚠️ 原写法 `'data-cfg="feedback.' not in _ui` 太宽：第 144 项续记按同一批口径把该段的
+#     **非凭据**键（enabled / attach_compat / limit.*4）补进了界面 —— 那 6 个**本来就该给用户调**，
+#     于是这条判据与"补齐非凭据键"两件事**互相矛盾**（判据红、而代码是对的）。
+#   ⇒ 改成**按字段名锚**（锚意图不锚前缀）：凭据类键在界面上**一个都不许有**。
+_CRED_IN_UI = ("feedback.to", "feedback.upload_url", "feedback.webhook_url", "feedback.webhook_token",
+               "feedback.smtp", "feedback.relay")
+_hit_cred = [k for k in _CRED_IN_UI if ('data-cfg="%s' % k) in _ui]
+ok("**界面里不含通道凭据**（key / token / SMTP 授权码这类不许摆上网页）",
+   not _hit_cred, "命中：%s" % _hit_cred)
+# 分母守卫：确认这条判据真的扫到了东西（`_ui` 不是空串、且界面里**确有** feedback 段的非凭据键）
+ok("分母守卫：界面里确实有 `feedback` 段的非凭据键（否则上面那条是空过）",
+   'data-cfg="feedback.' in _ui, "")
 for _k in ("在线提交密钥", "推送地址", "推送口令", "发信服务器", "邮箱授权码", "中转网址", "Web3Forms"):
     ok("界面文案里不该出现侧词汇「%s」" % _k, _k not in _ui, "")
 _cfg_src = src("agent/config.py")
@@ -673,6 +685,60 @@ ok("L7 出包闸门对它的凭据形态**显式放行并写明理由**（不是
    _has(_pack, '("assets/feedback_endpoint.json", "企业微信 webhook key")'), "")
 ok("L8 该文件**不进仓库**（.gitignore 挡着；轮换＝重新出一版，不用改 git 历史）",
    "assets/feedback_endpoint.json" in io.open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read(), "")
+
+print("")
+print("── M. 设备 ID 与签名（第 158 项：上报要能归到一台机器，且不含身份信息）──")
+try:
+    import json as _json2
+    import shutil as _sh2
+    import tempfile as _tf2
+    _tmp2 = _tf2.mkdtemp(prefix="pm_dev_")
+    _saved_df = FB.DEVICE_FILE
+    FB.DEVICE_FILE = os.path.join(_tmp2, "device.json")
+    try:
+        _d1 = FB.device_id()
+        ok("M1 ⭐ 首次调用**生成并持久化**设备 ID（32 位 hex = 128 位随机）",
+           len(_d1) == 32 and all(c in "0123456789abcdef" for c in _d1) and os.path.exists(FB.DEVICE_FILE),
+           "id=%s…" % _d1[:8])
+        ok("M2 ⭐ **同一个 ID 会被复用**（不是每次都换 ⇒ 才能把多条反馈归到一台机器）",
+           FB.device_id() == _d1, "")
+        ok("M3 文件里只有一个 `id` 与时间戳（**不含**主机名 / 用户名 / MAC / 硬盘序列号）",
+           set(_json2.load(open(FB.DEVICE_FILE, encoding="utf-8")).keys()) == {"id", "at"}, "")
+        # 反例锚：删掉文件后拿到的是**新** ID（证明确实是随机生成，不是从别处推导的）
+        os.remove(FB.DEVICE_FILE)
+        ok("M4 ⭐ 反例锚：删掉文件 ⇒ 得到**不同**的新 ID（证明确属随机生成，不是从机器推导）",
+           FB.device_id() != _d1, "")
+        # 写不了 ⇒ 空串，**不生成临时的**
+        _saved_mk = FB.os.makedirs
+        FB.DEVICE_FILE = os.path.join(_tmp2, "no_such_dir_xyz", "device.json")
+        try:
+            FB.os.makedirs = lambda *a, **k: (_ for _ in ()).throw(OSError("判据故意造的"))
+            ok("M5 ⭐ 写不了 ⇒ 回**空串**（不造假 ID：假 ID 会把一台机器拆成无限多台）",
+               FB.device_id() == "", repr(FB.device_id()))
+        finally:
+            FB.os.makedirs = _saved_mk
+        FB.DEVICE_FILE = os.path.join(_tmp2, "device.json")
+        # 签名：同内容同 ID ⇒ 同签名；换一个字符 ⇒ 变
+        _a = FB.sign_payload({"t": "你好", "k": "其他", "at": 1.0}, "abc")
+        ok("M6 ⭐ 签名稳定（同内容同 ID ⇒ 同签名 —— 接收端靠它去重）",
+           _a == FB.sign_payload({"t": "你好", "k": "其他", "at": 1.0}, "abc") and len(_a) == 16, _a)
+        ok("M7 ⭐ 反例锚：改一个字符 ⇒ 签名变（否则它就是个恒定的摆设）",
+           _a != FB.sign_payload({"t": "你坏", "k": "其他", "at": 1.0}, "abc"), "")
+    finally:
+        FB.DEVICE_FILE = _saved_df
+        _sh2.rmtree(_tmp2, ignore_errors=True)
+    _fb_src = src("agent/feedback.py")
+    ok("M8 ⭐ 上报体**真的带** device 与 sig（不是只定义了函数）",
+       '"device": device_id()' in _fb_src and '"sig"] = sign_payload(' in _fb_src, "")
+    ok("M9 ⛔ 设备 ID **不进**给人读的正文（`compose` 里不许出现 device）",
+       "device" not in FB.compose({"text": "x", "device": "deadbeef"}), "")
+    ok("M10 ⛔ 不取机器码类标识（源码里不许有 MAC / 主机名 / 硬盘序列号那类调用）",
+       not any(k in _fb_src for k in ("getnode(", "uuid.getnode", "gethostname", "volume_serial",
+                                      "GetVolumeInformation")), "")
+except Exception as e:
+    # 本节判据全部依赖 agent.feedback 的 device_id / sign_payload；
+    # 一旦这两者缺失或抛错，说明能力本身没落地 ⇒ 记 FAIL（不静默跳过）。
+    ok("M. 设备 ID 与签名（取用失败）", False, str(e)[:200])
 
 print("")
 print("反馈栏判据：%d 通过 / %d 失败" % (PASS, FAIL))

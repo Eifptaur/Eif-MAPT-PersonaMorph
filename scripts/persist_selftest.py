@@ -39,7 +39,7 @@ if ROOT not in sys.path:
 if HERE not in sys.path:
     sys.path.insert(0, HERE) # `_srcmatch`：源码级锚一律走它（空白容忍，别写脆断言）
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except Exception:
     pass
 

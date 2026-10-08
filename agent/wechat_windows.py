@@ -3727,8 +3727,9 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
          · 列表里**看得见**目标行 ⇒ `agent.session_order` 翻 DB 序号 ⇒ 算那一行 y ⇒ **双击**
            （两枪间隔取手速真值 `DOUBLE_GAP_S`；太近会被判成拖拽、把聊天框关掉）
          · 列表里**看不见**（被滚出屏幕外）⇒ **只报"需要先滚动"算失败**
-           （滚动会让用户眼前的列表动，比开搜索窗更打扰）⇒ 应改走
-           `open_chat_by_search(double_click_result=True)`（见 `报告/PLAN.md` 序 11d）
+           （滚动会让用户眼前的列表动，比开搜索窗更打扰）⇒ 应改走第 ④ 级：
+           **搜索定位（单击结果行切过去）⇒ 再双击列表里的绿底高亮行**
+           ⛔ 不要用 `open_chat_by_search(double_click_result=True)` —— 那条开不出窗（见上）
       ③ **自愈**：②若没等到（窗一闪即没/被叉掉）⇒ **自动重试一轮**（`how="opened_retry"`）
       ③′ ★ **开出来的窗立刻收起**（`park_popup`）：一旦是我们自己弹出来的（`how` ∈ opened*），
          就**马上收成最小化** ⇒ **不让它闪到用户眼前**（而"最小化档"本来就是发消息的正路：

@@ -14,7 +14,7 @@ import io
 import os
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -186,6 +186,86 @@ try:
     _P.get_config = _real_gc
 except Exception as e: # noqa: BLE001
     ok("第四档运行时行为", False, e)
+
+print("\n── J. `skip` 档的**行为**锚（原来只有 `'\"skip\"' in src` 这种文案锚 ⇒ 改坏了照样绿）──")
+try:
+    _s_owner = fake({"owner_accounts": ["wxid_big", "张大号"], "owner_mode": "skip"})
+    _s_other = fake({"owner_accounts": ["wxid_big", "张大号"], "owner_mode": "skip"})
+    # ① 认人这一步不能因为档位是 skip 就失灵（skip 是在"认出来之后"才跳的）
+    ok("J1 skip 档下 is_owner 仍认得出主人（wxid 命中）",
+       _s_owner.is_owner("wxid_big", "") is True)
+    ok("J2 skip 档下 is_owner 仍认得出主人（昵称兜底）",
+       _s_owner.is_owner("", "张大号") is True)
+    ok("J3 skip 档下**不**认别人（防「整批都当主人」的过宽）",
+       _s_other.is_owner("wxid_other", "李四") is False)
+    # ② 拿真源码验"跳过分支真的挂在那儿、且**必须靠 is_owner + skip 两个条件同时成立**"
+    #    ⛔ 不锚字面（注释里也出现过 skip 字样）—— 取 `normalize` 那段源码里的真语句。
+    _WX_SRC = io.open(os.path.join(ROOT, "agent", "wechat.py"), encoding="utf-8").read()
+    _line = [ln.strip() for ln in _WX_SRC.split("\n")
+             if ln.strip().startswith("if _is_owner and") and "skip" in ln]
+    ok("J4 真有一条「既认成主人、又是 skip 档」才跳过的语句（不是只认一条）",
+       len(_line) == 1 and "_owner_mode" in _line[0].split("==")[0], _line[0] if _line else "没找到")
+    _back = [ln.strip() for ln in _WX_SRC.split("\n")
+             if ln.strip() == "return None"]
+    # ③ 反向锚：同一段里必须**同时**存在"不跳过"的路径（否则把所有人全 skip 了也能绿）
+    _ret_after = _WX_SRC.split("if _is_owner and", 1)[-1][:400] if "if _is_owner and" in _WX_SRC else ""
+    ok("J5 反向锚：跳过分支之后还有正常返回那条路（不是整段 return None）",
+       _ret_after.strip().startswith("str(getattr") or '"_owner_mode"' in _ret_after
+       or "return {" in _ret_after, "")
+    # ④ 四档都要合法（落回落表里，不能被悄悄改成 know）
+    for _m in ("off", "skip", "owner_at_only", "know"):
+        ok("J6 档位 %s 是合法档（不被回落）" % _m,
+           fake({"owner_accounts": ["wxid_big"], "owner_mode": _m})._owner_mode == _m)
+    ok("J7 非法档位回落 know（既有口径不变）",
+       fake({"owner_accounts": ["wxid_big"], "owner_mode": "乱填"})._owner_mode == "know")
+    # ⑤ off 档：登记了但装没认出来（fail-closed，不误伤）
+    _off = fake({"owner_accounts": ["wxid_big"], "owner_mode": "off"})
+    ok("J8 off 档 ⇒ 登记了也不认（fail-closed）", _off.is_owner("wxid_big", "张大号") is False)
+    # ⑥ 没登记 ⇒ 任何档位都不认（防"空登记表把全员当主人"）
+    for _m in ("skip", "owner_at_only", "know"):
+        ok("J9 空登记表 + %s 档 ⇒ 一个都不认" % _m,
+           fake({"owner_accounts": [], "owner_mode": _m}).is_owner("wxid_big", "张大号") is False)
+except Exception as e: # noqa: BLE001
+    ok("J. `skip` 档行为锚", False, e)
+
+print("\n── K. 「主人说话 / 别人说话 ⇒ 行为不同」这条验收的**两条真链路**──")
+try:
+    from agent import prompt as _P2
+    # ① `know` 档：同一条文本，只有 owner 标记不同 ⇒ 进模型的显示名必须不同
+    _s_master = _P2._format_entry({"sender_id": "wxid_big", "sender_name": "张大号",
+                                   "owner": True, "text": "在吗", "ts": 1700000000000})
+    _s_stranger = _P2._format_entry({"sender_id": "wxid_other", "sender_name": "李四",
+                                     "owner": False, "text": "在吗", "ts": 1700000000000})
+    ok("K1 owner 标记 ⇒ 显示成「主人」", "主人" in _s_master, _s_master)
+    ok("K2 非 owner ⇒ 显示昵称（不被当成主人）",
+       "主人" not in _s_stranger and "李四" in _s_stranger, _s_stranger)
+    ok("K3 反向锚：两条显示**确实不同**（不是同一条文案）", _s_master != _s_stranger)
+    # ② `owner_at_only` 档：同一批消息，只有 owner 标记不同 ⇒ should_respond 必须不同
+    _real_gc2 = _P2.get_config
+
+    def _cfg_oa():
+        return {"wechat": {"owner_mode": "owner_at_only"},
+                "store": {"context_tier": 4, "all_count": 60, "at_count": 20,
+                          "keyword_count": 30, "random_count": 40, "random_percent": 0,
+                          "group_blocklist": {}, "unified_tier": True}}
+
+    def _e(text, owner):
+        return {"id": 1, "mid": 1, "ts": 9999999999999, "sender_id": "wxid_big" if owner else "wxid_x",
+                "sender_name": "张大号" if owner else "李四", "text": text, "self": False,
+                "media": [], "reply": None, "owner": owner}
+
+    _P2.get_config = _cfg_oa
+    _r_own = _P2.resolve_context_tier([_e("在吗", True)], "示例群", "", "", roll=0,
+                                     chat_key="group:gA", group_name="甲群")
+    _r_oth = _P2.resolve_context_tier([_e("在吗", False)], "示例群", "", "", roll=0,
+                                      chat_key="group:gA", group_name="甲群")
+    ok("K4 同一句话：主人发的 ⇒ 不回", _r_own.get("should_respond") is False, _r_own.get("reason"))
+    ok("K5 同一句话：别人发的 ⇒ 回", _r_oth.get("should_respond") is True, _r_oth.get("reason"))
+    ok("K6 反向锚：两者结论**确实不同**（不是都回或都不回）",
+       _r_own.get("should_respond") != _r_oth.get("should_respond"))
+    _P2.get_config = _real_gc2
+except Exception as e: # noqa: BLE001
+    ok("K. 两条真链路", False, str(e)[:200])
 
 print("")
 print("主人识别判据：%d 通过 / %d 失败" % (PASS, FAIL))

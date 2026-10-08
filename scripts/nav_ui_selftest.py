@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -89,7 +89,42 @@ ok("收起态：那颗按钮也被显式收窄并居中（不许压满整栏）"
    re.search(r"\.side\.tight \.nav-tg\{[^}]*width:auto", HTML) is not None
    and re.search(r"\.side\.tight \.nav-tg\{[^}]*margin:2px auto", HTML) is not None)
 
-print("⑤ 前端 JS 语法（node --check）")
+print("\n⑥ 三套索引（搜索 / 分类 / 最近）")
+# 三套索引是**三件不同的事**：分类＝按主题找（nav-grp 分组）；搜索＝按名字找（navFind）；
+# 最近＝回到刚才那个（navRecentGrp）。任一套缺了，都算这项没收尾。
+ok("分类：导航有分组（.nav-grp 且带 data-grp）",
+   len(re.findall(r'class="nav-grp" data-grp="', nav)) >= 3,
+   "%d 组" % len(re.findall(r'class="nav-grp" data-grp="', nav)))
+ok("搜索：有导航内搜索框 + 结果容器",
+   'id="navFind"' in HTML and 'id="navFindRes"' in HTML, "")
+ok("搜索：空结果有说明（不是静默什么都不显示）",
+   "没找到「" in HTML and "换个说法试试" in HTML, "")
+ok("★ 最近：有最近组的容器（JS 填，空时整组隐藏）",
+   'id="navRecentGrp"' in HTML and 'id="navRecentBd"' in HTML, "")
+ok("★ 最近：**故意不混进「分类」那 5 组**（不许用 nav-grp/data-grp —— Qt 侧按 5 组 28 项全等比对）",
+   re.search(r'class="nav-recent-grp" id="navRecentGrp"', HTML) is not None
+   and re.search(r'<div class="nav-grp" id="navRecentGrp"', HTML) is None, "")
+ok("★ 最近：只记功能项（section），不记小项（.sub/.row）—— 记多了没重点",
+   "只记**功能项" in HTML or "只记功能项" in HTML, "")
+ok("★ 最近：空的时候整组隐藏（不留空壳标题）",
+   "display:none" in re.search(r'<div class="nav-recent-grp" id="navRecentGrp"[^>]*>', HTML).group(0),
+   "")
+ok("★ 最近：状态持久化（localStorage，刷新/换页都保持）",
+   "navRecentSeen" in HTML and "localStorage.setItem(RK" in HTML, "")
+ok("★ 最近：分组可折叠且折叠态也持久化（与其余分组手感一致）",
+   "navRecentOpen" in HTML and "nav-recent-hd" in HTML, "")
+ok("★ 最近：剔除已不在本页的功能（配置不同/改名后不许留死链）",
+   "secTitle[id] !== undefined" in HTML, "")
+ok("★ 最近：图标沿用原导航项那一枚 SVG（不另造一套）",
+   "srcA.querySelector(\"svg\")" in HTML or "querySelector('svg')" in HTML, "")
+ok("★ 最近：跳转目标就是 section 的 id（点一下真的跳得到）",
+   "a.href = '#' + id" in HTML, "")
+ok("★ 最近：三套索引互不冒充（注释里写清各是什么）",
+   "分类＝按主题找" in HTML and "搜索＝按名字找" in HTML, "")
+ok("★「最近」有自己的一枚视觉标记（左侧竖线，与分类分组区分）",
+   ".nav-recent::before" in HTML, "")
+
+print("\n⑤ 前端 JS 语法（node --check）")
 node = shutil.which("node")
 if not node:
     ok("node 可用（拿它做语法检查）", False, "找不到 node")

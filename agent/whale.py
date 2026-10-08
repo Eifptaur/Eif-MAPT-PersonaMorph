@@ -195,8 +195,7 @@ class WhaleWidget:
     #:   · `sound/`：那个"目录式"入口没有对应实现；`press.mp3` / `release.mp3` 两条老路由由 webui 显式处理。
     #:   · `wait.json`（**上游 0.3.14 起新增**）：客户端每秒轮询它，用来知道"有没有挂起的交互
     #:     （提问 / 授权）、哪一类、对话名"，据此弹**常驻泡泡** + 提示音，并给文案里的 `{session}` 占位符取值。
-    #:     我们暂时没有"挂起交互"这个状态 ⇒ 如实回不支持（客户端走默认值：不弹挂起泡泡、`{session}` 显示"当前对话"）。
-    #:     ⚠️ **将来可接**：`agent/pending_decisions.py` 里就有"等人工拍板"的队列 ⇒ 接上它这条就能亮起来。
+    #:     ✅ 已接：数据源＝`agent/pending_decisions.py` 的"等人工拍板"队列（见 `wait_payload`）。
     _UNSUPPORTED = ("sound/",)
 
     _CFG_KEYS = {"bubble.json": ("bubble", "config"), "audio.json": ("audio", "settings")}
@@ -207,6 +206,42 @@ class WhaleWidget:
         return {"ok": False, "why": "本移植版（群相控制台）暂无此能力：%s。"
                                     "该功能依赖上游宿主侧能力，当前版本暂未提供"
                                     % name, "unsupported": True}
+
+    def wait_payload(self) -> dict:
+        """GET wait.json：客户端每秒轮询，问"有没有挂起的交互（提问/授权）、哪一类、对话名"。
+
+        上游规格（0.3.14 起）：有挂起 ⇒ 弹常驻泡泡 + 提示音，并用 `session` 填文案里的 `{session}`；
+        没有 ⇒ 客户端不弹。⛔ 没有挂起时**必须**回 `waiting:false`（回 true 会让泡泡一直弹）。
+        `id` 供客户端去重（同一个挂起只响一次）。
+
+        数据源＝`pending_decisions` 里 `status == "open"` 的条目（产品里唯一的挂起形态是
+        "微信/适配器版本不匹配"这一类需要一次外部确认的事）。取**最早创建**的那条：
+        一次只提示一件事，避免多条挂起时泡泡文案来回跳。
+        """
+        it = None
+        try:
+            from . import pending_decisions as _pd  # noqa: PLC0415  仅此处用，不做模块级依赖
+            items = _pd.open_items()
+            if items:
+                it = sorted(items, key=lambda x: str(x.get("created_at") or ""))[0]
+        except Exception as _e:  # noqa: BLE001
+            # 读不到待决台账 ⇒ **回"没有挂起"**（不是回错误）：这条路每秒被轮询，
+            # 回错误会让客户端每秒记一条失败；而"读不到"本身不该表现成"有情况要弹泡"。
+            log.debug("wait.json 读待决台账失败（按无挂起处理）：%s", _e, exc_info=True)
+            it = None
+        if not it:
+            return {"ok": True, "waiting": False}
+        title = str(it.get("title") or "").strip()
+        reason = str(it.get("reason") or "").strip()
+        #: 上游只有 ask / auth 两类；我们这唯一一种挂起是"请你拍板"⇒ 归 ask。
+        return {
+            "ok": True,
+            "waiting": True,
+            "kind": "ask",
+            "session": str(it.get("wechat") or "").strip() or (title or "当前对话"),
+            "id": str(it.get("id") or ""),
+            "text": reason or title,
+        }
 
     def cfg_payload(self, name: str) -> dict:
         """GET 泡泡 / 音频配置：没存过就回 `{"ok": false}`（前端用内置默认值）。"""

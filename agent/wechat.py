@@ -1382,18 +1382,29 @@ def _main_iconic_hint(gui) -> str:
 
 
 def _close_search_popover(hwnd: int) -> bool:
-    """投递 `WM_CLOSE` 关掉搜索浮层（实测：一枪就关，关掉后前台自动回微信主窗）。
+    """投递 `WM_CLOSE` 关掉搜索浮层；返回 True ＝**它现在不在屏幕上了**。
 
     ⚠️ 为什么必须自己关：搜索浮层**失败后留在屏幕上**——既挡屏又**占着前台**
     （对面那次复现的起点就是这个残留浮层）。⇒ 失败分支自己收尾，别把浮层留给用户。
+
+    ⛔ 返回值的口径是「**浮层还在不在**」，不是「**这一枪有没有打出去**」：
+      · 句柄**已经不是一个窗口**（`IsWindow` 为假）⇒ 它已经不在屏幕上了 ⇒ **回 True**。
+        这不是猜——**点完结果行之后微信自己会把浮层收掉**，成功分支正是踩在这里：
+        句柄那时已经失效，老写法回 False，于是成功路径的收尾文案写成「浮层**没关掉**」，
+        看上去像"浮层留在用户屏幕上"（实际是已经没了），把排查引向错误方向。
+      · 这条也顺带保证：**只要浮层真的还开着**（句柄有效、且不是主窗/渲染子窗），
+        本函数一定走 `winops.close` 投出那一枪 —— 不会因为"看着像已关"而漏关。
     """
     try:
         u = ctypes.windll.user32
-        if not hwnd or not u.IsWindow(ctypes.c_void_p(int(hwnd))):
-            return False
+        _h = int(hwnd or 0)
+        if not _h:
+            return False # 连句柄都没有 ⇒ 无从判断，如实回 False
+        if not u.IsWindow(ctypes.c_void_p(_h)):
+            return True # 已经不是窗口 ⇒ 不在屏幕上（点完结果行后微信自己收掉的正是这种）
         u.PostMessageW.restype = ctypes.c_void_p
         from .winops import close as _win_close
-        return _win_close(hwnd, "关搜索浮层")
+        return _win_close(_h, "关搜索浮层")
     except Exception as _e:
         log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         return False
@@ -4548,7 +4559,11 @@ class WeChatAdapter:
             return False
 
     def _only_popup(self) -> bool:
-        """**「只对独立窗操作」闸门**（`send.only_popup`，默认 **False**）。
+        """**「只对独立窗操作」闸门**（`send.only_popup`，内置默认 **True** ＝切会话链已废）。
+
+        ⚠️ 读取处的 `get(..., False)` 只是"键被显式删掉时"的兜底 —— **实际生效的是配置默认值**
+        （`agent/config.py` 的 `DEFAULTS["send"]["only_popup"] = True`）。两者不一致时**以 config 为准**。
+        
 
         开着时：发送**只许**对目标会话的**独立窗**做 —— **不切会话、不在主窗里发**
         （独立窗一窗一会话 ⇒ 结构上不可能发错；切会话则有"切错会话"的风险）。
@@ -4703,7 +4718,7 @@ class WeChatAdapter:
                         #   ⚠️ 失败/找不到一律**回落**下面的原路径，绝不改变既有行为。
                         # ⚠️ 用  取开关：本类的**测试桩/子类**未必有 
                         #    （实测  的  就没有 ⇒ 直接调用会 AttributeError）
-                        # ⛔ 「只对独立窗操作」闸门（`send.only_popup`，默认关）开着时：
+                        # ⛔ 「只对独立窗操作」闸门（`send.only_popup`，**内置默认开**）开着时：
                         #   **强制**走这一支（即使 `send.popup_first` 没开），且下面的
                         #   "投递到主窗 / 切会话再发"一律不许走（见下面那道 return）。
                         if bool(getattr(self, "_popup_preferred", lambda: False)()) or self._only_popup():
@@ -6629,13 +6644,11 @@ class WeChatAdapter:
         OCR 结果行找名字匹配的那行 → 投递点它 → **内容级复核**（`chat_identity_ok`）。
         返回 `(ok, 说明)`；拿不到内容级正面证据就不算成功（fail-closed）。
 
-        `double_click_result=True` —— 结果行改成**双击**，用来把会话**开成独立窗**
-        （单击只切会话）。**默认 False＝原行为不变。**
-        ⚠️ 双击在此处可行的前提：**结果行不属于主窗会话列表的选中态** ⇒
-          不会被判成"取消选中"（那正是 `ensure_popup` 里"已选中行双击开不出窗"的机制，
-          它为此专写了 `_deselect_target_row`）。
-        ⚠️ 这条**仍需真机验证**（探针 `_scratch/_e2e_search_popup.py`）；验证前
-          调用方应保持默认关。
+        `double_click_result=True` —— 结果行改成**双击**。⛔ **但这条路开不出独立窗**
+        （真机定档）：结果行的双击与单击**同一效果**（只切会话），两枪连发也一样。
+        ⇒ 独立窗要走 `wechat_windows.ensure_popup` 的第 ④ 级：
+          **搜索定位（单击结果行，切过去）⇒ 再双击列表里那根绿底高亮行**。
+        保留本参数只为兼容既有调用点；**新代码请改用 `ensure_popup`**。
         """
         from . import input_backend as ib
         # ⚠️ 晚（时间线实测）：**这条链会抢前台**——开搜索浮层、往浮层投字、点结果行，
@@ -6880,7 +6893,7 @@ class WeChatAdapter:
                     return False, ("搜索浮层的画面里没认出「%s」那一行（浮层截图 %s%s；输入框里=%s；浮层%s）"
                                    % (name, shot_size, ("｜现场已存 %s" % _d) if _d else "",
                                       ("「%s」" % _intxt[:20]) if _intxt else "**空**（字没投进去）",
-                                      "已关掉" if _closed else "**没关掉**"))
+                                      "已收掉（或本来就不在屏幕上）" if _closed else "**没能收掉**"))
                 # ⚡ 深夜修（**"点结果行点偏"** 实测：同一个浮层，第一次点到「演示」✓，
                 #   第二次却打开了「腾新闻」✗）：`prect` 是**几秒前**快照的浮层矩形，而搜索浮层会
                 #   **随结果变高**（实测「输入前 552×338、出结果后 552×891」）⇒ 拿旧矩形去加行坐标，
@@ -6904,13 +6917,15 @@ class WeChatAdapter:
                 if not _cok:
                     return False, _cwhy
                 if double_click_result:
-                    # 第二枪 ⇒ **开独立窗**（单击只切会话）。间隔取模块级那份手速真值
-                    #   （与 `ensure_popup` 共用，勿在此另写数字）。
-                    # ⚠️ 第二枪预期"会出现新窗"⇒ 必须 `allow_new=True`。
+                    # ⛔ **这条路别用来开独立窗**：结果行的双击**不会**把会话开成独立窗 ——
+                    #   它只切会话（与单击同一效果），两枪连发也一样。
+                    #   ⇒ 独立窗要走 `wechat_windows.ensure_popup` 的第 ④ 级：
+                    #     **搜索定位（单击结果行，切过去）⇒ 再双击列表里那根绿底高亮行**。
+                    #   保留本参数只为兼容既有调用点；新代码请改用 `ensure_popup`。
                     from .wechat_windows import DOUBLE_GAP_S as _DGS # noqa: PLC0415
                     time.sleep(float(_DGS))
                     self._click_posted(backend, int(pop_hwnd), (_px, _py),
-                                       "搜索浮层结果行·第二枪（开独立窗）", allow_new=True)
+                                       "搜索浮层结果行·第二枪（已定档：开不出独立窗）", allow_new=True)
                 time.sleep(1.0)
                 # ⚡ 
                 #   这一格原来只认**内容级复核**（`chat_identity_ok` 读聊天区最近几条）——
@@ -6930,7 +6945,7 @@ class WeChatAdapter:
                     _closed = _close_search_popover(int(pop_hwnd)) # 切成了就把浮层收掉（别留屏幕上）
                     return True, ("搜索浮层路线成功（强档证据：%s；%s；浮层%s）"
                                   % (str(_opwhy)[:80], row.get("why"),
-                                     "已关掉" if _closed else "**没关掉**"))
+                                     "已收掉（或本来就不在屏幕上）" if _closed else "**没能收掉**"))
                 _closed = _close_search_popover(int(pop_hwnd)) # 先关浮层：它盖着聊天区，不关读不到内容
                 time.sleep(0.4)
                 idn, idn_why = self.chat_identity_ok(chat_id, gui=gui)
@@ -6954,7 +6969,7 @@ class WeChatAdapter:
                 return False, ("点了搜索浮层的「%s」行（%s，落点 %s），但内容级复核没过：%s%s"
                                % (name, row.get("why"), (row["x"], row["y"]), idn_why,
                                   ("｜现场已存 %s" % _d) if _d else "") +
-                               ("｜浮层已关掉" if _closed else "｜浮层**没关掉**"))
+                               ("｜浮层已收掉（或本来就不在）" if _closed else "｜浮层**没能收掉**"))
             # —— 点开搜索入口，再**只许往"搜索浮层"打字，绝不往主窗打字** ⛔
             self._click_posted(backend, main, (ox + int(ent["x"]), oy + int(ent["y"])),
                                  "搜索入口", allow_new=True)[0]
@@ -8174,7 +8189,7 @@ class WeChatAdapter:
             _clr = lambda tag: _draft_cleanup_note(self, backend, main_hwnd, gui, r, _pre_st == "has", # noqa: E731
                                                    _pre_why, what="这份文件", tag=tag)
 
-            # ⛔ 「只对独立窗操作」闸门（`send.only_popup`，默认关）：下面这一整段是
+            # ⛔ 「只对独立窗操作」闸门（`send.only_popup`，**内置默认开**）：下面这一整段是
             #    「点主窗的『文件』图标 → 驱动系统『选择文件』对话框 → 点打开」——**全程在主窗上做**，
             #    中途还会 `open_chat_by_search` 切会话 ⇒ 闸门开着时**一律不走**
             #    （独立窗那条盲粘贴路在上面，不受影响）。
@@ -9017,7 +9032,7 @@ class WeChatAdapter:
         if self._norm_hhmm(_ht) != self._norm_hhmm(_lt):
             return False, "高亮行时间是 %s ≠ 目标会话最后一条消息时间 %s" % (_ht, _lt)
         _pane_hit = self._norm_hhmm(_lt) in self._norm_times(pane or "")
-        _uniq, _n = False, 0
+        _uniq, _n, _rows = False, 0, []
         try:
             _rows = _co.session_rows(_himg)
             _hits = [r for r in _rows
@@ -9027,6 +9042,52 @@ class WeChatAdapter:
             _uniq = (_n == 1)
         except Exception:
             _uniq = False
+        # ⛔ **名字侧交叉验证**（纯收紧：只负责"能否掉"，不负责"能放行"）。
+        #   上面那两条支撑里，`_uniq`＝"该时刻在**可见列表里唯一**"——它**只看时间**，
+        #   而时间的最小刻度是**分钟**：同一分钟里刚切到过别的会话时，它照样可能成立
+        #   （现场：连着几次对不同目标都报"已经是当前打开的会话"，而那个会话未必真开着）。
+        #   拿它单独去说"已经开着目标会话" ⇒ **跳过真正的切换** ⇒ 后面可能发进别的会话
+        #   （＝"发错人"级）。⇒ 再问一次**名字侧**（高亮行的名字）：只要能读出**明确指向
+        #   另一个已知会话**的名字，就把时间档的结论**否掉**。
+        #   ⚠️ 读不出 / 认不出 / 认成目标 ⇒ **保持原判**（不因这条把正常路径判死）；
+        #     因此它不会放宽任何东西 —— 授权口径仍由 `matches_strict` 那几档独立把关。
+        #   ⚠️ 只在**最弱的那一档**（`_uniq`，且聊天区没出现同一时刻）才花这次成本，
+        #     而且读数必须与 `_hy`（上面量到的那个高亮行的 y）**对得上**才采信 ——
+        #     两处各量一遍高亮行，量不到同一行就**弃权**（不许拿别的行的名字去否目标）。
+        if _uniq and not _pane_hit and _hy is not None:
+            _nm_side = ""
+            try:
+                _hlc = _co.highlight(_himg)
+                if _hlc is not None and abs(int(_hlc.get("y_abs")) - int(_hy)) <= 40:
+                    _nm_side = str(_hlc.get("name") or "").strip()
+            except Exception:
+                _nm_side = ""
+            if _nm_side:
+                _want_nm = str(self.display_name(chat_id) or "").strip()
+                try:
+                    _pool = self._known_chat_names()
+                except Exception:
+                    _pool = []
+                try:
+                    _tgt_ok = bool(_want_nm) and bool(_co.matches_strict(_nm_side, _want_nm, _pool or None))
+                except Exception:
+                    _tgt_ok = False
+                if not _tgt_ok:
+                    _other = []
+                    for _o in (_pool or []):
+                        _os = str(_o).strip()
+                        if not _os or _os == _want_nm:
+                            continue
+                        try:
+                            if _co.matches_strict(_nm_side, _os, _pool or None):
+                                _other.append(_os)
+                        except Exception:
+                            continue
+                    if _other:
+                        return False, ("高亮行时间 %s 与目标一致，但**名字侧指向另一个会话「%s」**"
+                                       "（高亮行读出 %r）⇒ 时间档不采信（时间只到分钟：同一分钟内刚"
+                                       "切过别的会话时，只看时间会误判成'已经开着目标会话'）"
+                                       % (_ht, _other[0][:16], _nm_side[:16]))
         if _pane_hit or _uniq:
             return True, ("高亮行（y=%s）时间 %s ＝目标会话最后一条消息时间%s"
                           % (_hy, _ht, "，聊天区里也出现同一时间" if _pane_hit
@@ -13436,7 +13497,7 @@ class WeChatAdapter:
     #   —— 朋友的注释记录了这里出过事故：原来用 `gui.open_chat()`（内部 **真鼠标**
     #   `SetCursorPos`）⇒ 窗口在屏外时坐标被夹到屏幕角落 ⇒ **在用户桌面左上角拖拽、框选桌面文件**
     #   （/09-28 两次）。我方一律投递，**投递不成如实放弃、绝不回真鼠标**。
-    #   ⛔ 关预览窗走 `_wm_close_safe` + `WM_CLOSE` 投递（**不发 Esc 键盘**）。
+    #   ⛔ 关预览窗走 `winops.close`（关窗唯一入口，内部先过 `ok_to_close`；**不发 Esc 键盘**）。
 
     def _video_from_wx_cache(self, save_dir: str, max_age_s: float = 600.0,
                              chat_id: str = "", local_id=None, want_name: str = ""):
@@ -13540,15 +13601,148 @@ class WeChatAdapter:
             log.debug("从微信缓存捞视频失败：%s", e)
             return None
 
+    # ── 文件名解析（**不含任何平台调用，纯函数** ⇒ 可单测、可离线验证）──────────
+    @staticmethod
+    def _parse_resource_file_name(raw) -> str | None:
+        """从 `MessageResourceDetail.packed_info` 里解出**原文件名**（失败 None）。
+
+        字段格式（protobuf 线格式，实测样本）：
+
+            \\n <外层长度varint> \\n <名字长度varint> <文件名UTF-8> \\x12 <名字长度> <文件名>
+
+        例：`'报错 (2).txt'` 的 34 字节是
+        `0a 20 0a 0e '报错 (2).txt' 12 0e '报错 (2).txt'`。
+
+        ⛔ **为什么不能像驱动库那样"整个字节串 decode 成文本"**：那样解出的是
+        `'\\n0\\n\\x16wx-agent-测试包.zip\\x12\\x16wx-agent-测试包.zip'` —— 带控制字符，
+        与磁盘上的 `wx-agent-测试包.zip` **永远对不上**（这就是"文件下载恒为 None"的第二个真因）。
+        这里按线格式**跳过两个长度前缀**再取那一截名字。
+
+        只认"两段名字一致"的形态（`\\x12` 后的重复字段是本文件名的冗余副本）：
+        不一致或结构对不上 ⇒ **返回 None**（不认识就不猜，交给调用方如实失败）。
+        """
+        try:
+            b = bytes(raw or b"")
+            if len(b) < 4 or b[0] != 0x0A:
+                return None
+
+            def _varint(i: int):
+                v, sh = 0, 0
+                while i < len(b):
+                    c = b[i]
+                    v |= (c & 0x7F) << sh
+                    i += 1
+                    if not (c & 0x80):
+                        return v, i
+                    sh += 7
+                    if sh > 63:
+                        return None, i
+                return None, i
+
+            _outer, i = _varint(1)          # ① 外层长度（值本身不用，只为跳过它）
+            if i >= len(b) or b[i] != 0x0A:
+                return None
+            ln, i = _varint(i + 1)          # ② 名字长度
+            if not ln or i + ln > len(b):
+                return None
+            name = b[i:i + ln].decode("utf-8", "strict")
+            if not name or "/" in name or "\\" in name or "\x00" in name:
+                return None
+            # ③ 冗余副本必须一致（不一致说明结构不是这个形态 ⇒ 不采信）
+            j = i + ln
+            if j < len(b) and b[j] == 0x12:
+                ln2, k = _varint(j + 1)
+                if ln2 and k + ln2 <= len(b):
+                    try:
+                        if b[k:k + ln2].decode("utf-8", "strict") != name:
+                            return None
+                    except Exception as _e:
+                        # 结构不是这个形态（半截 UTF-8 等）⇒ 不采信这个名字。
+                        # 留栈是因为：这里的"解不出"与上面那些 return None 语义不同，
+                        # 日志里得能区分"没这个字段"和"字段坏了"。
+                        log.debug("包内文件名副本解码失败（不采信该名字）：%s", _e, exc_info=True)
+                        return None
+            return name
+        except Exception as _e:
+            log.debug("解析包内文件名失败（回退到其它来源）：%s", _e, exc_info=True)
+            return None
+
+    def _file_from_wx_cache(self, save_dir: str, chat_id: str, local_id) -> str | None:
+        """**本机文件兜底**：解出文件名 ⇒ 去 `msg/file/` 里找同名文件 ⇒ 复制到 `save_dir`。
+
+        为什么需要它：驱动库 `download_file` 依赖 `_file_name()` 的两处实现细节
+        （`message_local_type=49` 精确匹配 ＋ `packed_info` 当纯文本 decode），
+        这两处在部分微信版本上都已失效（见 `_parse_resource_file_name` 的说明）
+        ⇒ 返回 None。而文件**其实就在本机磁盘上**（`msg/file/<YYYY-MM>/<原文件名>`）——
+        微信是否落盘取决于"用户有没有点开过"，与我们的解析无关。
+
+        ⛔ 边界：**只找本机已有的那份**（不触发下载、不点任何东西）。
+        本机没有 ⇒ 返回 None（调用方如实说"取不到"，绝不假装）。
+        """
+        try:
+            import shutil as _sh
+            db = getattr(self._md, "db", None)
+            acc = getattr(db, "account_dir", "") or ""
+            if not acc:
+                return None
+            res_dir = os.path.join(acc, "msg", "file")
+            if not os.path.isdir(res_dir):
+                return None
+            name = None
+            for rel, path, _ in getattr(db, "_db_files", []):
+                if os.path.basename(path) != "message_resource.db":
+                    continue
+                conn = db._open(rel)
+                try:
+                    row = conn.execute(
+                        "SELECT d.packed_info FROM MessageResourceDetail d "
+                        "JOIN MessageResourceInfo i ON d.message_id=i.message_id "
+                        "WHERE i.message_local_id=? AND LENGTH(d.packed_info)>0",
+                        (int(local_id),),
+                    ).fetchone()
+                finally:
+                    conn.close()
+                if row and row[0]:
+                    name = self._parse_resource_file_name(row[0])
+                break
+            if not name:
+                log.info("文件 local_id=%s：解不出原文件名（资源登记缺失或非文件类）⇒ 本机兜底放弃",
+                         local_id)
+                return None
+            want = os.path.basename(name)
+            for root, _dirs, files in os.walk(res_dir):
+                if want in files:
+                    src = os.path.join(root, want)
+                    try:
+                        if os.path.getsize(src) <= 0:
+                            continue
+                    except OSError:
+                        continue
+                    os.makedirs(save_dir, exist_ok=True)
+                    dst = os.path.join(save_dir, "%s_%s_%s" % (chat_id, int(local_id), want))
+                    if not os.path.exists(dst):
+                        _sh.copyfile(src, dst)
+                    log.info("文件取自微信缓存：%s（%d 字节）", want, os.path.getsize(dst))
+                    return dst
+            log.info("文件 local_id=%s：解出名字 %r，但本机 msg/file 下没有这份（用户没点开过）",
+                     local_id, want)
+            return None
+        except Exception as e:  # noqa: BLE001
+            log.debug("本机文件兜底失败：%s", e)
+            return None
+
     def _close_video_preview_windows(self, baseline=None) -> int:
         """**投递关窗**：把"点视频之后冒出来的预览窗/浮层"关掉（绝不动键盘、绝不关主窗）。
 
         `baseline`：点之前 `_wx_toplevel_windows()` 的快照；没传/拿不到就返回 0、**不乱关**。
-        只关"新冒出来的 **Qt 开头**的窗"，且一律走 `_wm_close_safe` 咽喉点
-        （它会当场重取主窗/渲染子窗，命中一律拒绝 —— 宁可留一个浮层，也绝不关用户的窗）。
+        只关"新冒出来的窗"，且一律走 **`winops.close`**（关窗唯一入口：它内部先过
+        `ok_to_close`，当场重取主窗/渲染子窗，命中一律拒绝 —— 宁可留一个浮层，也绝不关用户的窗）。
+
+        ⛔ 这里**不许**在闸门之后自己再裸投一次 `WM_CLOSE`：那会绕过 `winops` 的
+        "同一句柄只关一次"登记（句柄会被系统回收给新窗，重复关可能误伤无关的新窗），
+        等于把"唯一入口"这条规矩拆了。判据 `zorder_selftest` 的 D 段全仓扫这一条。
         """
         try:
-            import win32gui
             if baseline is None:
                 return 0
             try:
@@ -13556,14 +13750,13 @@ class WeChatAdapter:
             except Exception:
                 return 0
             new_ones = [h for h in after if h not in baseline]
+            from .winops import close as _win_close
             closed = 0
             for h in new_ones:
                 try:
-                    if _wm_close_safe(int(h), "点视频后冒出的预览窗"):
-                        if win32gui.IsWindow(int(h)):
-                            win32gui.PostMessage(int(h), 0x0010, 0, 0) # WM_CLOSE
-                            closed += 1
-                            time.sleep(0.3)
+                    if _win_close(int(h), "点视频后冒出的预览窗"):
+                        closed += 1
+                        time.sleep(0.3)
                 except Exception as _e:
                     log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                     continue
@@ -13713,14 +13906,22 @@ class WeChatAdapter:
             return None
 
     def download_media(self, chat_id: str, local_id, kind: str) -> str | None:
-        """下载语音 / 视频 / 文件到 `media/<kind>/`，返回本地路径；失败返回 None。
+        """下载**图片 / 语音 / 视频 / 文件**到 `media/<kind>/`，返回本地路径；失败返回 None。
 
-        kind = `voice` | `video` | `file`（分别对应驱动库的 download_voice / download_video / download_file）。
+        kind = `image` | `voice` | `video` | `file`。四类**最终都经驱动库的 `MediaDownloader`**
+        （`self._md`）落盘 —— 这是"四类媒体一条链"的口径：新增媒体类型时**接在这里**，
+        ⛔ 不要再写一套自己的解密/落盘实现。
+        · `image` 转 `self.download_image`（它多一个 `tier='best'`：原件 `_h.dat` → `.dat` → 缩略图，
+          不传就**可能只拿到缩略图**，见那个方法的说明）；
+        · `voice` / `video` / `file` 转 `self._md.download_voice/download_video/download_file`。
         语音落盘是 `.silk`（微信那套 `\\x02#!SILK_V3` 帧），转文字见 `agent/voice.py`。
+        ⛔ 未知 kind 一律返回 None（白名单，不做兜底瞎猜）。
         """
         if self._md is None:
             return None
         k = str(kind or "").strip().lower()
+        if k == "image":
+            return self.download_image(chat_id, local_id)
         fn = {"voice": "download_voice", "video": "download_video", "file": "download_file"}.get(k)
         if not fn:
             return None
@@ -13753,12 +13954,27 @@ class WeChatAdapter:
             if k == "video" and (not got or not os.path.exists(str(got))):
                 # ③ 兜底：库的等待式（不依赖点击，万一点击链没构 GUI 时）+ 再捞一次缓存
                 got = self._video_from_wx_cache(sub, chat_id=chat_id, local_id=local_id)
+            if k == "file" and (not got or not os.path.exists(str(got))):
+                # ⛔ **驱动库的文件名解析在部分微信版本上失效**（实测 4.1.15.13）⇒ 自己兜一层。
+                #   两个真因（都在 `wechatauto.media.MediaDownloader._file_name`）：
+                #     ① `MessageResourceInfo.message_local_type` 在这一版用了**高位带标志的复合编码**
+                #        （实测文件写的是 `0x600000031` / `0x1300000031`，低位才是 49）⇒ 驱动库用
+                #        `local_type=49` 精确匹 ⇒ **一条都查不到**；
+                #     ② 文件名在 `MessageResourceDetail.packed_info` 里是 **protobuf 包装**
+                #        （`\n<外层长>\n<名字长><文件名>\x12<名字长><文件名>`），驱动库把整个字节串
+                #        当纯文本 decode ⇒ 解出的是带控制字符的垃圾 ⇒ 与磁盘文件名永远对不上。
+                #   ⇒ 不依赖驱动库那一环：自己解 protobuf 取文件名，再去 `msg/file/` 里找同名文件。
+                got = self._file_from_wx_cache(sub, chat_id=chat_id, local_id=local_id)
             return got
-        except Exception:
+        except Exception as _e:
+            # 留栈理由：这里的宽捕吃掉的是"媒体下载链整条"的异常，
+            # 而下面两层兜底各自还会再吞一次 ⇒ 不留栈的话，日志里只会看到"没拿到文件"。
+            log.debug("媒体下载失败（转兜底链）：%s", _e, exc_info=True)
             if k == "video":
                 try:
                     return self._video_from_wx_cache(sub)
-                except Exception:
+                except Exception as _e2:
+                    log.debug("视频缓存兜底也失败：%s", _e2, exc_info=True)
                     return None
             return None
 

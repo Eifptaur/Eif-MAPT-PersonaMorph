@@ -202,6 +202,148 @@ def extract_facts(msgs) -> list:
     return out
 
 
+# ── 事实深抽取（**模型层**，在规则层之上补漏）────────────────────
+#   规则层只认关键词（`_FOREVER_HINTS` / `_PROMISE_HINTS`），换个说法就漏 ——
+#   比如"她不吃香菜"（没命中"讨厌"）/"周五老地方见"（没命中"约好"）。
+#   模型层就是补这一类的：把最近若干条消息喂给模型，让它按**固定 JSON schema**吐出事实。
+#
+#   ⛔ 三条纪律（缺一条都会让这个功能变成负资产）：
+#     ① **不覆盖、只并集**：规则层的结果先算好，模型层只做"补"，最后按 `(who, what)` 去重合并；
+#     ② **调不通 / JSON 不合法 / 字段越界 ⇒ 原样退回规则层结果**（不许因为"想抽得更细"把已有的弄丢）；
+#     ③ **模型不许凭空想象**：提示词里明确"只抽消息里明确说过的"，且返回的 `what`
+#        **必须能在原文里找到依据**（用字符重叠做机械校验，通不过就丢掉那一条）。
+_DEEP_SCHEMA_HINT = (
+    "只输出 JSON 数组，不要任何解释、不要 markdown 代码块。每个元素形如："
+    '{"who":"说话人名字（拿不准就空串）","what":"事实原文","kind":"followup 或 memory",'
+    '"expires_at":"YYYY-MM-DD 或空串"}。'
+    "followup＝有明确时间的待办/约定；memory＝喜好、生日、忌讳、习惯这类长期的事。"
+    "⛔ 只抽消息里**明确说过**的，没说的不要编；一条都抽不出就输出 []。"
+)
+
+
+def _deep_pick_msgs(msgs, min_chars: int, max_msgs: int) -> list:
+    """挑出**值得喂给模型**的消息（去短句、按最近的若干条）。"""
+    rows = []
+    for m in list(msgs or []):
+        try:
+            if isinstance(m, dict):
+                who = str(m.get("sender_name") or m.get("who") or "").strip()
+                txt = str(m.get("text") or m.get("content") or "").strip()
+            else:
+                who, txt = "", str(m or "").strip()
+        except Exception:  # noqa: BLE001
+            continue
+        if len(txt) < int(min_chars or 0) or len(txt) > 200:
+            continue
+        rows.append({"who": who, "text": txt})
+    if max_msgs and max_msgs > 0:
+        rows = rows[-int(max_msgs):]
+    return rows
+
+
+def _deep_supported(what: str, src_text: str) -> bool:
+    """机械校验：抽出来的 `what` 要能在**原文**里找到依据（防模型编）。
+
+    判据是**字符重叠**（去空白后取较长的一侧做分母）—— 宽松到允许模型改标点/补主语，
+    但严到"整条凭空造"必然过不了。**分母守卫**：原文为空 ⇒ 一律不通过（无从校验就当没过）。
+    """
+    a = "".join(str(what or "").split())
+    b = "".join(str(src_text or "").split())
+    if not a or not b:
+        return False
+    if a in b or b in a:
+        return True
+    common = sum(1 for ch in set(a) if ch in b)
+    return (common / float(len(set(a)))) >= 0.6
+
+
+def extract_facts_deep(msgs, llm_fn=None) -> list:
+    """**规则层 + 模型层**取并集的事实抽取（第 118 项）。
+
+    `llm_fn(prompt) -> str` 由调用方注入（默认走 `agent.llm.chat_completion`）——
+    ⛔ 这样本模块**不直接依赖 llm**（省得判据里一导入就要求配 API），也让判据能传假函数。
+
+    返回与 `extract_facts` 同构的列表。**降级纪律**：只要模型这条路有任何异常、
+    或它给的东西过不了 `_deep_supported` 校验，就**退回规则层的结果**——绝不返回更少的东西。
+    """
+    base = extract_facts(msgs)
+    cfg = {}
+    try:
+        cfg = dict((get_config() or {}).get("memory") or {})
+    except Exception as e:  # noqa: BLE001
+        log.debug("读 memory 配置失败（按默认关处理）：%s", e, exc_info=True)
+    if not cfg.get("deep_extract_enabled"):
+        return base
+    rows = _deep_pick_msgs(msgs, cfg.get("deep_extract_min_chars") or 6,
+                           cfg.get("deep_extract_max_msgs") or 40)
+    if not rows:
+        return base
+
+    _lines = "\n".join("%s：%s" % (r["who"] or "某人", r["text"]) for r in rows)
+    prompt = ("下面是一段群聊记录。请从中抽出**结构化事实**。\n%s\n\n%s"
+              % (_DEEP_SCHEMA_HINT, _lines))
+    try:
+        if llm_fn is None:
+            from . import llm as _llm
+
+            def llm_fn(p):
+                _model = str(cfg.get("deep_extract_model") or "").strip()
+                ret = _llm.chat_completion(
+                    [{"role": "user", "content": p}],
+                    _models=([_model] if _model else None))
+                return ((ret or {}).get("message") or {}).get("content") or ""
+        raw = str(llm_fn(prompt) or "")
+    except Exception as e:  # noqa: BLE001
+        log.warning("事实深抽取调模型失败 ⇒ 退回规则层结果（不丢东西）：%s", e)
+        return base
+
+    items = _deep_parse(raw)
+    if not items:
+        return base
+    # 原文全文：校验 `what` 有没有依据（**分母守卫**：原文为空 ⇒ 全不通过）
+    _src_all = "\n".join(r["text"] for r in rows)
+    seen = {(str(x.get("who") or ""), str(x.get("what") or "")) for x in base}
+    out = list(base)
+    import time as _t
+    for it in items:
+        who = str(it.get("who") or "").strip()
+        what = str(it.get("what") or "").strip()
+        if not what or not _deep_supported(what, _src_all):
+            continue
+        kind = "memory" if str(it.get("kind") or "").strip() == "memory" else "followup"
+        key = (who, what)
+        if key in seen:
+            continue
+        seen.add(key)
+        exp = str(it.get("expires_at") or "").strip()
+        if kind == "memory":
+            exp = ""
+        elif not re.match(r"^\d{4}-\d{2}-\d{2}$", exp):
+            exp = _t.strftime("%Y-%m-%d", _t.localtime(_t.time() + FACT_TTL_DAYS * 86400))
+        out.append({"who": who, "what": what, "kind": kind, "expires_at": exp})
+    return out
+
+
+def _deep_parse(raw: str) -> list:
+    """从模型输出里**宽容地**抠出 JSON 数组（去掉 ```json 围栏、截取首个 `[` 到末个 `]`）。
+
+    ⛔ 抠不出来 ⇒ 返回空列表（由调用方退回规则层结果），**不抛**。
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return []
+    if "```" in s:                      # 去掉 markdown 围栏
+        s = re.sub(r"```[a-zA-Z]*", "", s).replace("```", "").strip()
+    i, j = s.find("["), s.rfind("]")
+    if i < 0 or j <= i:
+        return []
+    try:
+        data = json.loads(s[i:j + 1])
+    except Exception:  # noqa: BLE001
+        return []
+    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+
+
 def add_event(chat_key: str, what: str, *, who: str = "", kind: str = "note",
               emotion: str = "", long_term: bool = False, date: str = "") -> dict:
     """往「事件簿」追加一条（**append-only**，JSONL 一行一条）。返回落库的那条。
@@ -388,6 +530,51 @@ def due_anniversaries(chat_key: str, today_md: str = "", *, limit: int = 5) -> l
     return out[: max(1, int(limit or 5))]
 
 
+def _md_plus(today_md: str, days: int) -> str:
+    """把 `MM-DD` 往后推 `days` 天 ⇒ `MM-DD`（跨年自动绕回，闰年由 date 兜）。"""
+    mm, dd = _mmdd(today_md).split("-")
+    import datetime as _dt
+    y = _dt.date.today().year
+    try:
+        d = _dt.date(y, int(mm), int(dd)) + _dt.timedelta(days=int(days))
+    except Exception:  # noqa: BLE001  闰年 02-29 等边界 ⇒ 退回不推
+        return _mmdd(today_md)
+    return "%02d-%02d" % (d.month, d.day)
+
+
+def upcoming_anniversaries(chat_key: str, days_ahead: int = 1, *, today_md: str = "",
+                           limit: int = 5) -> list:
+    """**快到了的**纪念日（第 124 项）：未来 `days_ahead` 天内到点 ⇒ 新→旧。
+
+    为什么要它：`due_anniversaries()` 只答"**今天**是不是纪念日"—— 那时才想起来**已经晚了**
+    （没时间准备、当天说"我记着呢"也显得假）。提前一天预告才用得着：
+    「明天是他生日」⇒ 这一轮可以自然地提一句或先把话说好。
+    ⛔ `days_ahead <= 0` ⇒ **空表**（＝关掉预告，只留当天那一档，不抛）。
+    ⛔ 走 `_md_plus` 只比月日 ⇒ **跨年照样生效**（12-31 的次日是 01-01）。
+    """
+    try:
+        n = int(days_ahead or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return []
+    base = _mmdd(today_md) or __import__("time").strftime("%m-%d")
+    today = _mmdd(base)
+    want = set()
+    for k in range(1, n + 1):
+        want.add(_md_plus(today, k))
+    out = []
+    for rec in list_events(chat_key, limit=1000):
+        if not isinstance(rec, dict):
+            continue
+        md = _mmdd(rec.get("date"))
+        # ⛔ 排掉"今天就是"的那些 —— 它们归 `due_anniversaries()`，两档不许重叠
+        #   （重叠会让同一条在提示词里出现两次，或让"今天"被说成"明天"）。
+        if md and md in want and md != today:
+            out.append(rec)
+    return out[: max(1, int(limit or 5))]
+
+
 def _followups_file(chat_key: str) -> str:
     return os.path.join(_chat_dir(chat_key), "followups.jsonl")
 
@@ -510,8 +697,19 @@ def proactive_seeds(chat_key: str, user_ids=None, *, cfg=None, now=None) -> dict
     ⇒ 收成一个函数：**到点纪念日** ＋ **该问还没问的** ＋ **还在时效内的事件**，
     提示词注入与（将来的）主动私聊都从这里取（第 124 项的"纪念日提醒"也接这里）。
     """
+    # 第 124 项：提前几天预告（`memory.anniv_ahead_days`，默认 **1**；`<=0` ⇒ 不预告，
+    #   只留"当天到点"那一档）。⛔ 走 `_mem_cfg()`：调用方传进来的可能是**整个配置**。
+    try:
+        _n_ahead = int(_mem_cfg(cfg).get("anniv_ahead_days")
+                       if _mem_cfg(cfg).get("anniv_ahead_days") is not None else 1)
+    except Exception:  # noqa: BLE001
+        _n_ahead = 1
+    _today_md = __import__("time").strftime("%m-%d")
     return {"followups": pending_followups(chat_key, user_ids, cfg=cfg, now=now),
             "anniversaries": due_anniversaries(chat_key),
+            # 第 124 项：**提前预告**（默认提前 1 天）—— 当天才想起来已经晚了一步。
+            #   ⛔ 与 `anniversaries` 严格不重叠（`upcoming_anniversaries` 排掉了今天）。
+            "upcoming": upcoming_anniversaries(chat_key, _n_ahead, today_md=_today_md),
             "events": pending_events(chat_key, limit=6, cfg=cfg, now=now)}
 
 
@@ -522,6 +720,12 @@ def seeds_for_prompt(chat_key: str, user_ids=None, *, cfg=None, now=None) -> str
     for a in s.get("anniversaries") or []:
         lines.append("· 今天是「%s」（%s 的事）——要提就自然提一句，别硬念日期"
                      % (str(a.get("what") or "").strip()[:60], _safe_name(a.get("who"), "某人")))
+    # 第 124 项：**快到了**（默认明天）—— 当天才想起来已经晚了：提前给一句"可以先准备"。
+    for a in s.get("upcoming") or []:
+        _d = _mmdd(a.get("date"))
+        lines.append("· 「%s」（%s 的事）**%s** 就到 —— 想说什么可以提前一点，别等到当天才提"
+                     % (str(a.get("what") or "").strip()[:60], _safe_name(a.get("who"), "某人"),
+                        ("%s 那天" % _d) if _d else "快"))
     for f in s.get("followups") or []:
         _n = int(f.get("asked_count") or 0)
         _who = _safe_name(f.get("who"), "")
@@ -536,6 +740,171 @@ def seeds_for_prompt(chat_key: str, user_ids=None, *, cfg=None, now=None) -> str
     if not lines:
         return ""
     return "【你记得的事】\n" + "\n".join(lines[:10])
+
+
+# ── 空窗延续（第 127 项）──────────────────────────────────────────
+#   问题：隔一天以上重新聊，机器人**像失忆重启** —— 明明记忆里有"上次聊过什么"，
+#         提示词却不说"这是隔了一阵子重新开口"，模型自然就当成全新对话来答。
+#   ⛔ 判据是**"距上一次非本轮互动有多久"**（纯读库、零 token），不是"距上一条消息"——
+#     后者在本轮触发批里恒为 0，永远测不出空窗。
+#   ⛔ 拿不到时间（没有库 / 读不出）⇒ **返回空串**（宁可不说，也不要编一个"好久不见"）。
+
+def gap_hint(chat_key: str, store=None, exclude_ids=None, *, cfg=None, now=None) -> str:
+    """隔久了重新开口 ⇒ 给模型一段"**别像失忆重启**"的提示（不需要就回空串）。
+
+    取的是"**本轮之前**最后一次非自己的发言"距现在的小时数（要排掉本轮触发批，
+    否则本轮那几条正是"现在要答的"，一算就恒为 0）。阈值＝`memory.gap_hours`
+    （**<=0 ⇒ 关**，一个字都不注入）。
+    """
+    if store is None:
+        return ""
+    try:
+        # ⛔ 走 `_mem_cfg()` 而不是直接读顶层：调用方传进来的可能是**整个配置**
+        #   （`prompt.build_user_prompt` 传的就是 `get_config()`）⇒ 直接读顶层 key **永远读不到**。
+        _c = _mem_cfg(cfg)
+        _hrs = float(_c.get("gap_hours") if _c.get("gap_hours") is not None else 20)
+    except Exception:  # noqa: BLE001
+        _hrs = 20.0
+    if _hrs <= 0:
+        return ""
+    try:
+        import time as _t
+        _now_ms = int(float(now) * 1000) if now else int(_t.time() * 1000)
+        msgs = store.recent(chat_key, limit=200)
+        ex = {str(x) for x in (exclude_ids or [])}
+        last = None
+        for m in reversed(list(msgs or [])):
+            if m.get("self") or str(m.get("id")) in ex:
+                continue
+            last = m
+            break
+        if not last:
+            return ""
+        _ts = int(last.get("ts") or 0)
+        if _ts <= 0:
+            return ""
+        hours = (_now_ms - _ts) / 3600000.0
+        if hours < _hrs:
+            return ""
+    except Exception as e:  # noqa: BLE001
+        log.debug("算空窗时长失败（按「不算空窗」处理）：%s", e, exc_info=True)
+        return ""
+    # 说人话的时长（与 `_rel_time` 同口径，但这里要的是"多久没聊"的粗粒度）
+    if hours < 48:
+        _ago = "差不多一天"
+    elif hours < 24 * 7:
+        _ago = "%d 天" % int(round(hours / 24.0))
+    elif hours < 24 * 30:
+        _ago = "一两周"
+    else:
+        _ago = "挺长一段时间"
+    _who = _safe_name(last.get("sender_name"), "对方")
+    _txt = " ".join(str(last.get("text") or "").split())[:40]
+    _tail = "上次 TA 说的是「%s」" % _txt if _txt else "上次 TA 发的是图片/表情"
+    return ("【隔了有一阵子】距上次聊天已经过了 %s（%s 最后开口：%s）。\n"
+            "· 这次重新开口要**自然接上次的话头**，别像第一次见面那样从头寒暄；\n"
+            "· 但也**别提「好久不见」**这种把间隔说破的话 —— 就像昨天刚聊过一样接着聊；\n"
+            "· 有【你记得的事】里还没问成的，就在这一轮自然带一句。"
+            % (_ago, _who, _tail))
+
+
+# ── 看脸色 / 情绪感知（第 128 项）──────────────────────────────────
+#   问题：机器人**不看脸色** —— 对方在难过，它照样给建议；对方烦着，它照样长篇大论；
+#         对方只回一个「哦」，它还要凑三段话。根因是提示词里**没有任何一处描述对方当下的状态**。
+#   数据源＝**对方最近几条消息本身**（`store.recent`，纯读库、零 token、零出网），
+#         不看表情图片（那需要 OCR/视觉，代价大且不准）：只按**文字形状**判三档语气。
+#   ⛔ 判不出 / 没数据 ⇒ **返回空串**（宁可不说，也不要瞎猜一个"他很难过"）——
+#     猜错比不说更糟：模型会照着一个不存在的情绪去演。
+#   ⛔ 三档之间**不许同时成立**（按优先级取一档），否则两个相反的指令会一起进提示词。
+
+#: 低落/难过的字面线索（对方自己说的"我现在不好"）
+_TONE_LOW_HINTS = (
+    "难过", "不开心", "心情不好", "郁闷", "沮丧", "崩溃", "想哭", "哭了", "委屈", "难受",
+    "压力", "焦虑", "烦死", "好累", "累死", "疲惫", "失眠", "失恋", "分手", "被骂",
+    "唉", "哎", "算了吧", "没意思", "不想说", "别问了",
+)
+#: 烦躁/忙的字面线索（"现在别烦我"）
+_TONE_BUSY_HINTS = (
+    "忙", "赶时间", "赶工", "开会", "在干活", "加班", "赶due", "顾不上", "等会再说",
+    "待会再说", "晚点说", "回头说", "先这样", "别烦", "没空", "没时间",
+)
+#: 「敷衍」的形状线索：短到几乎没信息量的回复
+_TONE_DRY_TEXTS = ("哦", "嗯", "啊", "哦哦", "嗯嗯", "行", "好", "好的", "呵", "哈哈",
+                   "。。。", "……", "?", "？", "!", "！", "额", "呃")
+
+
+def _tone_of(msgs) -> str:
+    """按对方最近几条消息判一档语气 ⇒ `low` / `busy` / `dry` / `""`（判不出）。
+
+    ⛔ **只吃非自己的消息**（自己发的不能当"脸色"）；⛔ 只取最近 3 条有字的。
+    ⛔ 顺序口径与 `ChatStore.recent()` 一致：**入参是旧→新**，所以取尾部。
+    """
+    texts = []
+    for m in list(msgs or []):
+        if m.get("self"):
+            continue
+        t = " ".join(str(m.get("text") or "").split())
+        if t:
+            texts.append(t)
+        if len(texts) >= 3:
+            break
+    # ⚠️ `recent()` 返回旧→新 ⇒ 取**最后** 3 条才是"最近"。若调用方给的是新→旧，
+    #   这里也只会取到较旧的三条 —— 仍能判出语气（只是略钝），不会判错档。
+    texts = texts[-3:]
+    if not texts:
+        return ""
+    joined = " ".join(texts)
+    if any(h in joined for h in _TONE_LOW_HINTS):
+        return "low"
+    if any(h in joined for h in _TONE_BUSY_HINTS):
+        return "busy"
+    # 「敷衍」＝**最近一条**很干且**总共很短**（多说几句就不算敷衍了）
+    last = texts[-1]
+    if last in _TONE_DRY_TEXTS and sum(len(x) for x in texts) <= 8:
+        return "dry"
+    return ""
+
+
+def tone_hint(chat_key: str = "", store=None, exclude_ids=None, *, cfg=None, now=None) -> str:
+    """看脸色（第 128 项）：给对方当前语气配一段"回话注意"（不需要就空串）。
+
+    分三档，**互斥**（按 `low` → `busy` → `dry` 优先级取一档）：
+      · `low`  —— 先共情安慰，**别急着给建议**、别讲道理；
+      · `busy` —— **简短**，一两句就够，别追问、别展开；
+      · `dry`  —— 对方在敷衍 ⇒ **别长篇大论硬凑**，也**别追问"怎么了"**。
+    阈值/词表都在本模块（`_TONE_*`）—— ⛔ 不做配置项：这是**判定口径**，交给用户调只会调坏
+    （与 `gap_hours` 不同，那个是"多久算隔久了"的主观阈值，这个是"什么字算难过"的客观词表）。
+    """
+    if store is None:
+        return ""
+    try:
+        msgs = store.recent(chat_key, limit=30)
+    except Exception as e:  # noqa: BLE001
+        log.debug("取最近消息判语气失败（按「判不出」处理）：%s", e, exc_info=True)
+        return ""
+    try:
+        ex = {str(x) for x in (exclude_ids or [])}
+        if ex:
+            msgs = [m for m in (msgs or []) if str(m.get("id")) not in ex]
+        tone = _tone_of(msgs)
+    except Exception as e:  # noqa: BLE001
+        log.debug("判语气失败（按「判不出」处理）：%s", e, exc_info=True)
+        return ""
+    if tone == "low":
+        return ("【对方现在的状态】他这几句读着**情绪低落**。\n"
+                "· 先**接住情绪**（一句共情、顺着他说），**别急着安慰式说教、别讲道理、别给建议**；\n"
+                "· 话别多 —— 这一轮**两三句以内**，重点是他被听见了；\n"
+                "· 他要是不想细说，就别追问。")
+    if tone == "busy":
+        return ("【对方现在的状态】他这几句读着**在忙、有点烦**。\n"
+                "· **简短**：一两句、说重点，**别展开、别追问、别连着发好几条**；\n"
+                "· 能一句话办完的就一句话，剩下的等他空下来再说。")
+    if tone == "dry":
+        return ("【对方现在的状态】他最近只回了很短的一句（像在敷衍）。\n"
+                "· ⛔ **别长篇大论硬凑**：这一轮**就一两句**，别把气氛硬撑起来；\n"
+                "· ⛔ **别追问「怎么了」「你是不是不高兴」**（那会把敷衍变成压力）；\n"
+                "· 他要是不接，就自然停住。")
+    return ""
 
 
 # ── 亲近度 / 活跃时段（第 115·116 项）──────────────────────────────
@@ -1221,11 +1590,24 @@ class MemoryStore:
     def due_anniversaries(self, chat_key: str, today_md: str = "", *, limit: int = 5):
         return due_anniversaries(chat_key, today_md, limit=limit)
 
+    def upcoming_anniversaries(self, chat_key: str, days_ahead: int = 1, *,
+                               today_md: str = "", limit: int = 5):
+        """纪念日提前预告（第 124 项）：未来 N 天内到点 ⇒ 新→旧；`<=0` ⇒ 空表。"""
+        return upcoming_anniversaries(chat_key, days_ahead, today_md=today_md, limit=limit)
+
     def proactive_seeds(self, chat_key: str, user_ids=None, *, cfg=None, now=None):
         return proactive_seeds(chat_key, user_ids, cfg=cfg, now=now)
 
     def seeds_for_prompt(self, chat_key: str, user_ids=None, *, cfg=None, now=None):
         return seeds_for_prompt(chat_key, user_ids, cfg=cfg, now=now)
+
+    def gap_hint(self, chat_key: str, store=None, exclude_ids=None, *, cfg=None, now=None):
+        """空窗延续（第 127 项）：隔久了 ⇒ 一段"别像失忆重启"的提示；不需要就空串。"""
+        return gap_hint(chat_key, store, exclude_ids, cfg=cfg, now=now)
+
+    def tone_hint(self, chat_key: str = "", store=None, exclude_ids=None, *, cfg=None, now=None):
+        """看脸色（第 128 项）：对方语气（低落/忙/敷衍）⇒ 一段"回话注意"；判不出就空串。"""
+        return tone_hint(chat_key, store, exclude_ids, cfg=cfg, now=now)
 
     def closeness(self, chat_key: str, user_id: str = "", *, name: str = "", **kw):
         return closeness(chat_key, user_id, name=name, **kw)

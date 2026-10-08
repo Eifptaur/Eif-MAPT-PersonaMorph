@@ -43,6 +43,12 @@ ROUTES = {
     "/api/code-check/progress": ("POST",),
     "/api/community/export": ("POST",),
     "/api/community/upload": ("POST",),
+    # 资源市场（`agent/market.py`）：软件内「下载 / 上传 / 打开网站」三动作的后端半边。
+    # ⛔ 只读清单 + 装到本栏目录，**不碰发送链**；站未就绪时如实回 `site-not-ready`。
+    "/api/market/list": ("GET",),
+    "/api/market/install": ("POST",),
+    "/api/market/uninstall": ("POST",),
+    "/api/market/upload": ("POST",),
     "/api/config": ("GET", "POST"),
     "/api/cursor/reset": ("POST",),
     "/api/cursor/upload": ("POST",),
@@ -188,7 +194,7 @@ ROUTES = {
     "/dsh-whale/sound/release.mp3": ("GET",),
     "/dsh-whale/usage-records.json": ("GET",),
     "/dsh-whale/usage-settings.json": ("GET", "POST"),
-    "/dsh-whale/wait.json": ("GET",), # 上游 0.3.14 新增：等待交互轮询（本移植版如实回不支持，见 whale._UNSUPPORTED）
+    "/dsh-whale/wait.json": ("GET",), # 上游 0.3.14 新增：等待交互轮询（数据源＝待决队列，见 whale.wait_payload）
     "/dsh-whale/widget.js": ("GET",), # 上游 widget 脚本（页面靠它跑）
     "/index.html": ("GET",),
 }
@@ -235,6 +241,18 @@ HANDLERS = {
     },
     "/api/community/upload": {
         "POST": "_rapi_community_upload_post",
+    },
+    "/api/market/list": {
+        "GET": "_rapi_market_list",
+    },
+    "/api/market/install": {
+        "POST": "_rapi_market_install_post",
+    },
+    "/api/market/uninstall": {
+        "POST": "_rapi_market_uninstall_post",
+    },
+    "/api/market/upload": {
+        "POST": "_rapi_market_upload_post",
     },
     "/api/config": {
         "GET": "_rapi_config",

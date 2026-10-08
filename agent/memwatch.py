@@ -71,7 +71,10 @@ def rss_mb() -> float:
         with open("/proc/self/statm", encoding="utf-8") as f:
             pages = int(f.read().split()[1])
         return round(pages * (os.sysconf("SC_PAGE_SIZE") / 1048576.0), 1)
-    except Exception:
+    except Exception as _e:
+        # 留栈不留白：读 RSS 失败就是"这个平台没有这条接口"，但**不能静默** ——
+        # 否则日志里只会看到一行孤零零的 `RSS 0.0 MB`，看不出是真空还是没读到。
+        log.debug("读 RSS 失败（回退 0.0，不影响运行）：%s", _e, exc_info=True)
         return 0.0
 
 
@@ -87,8 +90,10 @@ def counters() -> dict:
         if st is not None and hasattr(st, "chats"):
             out["chats"] = len(st.chats)
             out["chats_msgs"] = sum(len(v) for v in st.chats.values()) if isinstance(st.chats, dict) else 0
-    except Exception:
-        pass
+    except Exception as _e:
+        # 观测失败只该丢掉这一个计数（**不许让观测把产品搞崩**），但要留栈：
+        # 否则"某个计数一直缺"会被读成"它没在涨"，把排查带偏。
+        log.debug("读 chats 计数失败（跳过该计数）：%s", _e, exc_info=True)
     for name, mod, attr in (("meme_cache", "agent.meme_search", "_CACHE"),
                             ("voice_cache", "agent.voice", "_VOICE_CACHE"),
                             ("probe_cache", "agent.voice_models", "_probe_cache")):
@@ -98,8 +103,8 @@ def counters() -> dict:
             v = getattr(m, attr, None)
             if isinstance(v, dict):
                 out[name] = len(v)
-        except Exception:
-            pass
+        except Exception as _e:
+            log.debug("读 %s 计数失败（跳过该计数）：%s", name, _e, exc_info=True)
     return out
 
 

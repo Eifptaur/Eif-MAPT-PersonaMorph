@@ -52,6 +52,23 @@
   "echo_window_s": 120,
   "limit_window": "shrink_only"
  },
+ "_note_proactive_private": "主动私聊：机器人主动开口找人聊天。默认关。target 只能写一个明确会话（如 private:wxid_xxx），写成列表会被当成没配（防止撒到多个会话打扰一批人）。窗口写到跨次日也可以；每会话/全局有硬上限，填再大也不会越。",
+ "proactive_private": {
+  "enabled": false,
+  "target": "",
+  "times_per_day": 2,
+  "window_start": "10:00",
+  "window_end": "21:30",
+  "min_gap_min": 90,
+  "skip_if_recent_min": 20,
+  "respect_paused": true,
+  "topic_dedup": true,
+  "share_enabled": true,
+  "time_aware": true,
+  "anniversary_enabled": true,
+  "max_per_chat": 3,
+  "max_per_day": 20
+ },
  "persona": {
   "bot_name": "小鲸鱼",
   "self_nickname": "",
@@ -506,7 +523,16 @@
   "_note_memory_expiry": "记忆的时效：默认会淡出，重要的标 long_term（永不过期）。淡出不等于删除——文件只追加，淡出只是不再塞进提示词，历史仍可查。填 <=0 表示全部不过期（全部记得）。",
   "followup_expire_days": 30,
   "followup_show_max": 3,
-  "event_expire_days": 60
+  "event_expire_days": 60,
+  "_note_deep_extract": "事实深抽取（模型层）：规则层只认关键词、认不出「她不吃香菜」这类换个说法的事实；打开后额外调一次模型来补漏。默认关（要花 token）。调不通或返回不合法时原样退回规则层结果，不会把已抽到的弄丢。",
+  "deep_extract_enabled": false,
+  "deep_extract_model": "",
+  "deep_extract_max_msgs": 40,
+  "deep_extract_min_chars": 6,
+  "_note_gap_hint": "空窗延续：距上一次非本轮互动超过 gap_hours 小时，就提醒模型「自然接上次的话头、别提好久不见、别像失忆重启」。填 <=0 表示关掉（一个字都不注入）。默认 20 小时：隔夜即算，当天连续聊不算。",
+  "gap_hours": 20,
+  "_note_anniv_ahead": "纪念日提前预告：带日期的记录（生日、结婚纪念日这类）在到点前几天就提一句，别等到当天才想起来。填 <=0 表示只在当天提醒、不预告。",
+  "anniv_ahead_days": 1
  },
  "scoring": {
   "enabled": true,

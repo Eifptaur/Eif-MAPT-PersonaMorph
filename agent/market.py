@@ -5,7 +5,7 @@
 这三条正是本模块存在的理由：把"装到哪里、怎么校验、错了怎么说"收在一处，
 界面侧只管显示，⛔ 不各写一份。
 
-⛔ **本模块不碰发送链**：不 import `wechat` / `wechat_windows`，也不写任何消息。
+⛔ **本模块不碰发送链**：不 import 任何发送/窗口模块，也不写任何消息。
    它只做"读清单 / 装文件 / 卸文件 / 攒一份待上传的元数据"。
 
 ## 为什么状态用"码"而不是"句"
@@ -77,10 +77,22 @@ def site_ready() -> bool:
 
 
 def kind_dir(kind: str) -> str:
-    """某一栏的落点绝对路径。**只认 KINDS 表**，未知 kind 返回空串。"""
-    spec = KINDS.get(str(kind or "").strip().lower())
+    """某一栏的落点绝对路径。**只认 KINDS 表**，未知 kind 返回空串。
+
+    ⚠️ 工具栏**以 `user_tools.manifest_dir()` 为准**（拿不到才回落到表里的值）：
+       工具那一栏既被这里读、又被 `agent/user_tools.py` 的加载器读，
+       两处各留一份目录配置 ⇒ 迟早漂移（一处改了另一处不知道，表现为"装上了但列不出来"）。
+    """
+    k = str(kind or "").strip().lower()
+    spec = KINDS.get(k)
     if not spec:
         return ""
+    if k == "tool":
+        try:
+            from . import user_tools
+            return user_tools.manifest_dir()
+        except Exception as _e:
+            log.debug("取工具目录失败，回落表内值：%s", _e, exc_info=True)
     d = str(spec["dir"])
     return d if os.path.isabs(d) else os.path.join(ROOT, d)
 
@@ -104,6 +116,7 @@ def _local_catalog(kind: str) -> list:
     """
     k = str(kind or "").strip().lower()
     if k == "tool":
+        out = []
         try:
             from . import user_tools
             tools, problems = user_tools.load()
@@ -125,10 +138,24 @@ def _local_catalog(kind: str) -> list:
                     "source": "local",
                     "problem": reason("bad-manifest"),
                 })
-            return out
         except Exception as _e:
             log.debug("列本地工具失败：%s", _e, exc_info=True)
-            return []
+        # ⚠️ 加载器只认"清单合法"的 JSON ⇒ 刚装进来、还没被接受的包**也要能看见**
+        #   （否则"装完却列不出来"，用户以为没装上）。按文件名补一遍差集。
+        try:
+            d0 = kind_dir(k)
+            have = {str(x.get("id") or "") for x in out}
+            for name in sorted(os.listdir(d0)) if os.path.isdir(d0) else []:
+                stem = os.path.splitext(name)[0]
+                if not name.lower().endswith(".json"):
+                    continue
+                if stem in have or name in have:
+                    continue
+                out.append({"id": stem, "name": stem, "desc": "",
+                            "installed": True, "enabled": False, "source": "local"})
+        except OSError as _e:
+            log.debug("补列工具目录失败：%s", _e, exc_info=True)
+        return out
 
     d = kind_dir(k)
     if not d or not os.path.isdir(d):

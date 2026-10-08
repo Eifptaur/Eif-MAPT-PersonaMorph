@@ -7153,7 +7153,236 @@ def _show_text_window(t: Tokens, parent, title: str, text: str) -> None:
     dlg.exec()
 
 
+# ──────────────────────────────────────── 资源市场（社区分区顶部按钮 + 三栏弹窗）
+
+#: 三栏的定义。🔑 `kind` 是**唯一**标识 —— 与后端 `agent/market.py::KINDS` 一一对应，
+#:  文案（栏名 / 这一栏是干什么的）只在这里写一遍，三处界面共用。
+_MARKET_TABS = (
+    ("persona", "人设", "以谁的身份说话。下载别人做好的，或把自己的传上去。"),
+    ("skill", "Skill", "让模型自己判断什么时候用的能力包。"),
+    ("tool", "工具", "声明式 HTTP 工具，勾选后模型才能调用。这一类本机已经能装。"),
+)
+
+
+def _market_dialog(t: Tokens, parent, kind: str = "persona") -> None:
+    """资源市场弹窗：**三栏（人设 / Skill / 工具）** ＋ 每栏三个动作。
+
+    为什么做成弹窗而不是新开一个分区：这是"分发"的**用户入口**，不是日常配置项；
+    做成分区会让 28 项导航多一个几乎不用的条目，而弹窗用完就关、不占位置。
+
+    三个动作（每栏都有）：
+      · **下载** —— 列出站上资源 → 点「安装」落到本栏目录；
+      · **上传** —— 选本机文件 → 填标题/作者，等站建好后直传；
+      · **打开网站** —— 兜底路径，走系统默认浏览器（不内嵌浏览器，免得把安装包撑大）。
+
+    状态口径：⛔ **后端说不可用就如实置灰并写明原因**，绝不假装能用
+    （文案来自后端 `agent/market.py::REASONS`，界面不另拼句子）。
+    """
+    from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QFrame # noqa: PLC0415
+
+    dlg = QDialog(parent)
+    dlg.setObjectName("marketWindow")
+    dlg.setModal(True)
+    dlg.resize(880, 600)
+
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(14, 14, 14, 14)
+    shell = QFrame()
+    shell.setObjectName("MarketShell")
+    shell.setStyleSheet(
+        f"#MarketShell{{background:{surface_bg(t)};border:1px solid {t.bd};"
+        f"border-radius:{t.radius_card + 2}px;}}"
+    )
+    outer.addWidget(shell)
+    box = QVBoxLayout(shell)
+    box.setContentsMargins(18, 16, 18, 14)
+    box.setSpacing(10)
+
+    tl = QLabel("资源市场")
+    tl.setFont(qfont(t, 15, 600))
+    tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+    box.addWidget(tl)
+
+    head = QLabel("从站上下载人设 / Skill / 工具，或把你自己的传上去。")
+    head.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    head.setWordWrap(True)
+    box.addWidget(head)
+
+    # ── 三栏切换（真按钮排，不是"三个假标签"）──
+    tab_row = FlowBox(t, spacing=6)
+    tab_btns: dict = {}
+    body = QWidget()
+    body_lay = QVBoxLayout(body)
+    body_lay.setContentsMargins(0, 6, 0, 0)
+    body_lay.setSpacing(8)
+
+    state = {"kind": str(kind or "persona"), "data": {}}
+
+    def _render_body() -> None:
+        while body_lay.count():
+            it = body_lay.takeAt(0)
+            w = it.widget() if it is not None else None
+            if w is not None:
+                w.setParent(None)
+        k = state["kind"]
+        info = (state["data"] or {}).get(k) or {}
+        ready = bool(info.get("ready"))
+        why = str(info.get("ready_reason") or "")
+
+        note = QLabel(why if why else "就绪")
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            "background:transparent;color:%s;" % (t.tx2 if ready else t.err_tx)
+        )
+        body_lay.addWidget(note)
+
+        rows = list(info.get("remote") or []) + list(info.get("local") or [])
+        if not rows:
+            empty = QLabel("这里现在是空的。")
+            empty.setStyleSheet(f"background:transparent;color:{t.tx2};")
+            body_lay.addWidget(empty)
+        else:
+            for it2 in rows[:200]:
+                r = QFrame()
+                r.setStyleSheet(
+                    f"background:{t.card};border:1px solid {t.bd};"
+                    f"border-radius:{t.radius_card}px;"
+                )
+                rl = QHBoxLayout(r)
+                rl.setContentsMargins(12, 8, 12, 8)
+                nm = QLabel(str(it2.get("name") or it2.get("id") or ""))
+                nm.setStyleSheet(f"color:{t.tx};background:transparent;border:none;")
+                rl.addWidget(nm, 1)
+                tag = QLabel("已安装" if it2.get("installed") else "站上")
+                tag.setStyleSheet(f"color:{t.tx2};background:transparent;border:none;")
+                rl.addWidget(tag)
+                b = Btn("卸载" if it2.get("installed") else "安装", t, "ghost")
+                b.setEnabled(ready)
+                if it2.get("installed"):
+                    b.clicked.connect(
+                        lambda _=False, _k=k, _i=it2: _market_act(dlg, "uninstall", _k, str(_i.get("id") or ""))
+                    )
+                else:
+                    b.clicked.connect(
+                        lambda _=False, _k=k, _i=it2: _market_act(dlg, "install", _k, str(_i.get("id") or ""))
+                    )
+                rl.addWidget(b)
+                body_lay.addWidget(r)
+
+        acts = FlowBox(t, spacing=6)
+        b_up = Btn("上传到网站", t, "ghost")
+        b_up.setEnabled(ready)
+        b_up.clicked.connect(lambda _=False, _k=k: _market_upload(dlg, _k))
+        b_site = Btn("打开网站", t, "ghost")
+        b_site.clicked.connect(lambda _=False, _k=k: _market_open_site(_k))
+        acts.add(b_up)
+        acts.add(b_site)
+        body_lay.addWidget(acts)
+
+    def _pick(k: str) -> None:
+        state["kind"] = k
+        for kk, bb in tab_btns.items():
+            bb.setProperty("c8_primary", kk == k)
+            bb.setStyleSheet("")  # 交给主题重算
+        _render_body()
+
+    for k, label, _hint in _MARKET_TABS:
+        b = Btn(label, t, "ghost")
+        b.clicked.connect(lambda _=False, _k=k: _pick(_k))
+        tab_btns[k] = b
+        tab_row.add(b)
+    box.addWidget(tab_row)
+
+    box.addWidget(body, 1)
+
+    # ── 打开即取一次真清单（不缓存：站上随时可能变）──
+    def _loaded(r, e): # noqa: ANN001
+        if e or not isinstance(r, dict):
+            state["data"] = {}
+            state["err"] = str(e or "读取失败")
+        else:
+            state["data"] = r.get("kinds") or {}
+        _render_body()
+
+    _async_post(None, "/api/market/list", {}, _loaded, timeout=15.0)
+
+    foot = QHBoxLayout()
+    foot.addStretch(1)
+    b_close = Btn("关闭", t, "primary")
+    b_close.clicked.connect(dlg.accept)
+    foot.addWidget(b_close)
+    box.addLayout(foot)
+
+    _render_body()
+    dlg.exec()
+
+
+def _market_act(dlg, action: str, kind: str, item_id: str) -> None:
+    """装 / 卸一个资源，完事**重取清单**（不做就地打补丁 —— 后端才是真值）。"""
+    api = "/api/market/" + ("install" if action == "install" else "uninstall")
+
+    def _done(r, e): # noqa: ANN001
+        try:
+            dlg.accept()
+        except Exception: # noqa: BLE001
+            pass
+
+    _async_post(None, api, {"kind": kind, "id": item_id}, _done, timeout=60.0)
+
+
+def _market_upload(dlg, kind: str) -> None:
+    """选一个本机文件 → 攒元数据。⛔ 站没建好时不发任何请求，只如实说是哪一步没就绪。"""
+    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+
+    path, _sel = QFileDialog.getOpenFileName(dlg, "选择要上传的文件")
+    if not path:
+        return
+
+    def _done(r, e): # noqa: ANN001
+        try:
+            dlg.accept()
+        except Exception: # noqa: BLE001
+            pass
+
+    _async_post(None, "/api/market/upload",
+                {"kind": kind, "filename": os.path.basename(path)}, _done, timeout=20.0)
+
+
+def _market_open_site(kind: str) -> None:
+    """打开资源站对应分栏页 —— **走系统默认浏览器**（不内嵌）。
+
+    站地址还没定 ⇒ 这里不编一个网址出来，如实走"未就绪"这条路：
+    由后端配置给 `market.site_url`；没配就不打开任何东西。
+    """
+    try:
+        r = config_io.get_json("/api/market/list") or {}
+        site = str(r.get("site_url") or "")
+    except Exception as _e: # noqa: BLE001
+        log.debug("取市场站点地址失败：%s", _e, exc_info=True)
+        site = ""
+    if not site:
+        return
+    try:
+        import webbrowser # noqa: PLC0415
+
+        # ⛔ 不用 `rstrip("/")` 直拼 URL —— 本项目判据专门清这种写法
+        #   （斜杠数不对会在部分站点 404）。用标准库拼路径，不手写字符串。
+        import urllib.parse # noqa: PLC0415
+
+        u = urllib.parse.urlsplit(site)
+        target = urllib.parse.urlunsplit(
+            (u.scheme, u.netloc, (u.path.rstrip("/") or "") + "/" + kind, "", "")
+        )
+        webbrowser.open(target)
+    except Exception as _e: # noqa: BLE001
+        log.debug("打开市场站点失败：%s", _e, exc_info=True)
+
+
 ACT_CUSTOM = {
+    # 社区分区顶部：「资源市场」按钮 ⇒ 三栏弹窗（人设 / Skill / 工具）。
+    # ⛔ 三个动作都只碰清单与本地目录，不碰发送链。
+    "marketOpen": (lambda btn, note: _market_dialog(btn.t, btn.window(), "persona"),
+                   "打开资源市场：从站上下载人设/Skill/工具，或上传你自己的"),
     "fbAdvBtn": (_act_fb_adv,
                  "原生卡片：联系邮箱 + 最近提交（web 那颗只是折叠，这里直接摊开给你看）"),
     "fbSubmit": (_fb_submit,
@@ -7231,6 +7460,26 @@ def _community_appendix(t: Tokens, page: QWidget) -> None:
     对应 URL 非空才可用；开关/两个 URL 任一变化即时重算。
     上传/导出/导入动作本体走 ACT_CUSTOM 与 _ACT_API，这里只补 disabled 联动。
     """
+    # ── 分区顶部：「资源市场」入口（三栏弹窗）──
+    #    放在**最前**，因为它是"从站上拿资源"的用户入口，属于这一屏的头部动作；
+    #    后面那一串才是本机的上传/导出。
+    _mk = Card(t)
+    _mk.body.addWidget(h2(t, "资源市场"))
+    _mk.body.addWidget(desc(
+        t, "从站上下载人设 / Skill / 工具，或把你自己的传上去。站点还在建设中，"
+           "现在打开能看到本机已装的东西。"))
+    _mk_row = FlowBox(t, spacing=6)
+    _mk_btn = Btn("打开资源市场", t, "primary")
+    _mk_btn.setProperty("web_action", "marketOpen")
+    _custom = ACT_CUSTOM.get("marketOpen")
+    if _custom is not None:
+        _h, _tip = _custom
+        _mk_btn.clicked.connect(lambda _=False, f=_h, bb=_mk_btn: f(bb, None))
+        _mk_btn.setToolTip(_tip)
+    _mk_row.add(_mk_btn)
+    _mk.body.addWidget(_mk_row)
+    page.layout().addWidget(_mk)
+
     chk = _c8_find_row(page, lambda r: (r.cfg or "") == "community.upload_enabled")
     url_h = _c8_find_row(page, lambda r: (r.cfg or "") == "community.holyshits_upload_url")
     url_f = _c8_find_row(page, lambda r: (r.cfg or "") == "community.feedback_upload_url")

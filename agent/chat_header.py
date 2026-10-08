@@ -285,6 +285,7 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
         v = getattr(img, "_pm_green_right", None)
         if v is not None:
             return int(v)          # ⭐ 帧级缓存：pane_left_for 是热路径，同一帧会被调很多次
+    # 有意宽捕：取帧级缓存/几何探测，取不到就走默认值重算
     except Exception:
         pass
     try:
@@ -459,6 +460,7 @@ def detect_green_right(img, min_ratio: float = 0.30, min_h: int = 28) -> int:
         _ret = int(_best_r) if _best_r > int(w * 0.10) else 0
         try:
             img._pm_green_right = int(_ret)
+        # 有意宽捕：写/取帧级缓存与探测失败就回默认，不影响本轮判定
         except Exception:
             pass
         return _ret
@@ -485,17 +487,20 @@ def pane_left_for(img, cross_check: bool = True) -> int:
         v = getattr(img, "_pm_pane_left", None)
         if v is not None:
             return int(v)
+    # 有意宽捕：取帧级缓存/几何探测，取不到就走默认值重算
     except Exception:
         pass
     left = 0
     try:
         left = int(detect_pane_left(img) or 0)
+    # 有意宽捕：取帧级缓存/几何探测，取不到就走默认值重算
     except Exception:
         left = 0
     alt = 0
     if cross_check:
         try:
             alt = int(detect_pane_left_alt(img) or 0)
+        # 有意宽捕：写/取帧级缓存与探测失败就回默认，不影响本轮判定
         except Exception:
             alt = 0
     # ⭐ 第三来源：**绿底行（当前会话高亮）的右边界**
@@ -504,6 +509,7 @@ def pane_left_for(img, cross_check: bool = True) -> int:
     _gx = 0
     try:
         _gx = int(detect_green_right(img) or 0)
+    # 有意宽捕：取帧级缓存/几何探测，取不到就走默认值重算
     except Exception:
         _gx = 0
     val = 0
@@ -513,6 +519,7 @@ def pane_left_for(img, cross_check: bool = True) -> int:
             import logging as _lg
             _lg.getLogger("persona-morph").info(
                 "面板左沿：老口径 %s 疑似过冲（结构锚 %s）⇒ 改用结构锚", left, alt)
+        # 有意宽捕：写/取帧级缓存与探测失败就回默认，不影响本轮判定
         except Exception:
             pass
     elif left:
@@ -542,6 +549,7 @@ def pane_left_for(img, cross_check: bool = True) -> int:
             _lg.getLogger("persona-morph").info(
                 "面板左沿：老口径 %s 与绿底行右边界 %s 差 %dpx ⇒ 改用绿带（第三来源）",
                 val, _gx, abs(int(val) - _gx))
+        # 有意宽捕：写/取帧级缓存与探测失败就回默认，不影响本轮判定
         except Exception:
             pass
         val = _gx
@@ -559,6 +567,7 @@ def pane_left_for(img, cross_check: bool = True) -> int:
         pass
     try:
         img._pm_pane_left = int(val) # 同一帧只算一次（同一对象被十几个函数各调一遍）
+    # 有意宽捕：取帧级缓存/几何探测，取不到就走默认值重算
     except Exception:
         pass
     return int(val)
@@ -595,11 +604,13 @@ def layout_state(img, pane_left: int = 0) -> dict:
     _gx = 0
     try:
         _gx = int(detect_green_right(img) or 0)
+    # 有意宽捕：取帧级缓存/几何探测，取不到就走默认值重算
     except Exception:
         _gx = 0
     if not pane_left:
         try:
             pane_left = int(pane_left_for(img) or 0)
+        # 有意宽捕：写/取帧级缓存与探测失败就回默认，不影响本轮判定
         except Exception:
             pane_left = 0
     _vis = _gx != 0
@@ -621,6 +632,7 @@ def layout_state(img, pane_left: int = 0) -> dict:
             from . import chat_ocr as _co  # 延迟导入：`chat_ocr` 顶层 import 本模块，反向 import 会成环
             _se = _co.find_search_entry(img)
             _entry_variant = str((_se or {}).get("variant") or "")
+        # 有意宽捕：写/取帧级缓存与探测失败就回默认，不影响本轮判定
         except Exception:
             _entry_variant = ""
     if _vis:
@@ -1265,6 +1277,7 @@ def _print_window(hwnd, flags: int = 2, physical: bool = False):
                 _dpi = int(u32.GetDpiForWindow(int(hwnd)) or 0)
                 if _dpi > 0:
                     _sc = float(_dpi) / 96.0
+            # 有意宽捕：抓窗口画面失败就当拿不到（多候选/HWND 轮询，失败即换下一个）
             except Exception:
                 _sc = 1.0
         w, h = int(lw * _sc), int(lh * _sc)
@@ -1430,6 +1443,7 @@ def is_blank(fp) -> bool:
     """
     try:
         v = [float(x) for x in fp]
+    # 有意宽捕：指纹容错：非数字序列就判为不可用，交给调用方回退
     except Exception:
         return True
     if not v:
@@ -1455,6 +1469,7 @@ def degenerate_reason(fp, bins: int = BINS) -> str:
     """
     try:
         v = [int(x) for x in fp]
+    # 有意宽捕：指纹容错：非数字序列就判为不可用，交给调用方回退
     except Exception:
         return "指纹不是整数序列"
     if not v:
@@ -1622,6 +1637,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
             ch = _ib.find_render_child(main)
             if ch:
                 cands.append(int(ch))
+        # 有意宽捕：抓窗口画面失败就当拿不到（多候选/HWND 轮询，失败即换下一个）
         except Exception:
             pass
         cands.append(main)
@@ -1630,6 +1646,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
             for hwnd in cands:
                 try:
                     img = _print_window(hwnd)
+                # 有意宽捕：抓窗口画面失败就当拿不到（多候选/HWND 轮询，失败即换下一个）
                 except Exception:
                     img = None
                 if img is None or _too_dark(img):
@@ -1650,6 +1667,7 @@ def grab_render(gui=None, render=None, tries: int = 12):
                     #   ⇒ 先按**物理尺寸**再抓一次；尺寸对上就用它（这时它就是渲染区）。
                     try:
                         _imgp = _print_window(hwnd, physical=True)
+                    # 有意宽捕：抓窗口画面失败就当拿不到（多候选/HWND 轮询，失败即换下一个）
                     except Exception:
                         _imgp = None
                     if (_imgp is not None and not _too_dark(_imgp)
@@ -1730,6 +1748,7 @@ def shot_window(hwnd, tries: int = 8, sleep_s: float = 0.12):
         for fl in (2, 0):
             try:
                 im = _print_window(int(hwnd), fl)
+            # 有意宽捕：抓窗口画面失败就当拿不到（多候选/HWND 轮询，失败即换下一个）
             except Exception:
                 im = None
             if im is None:

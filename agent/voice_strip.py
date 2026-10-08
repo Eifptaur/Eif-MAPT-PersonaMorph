@@ -1254,6 +1254,12 @@ class _OffscreenShown:
                 return True
         except Exception:
             return False
+        finally:
+            # ⛔ **还原了就立刻注销**（不只靠 `__exit__` / `release_early` 记得清）：
+            #   `offscreen_active()` 是"出屏自愈让路"的唯一依据；窗口已经还原却还挂在登记里，
+            #   那条自愈就会**永远不敢再动这个窗口**（万一它真被挪到屏外，就没人救了）。
+            #   收口在这里 ⇒ 无论谁触发还原，登记与真实状态都不会不一致。
+            _LIVE_BOXES.discard(self)
 
     def __exit__(self, *exc):
         if self.shown:
@@ -1478,6 +1484,30 @@ def _restore_live_boxes():
         except Exception:  # noqa: BLE001
             pass  # 清理型：静默合法
         _LIVE_BOXES.discard(_b)
+
+
+def offscreen_active(hwnd: int) -> bool:
+    """这个窗口**此刻是不是被我们故意摆在屏幕外**（`_OffscreenShown` 还挂着）⇒ 布尔。
+
+    为什么要有这个查询口：别处另有一条"**窗口跑到屏幕外就自动拉回来**"的自愈逻辑
+    （`ui_adapt.prepare_screen()` 里按 rect 判"出屏"的那两个分支）——
+    它在**我方故意**把窗口摆到屏外时**同样会命中**，后果是双重的：
+      ① **屏外档当场被破坏**：屏外档的全部意义就是"显示着但不上屏"（投递的前提），
+         被拉回屏内 ⇒ 接下来的投递点击按屏外坐标算 ⇒ 落点全错；
+      ② 窗口会在**用户眼前**跳到 (90,90)/(180,120) 并被激活
+         （那两处用的是 `ShowWindow(hwnd, 9)` ＝ `SW_RESTORE`，**会激活窗口**）。
+    ⇒ 那两处挪窗口之前**必须先问这一句**：是我方自己摆的 ⇒ **一个字都不许动**。
+
+    ⚠️ 只按窗口句柄判：屏外档是**本进程内**的临时状态，跨进程问不到（也不该问）。
+    ⚠️ 只读、不抛：拿不到就回 False（调用方按"不是我们摆的"处理，与改动前一致）。
+    """
+    try:
+        _h = int(hwnd or 0)
+        if not _h:
+            return False
+        return any(int(getattr(_b, "hwnd", 0) or 0) == _h for _b in list(_LIVE_BOXES))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _arm_atexit():

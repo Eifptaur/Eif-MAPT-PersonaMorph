@@ -547,10 +547,14 @@ class WebUI:
         elif path == "/dsh-whale/wait.json":
             # 上游 **0.3.14 起新增**：客户端每秒轮询它，问"有没有挂起的交互（提问/授权）、哪一类、对话名"
             #   ⇒ 据此弹常驻泡泡 + 响提示音，并给文案里的 `{session}` 占位符取值。
-            #   本移植版**暂无"挂起交互"这个状态** ⇒ 如实回不支持（客户端走默认值：不弹挂起泡泡、
-            #   `{session}` 显示"当前对话"），⛔ **绝不回假 ok:true**（那会让界面显示假数据）。
-            #   ⭐ 将来可接：`agent/pending_decisions.py` 里就有"等人工拍板"的队列。
-            handler._json(whale.unsupported("wait.json"), cors=True)
+            #   ✅ 已接 `whale.wait_payload()`（数据源＝`agent/pending_decisions.py` 的待决队列）：
+            #     有挂起 ⇒ `waiting:true` + `kind`/`session`/`id`；没有 ⇒ `waiting:false`。
+            #     ⛔ 这条**每秒被轮询** ⇒ 任何异常都必须在 whale 侧吞成 `waiting:false`，
+            #       不许把 500 抛给客户端（否则每秒一条失败）。
+            try:
+                handler._json(whale.wait_payload(), cors=True)
+            except Exception as e:  # noqa: BLE001
+                handler._json({"ok": True, "waiting": False, "error": str(e)[:200]}, cors=True)
         elif path in tuple("/dsh-whale/" + n for n in whale._UNSUPPORTED):
             # 上游 0.3.x 有、本移植版没有的：**如实说不支持**（客户端会保留默认值 ⇒ 干净降级）
             handler._json(whale.unsupported(path.rsplit("/", 1)[-1]), cors=True)
@@ -2818,6 +2822,43 @@ def _make_handler(parent):
                     self._json({"ok": False, "error": "未提供上传功能"})
                 else:
                     self._json(parent.community_upload_fn(data))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        # ── 资源市场（`agent/market.py`）──
+        #    三栏同构，所以四个入口都很薄：把参数递给 market，再把结果原样透出。
+        #    ⛔ 这里不做任何"友好化改写"—— 状态文案由 backend 的 REASONS 表统一给，
+        #      界面直接用；两处各拼一句话，同一种失败就会长得不一样。
+        def _rapi_market_list(self, path, data, parsed, method):
+            try:
+                from . import market # noqa: PLC0415
+                kind = str(parsed.get("kind", [""])[0] or "").strip() if parsed else ""
+                self._json(market.list_kind(kind) if kind else market.list_all())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_market_install_post(self, path, data, parsed, method):
+            try:
+                from . import market # noqa: PLC0415
+                self._json(market.install(str(data.get("kind") or ""), str(data.get("id") or ""),
+                                          str(data.get("sha256") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_market_uninstall_post(self, path, data, parsed, method):
+            try:
+                from . import market # noqa: PLC0415
+                self._json(market.uninstall(str(data.get("kind") or ""), str(data.get("id") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_market_upload_post(self, path, data, parsed, method):
+            try:
+                from . import market # noqa: PLC0415
+                self._json(market.prepare_upload(str(data.get("kind") or ""),
+                                                 str(data.get("filename") or ""),
+                                                 str(data.get("title") or ""),
+                                                 str(data.get("author") or "")))
             except Exception as e:
                 self._json({"ok": False, "error": str(e)}, 500)
 

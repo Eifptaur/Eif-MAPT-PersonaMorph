@@ -247,6 +247,60 @@ def _console_stamp() -> str:
     return time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(p)))
 
 
+#: 设备 ID 文件（属于 `data/` ⇒ 不随版本变、不进包、不覆盖）
+DEVICE_FILE = os.path.join(ROOT, "data", "device.json")
+
+
+def device_id() -> str:
+    """本机匿名设备 ID（32 位 UUID，**首次调用时生成并持久化**到 `data/device.json`）。
+
+    用途：同一个人的多条反馈能被归到一台机器上（"这个人第三次报同一个问题了"），
+    而**不含任何身份信息**（不取 MAC / 主机名 / 用户名 / 硬盘序列号）。
+
+    ⛔ 为什么不用机器码：那类值是**跨软件稳定**的标识符，等于把"用户在这台电脑上装过什么"
+      串起来；随机 UUID 只在本产品内部有效，删了 `data/device.json` 就换一个新身份。
+    ⛔ 读不到/写不了 ⇒ 返回**空串**（如实表示"这台机器没有设备 ID"），**不生成临时的** ——
+      临时 ID 每次上报都不一样，等于把"同一台机器"拆成无限多台（比没有更坏）。
+    """
+    try:
+        if os.path.exists(DEVICE_FILE):
+            with open(DEVICE_FILE, encoding="utf-8") as f:
+                d = json.load(f)
+            did = str((d or {}).get("id") or "").strip()
+            if did:
+                return did
+    except Exception as _e:  # noqa: BLE001
+        log.debug("读设备 ID 失败（按无 ID 处理）：%s", _e, exc_info=True)
+        return ""
+    did = uuid.uuid4().hex  # 128 位随机
+    try:
+        os.makedirs(os.path.dirname(DEVICE_FILE), exist_ok=True)
+        tmp = persist.tmp_for(DEVICE_FILE)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"id": did, "at": time.time()}, f)
+        os.replace(tmp, DEVICE_FILE)
+    except Exception as _e:  # noqa: BLE001
+        log.debug("写设备 ID 失败（按无 ID 处理）：%s", _e, exc_info=True)
+        return ""
+    return did
+
+
+def sign_payload(payload: dict, did: str = "") -> str:
+    """给上报体算一个**可选的**短签名（`sha256(稳定序列化 + 设备 ID)` 前 16 位）。
+
+    用途：接收端能分辨"同一台机器重发同一条"与"两条内容恰好像"，
+    并在**配置了密钥**时做轻量防伪（本函数不需要密钥：它只做内容指纹，不宣称"不可伪造"）。
+
+    ⛔ **不许**把设备 ID 当成秘密（它就随包发出去）；这里的签名是**去重与完整性**用的，
+      不是鉴权。真正的凭据走用户自己配的 `webhook_token`。
+    """
+    try:
+        body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:  # noqa: BLE001
+        return ""
+    return hashlib.sha256((body + "|" + str(did or "")).encode("utf-8")).hexdigest()[:16]
+
+
 def _read_all() -> list:
     out = []
     try:
@@ -727,7 +781,12 @@ def submit(kind: str, text: str, contact: str = "", env: dict | None = None, fil
         "console": _console_stamp(),   # 控制台页面时间戳（诊断用；不冒充版本号）
         "env": env or {},
         "files": _saved,
+        # 匿名设备 ID：同一台机器的多条反馈能被归到一起（不含任何身份信息，见 device_id）。
+        # ⛔ 取不到就是空串 —— 不造假 ID（假 ID 比没有更坏：会把一台机器拆成无限多台）。
+        "device": device_id(),
     }
+    # 上报体签名：接收端用它做"同一条重发"的去重（**不是鉴权**，见 sign_payload）。
+    item["sig"] = sign_payload({"t": t, "k": k, "at": round(float(item["at"]), 3)}, item["device"])
     if _notes:
         item["attach_notes"] = _notes
     # ④ 防刷闸门（咽喉点）：超额/重复一律**不发、不落盘**，只留痕（见 rate_check 注释）

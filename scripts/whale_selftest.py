@@ -18,7 +18,7 @@ import os
 import re
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -184,6 +184,68 @@ try:
        "target[calls] += 1 出现 %d 次" % _llm_src.count('target["calls"] += 1'))
 except Exception as e:
     skip("E. 用量计数单点来源", "导入失败：%s" % e)
+
+print("")
+print("── F. wait.json 接上待决队列（上游 0.3.14 的挂起轮询）──")
+# 上游规格：客户端每秒轮询 `/dsh-whale/wait.json`，问"有没有挂起的交互、哪一类、对话名"
+#   ⇒ 有就弹常驻泡泡 + 提示音，并把 `session` 填进文案的 `{session}`。
+# ⛔ 两条硬要求（写反了都是显性故障）：
+#   ① **没有挂起必须 `waiting:false`** —— 回 true 会让泡泡**一直弹**；
+#   ② **异常必须吞成"没有挂起"** —— 这条每秒被轮询，回 500 会每秒记一条失败。
+try:
+    import tempfile as _tf
+    from agent import whale as _wh
+    from agent import pending_decisions as _pd
+
+    _tmp = _tf.mkdtemp(prefix="pm_wait_")
+    _w = _wh.WhaleWidget(_tmp)  # ⛔ 落到本次临时目录（不碰产品 data/）
+    _p = os.path.join(_tmp, "pd.json")
+    _pd.save({"items": []}, _p)
+    ok("F0 待决台账的隔离文件可读写（后面几条的**分母守卫**：夹具真的建起来了）",
+       os.path.isfile(_p), _p)
+    # wait_payload 走 `pd.path()` 定位台账 ⇒ 临时把它指到隔离文件（跑完还原）
+    _orig_path = _pd.path
+    try:
+        _pd.path = lambda p=None: (p or _p)  # noqa: ARG005
+        ok("F1 ⭐ **没有挂起 ⇒ waiting=False**（回 true 会让泡泡一直弹）",
+           _w.wait_payload() == {"ok": True, "waiting": False},
+           str(_w.wait_payload()))
+        _pd.open_item("version_mismatch", "wxid_demo|adapter", "微信版本对不上",
+                      reason="请选一个", wechat="测试群", p=_p,
+                      options=[{"key": "keep", "label": "继续用"}])
+        _r = _w.wait_payload()
+        ok("F2 有挂起 ⇒ waiting=True，且带 kind / session / id（客户端靠 id 去重）",
+           _r.get("waiting") is True and _r.get("kind") == "ask"
+           and _r.get("session") == "测试群" and bool(_r.get("id")),
+           str(_r))
+        ok("F3 ⭐ `session` 是**对话名**（填进文案的 `{session}` 占位符）",
+           _r.get("session") == "测试群", "session=%s" % _r.get("session"))
+        _pd.resolve(_r["id"], "", p=_p)
+        ok("F4 ⭐ 用户表态后 ⇒ 回到 waiting=False（泡泡要能自己消失）",
+           _w.wait_payload() == {"ok": True, "waiting": False},
+           str(_w.wait_payload()))
+    finally:
+        _pd.path = _orig_path
+
+    # ② 读台账炸了 ⇒ 也必须回 waiting=False（不是抛出去）
+    _orig_open = _pd.open_items
+    try:
+        def _boom(*a, **k):
+            raise RuntimeError("判据故意造的")
+        _pd.open_items = _boom
+        ok("F5 ⭐ 台账读失败 ⇒ **也回 waiting=False**（每秒轮询的路不许抛 500）",
+           _w.wait_payload().get("waiting") is False, str(_w.wait_payload()))
+    finally:
+        _pd.open_items = _orig_open
+
+    _wui = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+    ok("F6 路由**已改真调用**（不再 `whale.unsupported(\"wait.json\")`）",
+       'whale.wait_payload()' in _wui and 'whale.unsupported("wait.json")' not in _wui)
+    ok("F7 ⭐ 反例锚：whale.py 里**确实**有 wait_payload（否则 F6 是空过）",
+       "def wait_payload" in open(os.path.join(ROOT, "agent", "whale.py"),
+                                  encoding="utf-8").read())
+except Exception as e:
+    skip("F. wait.json 接待决队列", "导入失败：%s" % e)
 
 print("")
 print("鲸语判据：%d 通过 / %d 失败 / %d 跳过；字典 %d 条" % (PASS, FAIL, SKIP_N, len(DICT)))

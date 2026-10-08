@@ -478,6 +478,81 @@ def _builtin_tool_defs() -> list:
             "execute": _exec_search_meme,
         },
         {
+            "name": "meme_dict",
+            "description": ("群梗词典（**我们自己群里的词**，与 search_meme 查外部热梗不同）。"
+                            "三个动作：`detect`＝看看本群有哪些高频词、哪些还没查过；"
+                            "`explain`＝查一个词是什么意思（**先看笔记，查过就不出网**，"
+                            "返回带来源的材料，由你自己总结、**写清来源**）；"
+                            "`timeline`＝这个词在我们群里什么时候开始出现、热度怎么变（只读本群历史）。"
+                            "⛔ 拿不到就说拿不到，**绝不编释义**；⛔ 没有新词就自动去查会很耗，"
+                            "只在有人明确问、或你判断这个词真的需要解释时才 explain。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "detect / explain / timeline"},
+                    "word": {"type": "string", "description": "explain / timeline 要查的词"},
+                },
+                "required": ["action"],
+            },
+            "execute": _exec_meme_dict,
+        },
+        {
+            "name": "recommend_music",
+            "description": ("群友让你「推荐首歌」「来点适合下雨天的」「有没有像 XXX 那样的」时用它。"
+                            "给 **2~3 首**、**每首一句理由**（理由来自这首歌真实命中的标签/艺人，"
+                            "**不许编理由、更不许编歌名**）。⛔ 只给「歌名 + 艺人」——"
+                            "**不发音频文件、不转发、不绕平台版权**，让用户自己去放。"
+                            "库里没存过歌 ⇒ 它会如实说「我还不太熟这块」，照实转达即可。"
+                            "`remember=true` 时把这次提到的歌**记进标签表**（下次就能推了）。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "想要什么样的（如「适合下雨天的」「像周杰伦那样的」）"},
+                    "ctx": {"type": "string", "description": "场景补充（可选，如「现在是深夜」）"},
+                    "remember": {"type": "string", "description": "要记的歌，格式「歌名 - 艺人 | 标签1,标签2」（可选）"},
+                },
+            },
+            "execute": _exec_recommend_music,
+        },
+        {
+            "name": "rumor_check",
+            "description": ("核查一条转发/链接的真实性（群里有人转「XX 千万别吃」「某地出大事了」"
+                            "这类消息时用）。抓正文 + 检索公开来源，给 **六档结论**"
+                            "（真实/大概率真实/存疑/大概率不实/已证实谣言/信息不足）+ 来源 + 免责。"
+                            "⛔ 查不到就落「信息不足」——**绝不许倒向真或假任何一边**、**绝不编来源**。"
+                            "⭐ **私聊共情优于当众打脸**：群里用「我刚查了一下…」把信息补上就好，"
+                            "**别点名、别说对方传谣**。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "要核查的原文/说法"},
+                    "url": {"type": "string", "description": "要核查的链接（可选；给了会抓正文）"},
+                    "where": {"type": "string", "description": "group（默认，群里）/ private（私聊）"},
+                },
+                "required": ["content"],
+            },
+            "execute": _exec_rumor_check,
+        },
+        {
+            "name": "yearbook",
+            "description": ("群年报（年度报告 / 名场面 / 精华簿）。`action=pick`＝从本群历史里挑几条"
+                            "「名场面」（按长度/深夜/表情/点名机械挑，**不是「最好的」**，是「最有信息量的」）；"
+                            "`action=save`＝把某一条**存进精华簿**（群友说「这条留着」「这个算年度之最」时用）；"
+                            "`action=book`＝翻精华簿（每条都注明**是谁挑的**）。"
+                            "⛔ **只读消息库**，不改任何消息；⛔ 库里没数据就如实说没数据，**不硬凑**。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "pick / save / book"},
+                    "id": {"type": "string", "description": "save 时要存的条目 id（pick 返回里有）"},
+                    "text": {"type": "string", "description": "save 时要存的正文"},
+                    "who": {"type": "string", "description": "save 时这条话是谁说的（可选）"},
+                },
+                "required": ["action"],
+            },
+            "execute": _exec_yearbook,
+        },
+        {
             "name": "read_bilibili",
             "description": ("解析 B 站视频（BV 号 / av 号 / b23.tv 短链 / 视频页地址）：给出标题、UP、时长、"
                             "简介、分P 与字幕。群友丢 B 站链接问「这视频讲什么」时用它，**不要凭链接瞎猜内容**；"
@@ -1551,6 +1626,7 @@ def _exec_send_emoji(ctx, args):
         target = next((e for e in emojis if e["name"] == name
                        or e["path"].lower().endswith(name.lower())), None)
     idx = None
+    how = ""
     if target is None:
         if name:
             for s in _el.list_summaries():
@@ -1558,7 +1634,9 @@ def _exec_send_emoji(ctx, args):
                     idx = s["index"]
                     break
         if idx is None:
-            idx = _el.pick(str(args.get("context") or ""))
+            # 第 131 项：**选格只有这一个入口**，它自己决定走「按语境选」还是「随机选」，
+            #   并把用的是哪一种如实报出来（`how`）—— ⛔ 占位登记时**不许**把随机说成按语境。
+            idx, how = _el.choose(str(args.get("context") or ""))
         if idx is not None and idx >= 0:
             for s in _el.list_summaries():
                 if s["index"] == idx and s.get("path") and _os.path.exists(s["path"]):
@@ -1583,7 +1661,11 @@ def _exec_send_emoji(ctx, args):
                     idx if idx is not None and idx >= 0 else 0, chat_id=_cid0)
                 if _oki:
                     ctx["session"]["sent"].append({"type": "emoji", "text": "[表情]"})
-                    return _ok({"sent": True, "via": "emoji_panel", "index": idx, "note": _msi})
+                    # 第 131 项：同一条诚实口径 —— 占位登记时是随机挑的一格，如实标注。
+                    _hn = ("（随机挑的一格 —— 还没登记每格画的是什么，所以不是按语境选的）"
+                           if how == "random" else "")
+                    return _ok({"sent": True, "via": "emoji_panel", "index": idx,
+                                "how": how, "note": (_msi or "") + _hn})
                 _panel_why = str(_msi)[:80]
                 log.info("表情面板发送失败（%s）⇒ 才考虑退回本地发图", _panel_why)
             else:
@@ -1663,7 +1745,12 @@ def _exec_send_emoji(ctx, args):
         if not ok2:
             return _err("表情面板发送失败：%s（已取消，未发送）" % msg2)
         ctx["session"]["sent"].append({"type": "image", "text": "[表情]"})
-        return _ok({"sent": True, "index": idx, "note": msg2})
+        # 第 131 项：**如实标注这次是按哪个格号发的** —— 占位登记时只能随机选，
+        #   ⛔ 不许把它说成"按语境选"（用户看到"它懂了语境"会以为机器人认得每张图）。
+        _how_note = ("（这次是从微信收藏表情里**随机**挑的一格 —— 还没登记每格画的是什么，"
+                     "所以**不是**按语境选的）" if how == "random" else "")
+        return _ok({"sent": True, "index": idx, "how": how,
+                    "note": (msg2 or "") + _how_note})
     except Exception as e:
         return _err(str(e))
 
@@ -1921,6 +2008,110 @@ def _exec_search_meme(ctx, args):
         return _ok(data)
     except Exception as e:
         return _err("查热梗失败：%s" % e)
+
+
+def _exec_meme_dict(ctx, args):
+    """群梗词典（第 137 项）：detect / explain / timeline。
+
+    ⛔ 三条边界与模块一致：**不编释义**（explain 只回带来源的材料）· **见过就记下来**
+      （explain 命中笔记 ⇒ 不再出网）· **样本不够就说不够**（detect/timeline 都如实报）。
+    """
+    try:
+        from .config import get_config as _gc_md
+        from . import meme_dict as _md
+        _cfg = _gc_md() or {}
+        act = str(args.get("action") or "detect").strip().lower()
+        word = str(args.get("word") or "")
+        if act in ("detect", "scan", "list", ""):
+            r = _md.detect_new(ctx["chat_key"], memory=ctx.get("memory"), cfg=_cfg)
+        elif act in ("explain", "meaning", "what"):
+            r = _md.explain(word, cfg=_cfg)
+        elif act in ("timeline", "when", "history"):
+            r = _md.timeline(word, memory=ctx.get("memory"), chat_key=ctx["chat_key"])
+        else:
+            return _err("不认识的动作「%s」（只能是 detect / explain / timeline）" % act)
+        if not r.get("ok"):
+            return _err(str(r.get("note") or "查不到（如实转达即可，别编）"))
+        return _ok(r)
+    except Exception as e:
+        return _err("查群梗失败：%s" % e)
+
+
+def _exec_yearbook(ctx, args):
+    """群年报 · 名场面与精华簿（第 135 项③④）。
+
+    ⛔ 三条边界与模块一致：**只读消息库**（`save` 只写 `data/highlights.jsonl`）·
+      **没数据如实说**（`pick`/`book` 都照实回）· **群友挑的必须注明是谁挑的**。
+    """
+    try:
+        from . import report_card as _rc
+        act = str(args.get("action") or "pick").strip().lower()
+        if act in ("pick", "highlights", "list", ""):
+            r = _rc.highlight_book(ctx["chat_key"], store=ctx.get("store"))
+        elif act in ("save", "add", "keep"):
+            item = {"id": args.get("id"), "text": args.get("text"), "who": args.get("who")}
+            # 「谁挑的」＝当前发言人的显示名（`who` 由调用层给；没有就记「某位群友」）
+            by = str(ctx.get("sender_name") or ctx.get("who") or "").strip()
+            r = _rc.save_highlight(ctx["chat_key"], item, by=by)
+        elif act in ("book", "open", "show"):
+            r = _rc.book(ctx["chat_key"])
+        else:
+            return _err("不认识的动作「%s」（只能是 pick / save / book）" % act)
+        if not r.get("ok"):
+            return _err(str(r.get("note") or "查不到（如实转达即可，别编）"))
+        return _ok(r)
+    except Exception as e:
+        return _err("读群年报失败：%s" % e)
+
+
+def _exec_recommend_music(ctx, args):
+    """音乐推荐（第 139 项）：按标签给 2~3 首 + 每首一句理由。
+
+    ⛔ 红线（与模块一致）：**不发音频、不转发、不绕版权**；**没数据不编歌名**。
+    """
+    try:
+        from . import music_rec as _mr
+        rem = str(args.get("remember") or "").strip()
+        if rem:
+            # 格式「歌名 - 艺人 | 标签1,标签2」⇒ 记进标签表
+            head, _sep, tail = rem.partition("|")
+            title, _s2, artist = head.partition("-")
+            okr = _mr.remember(title.strip(), artist.strip(),
+                               [x.strip() for x in tail.split(",") if x.strip()])
+            if not okr:
+                return _err("没记住（要写成「歌名 - 艺人 | 标签1,标签2」这种格式）")
+        r = _mr.recommend(str(args.get("query") or ""), ctx=str(args.get("ctx") or ""))
+        if not r.get("ok"):
+            return _err(str(r.get("note") or "推不了（如实转达即可，别编歌名）"))
+        return _ok({"picks": r.get("picks"), "note": r.get("note")})
+    except Exception as e:
+        return _err("推荐失败：%s" % e)
+
+
+def _exec_rumor_check(ctx, args):
+    """辟谣核查（第 132 项）：抓正文 + 检索佐证 ⇒ 六档结论 + 来源 + 免责。
+
+    ⛔ `llm` 由这里注入（把"调模型"这件事留在工具层，`rumor` 模块本身不建 HTTP 客户端）。
+    """
+    try:
+        from . import rumor as _rm
+        from .llm import chat_completion as _cc
+
+        def _llm(prompt):
+            # 核查走一次**独立的小调用**（不复用主会话上下文：它不该被群里的闲聊带偏）
+            r = _cc([{"role": "user", "content": prompt}], temperature=0.2)
+            return str(((r or {}).get("message") or {}).get("content") or "")
+
+        r = _rm.check(str(args.get("content") or ""), url=str(args.get("url") or ""),
+                      llm=_llm, where=str(args.get("where") or "group"))
+        if not r.get("ok"):
+            return _err(str(r.get("note") or "没核查成（如实转达即可，别自己下结论）"))
+        return _ok({"verdict": r.get("verdict"), "confidence": r.get("confidence"),
+                    "summary": r.get("summary"), "points": r.get("points"),
+                    "sources": r.get("sources"), "disclaimer": r.get("disclaimer"),
+                    "note": r.get("note")})
+    except Exception as e:
+        return _err("核查失败：%s" % e)
 
 
 def _exec_web_fetch(ctx, args):

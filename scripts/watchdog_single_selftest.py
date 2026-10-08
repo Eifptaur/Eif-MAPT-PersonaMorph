@@ -24,7 +24,7 @@ import tempfile
 #   ⇒ 统一把 stdout 切到 UTF-8（reconfigure 失败也不致命，退化成 errors=replace）。
 for _s in (sys.stdout, sys.stderr):
     try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
+        _s.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     except Exception:
         pass
 

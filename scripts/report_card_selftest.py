@@ -16,11 +16,13 @@ import os
 import sys
 import tempfile
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, ROOT)
 
 from agent import report_card as RC  # noqa: E402
+import _srcslice as _ss  # noqa: E402
 
 PASS = FAIL = 0
 TD = tempfile.mkdtemp(prefix="yb-")
@@ -126,6 +128,76 @@ _bad = [w for w in ("INSERT", "UPDATE ", "DELETE", "commit(", "send_text", "send
 ok("D1★ 模块里**没有写库/发消息**的字样（年报只读历史）", not _bad, str(_bad))
 ok("D2 只读入口用的是既有的 `get_messages`（不新写一套库访问）",
    "db.get_messages(" in _src, "")
+
+print("\n── E. 名场面（第 135 项③）──")
+_hrows = [
+    {"id": 1, "sender_name": "甲", "ts": _ts(2026, 1, 1, 14),
+     "text": "今晚的月亮特别大，我站在阳台上看了好久好久好久好久好久", "self": False},
+    {"id": 2, "sender_name": "乙", "ts": _ts(2026, 1, 2, 3),
+     "text": "睡不着，谁还在？", "self": False},
+    {"id": 3, "sender_name": "甲", "ts": _ts(2026, 1, 3, 14), "text": "嗯", "self": False},
+    {"id": 4, "sender_name": "图", "ts": _ts(2026, 1, 3, 14), "type": "图片",
+     "content": "<msg>" + "x" * 200, "self": False},
+]
+_h = RC.highlights_from_rows(_hrows, name="测试群")
+ok("E0 分母守卫：挑得出、且挑的条数不超过候选数",
+   _h["ok"] and 0 < len(_h["picks"]) <= 3, str(len(_h.get("picks") or [])))
+ok("E1★ 太短的不算名场面（「嗯」不入榜）",
+   all("嗯" != p["text"] for p in _h["picks"]), str([p["text"][:6] for p in _h["picks"]]))
+ok("E2★ 非文本消息不入榜（图片的 content 是 XML 载荷）",
+   all("msg" not in p["text"] for p in _h["picks"]), "")
+ok("E3★ 深夜那条被打上「深夜」理由（0~5 点 +2 分）",
+   any("点还在说" in p["why"] for p in _h["picks"]), str([p["why"] for p in _h["picks"]]))
+ok("E4★ 每条都带「为什么入选」（用户能自己判断像不像话）",
+   all(p.get("why") for p in _h["picks"]), "")
+ok("E5★ 库里没数据 ⇒ `ok=False` 且说清原因（不硬凑）",
+   (not RC.highlights_from_rows([], name="g")["ok"])
+   and "没有可当" in RC.highlights_from_rows([], name="g")["note"], "")
+ok("E6★ 纯函数（不碰 IO）：只吃 rows，两次同一输入结果一致",
+   RC.highlights_from_rows(_hrows)["picks"] == RC.highlights_from_rows(_hrows)["picks"], "")
+ok("E7 同一条消息只出现一次（id 去重）",
+   len({p["id"] for p in RC.highlights_from_rows(
+       _hrows + [_hrows[0]], name="g")["picks"]}) == len(
+       RC.highlights_from_rows(_hrows + [_hrows[0]], name="g")["picks"]), "")
+ok("E8★ `store` 那种行**没有 type 字段**也当文本（否则真机一条都挑不出来）",
+   RC.highlights_from_rows([{"id": 9, "sender_name": "甲", "ts": 1791386610046,
+                             "text": "这是一条没有 type 字段的普通文本消息"}])["ok"], "")
+
+print("\n── F. 精华簿（第 135 项④：群友改写年度之最）──")
+import agent.report_card as _rc2  # noqa: E402
+_bk = os.path.join(TD, "highlights.jsonl")
+_rc2._book_path = lambda: _bk
+ok("F1★ 空簿 ⇒ `ok=False` 且说清「得先有人挑」",
+   (not _rc2.book("g1")["ok"]) and "空的" in _rc2.book("g1")["note"], "")
+ok("F2★ 群友挑的一条进簿 ⇒ 注明**是谁挑的**",
+   _rc2.save_highlight("g1", {"id": "1", "who": "甲", "text": "今晚的月亮特别大"}, by="老王")["ok"]
+   and _rc2.book("g1")["picks"][0]["by"] == "老王", "")
+ok("F3★ 没写挑的人 ⇒ 记「某位群友」（**绝不冒充**是统计结果）",
+   _rc2.save_highlight("g1", {"id": "2", "text": "另一条"})["ok"]
+   and [p for p in _rc2.book("g1")["picks"] if p["id"] == "2"][0]["by"] == "某位群友", "")
+ok("F4★ 同一条重复保存 ⇒ 只留一份（后写的来源覆盖前者）",
+   len([p for p in _rc2.book("g1")["picks"] if p["id"] == "1"]) == 1, "")
+ok("F5★ 空正文 ⇒ 不入簿（如实说没正文）",
+   _rc2.save_highlight("g1", {"text": "  "})["ok"] is False, "")
+ok("F6★ 簿只落 `data/`：模块里**没有写消息库**的字样（`save_highlight` 不碰消息）",
+   not [w for w in ("append_incoming", "append_self", "_save_chat", "delete_entries")
+        if w in _ss.func_src(_src, "save_highlight")], "")
+ok("F7★ 精华簿路径与消息库**是两个文件**（改簿不影响消息）",
+   "highlights.jsonl" in _src and "MESSAGES_DIR" not in _src, "")
+ok("F8 按群过滤 `book(chat_key)`（别的群的不串）",
+   _rc2.save_highlight("g2", {"id": "3", "text": "另一个群的"} , by="小李")["ok"]
+   and all(p["chat_key"] == "g1" for p in _rc2.book("g1")["picks"]), "")
+
+print("\n── G. 接线（工具 + 提示词）──")
+_tools_src = io.open(os.path.join(ROOT, "agent", "tools.py"), encoding="utf-8").read()
+_prompt_src = io.open(os.path.join(ROOT, "agent", "prompt.py"), encoding="utf-8").read()
+ok("G1★ 工具表里有 `yearbook`", '"name": "yearbook"' in _tools_src, "")
+ok("G2★ 执行体 `_exec_yearbook` 存在且三动作齐全",
+   "_exec_yearbook" in _tools_src and "pick" in _ss.func_src(_tools_src, "_exec_yearbook")
+   and "save" in _ss.func_src(_tools_src, "_exec_yearbook")
+   and "book" in _ss.func_src(_tools_src, "_exec_yearbook"), "")
+ok("G3★ 提示词里点了 `yearbook`（否则模型不知道有这个工具）",
+   "yearbook" in _prompt_src, "")
 
 print("\n== 群年报判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
