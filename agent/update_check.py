@@ -78,15 +78,66 @@ def current_version() -> str:
         return ""
 
 
+def _ver_system(v: str) -> str:
+    """版本串属于哪套体系：`"rune"`（`Vᛞ`）／`"date"`（`2026.9.28.6`）／`""`（认不出）。"""
+    s = str(v or "").strip()
+    if len(s) >= 2 and s[0].upper() == "V":
+        try:
+            from .version import rune_value
+            if rune_value(s[1]):
+                return "rune"
+        except Exception:                                    # noqa: BLE001
+            pass
+        return ""
+    parts = [p for p in s.split(".") if p != ""]
+    if parts and all(p.isdigit() for p in parts):
+        return "date"
+    return ""
+
+
+def same_system(a: str, b: str) -> bool:
+    """两个版本串**是不是可以比**（同体系且都认得出）。
+
+    ⛔ 为什么要这一条：换轨期一定会出现"本机 `Vᛞ`、清单还是日期式"这种组合。
+       `vtuple` 各自都能解析出来（`(23,)` 与 `(2026,9,28,6)`），**一比就是错的结论**
+       （数值上日期式永远更大 ⇒ 会被那道上界闸判成"超前一年以上 ⇒ 异常清单" ⇒
+       **把正常更新锁死**，而且界面把锅甩给更新源）。⇒ 不同体系 ⇒ **如实说"比不出来"**。
+    """
+    sa, sb = _ver_system(a), _ver_system(b)
+    return bool(sa) and sa == sb
+
+
 def vtuple(v):
-    """`2026.9.15.1` → (2026, 9, 15, 1)；非法值返回 ()。"""
-    out = []
-    for part in str(v or "").split("."):
-        part = part.strip()
-        if not part.isdigit():
+    """版本号 → 可比的整数元组；非法值返回 `()`（＝"比不出来"，调用方各自决定怎么办）。
+
+    支持两种形状：
+      · **现行**（2026-10-09 起）`V<符号>`：`Vᛞ` → `(4,)`。取值来自 `version.RUNE_VALUES`
+        那张**人手写的对照表**（符号代表几由人定，不按卢恩表位次自动取）。
+        带小段：`Vᛞ.2` → `(4, 2)`。
+      · **旧日期式** `2026.9.28.6` → `(2026, 9, 28, 6)`。老用户手里的记录是这种形状，
+        换轨后**必须还能解析**，否则他那边一比就返回 `()` ⇒ 再也收不到更新。
+    ⛔ **跨体系要比大小请先过 `same_system()`** —— `vtuple` 只负责"这一串自己解析得出来吗"，
+       **不负责**"这两串能不能比"（它拿不到对比的另一边）。判断两串能不能比是调用方的事。
+    """
+    s = str(v or "").strip()
+    sysm = _ver_system(s)
+    if sysm == "rune":
+        try:
+            from .version import rune_value
+        except Exception:                                    # noqa: BLE001
             return ()
-        out.append(int(part))
-    return tuple(out)
+        rest = []
+        for part in s[2:].lstrip(".").split("."):
+            part = part.strip()
+            if not part:
+                continue
+            if not part.isdigit():
+                return ()
+            rest.append(int(part))
+        return tuple([rune_value(s[1])] + rest)
+    if sysm == "date":
+        return tuple(int(p) for p in s.split(".") if p.strip().isdigit())
+    return ()
 
 
 DEFAULT_URL = "https://raw.githubusercontent.com/Eifptaur/Eif-MAPT-PersonaMorph/main/persona-morph-manifest.json"
@@ -734,6 +785,16 @@ def manifest_gates(man: dict, mine: str | None = None, max_seen: str | None = No
         return out
     # ② rollback：单调版本（远端不许比"见过的最高版本"低，哪怕它比本机新）
     _vt = vtuple(theirs)
+    # ⛔ **跨体系先出局**：本机 `Vᛞ`、清单还是日期式（或反过来）时，`vtuple` 两边都解析得出，
+    #   但**一比就是错的结论**（数值上日期式永远更大 ⇒ 会被下面那道上界闸判成"超前一年以上
+    #   ⇒ 异常清单" ⇒ **把正常更新锁死**，界面还把锅甩给更新源）。
+    #   ⇒ 体系不一致就**跳过全部"比大小"的闸**，如实说明"版本体系不同、这次不据它判新旧"。
+    #   ⚠️ freeze（过期）那道闸不受影响 —— 它看的是时间戳，与版本体系无关，上面已经判过。
+    if theirs and _vt and mine and not same_system(theirs, mine):
+        out["why"] = ("更新源给的版本（%s）与本机（%s）**不是同一套版本体系** ⇒ "
+                      "这次不据它判新旧（多半是换版本体系期间的过渡；手动下载或等下个清单即可）"
+                      % (theirs, mine))
+        return out
     if theirs and _vt:
         # ⛔ **离谱的超前版本要拦住、而且不许入账**。
         #   现场：第三方反代/CDN 篡改回包体、或发版时版本号打错一位（`9999.9.9`）⇒ 旧代码无条件

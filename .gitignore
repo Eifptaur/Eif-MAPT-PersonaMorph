@@ -104,6 +104,9 @@ config.json.bak*
 dev-workspace/
 exports/
 
+# 出包副产物：逐文件 sha256 表（供增量 diff 用）——发布只发 manifest，这张表本地生成即可
+persona-morph-files.json
+
 # 出厂反馈接收端（含凭据）：只在出包时注入，**不进仓库**（轮换＝重新出一版，不改 git 历史）
 assets/feedback_endpoint.json
 

@@ -81,10 +81,20 @@ try:
     b = man.get("base") or {}
     for k in ("version", "sha256", "url", "size", "files"):
         ok(k in b, "base 有字段 %s" % k)
-    # 版本号两段式：`YYYY.M.D.N`＝功能版本 · `YYYY.M.D.N.M`＝该版本下的小更新
-    ok(isinstance(b.get("version"), str)
-       and re.match(r"^\d{4}\.\d{1,2}\.\d{1,2}\.\d+(\.\d+)?$", b.get("version") or ""),
-       "base.version 形如 YYYY.M.D.N[.M]（实为 %s）" % b.get("version"))
+    # 版本号两种形状都合法：
+    #   · 现行（2026-10-09 起）`V` + 已登记符号（如 `Vᛞ`）
+    #   · 旧日期式 `YYYY.M.D.N[.M]`（换轨期清单可能还是这种，客户端仍认）
+    def _is_ver(s):
+        s = str(s or "")
+        if re.match(r"^V.\S*$", s):
+            try:
+                from agent.version import rune_value
+                return bool(rune_value(s[1]))
+            except Exception:
+                return False
+        return bool(re.match(r"^\d{4}\.\d{1,2}\.\d{1,2}\.\d+(\.\d+)?$", s))
+    ok(_is_ver(b.get("version")),
+       "base.version 形如 V<符号> 或 YYYY.M.D.N[.M]（实为 %s）" % b.get("version"))
     ok(is_hex64(b.get("sha256")), "base.sha256 是 64 位十六进制")
     ok(isinstance(b.get("size"), int) and b["size"] > 0, "base.size 是正整数（%s）" % b.get("size"))
     ok(isinstance(b.get("files"), int) and b["files"] > 0, "base.files 是正整数（%s）" % b.get("files"))
@@ -190,7 +200,7 @@ try:
     bad_note = [x for x in (notes or []) if re.search(r"\.(exe|dll|bat|cmd|ps1|py)\b|[;&|`$]\s*\w", x)]
     ok(not bad_note, "notes 里没有可执行文件名/命令（公告只读）" + ("（可疑：%s）" % bad_note[:2] if bad_note else ""))
     # 注意：minBase 是**裸版本号**、requiresBase 才是区间 —— 自检一开始把两者用同一个校验，自己抓出来了
-    ok(bool(re.match(r"^\d+(\.\d+)*$", str(an.get("minBase") or ""))), "minBase 是合法版本号（%s）" % an.get("minBase"))
+    ok(_is_ver(an.get("minBase")), "minBase 是合法版本号（%s）" % an.get("minBase"))
 
     print("\n[M8] 清单里不许出现本机路径/用户名（PII 闸门）")
     blob = json.dumps(man, ensure_ascii=False) + json.dumps(fmap, ensure_ascii=False)

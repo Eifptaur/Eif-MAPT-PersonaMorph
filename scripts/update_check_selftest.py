@@ -83,9 +83,19 @@ try:
                                                "minBase": ver}}, fh, ensure_ascii=False)
         return path
 
-    newp = mk_manifest(os.path.join(tmp, "new.json"), "2026.10.1.1", ["要点一", "要点二"])
+    # ⛔ 样本版本号跟着**版本体系**走（2026-10-09 换轨成 `V<符号>`）。
+    #    符号代表几是**人手写的对照表**（`version.RUNE_VALUES`）⇒ 判据里**临时登记**两枚
+    #    比当前版大/小的符号，而不是去改真表（真表只登记实际发过的版本）。
+    import agent.version as _VER0
+    _VER0.RUNE_VALUES["ᛟ"] = 5          # 比当前(ᛞ=4)大（正常新版本）
+    _VER0.RUNE_VALUES["ᚠ"] = 3          # 比当前小（回滚/更旧）
+    _VER0.RUNE_VALUES["ᛉ"] = 6          # 大两号 ⇒ 用来触发上界闸 `far_ahead`（跨段 > +1）
+    NEWER_V = "Vᛟ"
+    OLDER_V = "Vᚠ"
+    FAR_V = "Vᛉ"                        # 比当前大 2 ⇒ `_vt[0] > _vm[0] + 1` 成立
+    newp = mk_manifest(os.path.join(tmp, "new.json"), NEWER_V, ["要点一", "要点二"])
     samep = mk_manifest(os.path.join(tmp, "same.json"), VERSION)
-    oldp = mk_manifest(os.path.join(tmp, "old.json"), "2000.1.1.1")
+    oldp = mk_manifest(os.path.join(tmp, "old.json"), OLDER_V)
     nover = os.path.join(tmp, "nover.json")
     json.dump({"schema": "persona-morph/1", "base": {}, "announce": {}}, open(nover, "w", encoding="utf-8"))
     badp = os.path.join(tmp, "bad.json")
@@ -101,13 +111,13 @@ try:
 
     print("\n[U2] 用户开了不再提醒 / 不再提醒这个版本 ⇒ off")
     ok(UC.state({"url": newp, "muted": True})["status"] == "off", "muted ⇒ off")
-    ok(UC.state({"url": newp, "skip_version": "2026.10.1.1"})["status"] == "off", "skip_version 命中 ⇒ off")
+    ok(UC.state({"url": newp, "skip_version": NEWER_V})["status"] == "off", "skip_version 命中 ⇒ off")
     ok(UC.state({"url": newp, "skip_version": "其它版本"})["status"] == "newer", "skip 的是别的版本 ⇒ 正常判 newer")
 
     print("\n[U3] 有新版本 ⇒ newer（要点透传，供公告条显示）")
     r = UC.state({"url": newp})
     ok(r["status"] == "newer", "status=newer")
-    ok(r["mine"] == VERSION and r["theirs"] == "2026.10.1.1", "本机 %s / 远端 %s" % (r["mine"], r["theirs"]))
+    ok(r["mine"] == VERSION and r["theirs"] == NEWER_V, "本机 %s / 远端 %s" % (r["mine"], r["theirs"]))
     ok(r["notes"] == ["要点一", "要点二"], "notes 原样透传（%s）" % r["notes"])
     ok(r["checkedAt"] > 0, "记了检查时间")
 
@@ -515,59 +525,58 @@ print("\n[U10] TUF 廉价两面：清单 `expires`（freeze）+ 单调版本（r
 import json as _j27 # noqa: E402
 import logging
 
-_exp_man = mk_manifest(os.path.join(tmp, "expired.json"), "2026.10.1.1", ["要点"])
+_exp_man = mk_manifest(os.path.join(tmp, "expired.json"), NEWER_V, ["要点"])
 _jd = _j27.load(open(_exp_man, encoding="utf-8"))
 _jd.setdefault("base", {})["expires"] = "2000-01-01T00:00:00Z"
 _j27.dump(_jd, open(_exp_man, "w", encoding="utf-8"), ensure_ascii=False)
+_orig_state({"url": _exp_man})
 _o_exp = _orig_state({"url": _exp_man})
 ok(_o_exp.get("status") == "error" and "过期" in str(_o_exp.get("why") or ""),
    "① 清单 `expires` 已过期 ⇒ 拒绝据此更新（freeze 防护）", str(_o_exp)[:130])
-_ok_man = mk_manifest(os.path.join(tmp, "okexp.json"), "2026.10.1.1", ["要点"])
+_ok_man = mk_manifest(os.path.join(tmp, "okexp.json"), NEWER_V, ["要点"])
 _jd2 = _j27.load(open(_ok_man, encoding="utf-8"))
 _jd2.setdefault("base", {})["expires"] = "2099-01-01T00:00:00Z"
 _j27.dump(_jd2, open(_ok_man, "w", encoding="utf-8"), ensure_ascii=False)
 ok(_orig_state({"url": _ok_man}).get("status") == "newer",
    "①b 正向对照：没过期 ⇒ 照常判 newer（别把正常清单也拦死）")
-open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2027.9.9"}))
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": FAR_V}))
 _o_rb = _orig_state({"url": _ok_man})
 ok(_o_rb.get("status") == "error" and "回滚" in str(_o_rb.get("why") or ""),
    "② 源给的版本低于「见过的最高版本」⇒ 判回滚、拒据此更新", str(_o_rb)[:130])
-open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2000.1.1.1"}))
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": OLDER_V}))
 _o_hi = _orig_state({"url": _ok_man})
 _st_now = _j27.load(open(UC._state_path(), encoding="utf-8"))
-ok(_o_hi.get("status") == "newer" and str(_st_now.get("maxSeenVersion") or "") == "2026.10.1.1",
+ok(_o_hi.get("status") == "newer" and str(_st_now.get("maxSeenVersion") or "") == NEWER_V,
    "③ 见过的最高版本**落盘**（下次才能识别回滚）", str(_st_now)[:110])
 
 print("\n[U11] 上界闸门要**真的拦住**、把结论说对、且不入账（不是源码子串）")
-_man_far = mk_manifest(os.path.join(tmp, "far.json"), "2099.9.9", ["超前"])
-open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
+_man_far = mk_manifest(os.path.join(tmp, "far.json"), FAR_V, ["超前"])
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": OLDER_V}))
 _o_far = _orig_state({"url": _man_far})
 _st_far = _j27.load(open(UC._state_path(), encoding="utf-8"))
 ok(_o_far.get("status") == "error" and _o_far.get("kind") == "far_ahead",
-   "④ 超前半年以上的清单 ⇒ `state()` 报 **error + kind=far_ahead**",
+   "④ 超前本机两号以上的清单 ⇒ `state()` 报 **error + kind=far_ahead**",
    str(_o_far)[:140])
-ok(str(_st_far.get("maxSeenVersion") or "") == "2026.1.1.1",
+ok(str(_st_far.get("maxSeenVersion") or "") == OLDER_V,
    "④ …而且**没有入账**（`state()` 必须把 `kind` 抄进 `out`，否则那道守卫永不成立 —— ）",
    str(_st_far)[:110])
-# ⛔ **版本号相对"今天"动态生成** ——
-# 老写法写死 `2027.9.22`，那是一次**日期炸弹**：约 起（今天+180 天 ≥ 该日）
-#   这条断言必然变红，而红的原因与代码无关。
-_typo_v = time.strftime("%Y.%m.%d", time.localtime(time.time() + 240 * 86400))
-_man_typo = mk_manifest(os.path.join(tmp, "typo.json"), _typo_v, ["手误版本号（今天+240 天）"])
-open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2026.1.1.1"}))
+# ⛔ **符号版本体系下**：上界判据是「符号值跨段 > +1」（`_vt[0] > _vm[0] + 1`）。
+#    本机 `Vᛞ`(4) ⇒ 只有 ≥6 的符号才算"超前"。这里用已登记的 `ᛉ`(6) 当那枚离谱版本。
+#    （日期式的"超前 > 180 天"那条路只在清单还是日期式时生效，见 `_ver_ts`。）
+_man_typo = mk_manifest(os.path.join(tmp, "typo.json"), FAR_V, ["手误版本号（跨两号）"])
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": OLDER_V}))
 _o_typo = _orig_state({"url": _man_typo})
 ok(_o_typo.get("status") == "error" and _o_typo.get("kind") == "far_ahead",
-   "④b 判据是**时间跨度**（超前 > 180 天）而不是「只看年」⇒ 手误版本号也拦得住（"
-   "样本＝今天+240 天 ⇒ 不会变成日期炸弹，）",
+   "④b 跨段超前的版本也拦得住（样本＝Vᛉ，跨两号 ⇒ 不会变成日期炸弹，）",
    str(_o_typo)[:130])
-_man_ok11 = mk_manifest(os.path.join(tmp, "ok11.json"), "2026.10.1.1", ["正常"])
+_man_ok11 = mk_manifest(os.path.join(tmp, "ok11.json"), NEWER_V, ["正常"])
 ok(_orig_state({"url": _man_ok11}).get("status") == "newer",
-   "④c 阳性对照：同年内的正常新版本照旧判 `newer`（上界没把正常路堵死）")
-open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": "2099.9.9"}))
+   "④c 阳性对照：只超前一号的正常新版本照旧判 `newer`（上界没把正常路堵死）")
+open(UC._state_path(), "w", encoding="utf-8").write(_j27.dumps({"maxSeenVersion": FAR_V}))
 _rst11 = UC.reset_seen_version()
 _st_rst11 = _j27.load(open(UC._state_path(), encoding="utf-8"))
 ok(_rst11.get("ok") is True and "maxSeenVersion" not in _st_rst11
-   and str(_rst11.get("before") or "") == "2099.9.9",
+   and str(_rst11.get("before") or "") == FAR_V,
    "⑤ 复位口（`reset_seen_version`）清掉那一个键、别的读数不动", str(_rst11)[:110])
 ok(_orig_state({"url": _man_ok11}).get("status") == "newer",
    "⑤ …复位之后真清单不再被判回滚（闸门解开）")
