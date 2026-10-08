@@ -122,19 +122,57 @@ _wu = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
 ck("E3 webui 里有 _rapi_env_guide 实现且调 env_guide",
    "def _rapi_env_guide(" in _wu and "env_guide" in _wu)
 
-print("\n[F] 前端两侧都有「环境」这一步")
+print("\n[F] 前端两侧都按新结构接：正常引导(1-3) → 恢复(4) → 环境校准(5) → 缺件各一步(6..N) → 体检(末)")
 _html = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
-ck("F1 web 控制台 onboarding 调 /api/env-guide",
-   "'/api/env-guide'" in _html and "obRenderEnv" in _html)
-ck("F2 web 向导是六步（共 6 步 / step===6 收尾）",
-   "共 6 步" in _html and "if(step===6){" in _html, "")
+ck("F1 web 控制台缺件步调 /api/env-guide，且一屏只讲一项（obRenderItem）",
+   "'/api/env-guide'" in _html and "obRenderItem" in _html)
+ck("F2 web 步数**不写死**（没有「共 6 步」这种常量；总步数由 obTotal() 按实数算）",
+   "共 6 步" not in _html and "obTotal()" in _html, "")
 _onb = io.open(os.path.join(ROOT, "ui_qt", "onboarding.py"), encoding="utf-8").read()
-ck("F3 Qt 向导第 4 步＝环境引导（拉 /api/env-guide）",
-   "_render_step4_env" in _onb and "/api/env-guide" in _onb and "_load_env_guide" in _onb)
-ck("F4 Qt 向导也是六步（共 6 步）",
-   "共 6 步" in _onb and "_render_step6_check" in _onb)
-ck("F5 Qt 第 4 步说明文案点明「只检测和指路，不替你装驱动」",
-   "只检测" in _onb and "不替你装驱动" in _onb)
+ck("F3 Qt 缺件步拉 /api/env-guide，且一屏只讲一项（_render_env_item）",
+   "/api/env-guide" in _onb and "_render_env_item" in _onb)
+# ⛔ 反向锚不用裸子串：模块 docstring 里正**声明**「不出现"共 6 步"这种写死的数」，
+#    裸查会把那句声明本身判成违规（判据第一版就这么自伤）。
+#    口径：剥掉 docstring/注释，只在**代码**里找写死的步数。
+import ast as _ast  # noqa: E402
+def _code_only(src):
+    """剥掉模块/类/函数 docstring 与注释，只留**会执行的字符串字面量**（即用户真看到的文案）。"""
+    _t = _ast.parse(src)
+    _docs = set()
+    for _n in _ast.walk(_t):
+        if isinstance(_n, (_ast.Module, _ast.ClassDef, _ast.FunctionDef, _ast.AsyncFunctionDef)):
+            _b = getattr(_n, "body", None)
+            if _b and isinstance(_b[0], _ast.Expr) and isinstance(_b[0].value, _ast.Constant) \
+               and isinstance(_b[0].value.value, str):
+                _docs.add(id(_b[0].value))
+    _out = []
+    for _n in _ast.walk(_t):
+        if isinstance(_n, _ast.Constant) and isinstance(_n.value, str) and id(_n) not in _docs:
+            _out.append(_n.value)
+    return "\n".join(_out)
+_onb_code = _code_only(_onb)
+_hard = [s for s in _onb_code.splitlines() if "共 6 步" in s]
+ck("F4 Qt 步数**不写死**（代码里没有写死 6 的步数文案；由 _env_total_steps() 按实数算）",
+   not _hard and "_env_total_steps" in _onb, str(_hard[:2]))
+ck("F5 Qt 缺件步文案点明「用来干啥 / 现在什么情况 / 怎么补 / 这一类」四行",
+   all(k in _onb for k in ("用来干啥", "现在什么情况", "怎么补", "这一类")))
+ck("F5b Qt 缺件步不承诺代装：指示用户自己去装（「不想装也能继续用」）",
+   "不想装也能继续用" in _onb and "重新检测" in _onb)
+ck("F6 环境校准（env_hint）只提醒不强制：文案含「不改也能用」",
+   "不改也能用" in _onb and "不改也能用" in _html)
+ck("F7 两类不许混：环境校准走 env_hint（/api/status），缺件走 env-guide（/api/env-guide）",
+   "env_hint" in _onb and "_hint_fetch" in _onb and "_env_fetch" in _onb)
+
+print("\n[F'] 步号一致性：第 5 步＝环境校准，第 6 步起＝逐条缺件，末步＝体检")
+# 分母守卫 + 两侧同口径：缺件第 1 项必须是第 6 步（不是第 5 步，第 5 步被环境校准占了）。
+# ⛔ 这是真踩过的 off-by-one（`_env_step_no()` 曾返回 5+_env_i ⇒ 缺件第 1 项顶掉环境校准的步号）。
+ck("F8 Qt 缺件步号 = 6 + 已讲数（第 5 步留给环境校准）",
+   "return 6 + int(self._env_i or 0)" in _onb, "")
+ck("F9 web 缺件步号 = 5 + idx（idx 从 1 起 ⇒ 第 1 个缺件＝第 6 步）",
+   "(5+idx)" in _html and "_obI + 1" in _html, "")
+ck("F10 两侧总步数都＝3(配置)+1(恢复)+1(校准)+N(缺件)+1(体检)",
+   "3 + 1 + 1 + len(getattr(self, \"_env_pending_cache\", [])) + 1" in _onb
+   and "3 + 1 + 1 + obPend().length + 1" in _html, "")
 
 print("\n[G] 真机实测")
 try:

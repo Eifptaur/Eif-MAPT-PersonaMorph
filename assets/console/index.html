@@ -6123,8 +6123,8 @@ async function onboarding(){
   if(key && !key.includes('在这里填') && key !== '******' && !key.includes('••••')) return; // 真实=已配置
   _onboardOnce = true;
   const m = document.createElement('div'); m.className='mask'; m.id='onboard';
-  m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 五步上手</h1>'+
-    '<p id="obDesc">第 1 步/共 6 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。</p>'+
+  m.innerHTML='<div class="box" style="max-width:620px">'+ICON+'<h1>欢迎使用 Persona Morph · 上手向导</h1>'+
+    '<p id="obDesc">第 1 步：选择模型厂商 → 选择模型 → 填入该厂商的 密钥。</p>'+
     '<div class="mid" style="text-align:left">'+
       '<div class="row"><label>模型厂商</label><div class="grow"><select id="obProvider">'+
         Object.keys(PROVIDERS).filter(k=>k!=='custom').map(k=>'<option value="'+k+'">'+PROVIDERS[k].label+'</option>').join('')+
@@ -6136,6 +6136,7 @@ async function onboarding(){
     '<div class="btns" style="justify-content:center;margin-top:10px"><button class="pri" id="obNext">下一步</button><button class="ghost" id="obLater">跳过向导</button></div></div>';
   document.body.appendChild(m); maskOpen(m);
   let step = 1, picked = [];
+  let _obEnv = null, _obHint = null, _obPend = [], _obI = 0, _obCheckShown = false;  // 缺件清单 / 运行环境 / 待讲缺项 / 已讲到第几个 / 体检是否已展示
   /* 厂商/模型联动（复用全局 PROVIDERS 与组件） */
   function obRenderModels(prov){
     const sel = $('obModel'); sel.innerHTML = '';
@@ -6166,7 +6167,7 @@ async function onboarding(){
         await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
         toast('已保存 '+p.label+' 配置（'+model+'）');
  // ── 第 2 步：机器人昵称＝你自己微信的原名 ──
-        $('obDesc').textContent='第 2 步/共 6 步：把「机器人昵称」改成**你自己微信的原名**——就是你那个号在微信里显示的名字。群里 @ 到这个名字，它才知道是在叫它。';
+        $('obDesc').textContent='第 2 步：把「机器人昵称」改成**你自己微信的原名**——就是你那个号在微信里显示的名字。群里 @ 到这个名字，它才知道是在叫它。';
         $('obProvider').closest('.mid').style.display='none';
         const body=$('obBody');
         const _curNick = getPath(cfg,'wechat.bot_nickname')||'';
@@ -6197,7 +6198,7 @@ async function onboarding(){
  // 同一个接口的「选择监听的群」按钮 已经判了 `r.ok`，向导这条被漏了。
  //   ⇒ 现在：如实说原因 + 告诉他不勾也能先跑（不勾＝监听所有群），并让人点「下一步」重试。
         if(r && r.ok === false){
-          $('obDesc').textContent = '第 3 步/共 6 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
+          $('obDesc').textContent = '第 3 步：这台机器上**暂时读不到群列表** —— ' + (r.error || '原因未明');
           $('obBody').innerHTML = '<div class="hint" style="line-height:2">读不到群列表时这一步勾不了，'
             + '但**不影响先把程序跑起来**：不勾＝监听所有群（等你之后在「微信」面板里勾也行）。<br>'
             + '要现在勾：先确认微信已登录的是你要的那个号、那个号里确实有群，然后点下面的「重试读取」。</div>'
@@ -6210,7 +6211,7 @@ async function onboarding(){
           return;
         }
         const groups = r.groups||[];
-        $('obDesc').textContent = '第 3 步/共 6 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
+        $('obDesc').textContent = '第 3 步：勾选需要机器人监听的群（全不勾=监听所有群）。检测到 '+groups.length+' 个群聊。';
         const body=$('obBody'); body.innerHTML='';
         picked = []; // 重新开始（防重复调用残留）
         const pickSet = new Set((wlList||[]));
@@ -6221,76 +6222,132 @@ async function onboarding(){
       }
       if(step===3){
         if(picked.length){ wlList = picked.slice(); setPath(cfg,'wechat.group_name_white_list', wlList.slice()); await getJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}); renderChips(); }
- // ── 第 4 步：环境引导 —— 把"要你自己装的东西"逐项列清（GET /api/env-guide）──
- //   口径：**只检测 + 指路**，不替你装驱动、不改系统设置（守项目红线）。
-        $('obDesc').textContent='第 4 步/共 6 步：环境检查 —— 这几样要是缺了，某些功能就用不了。每项都写清「为什么需要 / 你现在缺不缺 / 怎么补」，缺的装完点「重新检测」。**我们只检测和指路，不替你装驱动、也不改你的系统设置。**';
-        $('obBody').innerHTML='<div id="obEnv" style="text-align:left;max-height:230px;overflow:auto;font-size:12px;line-height:1.7">检测中…</div>'
-          +'<div class="btns" style="justify-content:flex-start;margin-top:8px"><button class="ghost" id="obEnvRecheck">重新检测</button></div>';
-        $('obEnvRecheck').onclick = ()=>obRenderEnv();
-        $('obNext').textContent='下一步'; step=4; obRenderEnv(); return;
+ // ── 第 4 步：恢复（正常引导到这儿就完结了）──
+        obRenderResume(); return;
       }
-      if(step===4){
- // ── 第 5 步：点「恢复」它才开始工作（默认是暂停的）──
-        $('obDesc').textContent='第 5 步/共 6 步：点下面的「恢复」——程序默认是**暂停**的，点了它才开始监听群消息。';
-        $('obBody').innerHTML='<div class="btns" style="justify-content:flex-start;margin-top:6px">'+
-          '<button class="pri" id="obResume">恢复（开始工作）</button>'+
-          '<span class="hint" id="obResumeHint" style="align-self:center">点一下就开始了；之后想停，顶部有「暂停」。</span></div>';
-        $('obResume').onclick = async ()=>{
-          try{
-            await getJSON('/api/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-            $('obResumeHint').textContent='已开始工作 ✓（要停就在顶部点「暂停」）';
-            $('obResume').textContent='已恢复';
-            loadStatus();
-          }catch(e){ $('obResumeHint').textContent='恢复失败：'+e.message+'（也可以稍后在控制台顶部点「恢复」）'; }
-        };
-        $('obNext').textContent='下一步'; step=5; return;
-      }
-      if(step===5){
-        $('obDesc').textContent = '第 6 步/共 6 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
-        $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
-        $('obNext').textContent='完成'; step=6;
-        const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"code"}',timeoutMs:60000});
-        let lines=[r.summary||'',''];
-        for(const c of (r.checks||[])){
-          lines.push((c.status==='ok'?'通过':(c.status==='warn'?'注意':'未通过'))+' '+c.name+'：'+c.detail);
-          if(c.hint) lines.push('   建议：'+c.hint);
-        }
-        $('obCheck').textContent = lines.join('\n');
-        return;
-      }
-      if(step===6){
-        maskClose(m); m.remove();
-        _onboardOnce = true; // 完成：不再弹（即便 Key 仍空也不再打扰）
-        loadStatus();
-        try{ cfg = await getJSON('/api/config'); syncToForm(); }catch(e){}
-        loadMemory(''); toast('部署完成！');
-      }
+      if(step>=4){ obNextEnv(); return; }
     }catch(e){ toast('出错：'+e.message); }
   };
   $('obLater').onclick = ()=>{ maskClose(m); m.remove(); _onboardOnce = true; };
-  /* 第 4 步：环境清单渲染（GET /api/env-guide）——只显示，不替用户动手 */
-  async function obRenderEnv(){
+
+  /* ── 环境区：第 4 步＝运行环境校准（env_hint），5..N＝功能缺件逐条 ────
+     口径：**只检测 + 指路**，不替你装驱动、不改系统设置。
+     `_obHint`＝运行环境那份；`_obEnv`＝功能缺件清单；`_obPend`＝待讲缺项；`_obI`＝已讲到第几个。 */
+  async function obFetchEnv(){
+    try{ return await getJSON('/api/env-guide'); }
+    catch(e){ return {ok:false, items:[], why:'环境清单读不到：'+e.message}; }
+  }
+  async function obFetchHint(){
+    try{ const st = await getJSON('/api/status'); return (st && st.env_hint) || {}; }
+    catch(e){ return {level:'partial', ok:false, text:'环境没测到（'+e.message+'）', items:[]}; }
+  }
+  function obPend(){ return ((_obEnv && _obEnv.items) || []).filter(it=> it.ok !== true); }
+  function obTotal(){ return 3 + 1 + 1 + obPend().length + 1; }  // 配置3 + 恢复1 + 环境校准1 + 缺件N + 体检1
+
+  /* 第 5 步：环境校准（微信字号"标准" / 浅色 / 100% 缩放 / OCR）——文案用后端那份 */
+  function obRenderHint(){
     const box = $('obEnv'); if(!box) return;
-    box.innerHTML = '检测中…';
-    let r = null;
-    try{ r = await getJSON('/api/env-guide'); }catch(e){ r = {ok:false,items:[],why:'环境清单读不到：'+e.message}; }
-    const items = (r && r.items) || [];
+    const h = _obHint || {};
+    const items = h.items || [];
+    const total = obTotal();
+    $('obDesc').textContent = '第 5 步/共 '+total+' 步：环境校准 —— 这几样会直接影响识别的准头，先对一下。**只是提醒：不改也能用**，只是容易认错、要多绕一层。';
     if(!items.length){
-      box.innerHTML = '<div class="hint">'+esc((r && r.why) || '环境清单读不到（后台没连上）')+'</div>';
+      box.innerHTML = '<div class="hint">'+esc(String(h.text||'环境没测到（后台没连上）').replace(/\*\*/g,''))+'</div>';
       return;
     }
-    const colOf = {ok:'var(--ok-tx)', fail:'var(--err-tx)'};
-    let h = '';
+    const MK = {ok:['✓','var(--ok-tx)'], warn:['!','var(--err-tx)']};
+    let hh = '';
     items.forEach(function(it){
-      const mark = it.state==='ok' ? '✓' : (it.state==='fail' ? '✗' : '·');
-      const col = colOf[it.state] || 'var(--tx3)';
-      h += '<div style="margin:2px 0"><span style="color:'+col+'">'+mark+' <b>'+esc(it.title)+'</b></span>'
-        + (it.why ? '<div style="color:var(--tx2)">　'+esc(String(it.why).replace(/\*\*/g,''))+'</div>' : '')
-        + ((it.how && it.state!=='ok') ? '<div style="color:var(--tx2)">　怎么补：'+esc(String(it.how).replace(/\*\*/g,''))+'</div>' : '')
+      const m = MK[it.level] || ['·','var(--tx3)'];
+      hh += '<div style="margin:1px 0"><span style="color:'+m[1]+'">'+m[0]+' <b>'+esc(String(it.text||'').replace(/\*\*/g,''))+'</b></span>'
+        + (it.why ? '<div style="color:var(--tx2)">　　'+esc(String(it.why).replace(/\*\*/g,''))+'</div>' : '')
         + '</div>';
     });
-    h += '<div class="hint" style="margin-top:6px">'+esc((r.why||'').replace(/\*\*/g,''))+'</div>';
-    box.innerHTML = h;
+    hh += '<div class="hint" style="margin-top:6px">'+esc(String(h.text||'').replace(/\*\*/g,''))+'</div>';
+    if(_obPend.length) hh += '<div class="hint">接下来 '+_obPend.length+' 步逐条讲「还缺的是什么、用来干啥、怎么补」。</div>';
+    box.innerHTML = hh;
+  }
+
+  /* 环境校准步：拉 /api/status 的 env_hint + 缺件清单 */
+  async function obRenderHintStep(){
+    $('obDesc').textContent = '第 5 步：环境校准 —— 这几样会直接影响识别的准头，先对一下。**只是提醒：不改也能用**。';
+    $('obBody').innerHTML='<div id="obEnv" style="text-align:left;max-height:240px;overflow:auto;font-size:12.5px;line-height:1.85">检测中…</div>'
+      +'<div class="btns" style="justify-content:flex-start;margin-top:8px"><button class="ghost" id="obEnvRecheck">重新检测</button></div>';
+    $('obEnvRecheck').onclick = async ()=>{ _obHint = await obFetchHint(); _obEnv = await obFetchEnv(); _obPend = obPend(); _obI = 0; obRenderHint(); };
+    $('obNext').textContent='下一步'; step=5;
+    _obHint = await obFetchHint();
+    _obEnv = await obFetchEnv();
+    _obPend = obPend();
+    _obI = 0;
+    obRenderHint();
+  }
+
+  /* 第 5..N 步：一个功能缺件一步 */
+  function obRenderItem(it, idx, total){
+    const head = it.state==='fail' ? '还缺一项' : '这一项读不出';
+    // idx 从 1 起（第 1 个缺件）⇒ 步号 = 5 + idx（第 5 步是环境校准，第 6 步＝第 1 个缺件）
+    $('obDesc').textContent = '第 '+(5+idx)+' 步/共 '+total+' 步：'+head+' —— **'+esc(it.title)+'**';
+    const need = String(it.need||'').replace(/\*\*/g,'');
+    const why  = String(it.why ||'').replace(/\*\*/g,'');
+    const how  = String(it.how ||'').replace(/\*\*/g,'');
+    const KLABEL = {driver:'要装驱动（我们不会替你装）', system:'要开系统功能 / 装语言包',
+                    pip:'要装一个 Python 包', manual:'要放文件 / 填地址', none:'不用装'};
+    const kl = KLABEL[it.install_kind] || '';
+    let h = '<div style="text-align:left;font-size:12.5px;line-height:1.9">';
+    if(need) h += '<div><b>用来干啥：</b>'+esc(need)+'</div>';
+    if(why)  h += '<div style="color:var(--tx2)"><b>现在什么情况：</b>'+esc(why)+'</div>';
+    if(how)  h += '<div style="color:var(--tx2)"><b>怎么补：</b>'+esc(how)+'</div>';
+    if(kl)   h += '<div class="hint">这一类：'+esc(kl)+'</div>';
+    h += '<div class="hint">补好之后点「重新检测」确认一下。不想装也能继续用——只是这一项对应的功能用不了。</div>';
+    h += '<div class="btns" style="justify-content:flex-start;margin-top:8px"><button class="ghost" id="obEnvRe2">重新检测</button></div>';
+    h += '</div>';
+    $('obBody').innerHTML = h;
+    $('obEnvRe2').onclick = async ()=>{ _obHint = await obFetchHint(); _obEnv = await obFetchEnv(); _obPend = obPend(); _obI = 0; step = 4; obRenderHintStep(); };
+    $('obNext').textContent = '下一步';
+  }
+
+  /* 环境区推进：4 恢复 → 5 环境校准 → 6..N 缺件 → 体检 → 完成 */
+  async function obNextEnv(){
+    if(step === 4){ await obRenderHintStep(); return; }
+    if(_obI < _obPend.length){ obRenderItem(_obPend[_obI], _obI + 1, obTotal()); _obI++; return; }
+    if(!_obCheckShown){ obRenderCheck(); return; }
+    obFinish();
+  }
+  function obRenderResume(){
+    const total = obTotal();
+    $('obDesc').textContent='第 4 步/共 '+total+' 步：点下面的「恢复」——程序默认是**暂停**的，点了它才开始监听群消息。';
+    $('obBody').innerHTML='<div class="btns" style="justify-content:flex-start;margin-top:6px">'+
+      '<button class="pri" id="obResume">恢复（开始工作）</button>'+
+      '<span class="hint" id="obResumeHint" style="align-self:center">点一下就开始了；之后想停，顶部有「暂停」。</span></div>';
+    $('obResume').onclick = async ()=>{
+      try{
+        await getJSON('/api/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        $('obResumeHint').textContent='已开始工作 ✓（要停就在顶部点「暂停」）';
+        $('obResume').textContent='已恢复';
+        loadStatus();
+      }catch(e){ $('obResumeHint').textContent='恢复失败：'+e.message+'（也可以稍后在控制台顶部点「恢复」）'; }
+    };
+    $('obNext').textContent='下一步'; step=4;
+  }
+  async function obRenderCheck(){
+    const total = obTotal();
+    $('obDesc').textContent = '第 '+total+' 步/共 '+total+' 步：代码与依赖检测（不动鼠标，几秒完成：环境/依赖/微信接入/配置逐项检查）。需要更多「点击测试」可在检测中心用单独按钮。';
+    $('obBody').innerHTML='<pre class="out" id="obCheck" style="height:190px">体检中…</pre>';
+    $('obNext').textContent='完成'; step=8; _obCheckShown = true;
+    const r = await getJSON('/api/selfcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"mode":"code"}',timeoutMs:60000});
+    let lines=[r.summary||'',''];
+    for(const c of (r.checks||[])){
+      lines.push((c.status==='ok'?'通过':(c.status==='warn'?'注意':'未通过'))+' '+c.name+'：'+c.detail);
+      if(c.hint) lines.push('   建议：'+c.hint);
+    }
+    $('obCheck').textContent = lines.join('\n');
+  }
+  async function obFinish(){
+    maskClose(m); m.remove();
+    _onboardOnce = true; // 完成：不再弹（即便 Key 仍空也不再打扰）
+    loadStatus();
+    try{ cfg = await getJSON('/api/config'); syncToForm(); }catch(e){}
+    loadMemory(''); toast('部署完成！');
   }
 }
 

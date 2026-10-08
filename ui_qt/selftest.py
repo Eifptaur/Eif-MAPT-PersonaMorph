@@ -6488,12 +6488,14 @@ def t_g16() -> None:
 def t_g17() -> None:
     """首次引导向导（web onboarding :6118-6262 的 Qt 等价）。
 
-    web 有一整套六步上手向导（选厂商/命名/勾群/**环境引导**/恢复/体检），Qt 侧此前**完全缺失**
+    web 有一整套上手向导（选厂商/命名/勾群/**环境总览 + 逐条讲缺项**/恢复/体检），Qt 侧此前**完全缺失**
     ⇒ 新用户拿不到「填 Key → 起名字 → 选群 → 补环境 → 开始」的路径。本组钉死：
     ① 厂商清单/模型列表/Key 前缀运行时解析 web PROVIDERS（不复制）；
-    ② 六步各自的渲染与落盘（第 1 步 vendor→model→key，第 3 步群勾选，第 4 步环境，第 5/6 步）；
+    ② 各步渲染与落盘（第 1 步 vendor→model→key，第 3 步群勾选，第 4 步环境总览 + 逐项，恢复/体检）；
     ③ 「已配置 Key 不打扰」的判定（对齐 web :6120-6123）；
-    ④ 第 4 步环境引导：接 `/api/env-guide`，按项显示状态与补法（守"只检测+指路"红线）。
+    ④ 环境引导：第 4 步＝**运行环境校准**（`/api/status` 的 `env_hint`：浅色/缩放/字号/OCR），
+       第 5 步起＝**每个功能缺件各一步**（GET `/api/env-guide`）；守"只检测+指路、不强制"红线；
+    ⑤ ⛔ **步数不写死**：0 项缺 ⇒ 运行环境之后直接跳恢复；缺项越多步越多（不许"共 6 步"）。
     """
     import os # noqa: PLC0415
     import re as _re # noqa: PLC0415
@@ -6512,11 +6514,11 @@ def t_g17() -> None:
     ROOT = _P(__file__).resolve().parent.parent
     WEB = WEB_PAGE.read_text(encoding="utf-8")
 
-    # ① web 真值：六步向导函数齐备 + 关键 id 在册
-    ck("g17 web 真值：onboarding() 与六步 id 齐备",
+    # ① web 真值：向导函数齐备 + 关键 id 在册
+    ck("g17 web 真值：onboarding() 与关键 id 齐备",
        all(s in WEB for s in ("async function onboarding()", 'id="obBody"', 'id="obNext"',
                               'id="obLater"', 'id="obProvider"', 'id="obModel"', 'id="obKey"',
-                              'id="obNick"', 'id="obResume"', 'id="obCheck"')),
+                              'id="obNick"', 'id="obEnv"', 'id="obResume"', 'id="obCheck"')),
        "web 向导结构变了则 Qt 对齐口径要跟着改")
 
     # ② 厂商清单解析 == web PROVIDERS 减去 custom（web :5439 明确 filter(k=>k!=='custom')）
@@ -6605,14 +6607,24 @@ def t_g17() -> None:
     ck("g17 第 3 步保存：勾中群写 wechat.group_name_white_list",
        captured2.get("wechat.group_name_white_list") == ["群甲"],
        str(captured2.get("wechat.group_name_white_list")))
-    ck("g17 第 3 步保存后进入第 4 步（环境引导）", w.step == 4, "step=%d" % w.step)
+    ck("g17 第 3 步保存后进入第 4 步（恢复）", w.step == 4, "step=%d" % w.step)
 
-    # ⑦ 第 4 步环境引导：接 /api/env-guide，按项渲染状态 + 补法（守"只检测+指路"红线）
-    _env_calls = {"n": 0}
-    _orig_eg = onboarding.config_io.get_json
+    # ⑦ 第 5 步＝环境校准：读 /api/status 的 env_hint（字号/浅色/缩放/OCR），只提醒不强制
+    _st_calls = {"n": 0}
+    _orig_st = onboarding.config_io.get_json
 
     def _fake_env(url, *a, **k):
-        _env_calls["n"] += 1
+        if url.startswith("/api/status"):
+            _st_calls["n"] += 1
+            return {"env_hint": {
+                "level": "warn", "ok": False, "title": "运行环境",
+                "text": "建议调一下运行环境，识别会稳很多：\n· 把微信字号调回**默认**\n"
+                        "不改也能用，只是识别会差一些（会走降级路径、可能要人工兜底）。",
+                "items": [
+                    {"key": "font", "level": "warn", "text": "把微信字号调回**默认**（现在不是默认档）",
+                     "why": "字号会改行高 ⇒ 非默认档等于换了一套几何"},
+                    {"key": "scale", "level": "ok", "text": "显示缩放：100%", "why": ""}],
+                "detail": {"theme": "dark", "scale": 1.0, "font": None, "ocr_ready": True}}}
         assert url.startswith("/api/env-guide"), url
         return {"ok": False, "n_ok": 1, "n_fail": 1, "n_total": 2,
                 "why": "1 项还没就绪（补齐后点重检）：虚拟声卡（发真语音条）",
@@ -6627,32 +6639,44 @@ def t_g17() -> None:
 
     onboarding.config_io.get_json = _fake_env
     try:
-        w._render_step4_env()
+        w._render_step_hint()
     finally:
-        onboarding.config_io.get_json = _orig_eg
-    _env_text = "".join(lb.text() for lb in w._env_rows.findChildren(
-        __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))
-    ck("g17 第 4 步：拉 /api/env-guide", _env_calls["n"] >= 1, "n=%d" % _env_calls["n"])
-    ck("g17 第 4 步：逐项渲染（微信本体 + 虚拟声卡都在）",
-       "微信本体" in _env_text and "虚拟声卡" in _env_text, _env_text[:80])
-    ck("g17 第 4 步：缺的项摊开「怎么补」且写明不替装驱动",
-       "怎么补" in _env_text and "不替你装驱动" in _env_text, _env_text[-80:])
-    ck("g17 第 4 步：说明文案点明「只检测和指路，不替你装驱动」",
-       "不替你装驱动" in w.desc.text() and "只检测" in w.desc.text(), w.desc.text()[-40:])
-    ck("g17 第 4 步：下一步按钮", w.b_next.text() == "下一步", w.b_next.text())
+        onboarding.config_io.get_json = _orig_st
+    _QLabel = __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel
+    _hint_text = "".join(lb.text() for lb in w.body.findChildren(_QLabel))
+    ck("g17 第 5 步：读 /api/status 的 env_hint", _st_calls["n"] >= 1, "n=%d" % _st_calls["n"])
+    ck("g17 第 5 步：渲染「字号」这一条", "字号" in _hint_text, _hint_text[:90])
+    ck("g17 第 5 步：渲染「缩放」这一条", "缩放" in _hint_text, _hint_text[:90])
+    ck("g17 第 5 步：写明「不改也能用」（不强制）",
+       "不改也能用" in (w.desc.text() + _hint_text), (w.desc.text() + _hint_text)[:120])
+    ck("g17 第 5 步：待讲缺件＝只含未就绪项（微信本体不占步）",
+       len(w._env_pending_cache) == 1 and w._env_pending_cache[0]["key"] == "vmic",
+       "pend=%s" % [x.get("key") for x in w._env_pending_cache])
+    ck("g17 第 5 步：下一步按钮", w.b_next.text() == "下一步", w.b_next.text())
 
-    # ⑧ 第 5 步（恢复）/ 第 6 步（体检）渲染
-    w._render_step5_resume()
-    ck("g17 第 5 步：恢复按钮 + 提示在场（开始工作）",
-       "恢复" in w.desc.text() and w.b_next.text() == "下一步",
-       w.desc.text()[:30])
-    w.step = 6
-    w._render_step6_check()
-    ck("g17 第 6 步：体检输出区 + 完成按钮",
-       isinstance(w.check_out, QPlainTextEdit) and w.b_next.text() == "完成",
-       w.b_next.text())
-    ck("g17 流程推进：第 5→6 步走 resume→check（step 递增到 6 后 accept）",
-       w.step == 6, "step=%d" % w.step)
+    # ⑦.2 缺件步：一个缺件一步，说清「用来干啥 / 怎么补 / 这一类」
+    w.step = 5
+    w._on_next()   # 环境校准 ⇒ 第一个缺件
+    _it_text = "".join(lb.text() for lb in w.body.findChildren(_QLabel))
+    # _env_i＝"当前在讲第几个缺件"（0 起）⇒ 第一个缺件是 i=0、步号＝6
+    ck("g17 缺件步：点下一步进入「缺件」那一页", w.step == 6 and w._env_i == 0,
+       "step=%d i=%d" % (w.step, w._env_i))
+    ck("g17 缺件步：步号从 6 起（第 5 步是环境校准，不许被缺件顶掉）",
+       "第 6 步" in w.desc.text(), w.desc.text()[:40])
+    ck("g17 缺件步：标题写缺的是哪一项",
+       "虚拟声卡" in w.desc.text(), w.desc.text()[:60])
+    ck("g17 缺件步：摊开「用来干啥 / 现在什么情况 / 怎么补」",
+       "用来干啥" in _it_text and "怎么补" in _it_text and "现在什么情况" in _it_text,
+       _it_text[:100])
+    ck("g17 缺件步：写明「我们不替你装驱动」",
+       "不替你装驱动" in _it_text, _it_text[-80:])
+    ck("g17 缺件步：步数动态（文案里的「共 N 步」按实数算，不是写死 6）",
+       ("共 %d 步" % w._env_total_steps()) in w.desc.text(), w.desc.text()[:40])
+
+    # ⑦.3 缺件走完 ⇒ 体检（末步）
+    w._on_next()
+    ck("g17 缺件走完：落到体检步（有体检输出区 + 完成按钮）",
+       hasattr(w, "check_out") and w.b_next.text() == "完成", w.b_next.text())
 
     # ⑨ 已配置 Key → maybe_show 不弹（web :6120-6123 同口径）
     class _FakeDlg:
