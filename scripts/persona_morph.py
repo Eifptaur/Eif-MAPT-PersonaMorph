@@ -850,6 +850,18 @@ class Orchestrator:
         # 只裁"当前配置/场景下调用必然失败"的，规则与工具内部的可用性判定同源（agent/tools.py）。
         from agent.tools import visible_defs as _visible_defs
         tool_defs, _dropped_tools = _visible_defs(self.tool_defs, cfg, kind=kind)
+        # 省 token 档（R4）：说明收成第一句 —— **会掉效果**，只在 `token_budget.saver` 开着时做。
+        # ⛔ 与上面的能力裁剪是两回事：那个不损失效果，这个会，别合并成一条。
+        try:
+            from agent.config import token_saver as _ts
+            if _ts():
+                from agent.tools import slim_defs as _slim
+                _before = sum(len(str(x.get("description") or "")) for x in tool_defs)
+                tool_defs = _slim(tool_defs)
+                _after = sum(len(str(x.get("description") or "")) for x in tool_defs)
+                log.info("[%s] 省 token 档：工具说明 %d → %d 字符", chat_key, _before, _after)
+        except Exception as _e: # noqa: BLE001
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
         openai_tools = to_openai_tools(tool_defs)
         session["tools_dropped"] = _dropped_tools
         if _dropped_tools:

@@ -475,6 +475,9 @@
   "enable_memory_rules": true,
   "enable_holiday_hint": true
  },
+ "token_budget": {
+  "saver": false
+ },
  "timers": {
   "enabled": true
  },

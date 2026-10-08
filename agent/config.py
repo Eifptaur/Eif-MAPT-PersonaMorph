@@ -714,6 +714,18 @@ DEFAULT_CONFIG = {
         "enable_memory_rules": True,
         "enable_holiday_hint": True,
     },
+    # ── 省 token 档（"完整档 / 省钱档"两套，由用户在前端自己选）──────────────
+    # 关（默认）＝ **完整档**：表情码清单、工具表完整说明、回执原文、历史条数 100 都给模型
+    #   ⇒ 效果最好、最耗 token。
+    # 开 ＝ **省 token 档**：按三降调研报告的 R2–R5 逐项收紧（R1 无损，两档都生效）。
+    #   · R2 不摆表情码清单（`_emoji_codes_rule` 直接返回空）
+    #   · R3 `get_recent_messages` 上限 100→50、`web_fetch` 回执头尾裁剪
+    #   · R4 工具表 description 收成**第一句**
+    #   · R5 工具协议里加"能一次调完就别分两轮"的引导
+    # ⛔ 别把某一项写成"两档都要"：档位开关的意义就是**用户能自己选**。
+    "token_budget": {
+        "saver": False,
+    },
     # ── 计时提醒 + 节假日问候（第 12/13 条）────────────────────────────────
     # 红线（既有口径："只允许被动或显式开启"）：定时消息只能设到**当前会话**、到点仍过风险闸门、
     # 每会话/全局都有条数上限；节假日默认只"在提示词里提一句"，主动问候必须显式开启 + 配白名单。
@@ -1325,6 +1337,21 @@ def guard_safe_switches(cfg: dict, touched=None, source: str = "unknown",
 
 #: 调用方（控制台路由 / Qt）在本次保存里声明的"用户亲手点过哪些键"与来源
 _SAVE_TOUCHED = {"v": None, "src": ""}
+
+
+def token_saver() -> bool:
+    """**省 token 档**（`token_budget.saver`）—— "完整档 / 省钱档"两套里的省钱那套。
+
+    关（默认）＝ **完整档**：说明/清单/回执原文全给模型，效果优先。
+    开 ＝ **省 token 档**：R2–R5 逐项收紧（R1 无损，两档都生效）。
+
+    ⚠️ 读这个键的地方**只走这一个函数**（`prompt.py` / `tools.py` / 主程序都从这里拿）——
+       否则以后加档位项会在多处各读一遍配置，改一处漏一处。
+    """
+    try:
+        return bool((get_config() or {}).get("token_budget", {}).get("saver", False))
+    except Exception: # noqa: BLE001
+        return False
 
 
 def save_config(cfg: dict | None = None, path: str | None = None) -> None:

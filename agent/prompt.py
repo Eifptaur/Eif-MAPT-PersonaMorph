@@ -33,7 +33,7 @@ def _security_rules() -> str:
 
 
 def _tool_protocol() -> str:
-    return "\n".join([
+    lines = [
         "【工作方式 —— 先读懂再动手】",
         "1. 你运行在事件驱动的桥接程序里：每次新消息或主动机会，系统会新开一次处理，把【过去状态】（最近群聊）和【本次唤醒】（没看过的消息）放进上下文。你没有跨次对话记忆，需长期记住的写进记忆工具。",
         "2. 你的文本输出默认只是思考过程；**要发言就调用 send_message**（想分条、想引用/@，必须走它）。"
@@ -52,7 +52,15 @@ def _tool_protocol() -> str:
         "（不要写「发送失败了」「发送没成功」「这轮先不说了」「发不出去」「会话没对上」「工具报错」这类话）。"
         "要么换句话自然地把话说完，"
         "要么这轮就什么都不发 —— 故障记录只留在本机控制台与日志，群友不该知道。",
-    ])
+    ]
+    # 省 token 档（R5）：一轮里能一起调的别拆成两轮 —— 每多一轮，前面全部上下文都要重发。
+    # ⚠️ 这是**行为引导**（原来只写在调研报告里）⇒ 属"可能掉效果"那一档，只在省钱那档加。
+    if _token_saver():
+        lines.append(
+            "8. 【少走一轮】同一轮里能一起调的工具**一次调完**（多个搜索、多个人各查一次、先搜后读），"
+            "不要一件一件分多轮来。除非后一步真的要靠前一步的结果才知道怎么做。"
+        )
+    return "\n".join(lines)
 
 
 def _anti_ai_flavor() -> str:
@@ -238,16 +246,30 @@ def _sticker_rule() -> str:
     return base
 
 
+def _token_saver() -> bool:
+    """**省 token 档**（`token_budget.saver`）—— 转调 `config.token_saver()`。
+
+    唯一实现点在 `agent/config.py`（`prompt.py` / `tools.py` / 主程序都从那里拿）；
+    这里保留一个同名的薄封装，只为让本文件内的调用点读起来短。
+    """
+    from .config import token_saver as _ts
+    return _ts()
+
+
 def _emoji_codes_rule() -> str:
     """把**可用表情码**摆给模型看（`emoji_codes.prompt_lines`）⇒ 它才会真写 `[微笑]`。
 
     ⛔ 必须是**纯静态**的（只由配置决定，不随对话变）：本文件下方拼装处写着系统提示靠
     DeepSeek 前缀缓存命中率吃饭，每轮变化的内容一律放用户消息。
     开关：`emoji.prompt_codes`（关掉＝不摆，省约 1 K 字符/轮）、`emoji.allow_unicode`。
+    ＋ **省 token 档（R2）**：实测这份清单 1147 token/轮，而当前人格的角色卡明写"不用表情"
+    ⇒ 省钱那档直接不摆。（换人格要重评 —— 所以完整档仍照 `emoji.prompt_codes` 走。）
     """
     try:
         c = (get_config() or {}).get("emoji") or {}
         if not bool(c.get("prompt_codes", True)):
+            return ""
+        if _token_saver():
             return ""
         from . import emoji_codes as _ec
         return "\n".join(_ec.prompt_lines(allow_unicode=bool(c.get("allow_unicode", True))))

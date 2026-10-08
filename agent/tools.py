@@ -1034,7 +1034,16 @@ def _exec_skill(ctx, args):
 
 
 def _exec_get_recent(ctx, args):
-    limit = min(100, max(1, int(args.get("limit") or 30)))
+    # 省 token 档（R3）：单次最多 100 条 → 50 条。模型真要翻更多可以再调一次（带 offset）。
+    # ⚠️ 属"可能掉效果"那一档（少给的条数可能正好是需要的）⇒ 只在 `token_budget.saver` 里收紧。
+    _cap = 100
+    try:
+        from .config import token_saver as _ts
+        if _ts():
+            _cap = 50
+    except Exception: # noqa: BLE001
+        pass
+    limit = min(_cap, max(1, int(args.get("limit") or 30)))
     offset = max(0, int(args.get("offset") or 0))
     past_count = ctx["session"].get("past_state_count") or 0
     messages = ctx["store"].recent(ctx["chat_key"], limit=limit, offset=offset + past_count)
@@ -2118,11 +2127,27 @@ def _exec_web_fetch(ctx, args):
     try:
         result = web_fetch(str(args.get("url") or ""))
         body = str(result.get("body") or "")
+        # 省 token 档（R3）：回执**头尾各留一段、中间省略**（实测每次 web_fetch ≈6,000 fresh token）。
+        # ⚠️ 必须**头尾都留**：长正文的关键信息常在末尾（结论/列表尾），只留头会漏 ⇒ 更掉效果。
+        #    属"会掉效果"那一档，只在 `token_budget.saver` 里做。
+        _saver = False
+        try:
+            from .config import token_saver as _ts
+            _saver = _ts()
+        except Exception: # noqa: BLE001
+            pass
+        if _saver and len(body) > 9000:
+            _head, _tail = 6000, 3000
+            content = (body[:_head]
+                       + "\n…（省 token 档：中间省略 %d 字）…\n" % (len(body) - _head - _tail)
+                       + body[-_tail:])
+        else:
+            content = body[:20000]
         return _ok({
             "url": result.get("url"),
             "statusCode": result.get("status_code"),
-            "truncated": result.get("truncated") or len(body) > 20000,
-            "content": body[:20000],
+            "truncated": result.get("truncated") or len(body) > (9000 if _saver else 20000),
+            "content": content,
         })
     except Exception as e:
         return _err("抓取失败：%s" % e)
@@ -2317,6 +2342,30 @@ def visible_defs(defs: list, cfg=None, kind=None):
         else:
             kept.append(d)
     return kept, dropped
+
+
+def slim_defs(defs: list) -> list:
+    """**省 token 档（R4）**：把每条工具说明收成**第一句**（参数说明不动）。
+
+    ⚠️ 这**会掉效果**（模型可能选错工具 / 漏参数）⇒ 只在 `config.token_saver()` 为真时调用。
+    ⛔ **不要并进 `visible_defs`** —— 那个的口径是"裁掉当前必然调不通的工具，不损失任何可达效果"，
+       与本函数的"省体积但可能掉效果"是**两种性质**，合并会让那条口径变成假的。
+
+    实测体积（`agent/tools.py` 注释给的数）：37 个工具 11626 字符 ≈ 7324 token，
+    比整份系统提示还大 ⇒ 说明文字是每请求最大单块，收紧它收益最直接。
+    """
+    out = []
+    import re as _re
+    for d in (defs or []):
+        d2 = dict(d)
+        s = str(d2.get("description") or "")
+        m = _re.search(r"[。；;！？!?\n]", s)
+        # 判据是「第一句之后还剩多少可省的字」——不是"第一句多长"。
+        # 只有一句的说明（第一个标点就在末尾）不该被裁，裁了等于没省还多一次改动。
+        if m and (len(s) - m.start()) > 20:
+            d2["description"] = s[:m.start() + 1].strip()
+        out.append(d2)
+    return out
 
 
 def execute_tool(defs: list, ctx, name: str, args_json: str):
