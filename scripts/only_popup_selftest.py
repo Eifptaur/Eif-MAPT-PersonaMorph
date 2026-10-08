@@ -203,5 +203,76 @@ ok("H9★ 昂贵的诊断（交叉校验＝抓整帧+剖面，约 1 秒）**只�
    "不许挂在真实发送路径上（锚行为，不锚文案）",
    _i_cc > 0 and _i_dry > 0 and (_i_cc - _i_dry) < 900, "间隔 %d 字符" % (_i_cc - _i_dry))
 
+print("\n── I. 收口：**主窗只在两件事上被允许**（会话独立窗 / 朋友圈独立窗）──")
+# 用户定调：「不要在主窗进行操作…**唯二允许**：把会话独立窗点出来、把朋友圈独立窗点出来」。
+# 本段把全库的主窗操作点逐条钉住 —— 每一处要么**属于这两件事**，要么**已有闸门**拦住。
+# 判据锚**意图**（这一枪打给谁、干的是哪件事），不锚文案字面。
+
+print("\n  [I-1] 会话独立窗：`ensure_popup` 里把选中挪走的那一枪 ✅ 属允许项")
+_WW2 = io.open(os.path.join(ROOT, "agent", "wechat_windows.py"), encoding="utf-8").read()
+ok("I1 分母守卫：`ensure_popup` 源码切片拿到了（>2000 字符）",
+   len(_ss.func_src(_WW2, "ensure_popup")) > 2000, "%d 字符" % len(_ss.func_src(_WW2, "ensure_popup")))
+_E = _ss.func_src(_WW2, "ensure_popup")
+ok("I2 ★`ensure_popup` 的主窗点击**只为开窗**（它的返回值里带 'opened' ⇒ 这一枪的用途是"
+   "「把会话独立窗点出来」，不是发消息）",
+   _sm.has(_E, 'how="opened"') or _sm.has(_E, "opened_retry") or _sm.has(_E, "opened_right_click"), "")
+
+print("\n  [I-2] 朋友圈：**打开**链只许投递（＝只干「把朋友圈独立窗点出来」），注释/发布走真鼠标")
+_mo = _ss.func_src(SRC, "moments_open_posted")
+ok("I3 ★朋友圈**打开**链走投递档（`WM_*` 投递，不动光标）—— 这正是被允许的第二件事",
+   _sm.has(_mo, "b.click(hwnd, ") and _sm.has(_mo, "全程未动光标"), "")
+ok("I4 ★反向锚：朋友圈**打开**链里**不许**出现真鼠标原语（`SetCursorPos`/`mouse_event`/"
+   "`click_real_at`）—— 一旦出现就说明「打开」这件事偷偷动了用户光标",
+   not any(k in _mo for k in ("SetCursorPos", "mouse_event", "click_real_at")), "")
+_cm = _ss.func_src(SRC, "moments_comment") + _ss.func_src(SRC, "moments_publish_text")
+ok("I5 朋友圈**评论/发布**（会在主窗/朋友圈窗里真打字真发）**已被「只走后台」挡住**"
+   "（这两条链只说「跳过」、不偷偷用真鼠标替你发）",
+   _sm.has(_cm, "_background_only()") and _sm.has(_cm, "background_only_reason"), "")
+ok("I6 ★反向锚：评论/发布链的返回**必须是「没做」**（带 `background_only_reason`），"
+   "不许装成做成了",
+   _sm.has(_cm, "return False, _bg.background_only_reason"), "")
+
+print("\n  [I-3] 发图链：闸门开着时**不许在主窗发**（`send_image_posted` 整段都在主窗）")
+_SI = _ss.func_src(SRC, "send_image_posted")
+_i_gi = _SI.find("if self._only_popup():")
+ok("I7 ★发图链：闸门在位",
+   _i_gi >= 0, "gate=%d" % _i_gi)
+ok("I8 ★顺序即意图：闸门排在 `chat_is_open(`（**主窗**绿带 OCR 判据）**之前** —— "
+   "排在后面等于先按主窗口径判了一遍再拒绝",
+   -1 < _i_gi < _SI.find("self.chat_is_open("), "gate=%d open=%d" % (_i_gi, _SI.find("self.chat_is_open(")))
+ok("I9 ★发图链：闸门也排在**主窗投递**（`backend.keys(main` / `self._click_posted(backend, main`）之前",
+   -1 < _i_gi < _SI.find("backend.keys(main"), "gate=%d keys=%d" % (_i_gi, _SI.find("backend.keys(main")))
+ok("I10 发图链闸门开着时是**如实失败**（理由带「只对独立窗操作」）",
+   "只对独立窗操作" in _SI[_i_gi:_i_gi + 300] if _i_gi >= 0 else False, "")
+
+print("\n  [I-4] 引用链：闸门开着时**不许在主窗切会话 ＋ 弹右键菜单**")
+_RQ = _ss.func_src(SRC, "_reply_quote_inner")
+_i_gr = _RQ.find("if self._only_popup():")
+ok("I11 ★引用链：闸门在位",
+   _i_gr >= 0, "gate=%d" % _i_gr)
+ok("I12 ★顺序即意图：闸门排在 `_prepare_for_capture(`（抓**主窗**画面）**之前**",
+   -1 < _i_gr < _RQ.find("self._prepare_for_capture("), "gate=%d cap=%d" % (_i_gr, _RQ.find("self._prepare_for_capture(")))
+ok("I13 ★顺序即意图：闸门也排在 `_open_chat_guarded(`（**主窗**切会话）之前",
+   -1 < _i_gr < _RQ.find("self._open_chat_guarded("), "gate=%d guarded=%d" % (_i_gr, _RQ.find("self._open_chat_guarded(")))
+ok("I14 引用链闸门开着时是**如实失败**（理由带「只对独立窗操作」）",
+   "只对独立窗操作" in _RQ[_i_gr:_i_gr + 300] if _i_gr >= 0 else False, "")
+
+print("\n  [I-5] 覆盖范围声明与代码**一致**（不许名不副实）")
+_h2 = _ss.func_src(SRC, "_only_popup")
+ok("I15 ★`_only_popup` 的 docstring 点名了**引用链**（新接的那条）",
+   "引用" in _h2, "")
+ok("I16 ★反向锚：docstring 里那两句**过时的**声明已删 —— "
+   "①「图片/表情本来就只走独立窗 ⇒ 无需再闸」②「文件链待接」"
+   "（前者与事实不符：回落链 `send_image_posted` 整段在主窗；后者早已接上）",
+   (not _sm.has(_h2, "本来就只走独立窗")) and ("待接" not in _h2), "")
+
+print("\n  [I-6] 反向锚：把新加的两道闸删掉 ⇒ 位置检测必须报红")
+_gone_i = _SI.replace("if self._only_popup():", "")
+ok("★反向锚③：发图链的闸门**被删掉** ⇒ 位置检测必须报红",
+   not (-1 < _gone_i.find("if self._only_popup():") < _gone_i.find("self.chat_is_open(")), "")
+_gone_r = _RQ.replace("if self._only_popup():", "")
+ok("★反向锚④：引用链的闸门**被删掉** ⇒ 位置检测必须报红",
+   not (-1 < _gone_r.find("if self._only_popup():") < _gone_r.find("self._prepare_for_capture(")), "")
+
 print("\n== 只对独立窗闸门判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

@@ -300,6 +300,12 @@ class _ImgStub:
 
     _looks_like_img_msg = staticmethod(W.WeChatAdapter._looks_like_img_msg)
 
+    def _only_popup(self):
+        # `send_image_posted` 门口那道「只对独立窗操作」闸门会问它。
+        # 这里回 **False**（闸门关）＝保持这些用例测的是"主窗那条回落路"本身的撤草稿行为；
+        # 闸门**开着**时的行为由 `only_popup_selftest.py` 的 I 段单独钉（两道判据各管一段）。
+        return False
+
     def __init__(self, ink_seq):
         self.ink_seq = list(ink_seq)
 
