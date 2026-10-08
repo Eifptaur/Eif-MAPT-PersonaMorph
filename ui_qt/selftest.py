@@ -10386,8 +10386,11 @@ def t_emoji_index_guard() -> None:
        and "def _rapi_emoji_index(" in _wh and "def _rapi_emoji_index_post(" in _wh, "")
 
     # ② web：段落在 + 真调用 + 元数据可解析
+    # ⚠️ 用正则容忍 section 上的附加属性（如 IA-4 的 `data-mg`）——写死整串的话，
+    #    哪天 emoji 被并进别的大项，这条会变成"假红"而不是"真报缺失"。
     ck("web 侧有 sec-emoji 且标题为「表情」",
-       '<section id="sec-emoji" class="card" data-sec>' in _web and "<h2>表情</h2>" in _web, "")
+       re.search(r'<section id="sec-emoji" class="card" data-sec[^>]*>', _web) is not None
+       and "<h2>表情</h2>" in _web, "")
     ck("web 真调用取数口（GET ＋ action=learn / refresh）",
        "'/api/emoji_index'" in _flat and "action:'learn'" in _flat
        and "action:'refresh'" in _flat, "")
@@ -10621,8 +10624,13 @@ def t_subnav_coverage_guard() -> None:
     _web = WEB_PAGE.read_text(encoding="utf-8")
     _n_sec = len(_re.findall(r'<section id="sec-', _web))
     _gaps = []
-    for _m in _re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec>(.*?)</section>',
+    _scanned = 0
+    # ⚠️ `data-sec[^>]*>` 不写死相邻：section 上可能挂别的属性（IA-4 的 `data-mg`）。
+    #    写死会让被并的那 11 块静默跳过 —— 分母守卫数的是 `<section id="`，
+    #    抓不住这种"扫到了但没进循环"的漏读，所以下面单独钉 `_scanned`。
+    for _m in _re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec[^>]*>(.*?)</section>',
                            _web, _re.S):
+        _scanned += 1
         _k, _b = _m.group(1), _m.group(2)
         _n = len(_re.findall(r'<div class="row"[^>]*><label>', _b))
         if _n < 6:
@@ -10634,6 +10642,9 @@ def t_subnav_coverage_guard() -> None:
     ck("① 每个 ≥6 行的 section 组数达标（组数 ≥ max(2, 行数÷12)）", not _gaps,
        "未达标：%s" % _gaps)
     ck("① 分母守卫：真的扫到了全部 section（≥25 个）", _n_sec >= 25, "n=%d" % _n_sec)
+    # 分母守卫只证"页面上有 28 个 section"，不证"循环真读了 28 个" —— 补这条。
+    ck("① 分母守卫：解析循环覆盖数与页面 section 数相等（防静默漏读）",
+       _scanned == _n_sec, "扫到 %d / 页面 %d" % (_scanned, _n_sec))
 
     if str(HERE) not in _sys.path:
         _sys.path.insert(0, str(HERE))
