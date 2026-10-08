@@ -41,10 +41,37 @@ def ok(name, cond, detail=""):
 m = re.search(r'<nav class="nav" id="nav">(.*?)</nav>', HTML, re.S)
 nav = m.group(1) if m else ""
 items = re.findall(r'<a href="(#sec-[a-z0-9-]+)"[^>]*>(.*?)</a>', nav, re.S)
-print("① 导航项与自绘图标（共 %d 项）" % len(items))
-# 下限防"误删导航项"。原为 27 项；新增「表情」后 **28 项**。二级归并（IA-4）落地后应为 17 项，届时下限跟着下调。
-# —— 且 IA-4 必须 **web 与 Qt 同批改**（Qt 侧有硬编码的项名/section id，只改 web 会让 Qt 面板报错）。
-ok("导航项 ≥ 20（归并前 28 项）", len(items) >= 20, str(len(items)))
+# IA-4 已落地：左栏 = **17 个可见行**，其中 9 行是"合并行"（一行收 1~4 个功能项），
+# 另外 8 行是单功能项。**链接一个都没删**（28 条 `href="#sec-…"`）——
+# 因为 `ui_arch_selftest` 有一条用户投诉驱动的硬判据：导航链接的出现序列必须与
+# `<section id="sec-…">` 的出现序列逐位相同（"划着划着导航乱跳"那条）。
+# ⇒ 合并行把成员链接收进二级（`.nav-mg-bd` 里的 `.nav-mg-it`），默认收起。
+# 所以这里**不能只数 `<a>`**：要分别数"可见行"与"链接总数"。
+rows = re.findall(r'<a href="#sec-[a-z0-9-]+"(?: class="nav-mg-hd"[^>]*)?>', nav)
+mg_rows = re.findall(r'class="nav-mg-hd"', nav)
+plain = len(re.findall(r'<a href="#sec-[a-z0-9-]+">', nav))
+print("① 导航项与自绘图标（可见行 %d = 合并行 %d + 单项 %d；链接共 %d 条）"
+      % (len(rows), len(mg_rows), plain, len(items)))
+ok("可见行 = 17（IA-4 归并后的目标；上界＝左栏滚一屏能到底）", len(rows) == 17, str(len(rows)))
+ok("链接总数仍是 28（一个功能项一条，不许因为归并把入口删掉）", len(items) == 28, str(len(items)))
+ok("合并行 + 单项 = 可见行（两半对得上，没有漏算）", len(mg_rows) + plain == len(rows),
+   "%d + %d = %d" % (len(mg_rows), plain, len(rows)))
+# 合并行的二级项必须真的在（行头写了 +N 却没二级项 ⇒ 那 N 个功能项点不到了）
+_its = len(re.findall(r'class="nav-mg-it"', nav))
+ok("合并行的二级项数 = 链接总数 − 可见行数（收起的是显示、不是入口）",
+   _its == len(items) - len(rows), "%d vs %d" % (_its, len(items) - len(rows)))
+# 二级项默认收起：`.nav-mg-bd` 基础态 display:none，只有 `.open` 才露。
+ok("二级项默认收起（.nav-mg-bd 基础 display:none，.open 才显示）",
+   re.search(r"\.side \.nav-mg-bd\{display:none\}", HTML) is not None
+   and re.search(r"\.side \.nav-mg\.open \.nav-mg-bd\{display:block\}", HTML) is not None, "")
+# 归属映射写在 DOM 上（`data-mg="sec-主项"`），不是 JS 里另抄一张表。
+# ⚠️ 数**带该属性的 section 标签**，不是全文 grep `data-mg="sec-`——
+#    JS 注释里也写了这个词，全文 grep 会多算一条（实测 12 vs 11）。
+_mg_secs = re.findall(r'<section id="sec-[a-z0-9-]+"[^>]*data-mg="sec-[a-z0-9-]+"', HTML)
+ok("归属映射来自 DOM（被并入的 section 带 data-mg=\"sec-主项\"）", len(_mg_secs) == 11, str(len(_mg_secs)))
+# 收起态只剩图标 ⇒ 二级也得露出来，否则那 11 个功能项在窄栏里点不到。
+ok("收起态（.tight）二级项照样显示（否则窄栏里点不到）",
+   re.search(r"\.side\.tight \.nav-mg-bd\{display:block\}", HTML) is not None, "")
 ok("每一项都有 inline SVG", all("<svg" in body and "</svg>" in body for _h, body in items),
    str(sum(1 for _h, b in items if "<svg" in b)))
 ok("每一项都有 viewBox（可缩放、不靠位图）", all('viewBox="0 0 16 16"' in body for _h, body in items))
@@ -123,6 +150,58 @@ ok("★ 最近：三套索引互不冒充（注释里写清各是什么）",
    "分类＝按主题找" in HTML and "搜索＝按名字找" in HTML, "")
 ok("★「最近」有自己的一枚视觉标记（左侧竖线，与分类分组区分）",
    ".nav-recent::before" in HTML, "")
+
+print("\n⑦ 归并表逐项钉住（IA-4：不许悄悄改并法）")
+# 归并表写死在这里（与 `报告/PLAN.md` 第 145 项的「六、归并表」同口径）。
+# 为什么逐项钉：合并把"哪个功能在哪一行"变成**隐式**的了 —— 一旦有人把成员挪到别的行，
+# 用户"记得它在那行"的直觉就悄悄失效，而页面看起来一切正常。这条把它变成**显式**的。
+WANT_ROWS = [
+    ("sec-overview", []),
+    ("sec-wechat", []),
+    ("sec-bot", []),
+    ("sec-persona", []),
+    ("sec-check", ["sec-vermat"]),
+    ("sec-model", ["sec-search"]),
+    ("sec-memory", ["sec-memory-set"]),
+    ("sec-emoji", ["sec-community"]),
+    ("sec-media", []),
+    ("sec-tts", []),
+    ("sec-imggen", ["sec-videogen"]),
+    ("sec-tools", ["sec-poke"]),
+    ("sec-sessions", ["sec-feedback"]),
+    ("sec-send", []),
+    ("sec-log", ["sec-server"]),
+    ("sec-advanced", []),
+    ("sec-ui", ["sec-json", "sec-cursor", "sec-wavefx"]),
+]
+# 从导航里**现读**行序。三种 `<a>` 靠 class 区分：
+#   合并行头 `.nav-mg-hd` / 二级项 `.nav-mg-it` / 单项（无 class）。
+# ⚠️ 不能用 `( class="nav-mg-hd")?` 这种"可选组"来判 —— 二级项与单项都匹配成空串 ⇒ 分不开（实测过一次）。
+_rows = re.findall(r'<a href="#(sec-[a-z0-9-]+)"(?:\s+class="([a-z-]*)")?[^>]*>', nav)
+_got, _i = [], 0
+while _i < len(_rows):
+    sid, cls = _rows[_i]
+    if cls == "nav-mg-hd":
+        mem = []
+        _i += 1
+        while _i < len(_rows) and _rows[_i][1] == "nav-mg-it":
+            mem.append(_rows[_i][0])
+            _i += 1
+        _got.append((sid, mem))
+    else:
+        _got.append((sid, []))
+        _i += 1
+ok("归并表与实现逐项一致（行序 / 主项 / 成员，全等比对）", _got == WANT_ROWS,
+   "; ".join("%s: %s≠%s" % (w[0], g[1], w[1])
+             for g, w in zip(_got, WANT_ROWS) if g != w)
+   or ("行数 %d vs %d" % (len(_got), len(WANT_ROWS))))
+_mg_owner = {m: s for s, ms in WANT_ROWS for m in ms}
+ok("被并入项都在（11 个，一个不少）", len(_mg_owner) == 11, str(len(_mg_owner)))
+# 反向锚：主项**不许**自己也带 data-mg（那说明它被并进了别人，与上表矛盾）
+ok("主项都不带 data-mg（只有被并入的才带）",
+   not re.search(r'<section id="(sec-overview|sec-wechat|sec-bot|sec-persona|sec-check|sec-model|'
+                 r'sec-memory|sec-emoji|sec-media|sec-tts|sec-imggen|sec-tools|sec-sessions|'
+                 r'sec-send|sec-log|sec-advanced|sec-ui)"[^>]*data-mg=', HTML), "")
 
 print("\n⑤ 前端 JS 语法（node --check）")
 node = shutil.which("node")

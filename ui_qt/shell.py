@@ -75,6 +75,7 @@ from widgets import ( # noqa: E402
     IconBtn,
     NavGroup,
     NavItem,
+    NavMgRow,
     SearchBox,
     Switch,
     desc,
@@ -127,51 +128,64 @@ def set_per_monitor_dpi() -> str:
 # ---------------------------------------------------------------- 导航数据
 
 
-# 5 组 28 项 —— 组名 / key / 项名 / 顺序逐项抄自 assets/console/index.html 的
-# <aside class="side">（nav 区，L936 起），hint 摘自各面板 <div class="desc"> 第一句。
-# **以 web 源码为唯一真值**：不自造组名、不用比喻命名（
-# 分区按功能来；文案对齐 web 侧朴素直给的口吻）。
-# selftest 会运行时解析 web 源码与这份 NAV 全等比对 —— 手抄过时/写错会直接红。
-NAV: list[tuple[str, str, list[tuple[str, str, str]]]] = [
+# IA-4 之后：**左栏 17 行**（web 与 Qt 同一个数），其中 9 行是"合并行"
+# （一行收 1~4 个功能项，成员收在二级、默认收起），另 8 行是单功能项。
+# 结构：`(组名, 组 key, [(行名, 一句话说明, 主项 sec, [成员 sec…]), …])`。
+# ⛔ 成员的 sec 一个都不能少 —— 那 11 项本来是独立导航项，现在只是"显示上收进二级"；
+#    web 侧同理（`ui_arch_selftest` 要求导航链接序列 == section 序列，链接一条不删）。
+# **以 web 源码为唯一真值**：`data-mg="sec-主项"` 就是归属映射，selftest 运行时解析后全等比对。
+NAV: list[tuple[str, str, list[tuple[str, str, str, list[str]]]]] = [
     ("日常", "day", [
-        ("概览", "机器人运作状态与账户信息，每 8 秒自动刷新", "overview"),
-        ("微信", "机器人微信身份与轮询、白名单（改完要重启）", "wechat"),
-        ("机器人", "怎么称呼自己、响应到什么程度、给模型多少上下文", "bot"),
-        ("人设", "以谁的身份在群里说话、怎么参与，改完立刻生效", "persona"),
-        ("体检", "代码检测与点击测试共 55 项，零风险不碰鼠标", "check"),
+        ("概览", "机器人运作状态与账户信息，每 8 秒自动刷新", "overview", []),
+        ("微信", "机器人微信身份与轮询、白名单（改完要重启）", "wechat", []),
+        ("机器人", "怎么称呼自己、响应到什么程度、给模型多少上下文", "bot", []),
+        ("人设", "以谁的身份在群里说话、怎么参与，改完立刻生效", "persona", []),
+        ("体检·版本", "代码检测与点击测试共 55 项，零风险不碰鼠标", "check", ["vermat"]),
     ]),
     ("智能", "brain", [
-        ("模型", "密钥首次引导填入后自动保存，无需再改配置文件", "model"),
-        ("记忆", "每个群友的长期印象，机器人回复时会参考", "memory"),
-        ("共享", "记忆怎么存、怎么共享、什么时候整理", "memory-set"),
-        ("搜索", "搜索引擎与参数，保存后真实落盘生效", "search"),
-        ("社区", "金句与意见的本地导出、反应评分引擎", "community"),
-        ("表情", "自定义表情的语义索引：这张图是什么梗、什么时候用", "emoji"),
+        ("模型·搜索", "密钥首次引导填入后自动保存，无需再改配置文件", "model", ["search"]),
+        ("记忆·共享", "每个群友的长期印象，机器人回复时会参考", "memory", ["memory-set"]),
+        ("表情·社区", "自定义表情的语义索引：这张图是什么梗、什么时候用", "emoji", ["community"]),
     ]),
     ("内容", "media", [
-        ("媒体", "发图、发语音、发文件，开关默认都是关的", "media"),
-        ("语音", "文字合成音频后发出，声音来源分三档", "tts"),
-        ("要图", "群友要图时调生图后端，探到哪个用哪个", "imggen"),
-        ("视频", "做好自动发出，没配后端就如实说没配", "videogen"),
-        ("插件", "一个工具一份清单，勾选后模型才能用", "tools"),
-        ("拍拍", "自动回拍、主动皮一下的频率与冷却", "poke"),
+        ("媒体", "发图、发语音、发文件，开关默认都是关的", "media", []),
+        ("语音", "文字合成音频后发出，声音来源分三档", "tts", []),
+        ("要图·视频", "群友要图时调生图后端，探到哪个用哪个", "imggen", ["videogen"]),
+        ("插件·拍拍", "一个工具一份清单，勾选后模型才能用", "tools", ["poke"]),
     ]),
     ("运行", "ops", [
-        ("明细", "发了什么、多少用量、耗时，按天落盘可勾选删除", "sessions"),
-        ("反馈", "想说的、想让它变成什么样的，写在这儿提交", "feedback"),
-        ("发送", "真人化间隔与限频，防刷屏与封号风险", "send"),
-        ("日志", "动作与失败原因，出问题先看这一屏", "log"),
-        ("版本", "微信版本与适配层版本下每个能力的实测状态", "vermat"),
-        ("服务", "控制台监听地址与访问口令，改完要重启", "server"),
-        ("高级", "行为引擎完整参数、UI 图标库、学习机制", "advanced"),
+        ("明细·反馈", "发了什么、多少用量、耗时，按天落盘可勾选删除", "sessions", ["feedback"]),
+        ("发送", "真人化间隔与限频，防刷屏与封号风险", "send", []),
+        ("日志·服务", "动作与失败原因，出问题先看这一屏", "log", ["server"]),
+        ("高级", "行为引擎完整参数、UI 图标库、学习机制", "advanced", []),
     ]),
     ("外观", "look", [
-        ("界面", "显示缩放、遮挡清理与主题", "ui"),
-        ("配置格式", "全部配置的配置文件，改前先备份", "json"),
-        ("光标", "把鼠标指针换成鲸鱼，点击时向下点头", "cursor"),
-        ("波纹", "鼠标处荡开波纹的动效，参数即时生效", "wavefx"),
+        ("外观", "显示缩放、遮挡清理与主题", "ui", ["json", "cursor", "wavefx"]),
     ]),
 ]
+
+
+#: 被并入的功能项在二级里用的名字 —— 取**它原来当独立导航项时的那个名字**。
+#  不另编一套短名：原名是用户在旧版里记住的那个词，换了反而找不到。
+#  单一来源仍是 web（二级项 `<a class="nav-mg-it">` 里的 `.lb`），本表只是 Qt 侧的等价抄录，
+#  `ui_qt/selftest.py` 会与 web 逐项全等比对。
+_MEMBER_LABEL = {
+    "vermat": "版本",
+    "search": "搜索",
+    "memory-set": "共享",
+    "community": "社区",
+    "videogen": "视频",
+    "poke": "拍拍",
+    "feedback": "反馈",
+    "server": "服务",
+    "json": "配置格式",
+    "cursor": "光标",
+    "wavefx": "波纹",
+}
+
+
+def _member_label(sec: str) -> str:
+    return _MEMBER_LABEL.get(sec, sec)
 
 
 # ---------------------------------------------------------------- 鲸语桥
@@ -1369,6 +1383,9 @@ class Shell(QWidget):
         self.nav_lay.setSpacing(0)
 
         self.items: list[tuple[NavItem, NavGroup, str, str]] = []
+        # 合并行（IA-4）：(NavMgRow, 主项 sec)。`_go` 进到成员页时要把它所在的行展开，
+        # 否则高亮落在收起的行里 —— 用户看不见"我在哪"。
+        self.mg_rows: list[tuple[NavMgRow, str]] = []
         # 分组折叠跨会话记忆（web `navGrpClosed` localStorage 的 QSettings 等价，
         # assets/console/index.html:7043-7067）：以「被折叠的分组标题」为键，跨进程记住。
         from PySide6.QtCore import QSettings as _QS # noqa: PLC0415
@@ -1378,10 +1395,26 @@ class Shell(QWidget):
         _closed_now = [str(x) for x in _closed_now]
         for title, grp_key, entries in NAV:
             g = NavGroup(self.t, title)
-            for label, hint, sec in entries:
+            for label, hint, sec, members in entries:
                 it = NavItem(self.t, label, hint, icon_key=sec)
                 it.clicked.connect(lambda _=False, s=sec, l=label: self._go(s, l))
-                g.add(it)
+                if members:
+                    # 合并行：主项 + 二级成员（默认收起）。二级项的 label 取 web 侧那一项的名字，
+                    # hint 与主项同一条（成员自己的说明在 web 的 `<div class="desc">` 里，
+                    # 不在导航项上 —— 不另编一份，缺就留空）。
+                    row = NavMgRow(self.t, it, len(members))
+                    for msec in members:
+                        mlb = _member_label(msec)
+                        mit = NavItem(self.t, mlb, "", icon_key=msec)
+                        mit.set_indent(True)
+                        mit.clicked.connect(lambda _=False, s=msec, l=mlb: self._go(s, l))
+                        row.add(mit)
+                        self.items.append((mit, g, msec, mlb))
+                    row.toggled.connect(self._on_mg_toggled)
+                    g.add(row)
+                    self.mg_rows.append((row, sec))
+                else:
+                    g.add(it)
                 self.items.append((it, g, sec, label))
             # 恢复折叠态（跨会话）—— 在 add 完条目之后置位，避免空组头闪烁
             if title in _closed_now:
@@ -1391,6 +1424,16 @@ class Shell(QWidget):
             g.toggled.connect(self._on_grp_toggled)
             self.nav_lay.addWidget(g)
         self.nav_lay.addStretch(1)
+
+        # 恢复合并行展开态（跨会话）—— 对齐 web `navMgOpen` localStorage。
+        # 存的是「主项 sec」不是 index：归并表以后重排也不会串行。
+        try:
+            _open_now = [str(x) for x in (_qs.value("nav_mg_open", [], type=list) or [])]
+            for row, sec in self.mg_rows:
+                if sec in _open_now:
+                    row.set_expanded(True)
+        except Exception: # noqa: BLE001
+            pass
 
         self.scroll.setWidget(inner)
         lay.addWidget(self.scroll, 1)
@@ -1874,6 +1917,29 @@ class Shell(QWidget):
         if sc is not None and sc.viewport() is not None:
             sc.viewport().update()
 
+    def _on_mg_toggled(self, _open: bool) -> None:
+        """合并行展开/收起 → 写 QSettings（对齐 web `navMgOpen` localStorage）。
+
+        只存"主项 sec"，不存 index —— 归并表以后重排也不会串行。
+        """
+        from PySide6.QtCore import QSettings # noqa: PLC0415
+
+        op = [sec for row, sec in self.mg_rows if row.expanded]
+        QSettings("WXAgent", "persona-morph-ui").setValue("nav_mg_open", op)
+        sc = getattr(self, "scroll", None)
+        if sc is not None and sc.viewport() is not None:
+            sc.viewport().update()
+
+    def _reveal_mg(self, sec: str) -> None:
+        """进到某个功能项时，把它所在的合并行展开（否则高亮落在收起的行里看不见）。"""
+        for row, own in self.mg_rows:
+            if row.expanded:
+                continue
+            if sec == own or any(m == sec for m in row.member_secs):
+                row.set_expanded(True)
+                self._on_mg_toggled(True)
+                break
+
     def _close_transient_popups(self) -> None:
         """收回全部临时浮层。
 
@@ -2087,6 +2153,10 @@ class Shell(QWidget):
         for _it, g, _sec, _label in self.items:
             g.set_tight(on)
             _it.set_tight(on)
+        # 合并行（IA-4）：窄栏只剩图标 ⇒ 二级项也得露出来（对齐 web `.side.tight .nav-mg-bd{display:block}`），
+        # 否则窄栏里那 11 个功能项点不到。
+        for row, _sec in self.mg_rows:
+            row.set_tight(on)
         # 运行状态卡：宽栏走文字、窄栏收成图标列（见 `_build_side` 的 sb_narrow）。
         # 窄栏里那段"微信已连接 · 启动于 …"会被拦腰截断（实测截成"已连 / 接·/ 启动/工"），
         # 与其放一段读不了的字，不如换成图标 ＋ tooltip。
@@ -2186,6 +2256,8 @@ class Shell(QWidget):
     def _go(self, sec: str, label: str) -> None:
         for it, _g, s, _l in self.items:
             it.set_active(s == sec)
+        # 合并行（IA-4）：进到成员页时先把那行展开，否则高亮落在收起的二级里、用户看不见自己在哪
+        self._reveal_mg(sec)
         self.st_panel.set("info", label)
         # 惰性构建：首次导航到才建页，之后 setCurrentIndex 直达
         self._ensure_page(sec)

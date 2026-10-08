@@ -285,6 +285,29 @@ body.whale-anim::after{content:"";position:fixed;inset:0;z-index:-1;pointer-even
 .side.tight .nav-grp + .nav-grp{border-top:none;margin-top:0;padding-top:0}
 .side.tight .nav-grp.collapsed .nav-grp-bd{display:block}   /* 收起态不许再藏项，否则点不到 */
 .side.tight .nav-find{display:none}
+/* ── .nav-mg：**合并行**（IA-4：28 个功能项收成 17 行，让左栏一屏能扫完）──────────
+   一行 = 一个主项（`.nav-mg-hd`）＋ 收在二级的成员（`.nav-mg-bd` 里的 `.nav-mg-it`）。
+   ⛔ 成员的 `<a href="#sec-…">` **一个都没删**（`ui_arch_selftest` 要求导航链接的
+      出现序列与 `<section>` 的出现序列逐位相同 —— 那是"划着划着导航乱跳"那条老投诉的判据）；
+      这里只是**默认把它们收起来**，用户看到的是 17 行，展开才见全部。
+   `.mg-n` 是"+2"那枚计数，告诉用户"这一行还藏着几个"—— 否则收起来的项等于消失。 */
+.side .nav-mg{margin:0}
+.side .nav-mg-hd{position:relative}
+.side .nav-mg-hd .mg-n{margin-left:auto;flex:none;font-size:10.5px;font-weight:700;line-height:1;
+  color:var(--navgrp-tx);background:var(--hover-bg);border-radius:6px;padding:3px 5px;opacity:.9}
+.side .nav-mg.open .nav-mg-hd .mg-n{color:var(--blue)}
+.side .nav-mg-bd{display:none}
+.side .nav-mg.open .nav-mg-bd{display:block}
+/* 二级项：文字小一档、左边一道竖线（与「最近」的竖线同语言，但更淡）——
+   一眼能看出"这些是上面那一行里的，不是同级的大项" */
+.side .nav-mg-it{padding-left:30px;font-size:13.5px}
+.side .nav-mg-it .lb{font-size:13.5px}
+.side .nav-mg-it::before{content:"";position:absolute;left:17px;width:1px;height:14px;
+  background:var(--navgrp-line)}
+.side .nav-mg-it{position:relative}
+.side.tight .nav-mg-it::before{display:none}
+.side.tight .nav-mg-bd{display:block}   /* 收起态只剩图标 ⇒ 二级项也得露出来，否则点不到 */
+.side.tight .nav-mg .mg-n{display:none}
 /* 面板内的状态徽章（可用性：一眼看出"在跑 / 没连上 / 待更新 / 已就绪"） */
 .st{display:inline-flex;align-items:center;gap:6px;height:22px;box-sizing:border-box;padding:0 9px;
   border-radius:11px;font-size:11.5px;font-weight:600;line-height:1;white-space:nowrap;
@@ -1002,71 +1025,108 @@ th{color:var(--tx2);font-weight:500}
       <input type="text" id="navFind" placeholder="找功能…（如：发消息 / 换模型）" autocomplete="off" aria-label="在导航里快速找功能">
       <div class="nav-find-res" id="navFindRes"></div>
     </div>
-    <nav class="nav" id="nav">
-      <!-- 三套索引之「最近」：这里由 JS 填（看过的功能按时间倒序，点一下跳回去）。
-           注意：空的时候**整组隐藏**（不留一个空壳标题）；只记**功能项**，不记"看了哪个小项"。
-           与「分类」（下面的 nav-grp 分组）和「搜索」（上面的 navFind）是三件不同的事：
-           分类＝按主题找，搜索＝按名字找，最近＝**回到刚才那个**。
-           注意：这一组**故意不用 `class="nav-grp" data-grp=…"`** —— 那套是「分类」的静态分组，
-              Qt 侧 `NAV` 与 `ui_qt/selftest.py` 都以"5 组 28 项"为准全等比对；
-              这组是**运行时按历史生成**的，不属于那 28 项，混进去会让两边的对齐判据误红。 -->
-      <div class="nav-recent-grp" id="navRecentGrp" style="display:none">
-        <button class="nav-recent-hd" type="button"><span class="gt">最近</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-        <div class="nav-recent-bd" id="navRecentBd"></div>
-      </div>
-      <div class="nav-grp" data-grp="day">
-        <button class="nav-grp-hd" type="button"><span class="gt">日常</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-        <div class="nav-grp-bd">
-      <a href="#sec-overview" class="on"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3.1-2.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">概览</span></a>
-      <a href="#sec-wechat"><svg viewBox="0 0 16 16"><path d="M6.2 3.2c-2.6 0-4.7 1.7-4.7 3.9 0 1.2.6 2.3 1.7 3l-.4 1.6 1.8-.9c.5.1 1 .2 1.6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M9.9 6.6c-2.2 0-4 1.5-4 3.4 0 1.9 1.8 3.4 4 3.4.4 0 .9-.1 1.3-.2l1.5.8-.3-1.4c.9-.6 1.5-1.5 1.5-2.6 0-1.9-1.8-3.4-4-3.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">微信</span></a>
-      <a href="#sec-bot"><svg viewBox="0 0 16 16"><rect x="3.2" y="5" width="9.6" height="7.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 3v2" stroke="currentColor" stroke-width="1.4"/><circle cx="6.2" cy="8.6" r=".9" fill="currentColor"/><circle cx="9.8" cy="8.6" r=".9" fill="currentColor"/></svg><span class="lb">机器人</span></a>
-      <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
-      <a href="#sec-check"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检</span></a>
-        </div>
-      </div>
-      <div class="nav-grp" data-grp="brain">
-        <button class="nav-grp-hd" type="button"><span class="gt">智能</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-        <div class="nav-grp-bd">
-      <a href="#sec-model"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 1.6v2.4M9.5 1.6v2.4M6.5 12v2.4M9.5 12v2.4M1.6 6.5h2.4M1.6 9.5h2.4M12 6.5h2.4M12 9.5h2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">模型</span></a>
-      <a href="#sec-memory"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆</span></a>
-      <a href="#sec-memory-set"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
-      <a href="#sec-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
-      <a href="#sec-community"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a><a href="#sec-emoji"><svg viewBox="0 0 16 16"><rect x="2" y="2.6" width="12" height="10.8" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.9" cy="7" r=".95" fill="currentColor"/><circle cx="10.1" cy="7" r=".95" fill="currentColor"/><path d="M5.6 10.1c1.3 1 3.5 1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="lb">表情</span></a>
-        </div>
-      </div>
-      <div class="nav-grp" data-grp="media">
-        <button class="nav-grp-hd" type="button"><span class="gt">内容</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-        <div class="nav-grp-bd">
-      <a href="#sec-media"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">媒体</span></a>
-      <a href="#sec-tts"><svg viewBox="0 0 16 16"><path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">语音</span></a>
-      <a href="#sec-imggen"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 10.8l2.6-2.4 2 1.8 1.6-1.4 2.4 2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11.2 4.4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg><span class="lb">要图</span></a>
-      <a href="#sec-videogen"><svg viewBox="0 0 16 16"><rect x="2" y="3.4" width="9.2" height="9.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M11.2 7.2l2.8-1.8v5.2l-2.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">视频</span></a>
-      <a href="#sec-tools"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 6.4h1.6a1.6 1.6 0 010 3.2H10" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="10" width="7" height="3.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">插件</span></a>
-      <a href="#sec-poke"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
-        </div>
-      </div>
-      <div class="nav-grp" data-grp="ops">
-        <button class="nav-grp-hd" type="button"><span class="gt">运行</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-        <div class="nav-grp-bd">
-      <a href="#sec-sessions"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/></svg><span class="lb">明细</span></a>
-      <a href="#sec-feedback"><svg viewBox="0 0 16 16"><path d="M2.4 3.6h11.2v7.2H7.2L4.2 13.4V10.8H2.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 6.2h5.6M5.2 8.4h3.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">反馈</span></a>
-      <a href="#sec-send"><svg viewBox="0 0 16 16"><path d="M14 2L2 7.4l4.2 1.6L13 4l-4.8 6.6.6 3.4z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">发送</span></a>
-      <a href="#sec-log"><svg viewBox="0 0 16 16"><path d="M4 2h5.6L13 5.4V14H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2v3.6H13" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">日志</span></a>
-      <a href="#sec-vermat"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">版本</span></a>
-      <a href="#sec-server"><svg viewBox="0 0 16 16"><rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/></svg><span class="lb">服务</span></a>
-      <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
-        </div>
-      </div>
-      <div class="nav-grp" data-grp="look">
-        <button class="nav-grp-hd" type="button"><span class="gt">外观</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-        <div class="nav-grp-bd">
-      <a href="#sec-ui"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 3v10" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">界面</span></a>
-      <a href="#sec-json"><svg viewBox="0 0 16 16"><path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">配置格式</span></a>
-      <a href="#sec-cursor"><svg viewBox="0 0 16 16"><path d="M4 2l8.2 6.1-3.4.5 2 3.6-1.8 1-2-3.7L4.6 12z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">光标</span></a>
-      <a href="#sec-wavefx"><svg viewBox="0 0 16 16"><path d="M1.6 9.2c1.6-3.2 3.2-3.2 4.8 0s3.2 3.2 4.8 0 3.2-3.2 4.8 0" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">波纹</span></a>
-        </div>
-      </div>
-    </nav>
+<nav class="nav" id="nav">
+          <!-- 三套索引之「最近」：这里由 JS 填（看过的功能按时间倒序，点一下跳回去）。
+               注意：空的时候**整组隐藏**（不留一个空壳标题）；只记**功能项**，不记"看了哪个小项"。
+               与「分类」（下面的 nav-grp 分组）和「搜索」（上面的 navFind）是三件不同的事：
+               分类＝按主题找，搜索＝按名字找，最近＝**回到刚才那个**。
+               注意：这一组**故意不用 `class="nav-grp" data-grp=…"`** —— 那套是「分类」的静态分组，
+                  Qt 侧 `NAV` 与 `ui_qt/selftest.py` 都以"5 组 28 项"为准全等比对；
+                  这组是**运行时按历史生成**的，不属于那 28 项，混进去会让两边的对齐判据误红。 -->
+          <div class="nav-recent-grp" id="navRecentGrp" style="display:none">
+            <button class="nav-recent-hd" type="button"><span class="gt">最近</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+            <div class="nav-recent-bd" id="navRecentBd"></div>
+          </div>
+          <div class="nav-grp" data-grp="day">
+            <button class="nav-grp-hd" type="button"><span class="gt">日常</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+            <div class="nav-grp-bd">
+          <a href="#sec-overview"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3.1-2.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">概览</span></a>
+          <a href="#sec-wechat"><svg viewBox="0 0 16 16"><path d="M6.2 3.2c-2.6 0-4.7 1.7-4.7 3.9 0 1.2.6 2.3 1.7 3l-.4 1.6 1.8-.9c.5.1 1 .2 1.6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M9.9 6.6c-2.2 0-4 1.5-4 3.4 0 1.9 1.8 3.4 4 3.4.4 0 .9-.1 1.3-.2l1.5.8-.3-1.4c.9-.6 1.5-1.5 1.5-2.6 0-1.9-1.8-3.4-4-3.4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">微信</span></a>
+          <a href="#sec-bot"><svg viewBox="0 0 16 16"><rect x="3.2" y="5" width="9.6" height="7.4" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 3v2" stroke="currentColor" stroke-width="1.4"/><circle cx="6.2" cy="8.6" r=".9" fill="currentColor"/><circle cx="9.8" cy="8.6" r=".9" fill="currentColor"/></svg><span class="lb">机器人</span></a>
+          <a href="#sec-persona"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r=".9" fill="currentColor"/><circle cx="10" cy="7" r=".9" fill="currentColor"/><path d="M5.6 10.2c1.4 1.1 3.4 1.1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">人设</span></a>
+          <div class="nav-mg" data-mg-row="sec-vermat">
+          <a href="#sec-check" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 8.2l2.1 2.1L11 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="lb">体检·版本</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-vermat" class="nav-mg-it"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.7v6.9L8 14.2 2.6 11.4V4.5z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.8 4.6L8 7.3l5.2-2.7M8 7.3v6.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">版本</span></a>
+            </div>
+          </div>
+            </div>
+          </div>
+          <div class="nav-grp" data-grp="brain">
+            <button class="nav-grp-hd" type="button"><span class="gt">智能</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+            <div class="nav-grp-bd">
+          <div class="nav-mg" data-mg-row="sec-search">
+          <a href="#sec-model" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 1.6v2.4M9.5 1.6v2.4M6.5 12v2.4M9.5 12v2.4M1.6 6.5h2.4M1.6 9.5h2.4M12 6.5h2.4M12 9.5h2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">模型·搜索</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-search" class="nav-mg-it"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="lb">搜索</span></a>
+            </div>
+          </div>
+          <div class="nav-mg" data-mg-row="sec-memory-set">
+          <a href="#sec-memory" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><path d="M4 2.4h8v11.2L8 11.4l-4 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">记忆·共享</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-memory-set" class="nav-mg-it"><svg viewBox="0 0 16 16"><circle cx="3.6" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.2 7.2l5.6-2.4M5.2 8.8l5.6 2.4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">共享</span></a>
+            </div>
+          </div>
+          <div class="nav-mg" data-mg-row="sec-community">
+          <a href="#sec-emoji" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><rect x="2" y="2.6" width="12" height="10.8" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.9" cy="7" r=".95" fill="currentColor"/><circle cx="10.1" cy="7" r=".95" fill="currentColor"/><path d="M5.6 10.1c1.3 1 3.5 1 4.8 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="lb">表情·社区</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-community" class="nav-mg-it"><svg viewBox="0 0 16 16"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M1.6 12.4c.5-1.8 1.9-2.8 3.4-2.8s2.9 1 3.4 2.8M8.6 9.9c.6-.2 1.2-.3 1.8-.3 1.5 0 2.9 1 3.4 2.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">社区</span></a>
+            </div>
+          </div>
+            </div>
+          </div>
+          <div class="nav-grp" data-grp="media">
+            <button class="nav-grp-hd" type="button"><span class="gt">内容</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+            <div class="nav-grp-bd">
+          <a href="#sec-media"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.6" cy="6.4" r="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.6 11.4l3.4-3 2.7 2.4 2.2-1.9 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="lb">媒体</span></a>
+          <a href="#sec-tts"><svg viewBox="0 0 16 16"><path d="M3 6.4v3.2M6 4.2v7.6M9 2.8v10.4M12 5.4v5.2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg><span class="lb">语音</span></a>
+          <div class="nav-mg" data-mg-row="sec-videogen">
+          <a href="#sec-imggen" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 10.8l2.6-2.4 2 1.8 1.6-1.4 2.4 2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M11.2 4.4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg><span class="lb">要图·视频</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-videogen" class="nav-mg-it"><svg viewBox="0 0 16 16"><rect x="2" y="3.4" width="9.2" height="9.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M11.2 7.2l2.8-1.8v5.2l-2.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">视频</span></a>
+            </div>
+          </div>
+          <div class="nav-mg" data-mg-row="sec-poke">
+          <a href="#sec-tools" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 6.4h1.6a1.6 1.6 0 010 3.2H10" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="10" width="7" height="3.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">插件·拍拍</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-poke" class="nav-mg-it"><svg viewBox="0 0 16 16"><circle cx="8" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.6 12.6c.7-2.4 2.9-3.6 5.4-3.6s4.7 1.2 5.4 3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12.6" cy="3.4" r="1.2" fill="currentColor"/></svg><span class="lb">拍拍</span></a>
+            </div>
+          </div>
+            </div>
+          </div>
+          <div class="nav-grp" data-grp="ops">
+            <button class="nav-grp-hd" type="button"><span class="gt">运行</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+            <div class="nav-grp-bd">
+          <div class="nav-mg" data-mg-row="sec-feedback">
+          <a href="#sec-sessions" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="1.5" cy="4.5" r=".9" fill="currentColor"/><circle cx="1.5" cy="8" r=".9" fill="currentColor"/><circle cx="1.5" cy="11.5" r=".9" fill="currentColor"/></svg><span class="lb">明细·反馈</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-feedback" class="nav-mg-it"><svg viewBox="0 0 16 16"><path d="M2.4 3.6h11.2v7.2H7.2L4.2 13.4V10.8H2.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 6.2h5.6M5.2 8.4h3.6" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">反馈</span></a>
+            </div>
+          </div>
+          <a href="#sec-send"><svg viewBox="0 0 16 16"><path d="M14 2L2 7.4l4.2 1.6L13 4l-4.8 6.6.6 3.4z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">发送</span></a>
+          <div class="nav-mg" data-mg-row="sec-server">
+          <a href="#sec-log" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><path d="M4 2h5.6L13 5.4V14H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2v3.6H13" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lb">日志·服务</span><span class="mg-n">+1</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-server" class="nav-mg-it"><svg viewBox="0 0 16 16"><rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/></svg><span class="lb">服务</span></a>
+            </div>
+          </div>
+          <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
+            </div>
+          </div>
+          <div class="nav-grp" data-grp="look">
+            <button class="nav-grp-hd" type="button"><span class="gt">外观</span><svg class="gc" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+            <div class="nav-grp-bd">
+          <div class="nav-mg" data-mg-row="sec-json,sec-cursor,sec-wavefx">
+          <a href="#sec-ui" class="nav-mg-hd" aria-expanded="false"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 3v10" stroke="currentColor" stroke-width="1.3" fill="none"/></svg><span class="lb">外观</span><span class="mg-n">+3</span></a>
+            <div class="nav-mg-bd">
+          <a href="#sec-json" class="nav-mg-it"><svg viewBox="0 0 16 16"><path d="M6.4 2.6C4.8 2.6 5 4.4 5 5.6s-.6 1.8-1.6 2.4c1 .6 1.6 1.2 1.6 2.4s-.2 3 1.4 3M9.6 2.6c1.6 0 1.4 1.8 1.4 3s.6 1.8 1.6 2.4c-1 .6-1.6 1.2-1.6 2.4s.2 3-1.4 3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">配置格式</span></a>
+          <a href="#sec-cursor" class="nav-mg-it"><svg viewBox="0 0 16 16"><path d="M4 2l8.2 6.1-3.4.5 2 3.6-1.8 1-2-3.7L4.6 12z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">光标</span></a>
+          <a href="#sec-wavefx" class="nav-mg-it"><svg viewBox="0 0 16 16"><path d="M1.6 9.2c1.6-3.2 3.2-3.2 4.8 0s3.2 3.2 4.8 0 3.2-3.2 4.8 0" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">波纹</span></a>
+            </div>
+          </div>
+            </div>
+          </div>
+        </nav>
   </aside>
 
   <main class="main">
@@ -1586,6 +1646,73 @@ th{color:var(--tx2);font-weight:500}
       </table>
       <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
     </section>
+<section id="sec-vermat" data-mg="sec-check" class="card" data-sec>
+      <h2>版本能力矩阵</h2>
+      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
+      <div class="sub">① 版本与门</div><div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
+      <div class="row"><label>版本门</label><div class="grow">
+        <b id="vmGate">检测中…</b>
+        <div class="btns" style="margin-top:6px"><button id="vmAllow" class="ghost">本次允许发送</button></div>
+        <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
+      </div></div>
+      <div id="vmList" class="hint"></div>
+      <div class="row"><label>不提示新版本</label><input type="checkbox" data-cfg="update.muted">
+        <span class="hint">默认关。勾上＝**不再提示有新版本**（检查照跑、只是不打扰你）。</span></div>
+      <div class="row"><label>跳过某个版本</label><div class="grow"><input type="text" data-cfg="update.skip_version" placeholder="比如 1.2.3">
+        <div class="hint">填一个版本号 ⇒ 那一版**不再提示**（你不想升的那一版）。留空＝不跳过。</div></div></div>
+      <div class="sub">② 后台能力</div><div class="row"><label>后台能力</label><div class="grow">
+        <b id="bgHead">检测中…</b>
+        <div id="bgList" class="hint"></div>
+        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前，随后自动还回</b>——实测：取 GUI / 朋友圈滚动 / 表情面板 <b>0 秒</b>、发文字约 1 秒、切会话 3~7 秒、<b>切会话失败重试可达约 15 秒</b>。<b>一定非得走前台</b>的只有三项：朋友圈点赞/评论/发朋友圈 · 转发视频文件那一下（系统选择文件框）· UI 标定与真鼠标兜底档（默认关））；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
+      </div></div>
+      <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
+        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
+      <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
+        <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
+      <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
+        <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
+      <div class="row"><label>发表情方式</label><select data-cfg="wechat.emoji_send_mode">
+        <option value="image">路线 A（默认）：当图片发 —— 全程后台</option>
+        <option value="real">路线 B：走微信表情面板 —— 前台会闪一下</option>
+        <option value="auto">自动：先试面板，不通再发图片</option>
+      </select>
+        <span class="hint"><b>路线 A（默认，推荐）</b>：把表情发出去（走剪贴板 + 输入框粘贴，
+        或直接用本地表情文件）。<b>全程后台</b>——不弹任何浮层，你按着微信、在用鼠标都不会被打断；
+        <b>会动的表情发出去还是动的</b>（动图自动走"当文件贴进输入框"那条，微信按动画表情收）；
+        只有静态图才当成图片发 —— 那种对方看到的是一张图，不是表情。<br>
+        <b>路线 B</b>：走微信<b>表情面板</b>，发出去的才是<b>真·表情包</b>（动图还是动图）。代价：
+        面板是浮层、<b>必须被激活才能渲染</b> ⇒ <b>那一下微信会被带到前台</b>（实测约 2~7 秒），
+        而且期间你一点别处、面板就被关掉。<br>
+        <b>自动</b>：先试 B、不通再退 A —— 会偶尔闪前台，在意打扰就别选它。<br>
+        <b>关于动图</b>：微信的表情很多是"会动的一小段"。<b>收藏时会把动图存成真的动图</b>放进收藏夹
+        （以前只存一张首帧图）；<b>发出去也是动的</b>——动图会自动走"当文件贴进输入框"那条，
+        微信按动画表情收（实测对方收到的就是会动的那个），静态图才当成图片发。</span></div>
+      <div class="row"><label>图标指纹</label><div class="grow">
+        <b id="ufpHead">检测中…</b>
+        <div class="btns" style="margin-top:6px">
+          <button id="ufpTake" class="ghost">重新取指纹</button>
+          <button id="ufpForget" class="ghost">丢掉旧指纹</button>
+        </div>
+        <div id="ufpList" class="hint"></div>
+        <div class="hint">点任何图标之前，程序会先比一次<b>图标指纹</b>（目标点周围 48×48 的 dHash，按「微信版本 × 渲染区尺寸 × 缩放」分开存）。指纹<b>明确对不上</b>就停手并告诉你原因——那说明这个位置现在不像原来那个图标（微信更新了 UI / 窗口改了尺寸），照着过期比例盲点只会点到别处。没有记录或窗口最小化抓不到图时放行但留痕（不把第一次用锁死）。</div>
+      </div></div>
+      <div class="sub">③ 版本变更待办</div><div class="row"><label>待拍板</label><div class="grow">
+        <b id="pdStat">检测中…</b>
+        <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
+        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体依赖 · 本次运行继续发送 · 我去微信那边看看。× 等于什么都不做——单子留着、同一对版本不再追问，<b>不影响发送</b>。</div>
+      </div></div>
+      <div class="row"><label>最近表态</label><div class="grow"><b id="vmDec">暂无</b></div></div>
+      <div class="row"><label>一键修</label><div class="grow">
+        <b id="actStat">没有在跑的事</b>
+        <div class="btns" style="margin-top:6px">
+          <button id="actHeal" class="ghost">依赖自愈</button>
+          <button id="actUp" class="ghost">升级适配层</button>
+          <button id="actCancel" class="ghost" style="display:none">停下</button>
+        </div>
+        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。跑到一半想停就按「停下」（<b>停下不是失败</b>，是第三档结果）。</div>
+        <div id="depHint" class="hint" style="margin-top:2px"></div>
+      </div></div>
+    </section>
 <section id="sec-model" class="card" data-sec>
       <div class="sec-hd"><h2>模型 API</h2><span class="st" id="stModel">读取中</span></div>
       <div class="desc">密钥在控制台首次引导填入后自动保存，无需再改 config.json。</div>
@@ -1726,6 +1853,24 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
     </section>
+<section id="sec-search" data-mg="sec-model" class="card" data-sec>
+      <div class="sec-hd"><h2>联网搜索</h2><span class="st" id="stSearch">读取中</span></div>
+      <div class="sub">① 引擎</div><div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
+      <div class="row"><label>引擎</label><div class="grow"><select data-cfg="web_search.provider" id="wsProvider">
+        <option value="bing">Bing（免key）</option><option value="deepseek">DeepSeek</option>
+        <option value="zhipu">智谱</option><option value="bocha">博查</option>
+        <option value="baidu">百度千帆</option><option value="metaso">秘塔</option><option value="custom">自定义</option></select>
+        <div class="hint" id="wsHint">Bing 免 Key；其余引擎填「引擎 Key」与「接口地址」（留空=官方默认；DeepSeek 另有模型、智谱另有 engine）。</div></div></div>
+      <div class="row"><label>结果数</label><div class="grow"><input type="number" min="1" max="20" data-cfg="web_search.max_results"></div></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="desc">当前引擎参数（切换引擎自动带出对应小节，保存真实落盘 web_search.&lt;provider&gt;）：</div>
+      <div class="sub">② 引擎参数</div><div class="row"><label>引擎 Key</label><div class="grow"><input type="password" id="wsKey" placeholder="贴该引擎的 密钥" autocomplete="off"></div></div>
+      <div class="row"><label>接口地址</label><div class="grow"><input type="text" id="wsUrl" placeholder="留空=官方默认"></div></div>
+      <div class="row" data-ws="deepseek"><label>模型</label><div class="grow"><input type="text" id="wsModel" placeholder="deepseek-chat"></div></div>
+      <div class="row" data-ws="zhipu"><label>engine</label><div class="grow"><input type="text" id="wsEngine" placeholder="search_std"></div></div>
+      <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
+    </section>
 <section id="sec-memory" class="card" data-sec>
       <h2>记忆（群友印象）</h2>
       <div class="desc">每个群友的长期印象，机器人回复时会参考。点「保存设置」不影响此处；删除即从记忆中移除。</div>
@@ -1759,7 +1904,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint" id="memAudit"></div>
       <div class="hint" id="memEmpty">（无记忆数据）</div>
     </section>
-<section id="sec-memory-set" class="card" data-sec>
+<section id="sec-memory-set" data-mg="sec-memory" class="card" data-sec>
       <h2>记忆（共享设置）</h2>
       <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
       <div class="sub">① 开关与共享</div><div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
@@ -1778,24 +1923,8 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
     </section>
-<section id="sec-search" class="card" data-sec>
-      <div class="sec-hd"><h2>联网搜索</h2><span class="st" id="stSearch">读取中</span></div>
-      <div class="sub">① 引擎</div><div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
-      <div class="row"><label>引擎</label><div class="grow"><select data-cfg="web_search.provider" id="wsProvider">
-        <option value="bing">Bing（免key）</option><option value="deepseek">DeepSeek</option>
-        <option value="zhipu">智谱</option><option value="bocha">博查</option>
-        <option value="baidu">百度千帆</option><option value="metaso">秘塔</option><option value="custom">自定义</option></select>
-        <div class="hint" id="wsHint">Bing 免 Key；其余引擎填「引擎 Key」与「接口地址」（留空=官方默认；DeepSeek 另有模型、智谱另有 engine）。</div></div></div>
-      <div class="row"><label>结果数</label><div class="grow"><input type="number" min="1" max="20" data-cfg="web_search.max_results"></div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="desc">当前引擎参数（切换引擎自动带出对应小节，保存真实落盘 web_search.&lt;provider&gt;）：</div>
-      <div class="sub">② 引擎参数</div><div class="row"><label>引擎 Key</label><div class="grow"><input type="password" id="wsKey" placeholder="贴该引擎的 密钥" autocomplete="off"></div></div>
-      <div class="row"><label>接口地址</label><div class="grow"><input type="text" id="wsUrl" placeholder="留空=官方默认"></div></div>
-      <div class="row" data-ws="deepseek"><label>模型</label><div class="grow"><input type="text" id="wsModel" placeholder="deepseek-chat"></div></div>
-      <div class="row" data-ws="zhipu"><label>engine</label><div class="grow"><input type="text" id="wsEngine" placeholder="search_std"></div></div>
-      <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
-      <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
-    </section><section id="sec-community" class="card" data-sec>
+<section id="sec-emoji" class="card" data-sec><div class="sec-hd"><h2>表情</h2><span class="st" id="stEmojiIndex">读取中</span></div><div class="desc">自定义表情是图片，模型读不出含义 —— 这里把每张图翻成一句文字（说明 / 适用场面 / 情绪 / 把握），机器人挑表情时才有依据。</div><div class="sub">① 索引概况</div><div class="stat" id="emojiStats"><div class="s"><b id="eiTotal">0</b><span>索引总数</span></div><div class="s"><b id="eiDone">0</b><span>已标注</span></div><div class="s"><b id="eiTodo">0</b><span>待打标</span></div><div class="s"><b id="eiLow">0</b><span>把握不足</span></div><div class="s"><b id="eiAnim">0</b><span>动图</span></div><div class="s"><b id="eiStill">0</b><span>静态图</span></div><div class="s"><b id="eiTop">—</b><span>群友最常用</span></div></div><div class="row"><label>筛选</label><div class="grow"><input type="text" id="eiSearch" placeholder="按说明、场面或编号搜…"><label style="margin-left:12px"><input type="checkbox" id="eiPendingOnly">只看待打标</label><button id="eiRefresh" class="ghost">刷新</button><button id="eiRescan" class="ghost">重扫目录</button><span class="hint" id="eiNote"></span></div></div><div class="sub">② 清单</div><div id="emojiList" style="max-height:420px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px"></div><div class="sub">③ 回填语义（点上面任意一条开始改）</div><div class="mid"><div class="row"><label>说明</label><div class="grow"><input type="text" id="eiCap" placeholder="这张图画了什么、是什么梗"><span class="hint">模型只读这句文字，所以梗图必须把来源写进去</span></div></div><div class="row"><label>适用场面</label><div class="grow"><input type="text" id="eiSit" placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）"></div></div><div class="row"><label>情绪</label><div class="grow"><input type="text" id="eiMoods" placeholder="逗号分隔，如：嘲弄,无奈"></div></div><div class="row"><label>把握</label><div class="grow"><select id="eiConf"><option value="high">高（看图就能确定）</option><option value="low">低（疑似梗，需外部资料）</option></select><input type="text" id="eiMeme" placeholder="梗的出处（可留空）" style="margin-left:8px"></div></div><div class="btns"><button class="pri" id="eiSave">保存语义</button><span class="hint" id="eiWho"></span></div></div><div class="sub">④ 向群友请教</div><div class="row"><label>启用</label><div class="grow"><input type="checkbox" data-cfg="emoji.curiosity.enabled"><span class="hint">低把握的表情，机器人可以在群里问一句「这是什么梗」；群友答对了就记下来（默认关 —— 问多了像刷屏）</span></div></div><div class="row"><label>提问概率</label><div class="grow"><input type="number" min="0" max="1" step="0.05" data-cfg="emoji.curiosity.probability"><span class="hint">每次遇到合适机会，问的概率（0~1）</span></div></div><div class="row"><label>冷却(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.cooldown_s"><span class="hint">同一张表情多久内不再问（默认 21600 ＝ 6 小时）</span></div></div><div class="row"><label>应答窗口(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.answer_window_s"><span class="hint">超过这么久才回的不算回答（默认 120）</span></div></div><div class="row"><label>当前状态</label><div class="grow"><span class="hint" id="eiCurState">读取中…</span></div></div><div class="row"><label>最近学到</label><div class="grow"><span class="hint" id="eiCurLearned">—</span></div></div><div class="sub">⑤ Emoji 库</div><div class="row"><label>可用清单</label><div class="grow"><b id="ecStats">读取中</b><span class="hint">机器人回话时可以直接写这些方括号码，微信会把它变成表情 —— 这份清单与提示词里摆给模型看的那份同源</span></div></div><div class="row"><label>微信表情码</label><div class="grow"><span class="hint" id="ecWx">读取中…</span></div></div><div class="row"><label>情绪组</label><div class="grow"><span class="hint" id="ecMood">读取中…</span></div></div><div class="row"><label>提示词里摆给模型看</label><div class="grow"><input type="checkbox" data-cfg="emoji.prompt_codes"><span class="hint">关掉可省约 1 K 字符/轮；关掉之后模型可能改用「（微笑）」这种文字对付</span></div></div><div class="row"><label>允许 Unicode 表情</label><div class="grow"><input type="checkbox" data-cfg="emoji.allow_unicode"><span class="hint">开启时情绪组里会一并给出表情字符（笑脸那类）；关掉只给微信 [码]</span></div></div></section>
+<section id="sec-community" data-mg="sec-emoji" class="card" data-sec>
       <h2>社区与学习</h2>
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
       <div class="sub">① 资源市场</div>
@@ -1864,7 +1993,6 @@ th{color:var(--tx2);font-weight:500}
         <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
       </div>
     </section>
-<section id="sec-emoji" class="card" data-sec><div class="sec-hd"><h2>表情</h2><span class="st" id="stEmojiIndex">读取中</span></div><div class="desc">自定义表情是图片，模型读不出含义 —— 这里把每张图翻成一句文字（说明 / 适用场面 / 情绪 / 把握），机器人挑表情时才有依据。</div><div class="sub">① 索引概况</div><div class="stat" id="emojiStats"><div class="s"><b id="eiTotal">0</b><span>索引总数</span></div><div class="s"><b id="eiDone">0</b><span>已标注</span></div><div class="s"><b id="eiTodo">0</b><span>待打标</span></div><div class="s"><b id="eiLow">0</b><span>把握不足</span></div><div class="s"><b id="eiAnim">0</b><span>动图</span></div><div class="s"><b id="eiStill">0</b><span>静态图</span></div><div class="s"><b id="eiTop">—</b><span>群友最常用</span></div></div><div class="row"><label>筛选</label><div class="grow"><input type="text" id="eiSearch" placeholder="按说明、场面或编号搜…"><label style="margin-left:12px"><input type="checkbox" id="eiPendingOnly">只看待打标</label><button id="eiRefresh" class="ghost">刷新</button><button id="eiRescan" class="ghost">重扫目录</button><span class="hint" id="eiNote"></span></div></div><div class="sub">② 清单</div><div id="emojiList" style="max-height:420px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px"></div><div class="sub">③ 回填语义（点上面任意一条开始改）</div><div class="mid"><div class="row"><label>说明</label><div class="grow"><input type="text" id="eiCap" placeholder="这张图画了什么、是什么梗"><span class="hint">模型只读这句文字，所以梗图必须把来源写进去</span></div></div><div class="row"><label>适用场面</label><div class="grow"><input type="text" id="eiSit" placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）"></div></div><div class="row"><label>情绪</label><div class="grow"><input type="text" id="eiMoods" placeholder="逗号分隔，如：嘲弄,无奈"></div></div><div class="row"><label>把握</label><div class="grow"><select id="eiConf"><option value="high">高（看图就能确定）</option><option value="low">低（疑似梗，需外部资料）</option></select><input type="text" id="eiMeme" placeholder="梗的出处（可留空）" style="margin-left:8px"></div></div><div class="btns"><button class="pri" id="eiSave">保存语义</button><span class="hint" id="eiWho"></span></div></div><div class="sub">④ 向群友请教</div><div class="row"><label>启用</label><div class="grow"><input type="checkbox" data-cfg="emoji.curiosity.enabled"><span class="hint">低把握的表情，机器人可以在群里问一句「这是什么梗」；群友答对了就记下来（默认关 —— 问多了像刷屏）</span></div></div><div class="row"><label>提问概率</label><div class="grow"><input type="number" min="0" max="1" step="0.05" data-cfg="emoji.curiosity.probability"><span class="hint">每次遇到合适机会，问的概率（0~1）</span></div></div><div class="row"><label>冷却(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.cooldown_s"><span class="hint">同一张表情多久内不再问（默认 21600 ＝ 6 小时）</span></div></div><div class="row"><label>应答窗口(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.answer_window_s"><span class="hint">超过这么久才回的不算回答（默认 120）</span></div></div><div class="row"><label>当前状态</label><div class="grow"><span class="hint" id="eiCurState">读取中…</span></div></div><div class="row"><label>最近学到</label><div class="grow"><span class="hint" id="eiCurLearned">—</span></div></div><div class="sub">⑤ Emoji 库</div><div class="row"><label>可用清单</label><div class="grow"><b id="ecStats">读取中</b><span class="hint">机器人回话时可以直接写这些方括号码，微信会把它变成表情 —— 这份清单与提示词里摆给模型看的那份同源</span></div></div><div class="row"><label>微信表情码</label><div class="grow"><span class="hint" id="ecWx">读取中…</span></div></div><div class="row"><label>情绪组</label><div class="grow"><span class="hint" id="ecMood">读取中…</span></div></div><div class="row"><label>提示词里摆给模型看</label><div class="grow"><input type="checkbox" data-cfg="emoji.prompt_codes"><span class="hint">关掉可省约 1 K 字符/轮；关掉之后模型可能改用「（微笑）」这种文字对付</span></div></div><div class="row"><label>允许 Unicode 表情</label><div class="grow"><input type="checkbox" data-cfg="emoji.allow_unicode"><span class="hint">开启时情绪组里会一并给出表情字符（笑脸那类）；关掉只给微信 [码]</span></div></div></section>
 <section id="sec-media" class="card" data-sec>
       <div class="sec-hd"><h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2><span class="st" id="stMedia">读取中</span></div>
       <div class="desc">三项能力的状态都在这一屏：能用的显示**实测**结果，不能用的写清缺哪一环、怎么补。下面这些开关**默认都是关的**——开着才会真的动。</div>
@@ -2301,7 +2429,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div id="igOut" class="hint">点「试一次」会拿一句话跑完整条链（解析 → 挑后端 → 生成 → 过滤），并把每一步的结论原样贴出来；**不会发到任何会话**。</div>
     </section>
-<section id="sec-videogen" class="card" data-sec>
+<section id="sec-videogen" data-mg="sec-imggen" class="card" data-sec>
       <h2>AI 视频（几秒到几十秒的小视频）</h2>
       <div class="desc">群友说「给我做一个…的视频」时，机器人可以去做一条短小视频，做好**自动发出去**。**视频比图慢得多**（几十秒到几分钟），所以是"先回一句正在做、做好再发"，不会卡着聊天。**没配后端就如实说没配**，绝不假装做过。</div>
       <div class="sub">① 后端</div><div class="row"><label>总开关</label><input type="checkbox" data-cfg="video_gen.enabled">
@@ -2367,7 +2495,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。写好了拿不准通不通，就在那一行点「试一下」：填参数、真发一次请求、返回内容当场显示（也会记一次调用）。</div>
       <div id="utDropped" class="hint"></div>
     </section>
-<section id="sec-poke" class="card" data-sec>
+<section id="sec-poke" data-mg="sec-tools" class="card" data-sec>
       <h2>拍一拍（行为）</h2>
       <div class="desc">自动回拍 / 主动皮一下的频率与冷却。注意：拍一拍有误拍风险（同名/头像辨识不清），建议保持「简易检测」优先。</div>
       <div class="mid">
@@ -2413,7 +2541,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint" style="padding:10px;text-align:center">点「读取该会话存档」后，这里按条显示（#编号 发送者：内容），每行可单独屏蔽 / 解除 / 清除。</div>
       </div>
     </section>
-<section id="sec-feedback" class="card" data-sec>
+<section id="sec-feedback" data-mg="sec-sessions" class="card" data-sec>
       <h2>反馈</h2>
       <div class="desc">有什么想说的、想让它变成什么样的，写在这儿点提交就行。</div>
       <div class="desc" style="margin-top:-2px"><b>有问题一定要反馈 —— 每一次反馈都会让体验变得更好。</b>你遇到的那一下，往往就是它最该改的地方。
@@ -2515,74 +2643,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <pre class="out" id="log" style="height:380px">加载中…</pre>
     </section>
-<section id="sec-vermat" class="card" data-sec>
-      <h2>版本能力矩阵</h2>
-      <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
-      <div class="sub">① 版本与门</div><div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
-      <div class="row"><label>版本门</label><div class="grow">
-        <b id="vmGate">检测中…</b>
-        <div class="btns" style="margin-top:6px"><button id="vmAllow" class="ghost">本次允许发送</button></div>
-        <div class="hint">只对本次运行有效（重启后重新拦），我们不会把"放行"写进配置。</div>
-      </div></div>
-      <div id="vmList" class="hint"></div>
-      <div class="row"><label>不提示新版本</label><input type="checkbox" data-cfg="update.muted">
-        <span class="hint">默认关。勾上＝**不再提示有新版本**（检查照跑、只是不打扰你）。</span></div>
-      <div class="row"><label>跳过某个版本</label><div class="grow"><input type="text" data-cfg="update.skip_version" placeholder="比如 1.2.3">
-        <div class="hint">填一个版本号 ⇒ 那一版**不再提示**（你不想升的那一版）。留空＝不跳过。</div></div></div>
-      <div class="sub">② 后台能力</div><div class="row"><label>后台能力</label><div class="grow">
-        <b id="bgHead">检测中…</b>
-        <div id="bgList" class="hint"></div>
-        <div class="hint">这份表是<b>单一事实源</b>（agent/bg_status.py）：写"全程后台"的路径可以不动光标、不要求窗口可见（<b>可能短暂置前，随后自动还回</b>——实测：取 GUI / 朋友圈滚动 / 表情面板 <b>0 秒</b>、发文字约 1 秒、切会话 3~7 秒、<b>切会话失败重试可达约 15 秒</b>。<b>一定非得走前台</b>的只有三项：朋友圈点赞/评论/发朋友圈 · 转发视频文件那一下（系统选择文件框）· UI 标定与真鼠标兜底档（默认关））；写"真鼠标"的会动你的光标，勾上下面这个开关就让它们直接跳过并如实告诉你。</div>
-      </div></div>
-      <div class="row"><label>只走后台</label><input type="checkbox" data-cfg="wechat.background_only">
-        <span class="hint"><b>默认开</b>（老版本留下的配置会被一次性迁移成开）。开了之后：<b>朋友圈点赞·评论 / 发朋友圈 / UI 标定</b> 一律<b>跳过并说明原因</b>（这几条确实只能用真鼠标）；而 <b>拍一拍 / 引用</b> 已经改成<b>走投递</b>（不动光标（可能短暂置前（2026-09-18 本机实测：发文字约 1 秒｜切会话 3~7 秒｜切会话失败重试可达约 15 秒），随后自动还回）），<b>不再被这个开关拦住</b>。关掉它上面那三条才可用——但它们是<b>真实鼠标</b>（移动光标 + 发全局点击），点的是<b>光标所在的那个窗口</b>（可能是你正在用的程序，比如这个控制台），所以请在电脑前时再关。发送文字、图片、表情、切会话、刷朋友圈一直走后台投递。</span></div>
-      <div class="row"><label>恢复后补处理</label><input type="checkbox" data-cfg="wechat.replay_on_resume">
-        <span class="hint">机器人暂停时群里照常有人说话。<b>默认不补</b>：恢复后只从那一刻往后回，暂停期间那些当没看见。<b>勾上就补</b>：恢复后按消息顺序把暂停期间的积压一批批处理——<b>停得越久、恢复瞬间回复越密集</b>（可能连回几十条），想清楚再勾。</span></div>
-      <div class="row"><label>搜索失败时扫会话列表</label><input type="checkbox" data-cfg="wechat.scroll_list_fallback">
-        <span class="hint">**默认关**。切会话现在是「在搜索框里打名字 → 点结果行」；搜索没成时默认**停手并说明原因**。打开这个开关，它才会退回老路——在会话列表里找行、必要时滚轮往下翻（**滚轮不动你的光标，但会话列表会在你眼前滚动**，看着就像它在划你的列表）。想成功率优先、不介意列表动几下，就打开它。</span></div>
-      <div class="row"><label>发表情方式</label><select data-cfg="wechat.emoji_send_mode">
-        <option value="image">路线 A（默认）：当图片发 —— 全程后台</option>
-        <option value="real">路线 B：走微信表情面板 —— 前台会闪一下</option>
-        <option value="auto">自动：先试面板，不通再发图片</option>
-      </select>
-        <span class="hint"><b>路线 A（默认，推荐）</b>：把表情发出去（走剪贴板 + 输入框粘贴，
-        或直接用本地表情文件）。<b>全程后台</b>——不弹任何浮层，你按着微信、在用鼠标都不会被打断；
-        <b>会动的表情发出去还是动的</b>（动图自动走"当文件贴进输入框"那条，微信按动画表情收）；
-        只有静态图才当成图片发 —— 那种对方看到的是一张图，不是表情。<br>
-        <b>路线 B</b>：走微信<b>表情面板</b>，发出去的才是<b>真·表情包</b>（动图还是动图）。代价：
-        面板是浮层、<b>必须被激活才能渲染</b> ⇒ <b>那一下微信会被带到前台</b>（实测约 2~7 秒），
-        而且期间你一点别处、面板就被关掉。<br>
-        <b>自动</b>：先试 B、不通再退 A —— 会偶尔闪前台，在意打扰就别选它。<br>
-        <b>关于动图</b>：微信的表情很多是"会动的一小段"。<b>收藏时会把动图存成真的动图</b>放进收藏夹
-        （以前只存一张首帧图）；<b>发出去也是动的</b>——动图会自动走"当文件贴进输入框"那条，
-        微信按动画表情收（实测对方收到的就是会动的那个），静态图才当成图片发。</span></div>
-      <div class="row"><label>图标指纹</label><div class="grow">
-        <b id="ufpHead">检测中…</b>
-        <div class="btns" style="margin-top:6px">
-          <button id="ufpTake" class="ghost">重新取指纹</button>
-          <button id="ufpForget" class="ghost">丢掉旧指纹</button>
-        </div>
-        <div id="ufpList" class="hint"></div>
-        <div class="hint">点任何图标之前，程序会先比一次<b>图标指纹</b>（目标点周围 48×48 的 dHash，按「微信版本 × 渲染区尺寸 × 缩放」分开存）。指纹<b>明确对不上</b>就停手并告诉你原因——那说明这个位置现在不像原来那个图标（微信更新了 UI / 窗口改了尺寸），照着过期比例盲点只会点到别处。没有记录或窗口最小化抓不到图时放行但留痕（不把第一次用锁死）。</div>
-      </div></div>
-      <div class="sub">③ 版本变更待办</div><div class="row"><label>待拍板</label><div class="grow">
-        <b id="pdStat">检测中…</b>
-        <div class="btns" style="margin-top:6px"><button id="pdOpen" class="ghost">版本不匹配怎么办</button></div>
-        <div class="hint">不匹配时开一张单：一键升级适配层 · 更新本体依赖 · 本次运行继续发送 · 我去微信那边看看。× 等于什么都不做——单子留着、同一对版本不再追问，<b>不影响发送</b>。</div>
-      </div></div>
-      <div class="row"><label>最近表态</label><div class="grow"><b id="vmDec">暂无</b></div></div>
-      <div class="row"><label>一键修</label><div class="grow">
-        <b id="actStat">没有在跑的事</b>
-        <div class="btns" style="margin-top:6px">
-          <button id="actHeal" class="ghost">依赖自愈</button>
-          <button id="actUp" class="ghost">升级适配层</button>
-          <button id="actCancel" class="ghost" style="display:none">停下</button>
-        </div>
-        <div class="hint">两条都在后台跑，跑完这一行显示结果 · 都不动微信本体。跑到一半想停就按「停下」（<b>停下不是失败</b>，是第三档结果）。</div>
-        <div id="depHint" class="hint" style="margin-top:2px"></div>
-      </div></div>
-    </section>
-<section id="sec-server" class="card" data-sec>
+<section id="sec-server" data-mg="sec-log" class="card" data-sec>
       <h2>服务器</h2>
       <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。<br>要在<b>别的电脑</b>上用浏览器打开：① 先设一个「访问口令」；② 打开下面的「允许远程访问」；③ 监听地址填 <code>0.0.0.0</code>（或本机内网 IP），保存后重启控制台，再在对方浏览器里打开 <code>http://本机IP:端口/?token=口令</code>。链路是 HTTP 明文 ⇒ 只在可信内网用，或走 SSH 隧道转发。</div>
       <div class="sub">① 监听</div><div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
@@ -2782,7 +2843,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
     </section>
-<section id="sec-json" class="card" data-sec>
+<section id="sec-json" data-mg="sec-ui" class="card" data-sec>
       <h2>完整配置文件（高级）</h2>
       <div class="desc">全部配置的配置文件。只在面板里找不到对应开关时才动它，保存前先备份。</div>
       <textarea id="rawjson" spellcheck="false" style="width:100%;min-height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:10px;color:var(--tx)"></textarea>
@@ -2792,7 +2853,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint">保存后需重启才能完全生效的部分：模型/人设/白名单等；暂停恢复、测试 API 即时生效。可改可不改：一般用上面各分区即可。</div>
     </section>
-<section id="sec-cursor" class="card" data-sec>
+<section id="sec-cursor" data-mg="sec-ui" class="card" data-sec>
       <h2>光标设置</h2>
       <div class="desc">把鼠标指针换成鲸鱼（或你自己的图片），点击时向下点头；默认鲸鱼小蓝鲸（22）。</div>
       <div class="sub">① 开关与图</div><div class="row"><label>启用鲸鱼光标</label><input type="checkbox" data-cfg="ui.whale_cursor"></div>
@@ -2817,7 +2878,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">时长公式（dist=拖拽距离 px）：蠕动 260×dist/100×系数④（600~2400ms）；纸飞机 170×dist/100×系数+0.58s（变形/翻回）；扎入 90×dist/100×系数+0.78s（含 0.5s 消失+冒出）。可在控制台 Console 看每次返回的日志（如 [whale-return]）。</div>
       <div class="btns"><button class="pri" id="cursorSaveBtn">保存光标设置</button></div>
     </section>
-<section id="sec-wavefx" class="card" data-sec>
+<section id="sec-wavefx" data-mg="sec-ui" class="card" data-sec>
       <h2>水光波纹（鼠标投石入水）</h2>
       <div class="desc">鼠标像石子投入湖面：一道波纹从鼠标处肉眼可见地一波波荡开，扩散范围=光标所在的整个模块（顶栏/导航栏/功能卡），到模块边缘极强衰减、绝不越界；拖动越快荡得越快。所有参数即时生效。</div>
       <div class="sub">① 开关与强度</div><div class="row"><label>启用水光波纹</label><input type="checkbox" data-cfg="ui.wave_fx.enabled"><span class="hint">关闭后完全无扭曲</span></div>
@@ -7811,6 +7872,55 @@ $('memSearch').addEventListener('keydown', (e)=>{
     });
   }
   applyClosed();
+  /* ── 合并行（IA-4）：一行里收着 1~N 个功能项，点行头展开/收起 ──────────────
+     展开态存 localStorage（与分组折叠同一套手感）；**当前所在的那一行自动展开**，
+     否则用户跳进去之后看不见自己在哪一项。 */
+  try{
+    const MK = 'navMgOpen';
+    let mopen = [];
+    try{ mopen = JSON.parse(localStorage.getItem(MK) || '[]') || []; }catch(e){ mopen = []; }
+    if(!Array.isArray(mopen)) mopen = [];
+    const saveM = ()=>{ try{ localStorage.setItem(MK, JSON.stringify(mopen)); }catch(e){} };
+    const rows = Array.from(navEl.querySelectorAll('.nav-mg'));
+    function applyM(){
+      rows.forEach(r=>{
+        const k = r.getAttribute('data-mg-row') || '';
+        r.classList.toggle('open', mopen.indexOf(k) >= 0);
+        const hd = r.querySelector('.nav-mg-hd');
+        if(hd) hd.setAttribute('aria-expanded', mopen.indexOf(k) >= 0 ? 'true' : 'false');
+      });
+    }
+    applyM();
+    navEl.addEventListener('click', (e)=>{
+      const hd = e.target.closest ? e.target.closest('.nav-mg-hd') : null;
+      if(!hd) return;
+ // 收起态只剩图标：不展开二级（CSS 里二级本来就露着），保持"点了就跳"的直觉
+      if(sideEl && sideEl.classList.contains('tight')){
+        try{ window.dispatchEvent(new Event('resize')); }catch(err){}
+        return;
+      }
+      const r = hd.closest('.nav-mg');
+      if(!r) return;
+      const k = r.getAttribute('data-mg-row') || '';
+      const i = mopen.indexOf(k);
+      if(i >= 0) mopen.splice(i, 1); else mopen.push(k);
+      saveM(); applyM();
+      try{ window.dispatchEvent(new Event('resize')); }catch(err){}
+      const on = navEl.querySelector('a.on');
+      if(on) on.dispatchEvent(new Event('nav-recalc', {bubbles:true}));
+    });
+    /* 当前所在功能项若藏在收起的那一行里 ⇒ 自动展开它（不然高亮落在看不见的地方） */
+    window.__ia4RevealRow = function(sid){
+      try{
+        const a = navEl.querySelector('a[href="#' + sid + '"]');
+        const r = a && a.closest ? a.closest('.nav-mg') : null;
+        if(!r) return;
+        const k = r.getAttribute('data-mg-row') || '';
+        if(mopen.indexOf(k) < 0){ mopen.push(k); saveM(); applyM();
+          window.dispatchEvent(new Event('resize')); }
+      }catch(e){}
+    };
+  }catch(e){ /* 合并行是增强项：失败也不拖累导航其余部分 */ }
   navEl.addEventListener('click', (e)=>{
     const hd = e.target.closest ? e.target.closest('.nav-grp-hd') : null;
     if(!hd) return;
@@ -7963,6 +8073,11 @@ $('memSearch').addEventListener('keydown', (e)=>{
         if(i >= 0){ closed.splice(i,1); saveClosed(); }
         g2.classList.remove('collapsed');
       }
+ // 命中的功能项藏在收起的**合并行**里 ⇒ 同样先展开（IA-4），否则跳过去左栏看不见它
+      try{
+        const r2 = navA && navA.closest ? navA.closest('.nav-mg') : null;
+        if(r2 && !r2.classList.contains('open') && window.__ia4RevealRow) window.__ia4RevealRow(secId);
+      }catch(e){}
       res.classList.remove('open');
       box.value = '';
     });
@@ -8067,6 +8182,14 @@ $('memSearch').addEventListener('keydown', (e)=>{
       if(want !== top) navEl.scrollTo({top: Math.max(0, want), behavior: 'smooth'});
     }catch(e){}
   }
+  /* 归属映射（IA-4）：`data-mg="sec-主项"` 写在**被并入**的 section 上 ⇒ 它自己
+     **没有**独立的导航链接，滚动到它时要把高亮落到**主项**那一行上，
+     否则"滚到版本页、左栏一个都不亮"。映射从 DOM 现读，不另抄一张表。 */
+  function ownerOf(sid){
+    const el = document.getElementById(sid);
+    const mg = el && el.getAttribute ? (el.getAttribute('data-mg') || '') : '';
+    return mg || sid;
+  }
   function currentSection(){
     const secs = Array.from(document.querySelectorAll('section[data-sec]'));
     const y = window.scrollY + 90;
@@ -8076,8 +8199,13 @@ $('memSearch').addEventListener('keydown', (e)=>{
   }
   function sync(){
     const cur = currentSection();
-    const a = links.find(x => x.getAttribute('href') === '#'+cur.id);
-    if(a){ links.forEach(x=>x.classList.toggle('on', x===a)); moveInd(a); revealInd(a); }
+    const own = ownerOf(cur.id);
+    const a = links.find(x => x.getAttribute('href') === '#'+own);
+    if(a){
+      links.forEach(x=>x.classList.toggle('on', x===a));
+      if(a.classList.contains('nav-mg-hd') && window.__ia4RevealRow) window.__ia4RevealRow('#'+own);
+      moveInd(a); revealInd(a);
+    }
   }
   window.addEventListener('scroll', ()=>requestAnimationFrame(sync), {passive:true});
   window.addEventListener('resize', ()=>requestAnimationFrame(sync));
@@ -8111,7 +8239,9 @@ $('memSearch').addEventListener('keydown', (e)=>{
     secOrder.forEach(s=>{
       const h = s.querySelector('h2');
       secTitle[s.id] = ((h ? h.textContent : '') || '').trim();
-      // 用导航里那个 icon（自绘 SVG）与名字，跟其余分组长一个样
+      // 用导航里那个 icon（自绘 SVG）与名字，跟其余分组长一个样。
+      // ⚠️ IA-4 之后：被并入的 section 自己的链接是**二级项**（`.nav-mg-it`），
+      //   它一样带 `href="#sec-…"` ⇒ 这里的 `links.find` 照样找得到，不用改。
       const a = links.find(x => x.getAttribute('href') === '#' + s.id);
       if(a) secTitle[s.id + '_a'] = a;
     });

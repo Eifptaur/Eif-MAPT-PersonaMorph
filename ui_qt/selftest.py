@@ -54,27 +54,48 @@ def t_syntax() -> None:
 
 # ---------------------------------------------------------------- 2. 导航结构与 web 侧同构
 
-def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str]]]]:
+def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str, list[str]]]]]:
     """运行时解析控制台页面的 <nav id=nav>，拿到导航真值。
 
     这是「与 web 侧一致」的唯一权威来源。旧版判据把组名手抄在 selftest 里
     （want_groups = ["天天用", ...]），原型自己编一套比喻命名也能绿 —— 假对齐。
-    组名/组序/项名/项序/sec 锚点全部以 web 源码为准全等比对。
+    组名/组序/行名/行序/主项 sec/**成员 sec** 全部以 web 源码为准全等比对。
+
+    IA-4 之后结构变两层：一行可能是**合并行**（`.nav-mg-hd` 行头 + 若干 `.nav-mg-it` 成员）。
+    返回值：`[(组名, 组 key, [(行名, 主项 sec, [成员 sec…]), …]), …]`。
+    ⚠️ 三种 `<a>` 靠 **class 属性**区分（`.nav-mg-hd` / `.nav-mg-it` / 无）——
+       不能用"可选组"匹配：二级项与单项都落成空串，分不开（web 侧判据实测踩过）。
     """
     web_path = WEB_PAGE
     text = web_path.read_text(encoding="utf-8")
     m = re.search(r'<nav class="nav" id="nav">(.*?)</nav>', text, re.S)
     if m is None:
         raise AssertionError("页面里找不到 <nav id=nav> —— 解析器要跟版式走")
-    out: list[tuple[str, str, list[tuple[str, str]]]] = []
+    out: list[tuple[str, str, list[tuple[str, str, list[str]]]]] = []
     for chunk in re.split(r'<div class="nav-grp" data-grp="', m.group(1))[1:]:
         key = re.match(r'(\w+)"', chunk).group(1)
         gt = re.search(r'<span class="gt">([^<]+)</span>', chunk)
-        pairs = re.findall(
-            r'href="#sec-([\w-]+)".*?<span class="lb">([^<]+)</span>', chunk, re.S)
-        if gt is None or not pairs:
-            raise AssertionError(f"分组 {key} 解析不出组名或项 —— 版式变了要跟改")
-        out.append((gt.group(1), key, pairs))
+        # 按出现顺序取 (sec, class)；再按 class 组装成行
+        flat = re.findall(
+            r'<a href="#sec-([\w-]+)"(?:\s+class="([a-z-]*)")?[^>]*>'
+            r'.*?<span class="lb">([^<]+)</span>', chunk, re.S)
+        rows: list[tuple[str, str, list[str]]] = []
+        i = 0
+        while i < len(flat):
+            sec0, cls0, lb0 = flat[i]
+            if cls0 == "nav-mg-hd":
+                mem = []
+                i += 1
+                while i < len(flat) and flat[i][1] == "nav-mg-it":
+                    mem.append(flat[i][0])
+                    i += 1
+                rows.append((lb0, sec0, mem))
+            else:
+                rows.append((lb0, sec0, []))
+                i += 1
+        if gt is None or not rows:
+            raise AssertionError(f"分组 {key} 解析不出组名或行 —— 版式变了要跟改")
+        out.append((gt.group(1), key, rows))
     return out
 
 
@@ -85,27 +106,36 @@ def t_nav() -> None:
     wid = (HERE / "widgets.py").read_text(encoding="utf-8")
 
     flat = [e[0] for _t, _k, es in NAV for e in es]
-    ck("导航项数 = 28", len(flat) == 28, f"实际 {len(flat)}")
+    # IA-4 之后左栏是 **17 行**（9 行合并 + 8 行单项），成员收在二级、默认收起。
+    # ⛔ 别把这条写成"28 项"：那会逼着后人把合并拆掉。
+    ck("导航可见行数 = 17（IA-4 归并后）", len(flat) == 17, f"实际 {len(flat)}")
+    # 链接总数仍是 28 —— 成员只是显示上收进二级，**入口一条都没删**
+    # （web `ui_arch_selftest`：导航链接序列必须与 <section> 序列逐位相同）。
+    n_links = len(flat) + sum(len(e[3]) for _t, _k, es in NAV for e in es)
+    ck("导航入口总数 = 28（成员的入口一个都没删）", n_links == 28, f"实际 {n_links}")
 
     # ★ 真对齐：以 web 源码解析结果为唯一真值，全等比对。
     web = _nav_truth_from_web()
-    mine = [(t, k, [e[0] for e in es], [e[2] for e in es]) for t, k, es in NAV]
-    theirs = [(t, k, [lb for _s, lb in es], [s for s, _lb in es]) for t, k, es in web]
-    ck("web 侧解析出 5 组 28 项（解析器没跟丢）",
-       len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 28,
-       f"组 {len(theirs)} / 项 {sum(len(t[2]) for t in theirs)}")
+    mine = [(t, k, [(e[0], e[2], list(e[3])) for e in es]) for t, k, es in NAV]
+    theirs = web
+    ck("web 侧解析出 5 组 17 行（解析器没跟丢）",
+       len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 17,
+       f"组 {len(theirs)} / 行 {sum(len(t[2]) for t in theirs)}")
     ck("组名与 web 侧逐字一致（顺序含内）",
        [m[0] for m in mine] == [t[0] for t in theirs],
        " > ".join(m[0] for m in mine))
     ck("组 key 与 web 侧 data-grp 一致",
        [m[1] for m in mine] == [t[1] for t in theirs],
        ",".join(m[1] for m in mine))
-    bad_items = [(m[0], m[2], t[2]) for m, t in zip(mine, theirs) if m[2] != t[2]]
-    ck("项名与项序与 web 侧逐字一致", not bad_items,
-       "; ".join(f"{b[0]}: {b[1]} ≠ {b[2]}" for b in bad_items))
-    bad_secs = [(m[0], m[3], t[3]) for m, t in zip(mine, theirs) if m[3] != t[3]]
-    ck("sec 锚点与 web 侧一致", not bad_secs,
-       "; ".join(f"{b[0]}: {b[1]} ≠ {b[2]}" for b in bad_secs))
+    # 逐行全等：行名 / 主项 sec / 成员 sec（顺序含内）
+    bad_rows = [(m[0], m[2], t[2]) for m, t in zip(mine, theirs) if m[2] != t[2]]
+    ck("行名、主项与成员与 web 侧逐项一致（含成员顺序）", not bad_rows,
+       "; ".join(f"{b[0]}: {b[1]} ≠ {b[2]}" for b in bad_rows))
+    # 合并行必须是 9 行、成员必须正好 11 个（web `.nav-mg-hd` / `.nav-mg-it` 的数）
+    n_mg = sum(1 for _t, _k, es in NAV for e in es if e[3])
+    n_mem = sum(len(e[3]) for _t, _k, es in NAV for e in es)
+    ck("合并行 = 9 行、被并入项 = 11 个（与 web 逐数一致）",
+       n_mg == 9 and n_mem == 11, f"{n_mg} 行 / {n_mem} 项")
 
     # 「机器人」必须排在第 3 位 —— web 侧 ui_arch_selftest 有同一条硬断言
     ck("「机器人」排在第 3 位（同 ui_arch 硬断言）", flat.index("机器人") + 1 == 3,
@@ -116,16 +146,35 @@ def t_nav() -> None:
     missing = [e[0] for _t, _k, es in NAV for e in es if len(e) < 3 or not e[1].strip()]
     ck("每个导航项都带一句话说明", not missing, ",".join(missing))
 
+    # 二级项的显示名必须与 web 二级项逐字一致，且能用 `_member_label` 取到
+    # （取错了 ⇒ 用户按旧名字找不着）
+    try:
+        from shell import _member_label # noqa: PLC0415
+
+        bad_lb = []
+        for m2, t2 in zip(mine, theirs):
+            for row_m, row_t in zip(m2[2], t2[2]):
+                mem_m, mem_t = row_m[2], row_t[2]
+                got = [_member_label(s) for s in mem_m]
+                if got != mem_t:
+                    bad_lb.append(f"{row_m[0]}: {got} ≠ {mem_t}")
+        ck("二级项显示名与 web 一致（_member_label 没取错）", not bad_lb, "; ".join(bad_lb))
+    except ImportError:
+        ck("shell 暴露 _member_label（Qt 侧二级项的名字来源）", False, "import 失败")
+
     # 无 emoji（红线）
     emo = re.compile("[\\U0001F000-\\U0001FAFF\\u2600-\\u27BF\\u2B00-\\u2BFF\\uFE0F]")
-    hits = [w for w in flat if emo.search(w)] + [
+    all_names = flat + [m for _t, _k, es in NAV for e in es for m in e[3]]
+    hits = [w for w in all_names if emo.search(w)] + [
         t for t, _k, _e in NAV if emo.search(t)
     ]
     ck("导航文案无 emoji（红线）", not hits, ",".join(hits))
 
     # 名字 ≤5 字（对齐 web 侧 nav_ui_selftest）
-    long_names = [w for w in flat if len(w) > 5]
-    ck("导航名 ≤5 字", not long_names, ",".join(long_names))
+    # ⚠️ 只判**可见行**：二级项沿用它们当独立项时的旧名（如「配置格式」4 字），
+    #    也都 ≤5；但 web 侧那条判据判的是全部 `<a>`，这里跟着判全部更严，不放松。
+    long_names = [w for w in all_names if len(w) > 5]
+    ck("导航名 ≤5 字（含二级项）", not long_names, ",".join(long_names))
 
     # 分组键唯一
     keys = [k for _t, k, _e in NAV]
@@ -141,8 +190,10 @@ def t_nav() -> None:
 
     # ★ 导航图标
     #   判据一：icons.INNER 覆盖全部 28 个 sec 锚点（与 web 同一份 path 数据）
+    #   28 ＝ 17 可见行的主项 + 11 个被并进合并行的成员（成员不在行上，但一样要图标）
     ico_src = (HERE / "icons.py").read_text(encoding="utf-8")
     secs = [e[2] for _t, _k, es in NAV for e in es]
+    secs += [m for _t, _k, es in NAV for e in es for m in e[3]]
     missing_ico = [s for s in secs if f'"{s}"' not in ico_src]
     ck("28 个导航图标与 sec 锚点一一对应（icons.py）", not missing_ico, ",".join(missing_ico))
     #   判据二：NavItem 真的把图标接上了（有 icon_key 参数 + 渲染调用），组头有 chevron
@@ -409,7 +460,9 @@ def t_panels() -> None:
     QApplication.instance() or QApplication([])
 
     # ① 面板↔导航一一对应：BATCH_SECS + 机器人主面板 = 全部 28 项导航
-    nav_secs = {s for _t, _k, es in NAV for _l, _h, s in es}
+    #   导航侧要同时收主项与成员：NAV 是 17 行（9 行带成员），成员 sec 也各占一个面板
+    nav_secs = {s for _t, _k, es in NAV for _l, _h, s, _m in es}
+    nav_secs |= {m for _t, _k, es in NAV for _l, _h, _s, ms in es for m in ms}
     ck("新面板清单与全部导航一一对应（机器人=主面板，共 27+1）",
        nav_secs == set(BATCH_SECS) | {"bot"},
        f"导航有而面板无: {sorted(nav_secs - set(BATCH_SECS) - {'bot'})} / "

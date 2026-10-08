@@ -943,6 +943,96 @@ class NavGroup(QWidget):
         self.toggled.emit(self.collapsed)
 
 
+class NavMgRow(QWidget):
+    """**合并行**（IA-4）—— 一行里收着 1~N 个功能项，成员收在二级、默认收起。
+
+    对应 web 的 `.nav-mg`（`.nav-mg-hd` 行头 + `.nav-mg-bd` 二级体）。
+    为什么是"收"而不是"删"：web 侧 `ui_arch_selftest` 有一条用户投诉驱动的硬判据 ——
+    导航链接的出现序列必须与 `<section>` 的出现序列逐位相同（"划着划着导航乱跳"那条）。
+    Qt 侧同理（`ui_qt/selftest.py` 与 web 全等比对）⇒ **成员的入口一个都不能删**，
+    只是默认收起来。用户看到的是 **17 行**，展开才见全部 28 项。
+
+    `.mg-n` 那枚 "+N" 是必要的：收起来的项若没有任何痕迹，等于消失。
+    """
+
+    toggled = Signal(bool)
+
+    def __init__(self, t: Tokens, head: "NavItem", n_members: int,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self.t = t
+        self.expanded = False
+        self.member_secs: list[str] = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        self.head = head
+        # 「+N」挂到行头右侧：它是"这一行还藏着几个"的唯一提示。
+        self.badge = QLabel("+%d" % n_members, head)
+        self.badge.setFont(qfont(t, max(8.5, t.grp_size - 1.5), 700))
+        self.badge.setStyleSheet(
+            f"color:{t.tx3};background:transparent;padding:0 4px;")
+        # 行头是 QPushButton（自带布局不可用）⇒ 靠 resizeEvent 把它贴到右缘。
+        self.head.installEventFilter(self)
+        self.badge.show()
+        root.addWidget(head)
+
+        self.body = QWidget()
+        self.bl = QVBoxLayout(self.body)
+        self.bl.setContentsMargins(0, 0, 0, 2)
+        self.bl.setSpacing(1)
+        self.body.setVisible(False)          # 默认收起（对齐 web `.nav-mg-bd{display:none}`）
+        root.addWidget(self.body)
+
+        # 行头点击 = 切换展开（**同时保留它自己跳转**：行头本身就是主项的入口，
+        # 所以这里只在"点在 +N 上"时切换 —— 否则用户点行头想跳转却被展开挡了）。
+        head.clicked.connect(self._on_head_clicked)
+        self._tight = False
+
+    def eventFilter(self, obj, ev): # noqa: N802
+        if obj is self.head and ev.type() == ev.Type.Resize:
+            self.badge.move(max(0, self.head.width() - self.badge.width() - 26),
+                            max(0, (self.head.height() - self.badge.height()) // 2))
+        return super().eventFilter(obj, ev)
+
+    def _on_head_clicked(self) -> None:
+        """点行头：**主项跳转照旧**，只在窄栏之外顺便展开这一行。
+
+        为什么顺手展开：用户点一个大项多半就是想用里面的东西 ——
+        收起态下二级看不见，"我点了它怎么没反应"比"多点一下"更糟。
+        再点一次可以收起（`toggle()`/`set_expanded()` 都走这里之外的口子）。
+        """
+        if not self.expanded:
+            self.set_expanded(True)
+
+    def add(self, w: "NavItem") -> None:
+        self.bl.addWidget(w)
+        self.member_secs.append(getattr(w, "icon_key", ""))
+
+    def set_expanded(self, on: bool) -> None:
+        if on == self.expanded:
+            return
+        self.expanded = on
+        self.body.setVisible(on)
+        self.badge.setText(("▾ " if on else "▸ ") + self.badge.text().lstrip("▾▸ "))
+        self.toggled.emit(on)
+
+    def toggle(self) -> None:
+        self.set_expanded(not self.expanded)
+
+    def set_tight(self, tight: bool) -> None:
+        """窄栏只剩图标 ⇒ 二级项也得露出来（对齐 web `.side.tight .nav-mg-bd{display:block}`），
+        否则窄栏里那些功能项点不到；那枚 "+N" 在窄栏里没有位置，藏掉。"""
+        self._tight = tight
+        self.badge.setVisible(not tight and self.member_secs != [])
+        if tight:
+            self.body.setVisible(True)
+        else:
+            self.body.setVisible(self.expanded)
+
+
 class NavItem(QPushButton):
     """导航项 —— 支持图标 + "当前选中"高亮（左侧 2px 指示条，对齐 web 侧 `.nav a.on`）。
 
@@ -965,6 +1055,7 @@ class NavItem(QPushButton):
         self.active = False
         self._hover = False
         self._tight = False # E：窄栏纯图标态
+        self._indent = False # 二级项（合并行里的成员）标记，见 set_indent
         self._label = text # 收起清文字前的原文（还原用）
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setCheckable(False)
@@ -1008,6 +1099,19 @@ class NavItem(QPushButton):
         if self.icon_key:
             self.setIcon(_icons.nav_icon(self.icon_key, self._icon_color(), 16))
 
+    def set_indent(self, on: bool = True) -> None:
+        """标记成**二级项**（合并行里的成员）：行高矮一档、左边留出缩进，
+        并在左缘画一道短竖线（web `.nav-mg-it::before` 的等价物）——
+        一眼能看出"这些是上面那一行里的，不是同级的大项"。
+
+        只改**外观**，不动入口本身：sec 仍是自己的，点击仍走自己的 `_go`。
+        """
+        self._indent = bool(on)
+        if on:
+            self.setFixedHeight(28)
+            self.setContentsMargins(30, 0, 8, 0)
+            self.update()
+
     def set_tight(self, tight: bool) -> None:
         """窄栏缩略——
         清文字只留图标，图标放大一档 16→20，行距加高；展开时全部还原。
@@ -1020,7 +1124,7 @@ class NavItem(QPushButton):
         elif not tight and self._tight:
             self.setText(getattr(self, "_label", "") or self.text())
             self.setIconSize(QSize(16, 16))
-            self.setFixedHeight(30)
+            self.setFixedHeight(28 if getattr(self, "_indent", False) else 30)
         self._tight = tight
 
     def _lift(self, blur: float) -> None:
@@ -1061,6 +1165,16 @@ class NavItem(QPushButton):
            的一段短条，圆头、上下都收口。
         """
         super().paintEvent(ev)
+        # 二级项（合并行里的成员）：左缘一道短竖线（web `.nav-mg-it::before` 的等价物）。
+        # 画在**选中条之外**的左侧，两者不重叠 —— 一个在 x=0（选中）、一个在 x≈17（归属）。
+        if getattr(self, "_indent", False) and not self._tight:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(self.t.bd if hasattr(self.t, "bd") else self.t.tx3))
+            p.setOpacity(0.5)
+            p.drawRoundedRect(QRectF(17, (self.height() - 14) / 2.0, 1.5, 14), 0.75, 0.75)
+            p.setOpacity(1.0)
         if not self.active:
             return
         p = QPainter(self)
