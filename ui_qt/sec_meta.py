@@ -510,7 +510,13 @@ def secs() -> dict[str, Sec]:
     if _CACHE:
         return _CACHE
     text = WEB_PATH.read_text(encoding="utf-8")
-    for m in re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec>(.*?)</section>', text, re.S):
+    # ⚠️ `[^>]*` 收在 `>` 之前：section 上除了 `class="card" data-sec` 还可能挂别的属性
+    #   （IA-4 的 `data-mg="sec-主项"` 归属标记就挂在被并入的 11 块上）。
+    #   旧写法把 `data-sec>` 写死相邻，多一个属性就整块漏读 —— 表现为 secs() 只出来 17 个，
+    #   面板构建时 KeyError。判"是不是 section"看的是这三个前缀属性，不是"后面紧接 >"。
+    for m in re.finditer(
+        r'<section id="sec-([\w-]+)" class="card" data-sec[^>]*>(.*?)</section>', text, re.S
+    ):
         key, body = m.group(1), _strip_scripts(m.group(2))
         hd = re.search(r'<div class="sec-hd"><h2>([^<]+)</h2>', body) or re.search(r"<h2>([^<]+)</h2>", body)
         dsc = re.search(r'<div class="desc">(.{0,400}?)</div>', body, re.S)

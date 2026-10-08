@@ -1646,7 +1646,7 @@ th{color:var(--tx2);font-weight:500}
       </table>
       <div class="btns" style="margin-top:8px"><button id="ckReset" class="ghost">重置勾选</button><span class="hint" id="ckCount" style="align-self:center"></span></div>
     </section>
-<section id="sec-vermat" data-mg="sec-check" class="card" data-sec>
+<section id="sec-vermat" class="card" data-sec data-mg="sec-check">
       <h2>版本能力矩阵</h2>
       <div class="desc">当前「微信版本 × 适配层版本」下每个能力的实测状态。**没有实测记录的版本对按未知处理，但默认照常发送**（只在这里标出来提醒你）；想改成「没实测就停手」可在配置里开 <code>version_gate.strict</code>，开了之后才需要点「本次允许发送」临时放行。</div>
       <div class="sub">① 版本与门</div><div class="row"><label>当前版本对</label><div class="grow"><b id="vmVer">检测中…</b></div></div>
@@ -1853,7 +1853,7 @@ th{color:var(--tx2);font-weight:500}
       </div></div>
       <div class="btns"><button class="pri" data-save>保存设置（模型 API）</button></div>
     </section>
-<section id="sec-search" data-mg="sec-model" class="card" data-sec>
+<section id="sec-search" class="card" data-sec data-mg="sec-model">
       <div class="sec-hd"><h2>联网搜索</h2><span class="st" id="stSearch">读取中</span></div>
       <div class="sub">① 引擎</div><div class="row"><label>启用</label><input type="checkbox" data-cfg="web_search.enabled"></div>
       <div class="row"><label>引擎</label><div class="grow"><select data-cfg="web_search.provider" id="wsProvider">
@@ -1904,7 +1904,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint" id="memAudit"></div>
       <div class="hint" id="memEmpty">（无记忆数据）</div>
     </section>
-<section id="sec-memory-set" data-mg="sec-memory" class="card" data-sec>
+<section id="sec-memory-set" class="card" data-sec data-mg="sec-memory">
       <h2>记忆（共享设置）</h2>
       <div class="desc">记忆怎么存、怎么共享、什么时候整理；每个群的记忆默认互相隔离，只有你点头的群之间才共享。</div>
       <div class="sub">① 开关与共享</div><div class="row"><label>自动整理</label><input type="checkbox" data-cfg="memory.consolidate_enabled"></div>
@@ -1924,7 +1924,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
     </section>
 <section id="sec-emoji" class="card" data-sec><div class="sec-hd"><h2>表情</h2><span class="st" id="stEmojiIndex">读取中</span></div><div class="desc">自定义表情是图片，模型读不出含义 —— 这里把每张图翻成一句文字（说明 / 适用场面 / 情绪 / 把握），机器人挑表情时才有依据。</div><div class="sub">① 索引概况</div><div class="stat" id="emojiStats"><div class="s"><b id="eiTotal">0</b><span>索引总数</span></div><div class="s"><b id="eiDone">0</b><span>已标注</span></div><div class="s"><b id="eiTodo">0</b><span>待打标</span></div><div class="s"><b id="eiLow">0</b><span>把握不足</span></div><div class="s"><b id="eiAnim">0</b><span>动图</span></div><div class="s"><b id="eiStill">0</b><span>静态图</span></div><div class="s"><b id="eiTop">—</b><span>群友最常用</span></div></div><div class="row"><label>筛选</label><div class="grow"><input type="text" id="eiSearch" placeholder="按说明、场面或编号搜…"><label style="margin-left:12px"><input type="checkbox" id="eiPendingOnly">只看待打标</label><button id="eiRefresh" class="ghost">刷新</button><button id="eiRescan" class="ghost">重扫目录</button><span class="hint" id="eiNote"></span></div></div><div class="sub">② 清单</div><div id="emojiList" style="max-height:420px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px"></div><div class="sub">③ 回填语义（点上面任意一条开始改）</div><div class="mid"><div class="row"><label>说明</label><div class="grow"><input type="text" id="eiCap" placeholder="这张图画了什么、是什么梗"><span class="hint">模型只读这句文字，所以梗图必须把来源写进去</span></div></div><div class="row"><label>适用场面</label><div class="grow"><input type="text" id="eiSit" placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）"></div></div><div class="row"><label>情绪</label><div class="grow"><input type="text" id="eiMoods" placeholder="逗号分隔，如：嘲弄,无奈"></div></div><div class="row"><label>把握</label><div class="grow"><select id="eiConf"><option value="high">高（看图就能确定）</option><option value="low">低（疑似梗，需外部资料）</option></select><input type="text" id="eiMeme" placeholder="梗的出处（可留空）" style="margin-left:8px"></div></div><div class="btns"><button class="pri" id="eiSave">保存语义</button><span class="hint" id="eiWho"></span></div></div><div class="sub">④ 向群友请教</div><div class="row"><label>启用</label><div class="grow"><input type="checkbox" data-cfg="emoji.curiosity.enabled"><span class="hint">低把握的表情，机器人可以在群里问一句「这是什么梗」；群友答对了就记下来（默认关 —— 问多了像刷屏）</span></div></div><div class="row"><label>提问概率</label><div class="grow"><input type="number" min="0" max="1" step="0.05" data-cfg="emoji.curiosity.probability"><span class="hint">每次遇到合适机会，问的概率（0~1）</span></div></div><div class="row"><label>冷却(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.cooldown_s"><span class="hint">同一张表情多久内不再问（默认 21600 ＝ 6 小时）</span></div></div><div class="row"><label>应答窗口(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.answer_window_s"><span class="hint">超过这么久才回的不算回答（默认 120）</span></div></div><div class="row"><label>当前状态</label><div class="grow"><span class="hint" id="eiCurState">读取中…</span></div></div><div class="row"><label>最近学到</label><div class="grow"><span class="hint" id="eiCurLearned">—</span></div></div><div class="sub">⑤ Emoji 库</div><div class="row"><label>可用清单</label><div class="grow"><b id="ecStats">读取中</b><span class="hint">机器人回话时可以直接写这些方括号码，微信会把它变成表情 —— 这份清单与提示词里摆给模型看的那份同源</span></div></div><div class="row"><label>微信表情码</label><div class="grow"><span class="hint" id="ecWx">读取中…</span></div></div><div class="row"><label>情绪组</label><div class="grow"><span class="hint" id="ecMood">读取中…</span></div></div><div class="row"><label>提示词里摆给模型看</label><div class="grow"><input type="checkbox" data-cfg="emoji.prompt_codes"><span class="hint">关掉可省约 1 K 字符/轮；关掉之后模型可能改用「（微笑）」这种文字对付</span></div></div><div class="row"><label>允许 Unicode 表情</label><div class="grow"><input type="checkbox" data-cfg="emoji.allow_unicode"><span class="hint">开启时情绪组里会一并给出表情字符（笑脸那类）；关掉只给微信 [码]</span></div></div></section>
-<section id="sec-community" data-mg="sec-emoji" class="card" data-sec>
+<section id="sec-community" class="card" data-sec data-mg="sec-emoji">
       <h2>社区与学习</h2>
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
       <div class="sub">① 资源市场</div>
@@ -2429,7 +2429,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div id="igOut" class="hint">点「试一次」会拿一句话跑完整条链（解析 → 挑后端 → 生成 → 过滤），并把每一步的结论原样贴出来；**不会发到任何会话**。</div>
     </section>
-<section id="sec-videogen" data-mg="sec-imggen" class="card" data-sec>
+<section id="sec-videogen" class="card" data-sec data-mg="sec-imggen">
       <h2>AI 视频（几秒到几十秒的小视频）</h2>
       <div class="desc">群友说「给我做一个…的视频」时，机器人可以去做一条短小视频，做好**自动发出去**。**视频比图慢得多**（几十秒到几分钟），所以是"先回一句正在做、做好再发"，不会卡着聊天。**没配后端就如实说没配**，绝不假装做过。</div>
       <div class="sub">① 后端</div><div class="row"><label>总开关</label><input type="checkbox" data-cfg="video_gen.enabled">
@@ -2495,7 +2495,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">调用次数来自唯一分发点的统计（内置与自定义工具都算）——一眼能看出哪些工具只是摆设。写好了拿不准通不通，就在那一行点「试一下」：填参数、真发一次请求、返回内容当场显示（也会记一次调用）。</div>
       <div id="utDropped" class="hint"></div>
     </section>
-<section id="sec-poke" data-mg="sec-tools" class="card" data-sec>
+<section id="sec-poke" class="card" data-sec data-mg="sec-tools">
       <h2>拍一拍（行为）</h2>
       <div class="desc">自动回拍 / 主动皮一下的频率与冷却。注意：拍一拍有误拍风险（同名/头像辨识不清），建议保持「简易检测」优先。</div>
       <div class="mid">
@@ -2541,7 +2541,7 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint" style="padding:10px;text-align:center">点「读取该会话存档」后，这里按条显示（#编号 发送者：内容），每行可单独屏蔽 / 解除 / 清除。</div>
       </div>
     </section>
-<section id="sec-feedback" data-mg="sec-sessions" class="card" data-sec>
+<section id="sec-feedback" class="card" data-sec data-mg="sec-sessions">
       <h2>反馈</h2>
       <div class="desc">有什么想说的、想让它变成什么样的，写在这儿点提交就行。</div>
       <div class="desc" style="margin-top:-2px"><b>有问题一定要反馈 —— 每一次反馈都会让体验变得更好。</b>你遇到的那一下，往往就是它最该改的地方。
@@ -2643,7 +2643,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <pre class="out" id="log" style="height:380px">加载中…</pre>
     </section>
-<section id="sec-server" data-mg="sec-log" class="card" data-sec>
+<section id="sec-server" class="card" data-sec data-mg="sec-log">
       <h2>服务器</h2>
       <div class="desc">控制台的监听地址与访问口令。默认只听本机；改完要重启控制台才生效。<br>要在<b>别的电脑</b>上用浏览器打开：① 先设一个「访问口令」；② 打开下面的「允许远程访问」；③ 监听地址填 <code>0.0.0.0</code>（或本机内网 IP），保存后重启控制台，再在对方浏览器里打开 <code>http://本机IP:端口/?token=口令</code>。链路是 HTTP 明文 ⇒ 只在可信内网用，或走 SSH 隧道转发。</div>
       <div class="sub">① 监听</div><div class="row"><label>监听地址</label><div class="grow"><input type="text" data-cfg="server.host" title="默认只允许本机访问"></div></div>
@@ -2843,7 +2843,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
     </section>
-<section id="sec-json" data-mg="sec-ui" class="card" data-sec>
+<section id="sec-json" class="card" data-sec data-mg="sec-ui">
       <h2>完整配置文件（高级）</h2>
       <div class="desc">全部配置的配置文件。只在面板里找不到对应开关时才动它，保存前先备份。</div>
       <textarea id="rawjson" spellcheck="false" style="width:100%;min-height:260px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:var(--input-bg);border:1px solid var(--bd);border-radius:8px;padding:10px;color:var(--tx)"></textarea>
@@ -2853,7 +2853,7 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="hint">保存后需重启才能完全生效的部分：模型/人设/白名单等；暂停恢复、测试 API 即时生效。可改可不改：一般用上面各分区即可。</div>
     </section>
-<section id="sec-cursor" data-mg="sec-ui" class="card" data-sec>
+<section id="sec-cursor" class="card" data-sec data-mg="sec-ui">
       <h2>光标设置</h2>
       <div class="desc">把鼠标指针换成鲸鱼（或你自己的图片），点击时向下点头；默认鲸鱼小蓝鲸（22）。</div>
       <div class="sub">① 开关与图</div><div class="row"><label>启用鲸鱼光标</label><input type="checkbox" data-cfg="ui.whale_cursor"></div>
@@ -2878,7 +2878,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint">时长公式（dist=拖拽距离 px）：蠕动 260×dist/100×系数④（600~2400ms）；纸飞机 170×dist/100×系数+0.58s（变形/翻回）；扎入 90×dist/100×系数+0.78s（含 0.5s 消失+冒出）。可在控制台 Console 看每次返回的日志（如 [whale-return]）。</div>
       <div class="btns"><button class="pri" id="cursorSaveBtn">保存光标设置</button></div>
     </section>
-<section id="sec-wavefx" data-mg="sec-ui" class="card" data-sec>
+<section id="sec-wavefx" class="card" data-sec data-mg="sec-ui">
       <h2>水光波纹（鼠标投石入水）</h2>
       <div class="desc">鼠标像石子投入湖面：一道波纹从鼠标处肉眼可见地一波波荡开，扩散范围=光标所在的整个模块（顶栏/导航栏/功能卡），到模块边缘极强衰减、绝不越界；拖动越快荡得越快。所有参数即时生效。</div>
       <div class="sub">① 开关与强度</div><div class="row"><label>启用水光波纹</label><input type="checkbox" data-cfg="ui.wave_fx.enabled"><span class="hint">关闭后完全无扭曲</span></div>

@@ -54,15 +54,17 @@ def t_syntax() -> None:
 
 # ---------------------------------------------------------------- 2. 导航结构与 web 侧同构
 
-def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str, list[str]]]]]:
+def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str, list[str], list[str]]]]]:
     """运行时解析控制台页面的 <nav id=nav>，拿到导航真值。
 
     这是「与 web 侧一致」的唯一权威来源。旧版判据把组名手抄在 selftest 里
     （want_groups = ["天天用", ...]），原型自己编一套比喻命名也能绿 —— 假对齐。
-    组名/组序/行名/行序/主项 sec/**成员 sec** 全部以 web 源码为准全等比对。
+    组名/组序/行名/行序/主项 sec/**成员 sec 与成员显示名** 全部以 web 源码为准全等比对。
 
     IA-4 之后结构变两层：一行可能是**合并行**（`.nav-mg-hd` 行头 + 若干 `.nav-mg-it` 成员）。
-    返回值：`[(组名, 组 key, [(行名, 主项 sec, [成员 sec…]), …]), …]`。
+    返回值：`[(组名, 组 key, [(行名, 主项 sec, [成员 sec…], [成员显示名…]), …]), …]`。
+    ⚠️ 成员**显示名**与 sec 要分开带出来：显示名判「二级项 ≤5 字」「二级项名字对人」，
+       sec 判「归属映射/入口数」；两者混用会让 ≥5 字的 sec id（如 memory-set）假红。
     ⚠️ 三种 `<a>` 靠 **class 属性**区分（`.nav-mg-hd` / `.nav-mg-it` / 无）——
        不能用"可选组"匹配：二级项与单项都落成空串，分不开（web 侧判据实测踩过）。
     """
@@ -71,27 +73,29 @@ def _nav_truth_from_web() -> list[tuple[str, str, list[tuple[str, str, list[str]
     m = re.search(r'<nav class="nav" id="nav">(.*?)</nav>', text, re.S)
     if m is None:
         raise AssertionError("页面里找不到 <nav id=nav> —— 解析器要跟版式走")
-    out: list[tuple[str, str, list[tuple[str, str, list[str]]]]] = []
+    out: list[tuple[str, str, list[tuple[str, str, list[str], list[str]]]]] = []
     for chunk in re.split(r'<div class="nav-grp" data-grp="', m.group(1))[1:]:
         key = re.match(r'(\w+)"', chunk).group(1)
         gt = re.search(r'<span class="gt">([^<]+)</span>', chunk)
-        # 按出现顺序取 (sec, class)；再按 class 组装成行
+        # 按出现顺序取 (sec, class, 显示名)；再按 class 组装成行
         flat = re.findall(
             r'<a href="#sec-([\w-]+)"(?:\s+class="([a-z-]*)")?[^>]*>'
             r'.*?<span class="lb">([^<]+)</span>', chunk, re.S)
-        rows: list[tuple[str, str, list[str]]] = []
+        rows: list[tuple[str, str, list[str], list[str]]] = []
         i = 0
         while i < len(flat):
             sec0, cls0, lb0 = flat[i]
             if cls0 == "nav-mg-hd":
-                mem = []
+                mem: list[str] = []
+                mem_lb: list[str] = []
                 i += 1
                 while i < len(flat) and flat[i][1] == "nav-mg-it":
                     mem.append(flat[i][0])
+                    mem_lb.append(flat[i][2])
                     i += 1
-                rows.append((lb0, sec0, mem))
+                rows.append((lb0, sec0, mem, mem_lb))
             else:
-                rows.append((lb0, sec0, []))
+                rows.append((lb0, sec0, [], []))
                 i += 1
         if gt is None or not rows:
             raise AssertionError(f"分组 {key} 解析不出组名或行 —— 版式变了要跟改")
@@ -117,7 +121,7 @@ def t_nav() -> None:
     # ★ 真对齐：以 web 源码解析结果为唯一真值，全等比对。
     web = _nav_truth_from_web()
     mine = [(t, k, [(e[0], e[2], list(e[3])) for e in es]) for t, k, es in NAV]
-    theirs = web
+    theirs = [(t[0], t[1], [(r[0], r[1], r[2]) for r in t[2]]) for t in web]
     ck("web 侧解析出 5 组 17 行（解析器没跟丢）",
        len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 17,
        f"组 {len(theirs)} / 行 {sum(len(t[2]) for t in theirs)}")
@@ -148,16 +152,18 @@ def t_nav() -> None:
 
     # 二级项的显示名必须与 web 二级项逐字一致，且能用 `_member_label` 取到
     # （取错了 ⇒ 用户按旧名字找不着）
+    # ⚠️ 比的是 **web 的 <span class="lb">**（显示名），不是 sec id —— 拿 id 比会
+    #    把「版本 vs vermat」误报成不一致。
     try:
         from shell import _member_label # noqa: PLC0415
 
         bad_lb = []
-        for m2, t2 in zip(mine, theirs):
-            for row_m, row_t in zip(m2[2], t2[2]):
-                mem_m, mem_t = row_m[2], row_t[2]
-                got = [_member_label(s) for s in mem_m]
-                if got != mem_t:
-                    bad_lb.append(f"{row_m[0]}: {got} ≠ {mem_t}")
+        for t2 in web:
+            for row_t in t2[2]:
+                mem_secs, mem_lbs = row_t[2], row_t[3]
+                got = [_member_label(s) for s in mem_secs]
+                if got != mem_lbs:
+                    bad_lb.append(f"{row_t[0]}: {got} ≠ {mem_lbs}")
         ck("二级项显示名与 web 一致（_member_label 没取错）", not bad_lb, "; ".join(bad_lb))
     except ImportError:
         ck("shell 暴露 _member_label（Qt 侧二级项的名字来源）", False, "import 失败")
@@ -171,9 +177,11 @@ def t_nav() -> None:
     ck("导航文案无 emoji（红线）", not hits, ",".join(hits))
 
     # 名字 ≤5 字（对齐 web 侧 nav_ui_selftest）
-    # ⚠️ 只判**可见行**：二级项沿用它们当独立项时的旧名（如「配置格式」4 字），
-    #    也都 ≤5；但 web 侧那条判据判的是全部 `<a>`，这里跟着判全部更严，不放松。
-    long_names = [w for w in all_names if len(w) > 5]
+    # ⚠️ 要判的是**显示名**：行名（NAV 首元）＋ 二级项的 `_member_label`。
+    #    ⛔ 不能拿 sec id 判（`memory-set`/`community` 这些是内部锚点，用户看不见，
+    #    拿它判会凭空多出 9 条假红）。
+    mem_names = [_member_label(m) for _t, _k, es in NAV for e in es for m in e[3]]
+    long_names = [w for w in (flat + mem_names) if len(w) > 5]
     ck("导航名 ≤5 字（含二级项）", not long_names, ",".join(long_names))
 
     # 分组键唯一
@@ -10522,7 +10530,9 @@ def t_subnav_guard() -> None:
             _got[_k] = [r.label for r in _gs]
     # web 真值：逐 section 数 `.sub`（只在 data-sec 段内）
     _want: dict[str, list[str]] = {}
-    for _m in _re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec>(.*?)</section>',
+    # ⚠️ `data-sec[^>]*>` 不写死相邻 —— section 上可能挂别的属性（IA-4 的 `data-mg`）。
+    #    写死 `data-sec>` 会让被并的那 11 块整段漏读 ⇒ 本判据与 `sec_meta` 口径不一致、假红。
+    for _m in _re.finditer(r'<section id="sec-([\w-]+)" class="card" data-sec[^>]*>(.*?)</section>',
                            _html, _re.S):
         _body = _m.group(2)
         _subs = [_re.sub(r"<[^>]+>", "", x).strip()
@@ -10530,9 +10540,9 @@ def t_subnav_guard() -> None:
         _subs = [x for x in _subs if x]
         if _subs:
             _want[_m.group(1)] = _subs
-    ck("组标题：5 个 section 有组，与 web `.sub` 逐 section 对齐（键集合）",
+    ck("组标题：有组的 section 与 web `.sub` 逐 section 对齐（键集合）",
        set(_got) == set(_want), "我方%s / web%s" % (sorted(_got), sorted(_want)))
-    ck("组标题：总数 20 条、文字逐字一致（多一条少一条都算）",
+    ck("组标题：两条数一致、文字逐字一致（多一条少一条都算）",
        sum(len(v) for v in _got.values()) == sum(len(v) for v in _want.values())
        and _got == _want,
        "我方=%s" % {k: len(v) for k, v in _got.items()})

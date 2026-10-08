@@ -963,6 +963,7 @@ class NavMgRow(QWidget):
         self.t = t
         self.expanded = False
         self.member_secs: list[str] = []
+        self.n_members = n_members # `+N` 角标要报的数（展开后转纯数字，见 _sync_badge）
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1016,8 +1017,18 @@ class NavMgRow(QWidget):
             return
         self.expanded = on
         self.body.setVisible(on)
-        self.badge.setText(("▾ " if on else "▸ ") + self.badge.text().lstrip("▾▸ "))
+        self._sync_badge()
         self.toggled.emit(on)
+
+    def _sync_badge(self) -> None:
+        """`+N` 角标只报"里面还藏着几个"，不兼作折叠箭头。
+
+        折叠指示器是**组头**那一枚 chevron（`chevron_pixmap`，与 web 同一条 path）；
+        行头这枚是"数量"语义 —— 展开后把 `+` 去掉、露出纯数字，收起时回 `+N`。
+        ⛔ 别在这里塞文字三角箭头：全项目口径是"折叠一律用矢量 chevron，
+        不用文字箭头"（判据 `selftest.t_nav` 会整文件搜那个三角字符并报红）。
+        """
+        self.badge.setText(("+%d" if not self.expanded else "%d") % self.n_members)
 
     def toggle(self) -> None:
         self.set_expanded(not self.expanded)
