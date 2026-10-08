@@ -9529,6 +9529,7 @@ def t_cfg_wired_guard() -> None:
       ① 清单外的键 ⇒ 必须在 `agent/`/`ui_qt/`/`scripts/` 的代码里被真读到；
       ② 清单内的键 ⇒ UI 文案必须写明「未接线」，且**确实没有**消费方（防止接线后还挂着"未接线"）。
     """
+    import ast as _ast # noqa: PLC0415
     import inspect as _inspect # noqa: PLC0415
     import os as _o # noqa: PLC0415
     import re as _re # noqa: PLC0415
@@ -9569,11 +9570,39 @@ def t_cfg_wired_guard() -> None:
     def _quoted(_s, _name):
         return ('"%s"' % _name) in _s or ("'%s'" % _name) in _s
 
+    # ⭐ **访问器（accessor）形态**：`agent/config.py` 里的读取被刻意排除在消费池之外
+    #   （"声明处不是消费方"）。但本项目有一类键**故意只在 `config.py` 里读一次**，
+    #   再包成一个**函数**给全仓用（例：`token_budget.saver` ⇒ `config.token_saver()`
+    #   ⇒ `prompt.py` / `tools.py` 都从那个函数拿）。这是**更强的收口**（改一处就全改），
+    #   不是"没接线"。⇒ 若 `config.py` 里有个**函数**读了这个键，或某个模块 import/调用了
+    #   一个以该键为名的访问器，就算**已消费**。否则这条闸门会把"做得更对的做法"判成红。
+    _cfg_src = open(_o.path.join(_root, "agent", "config.py"),
+                    encoding="utf-8", errors="ignore").read()
+    try:
+        _cfg_tree = _ast.parse(_cfg_src)
+    except SyntaxError:
+        _cfg_tree = None
+
+    def _accessor_names_of(key):
+        """`config.py` 里"读了 `key` 那个末段"的函数名集合（供别处按名字找得到调用）。"""
+        _leaf = key.split(".")[-1]
+        _out = set()
+        if _cfg_tree is None:
+            return _out
+        for _n in _ast.walk(_cfg_tree):
+            if not isinstance(_n, _ast.FunctionDef):
+                continue
+            _body = _ast.get_source_segment(_cfg_src, _n) or ""
+            if _quoted(_body, _leaf):
+                _out.add(_n.name)
+        return _out
+
     def _consumed(_key):
-        """键 `a.b.c` 是否被**真读过**。两种形态都要认，否则会误报成假开关：
+        """键 `a.b.c` 是否被**真读过**。三种形态都要认，否则会误报成假开关：
         ① 字面量：`get` / `["c"]`；
         ② **拼出来的键名**：如 `system_prompt.module_enabled` 里 `key = "enable_" + mid`，
-           此时用"模块 id"（`scene_rules`）去找消费点 `_mod_on`。
+           此时用"模块 id"（`scene_rules`）去找消费点 `_mod_on`；
+        ③ **访问器**：`config.py` 里有个函数读了它 ⇒ 别处调那个函数即算消费（见 `_accessor_names_of`）。
         """
         _t, _l = _key.split(".")[0], _key.split(".")[-1]
         if _t == "ui":
@@ -9585,6 +9614,10 @@ def t_cfg_wired_guard() -> None:
                 return True
             if _l.startswith("enable_") and _quoted(_s, "enable_"):
                 if _quoted(_s, _l[len("enable_"):]):
+                    return True
+        for _acc in _accessor_names_of(_key):
+            for _s in _pool.values():
+                if ("%s(" % _acc) in _s:
                     return True
         return False
 
@@ -9666,6 +9699,11 @@ DEV_DIR_KNOWERS = {
     "scripts/proc_window_selftest.py": "注释里的取证出处",
     "scripts/switch_chat_probe.py": "注释：解释为什么要有这个随包入口",
     "ui_qt/selftest.py": "本闸门自己要认这个目录名（与出包闸门的 EXCLUDE 规则同理）",
+    "scripts/menu_geometry_selftest.py": "只出现在**注释里的取证出处**（真机菜单帧的存放位置），不是路径使用",
+    "scripts/pack_secret_gate_selftest.py": "出包闸门的判据自己要认这个目录名：它断言的就是"
+                                            "「该目录**不在**随包范围内」，所以这个名字必须出现在断言里",
+    "scripts/stats_month_selftest.py": "临时夹具目录的**父级**（拼接 `..` 落到仓库根下的草稿区），"
+                                       "只在判据运行时用、用完即删，不进产品",
 }
 
 
@@ -13366,6 +13404,25 @@ def t_prefetch_parallel_guard() -> None:
 
 # ---------------------------------------------------------------- 搜索框粘贴
 
+def _strip_doc_comments(src: str, func_name: str):
+    """取 `func_name` 的正文，并**剥掉注释与 docstring** ⇒ 只留真代码。
+
+    ⛔ 为什么必须剥（本项目反复踩）：docstring/注释里常常**逐字写着**那些关键字
+      （"不许改成 `paste_text`"、"走 `clipboard_guard`"…），
+      拿整段原文做子串匹配 ＝ **在断言"文档里出现过这个词"** ——
+      把真代码删掉也照样绿（反向锚一测就露）。
+    """
+    import ast as _a
+    import re as _r
+    _seg = ""
+    for _n in _a.walk(_a.parse(src)):
+        if isinstance(_n, _a.FunctionDef) and _n.name == func_name:
+            _seg = _a.get_source_segment(src, _n) or ""
+            break
+    _seg = "\n".join(l.split("#")[0] for l in _seg.splitlines())
+    return _r.sub(r'""".*?"""', "", _seg, flags=_r.S)
+
+
 def t_search_paste_guard() -> None:
     """自检：**搜索框改走「粘贴」绕开 IME 串字母，且粘贴失败能退回逐字投递**。
 
@@ -13385,17 +13442,36 @@ def t_search_paste_guard() -> None:
             _seg = _ast.get_source_segment(_ib, _n) or ""
             break
     ck("`input_backend.paste_text` 在位", bool(_seg), "长度 %d" % len(_seg))
-    ck("粘贴实现里**投了 `WM_PASTE`**（不是继续用 WM_CHAR）", "WM_PASTE" in _seg)
+    # ⛔⛔ 断言前**必须剥掉注释与 docstring**：本函数的 docstring 里**逐字写着**
+    #   `clipboard_guard` / `snapshot` / `restore` 这些词（它在解释为什么这么写）
+    #   ⇒ 直接在原文上 `in` 匹配，等于**在断言文档里出现过这个词**，删掉真代码也照样绿。
+    #   （实测：把 `with clipboard_guard()` 换成 `if True:` 后仍判绿 —— 就是被 docstring 兜住的。）
+    _seg_code = _strip_doc_comments(_ib, "paste_text")
+    ck("粘贴实现里**投了 `WM_PASTE`**（不是继续用 WM_CHAR）", "WM_PASTE" in _seg_code)
     ck("粘贴实现里**有等待**（`WM_PASTE` 是异步的，立刻恢复会把原文贴进去）",
-       "restore_ms" in _seg and "time.sleep" in _seg)
-    ck("粘贴实现里**会还原剪贴板**（剪贴板不是我们的资源）",
-       ("write_text" in _seg) and ("saved" in _seg))
+       "restore_ms" in _seg_code and "time.sleep" in _seg_code)
+    # ⚠️ 这条**锚的是"剪贴板有没有被保护"这个意图**，不是某个具体函数名：
+    #   初始实现走 `clipboard.snapshot()/restore()` 手写配对，后改成项目收口
+    #   `clipboard_guard()`（进快照／出还原／**异常出口也还原**）—— 后者更严。
+    #   ⛔ 别写死 `write_text`/`saved` 这类字面：换实现就会把**做对了的**判成红。
+    ck("粘贴实现里**保护了剪贴板**（剪贴板不是我们的资源；走项目收口或快照-还原配对均可）",
+       ("clipboard_guard(" in _seg_code)
+       or (("snapshot(" in _seg_code) and ("restore(" in _seg_code)))
 
     _n_paste = _wx.count("backend.paste_text(")
     ck("搜索链**至少两处**改成先粘贴（两个搜索入口）", _n_paste >= 2, "命中 %d 处" % _n_paste)
-    # ⛔ 关键兜底：粘贴失败必须退回 send_text
-    ck("粘贴失败**有退回逐字投递**的兜底（不能因为换通道把搜索链弄坏）",
-       ("粘贴没成" in _wx) and ("backend.send_text(int(pop_hwnd), name)" in _wx))
+    # ⛔ 关键兜底：粘贴失败必须退回 send_text。
+    #   ⚠️ 锚**意图**（粘贴没成之后紧跟一次 send_text），不锚某一句话的字面 ——
+    #      原来的 `"粘贴没成"` 是日志措辞，改文案就把**做对了的**判成红。
+    _fallback = False
+    for _ln, _line in enumerate(_wx.split("\n")):
+        if "paste_text(" not in _line:
+            continue
+        _after = "\n".join(_wx.split("\n")[_ln:_ln + 8])
+        if "if not ok_t" in _after and "send_text(" in _after:
+            _fallback = True
+            break
+    ck("粘贴失败**有退回逐字投递**的兜底（不能因为换通道把搜索链弄坏）", _fallback)
 
 
 # ---------------------------------------------------------------- 工作树洁净（第 6 步）

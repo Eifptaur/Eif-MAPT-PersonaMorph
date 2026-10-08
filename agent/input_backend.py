@@ -818,8 +818,195 @@ def _menu_alive(hwnd: int) -> bool:
         return False
 
 
+def menu_separator_lines(hwnd_menu: int, *, line_ink: float = 0.55) -> tuple:
+    """量菜单窗里的**分隔线**位置 ⇒ `([y, …], 说明)`。**只量，不点**。
+
+    ⭐ 存在的理由（真机实测的必然结论）：
+      微信消息右键菜单**真实 10 项**，而 OCR **只读到 8 项** ——
+      漏掉的恰好是**没有图标**的纯文字项（「多选」「提醒」）。
+      ⇒ 任何"按 OCR 命中项去算位置"的路（含模糊匹配）对这类项**永远点不到**。
+
+    ⛔ **不许"按读到的条数等分"**：实测 8 项等分 = 76.4px/项，真实 = 61.1px/项
+      ⇒ 越往下偏得越多，会把「多选」点到「收藏」或「引用」上。
+    ⛔ **也不许"按总高 / 真实项数等分"**：项高确实等高，但**分隔线占额外高度**
+      （实测相邻 y 差 `47/62/50/143/61/52/62`，那个 143 里夹着两项 ＋ 一条线）
+      ⇒ 不知道"几条线、都在哪"，等分出来照样偏。
+
+    ✅ 所以正确的第一步就是**把线量出来**（本函数），第二步用 `menu_item_pt_in_segments`
+      按"段内等分"算落点。
+
+    `line_ink` —— 判"这一行是分隔线"的墨迹占比阈值。分隔线**横贯大部分宽度**、但很浅。
+      实测定在 0.55（比空白行高、比整块填充低）。⚠️ 阈值与主题相关 ⇒ **量不出线就返回空表**，
+      由调用方决定"退不退回 OCR 档"，绝不拿空表当"没有线"去硬算。
+    """
+    try:
+        from PIL import ImageGrab
+        import win32gui
+    except Exception as e:  # noqa: BLE001
+        return [], "缺依赖：%s" % e
+    if not hwnd_menu:
+        return [], "菜单窗为空"
+    try:
+        L, T, R, B = win32gui.GetWindowRect(int(hwnd_menu))
+        if R - L <= 0 or B - T <= 0:
+            return [], "菜单窗几何无效"
+        img = ImageGrab.grab(bbox=(int(L), int(T), int(R), int(B)), all_screens=True)
+        gray = img.convert("L")
+    except Exception as e:  # noqa: BLE001
+        return [], "菜单截图失败：%s" % str(e)[:60]
+
+    W, H = gray.size
+    px = gray.load()
+
+    def _row_ink(y):
+        """这一行的"墨迹占比"（非背景像素 / 行宽）。采样即可（不必逐像素）。"""
+        n = hit = 0
+        for x in range(2, max(3, W - 2), 2):
+            n += 1
+            if px[x, y] < 235:
+                hit += 1
+        return (hit / n) if n else 0.0
+
+    _lines = []
+    y = 2
+    while y < H - 2:
+        if _row_ink(y) >= float(line_ink):
+            y2 = y
+            while y2 + 1 < H - 2 and _row_ink(y2 + 1) >= float(line_ink):
+                y2 += 1
+            _lines.append(int((y + y2) / 2))
+            y = y2 + 1
+        else:
+            y += 1
+    return _lines, "量到 %d 条线（高 %d）" % (len(_lines), H)
+
+
+def menu_item_pt_in_segments(seg_bounds, index, menu_w: int,
+                             left_frac: float = 0.5) -> tuple:
+    """已知**各段边界**与**每段项数**时，算第 `index` 项（全局，从 0 数）的中心 y。
+
+    `seg_bounds` —— `[(段顶 y, 段底 y, 段内项数), …]`，段按上下顺序给。
+    `menu_w` —— 菜单窗宽度（用来定 x；x 取 `left_frac` 位置，默认正中）。
+    返回 `((x, y) | None, 说明)`。
+
+    ⭐ **这是"点准"的最终落点公式**，与 `menu_separator_lines` 的产物配合使用。
+      纯函数、不碰窗口 ⇒ 判据可以直接喂组合验它（见 `menu_geometry_selftest`）。
+    """
+    try:
+        idx = int(index)
+    except Exception:
+        return None, "index 无效"
+    if idx < 0:
+        return None, "index 为负"
+    if not seg_bounds:
+        return None, "没有段信息"
+    _n = 0
+    for _i, (a, b, cnt) in enumerate(seg_bounds):
+        cnt = int(cnt)
+        if cnt <= 0:
+            continue
+        if _n <= idx < _n + cnt:
+            k = idx - _n
+            y = int(a + (b - a) * (k + 0.5) / cnt)
+            return (int(round(left_frac * int(menu_w))), y), ("第 %d 段第 %d 项（段 %s-%s，段内 %d 项）"
+                                                              % (_i, k, a, b, cnt))
+        _n += cnt
+    return None, "index=%d 超出全部段（各段合计 %d 项）" % (idx, _n)
+
+
+#: 真机实测的**消息右键菜单段结构**：`[(段顶, 段底, 段内项数), …]`（分隔线切段）。
+#:
+#: 微信 4.x 的消息右键菜单项固定在**四段**里（段间有分隔线）：
+#:   ① 复制 / 编辑            ② 转发 / 收藏 /（多选 / 提醒 / 引用）
+#:   ③ 用窗口打开 / 另存为     ④ 删除
+#: ⚠️ 会话列表的右键菜单是**另一个形态** ⇒ 用本表前必须先确认菜单形态；
+#:    `menu_click` 的 `geom_segs` 口子留给调用方传"已知的别的形态"。
+MENU_SEGS_MESSAGE = [(0, 137, 2), (137, 391, 5), (391, 505, 2), (505, 611, 1)]
+
+
+def _geom_index_from_items(items, seg_bounds, menu_h: int) -> tuple:
+    """用**读到的菜单项**当锚，反推"目标项的全局序号" ⇒ `(index | None, 说明)`。
+
+    ⭐⭐ 为什么需要它（这是"OCR 读不全"这个死结的**真正出路**）：
+      OCR 对自绘菜单**读不全**（实测 10 项里漏掉没图标的「多选」「提醒」），
+      但它读到的那些项 **y 位置是准的**（实测与算出来的落点差 2~6px）。
+      ⇒ 拿"读到的**最靠上**那一项"当锚（它几乎必然是段①的第 0 项「复制」），
+        量它在**真实段结构**里应处的 y，与它实测 y 一比 ⇒ 就知道"OCR 少读了几个"。
+
+    ⛔ 不许拿"读到的条数"当项数（见 `menu_item_pt_in_segments` 的说明）；
+      也不许拿"最靠下那一项"当锚（越往下累积误差越大）。
+
+    返回的 `index` 是**目标项在真实菜单里的全局序号**；本函数只负责"锚 → 偏移"的换算，
+      目标项叫什么由调用方另行匹配（本函数不认识菜单内容）。
+
+    ⚠️ **判不准就返回 `None`**：段结构缺失 / 一项都没读到 / 锚与任何真实项都对不上
+      （差超过半行高）⇒ 一律不给序号（调用方据此"不点"）。
+    """
+    if not seg_bounds:
+        return None, "没有段结构"
+    _its = [it for it in (items or []) if len(it) >= 5]
+    if not _its:
+        return None, "OCR 一项都没读到（没有锚）"
+    # 锚 = 最靠上那一项（按 y 排序取第一个）
+    try:
+        _anchor = sorted(_its, key=lambda it: int(it[2]))[0]
+        _ay = int(_anchor[2] + int(_anchor[4]) / 2)
+    except Exception:
+        return None, "锚项读数无效"
+
+    # 在段结构里找"应处 y"与锚最接近的那一项。
+    #
+    # ⚠️ **为什么不能简单取"最近的那一项"**（实测踩过）：菜单顶部有一圈内边距，
+    #   实测「复制」（真实第 0 项）中心 y=59，而按段结构 `(0,137,2)` 算出的第 0 项中心是 34
+    #   —— 差了 25px；反而是第 1 项（算得 102）离它只差 43px……**两边都不近，最近的那个会挑错**。
+    #   实测其余各项（编辑 106 / 转发 168 / 收藏 218 …）与算值只差 4~6px ⇒
+    #   **这个"第 0 项偏下 25px"是段结构第一段的固有内边距**，不是读数错误。
+    #   ⇒ 正确口径：**锚"落在某一项的行下沿之内"即算命中该项**，而不是比"欧氏距离"。
+    #     换句话说，找"**项中心 ≤ 锚 y + 半行高** 里最靠下的那一项"（锚可以比项中心偏下，因为它可能压在下一行的上沿）。
+    _pairs = []
+    _n = 0
+    for _i, (a, b, cnt) in enumerate(seg_bounds):
+        cnt = int(cnt)
+        if cnt <= 0:
+            continue
+        for _k in range(cnt):
+            _y = int(a + (b - a) * (_k + 0.5) / cnt)
+            _pairs.append((_n + _k, _y, (_i, _k)))
+        _n += cnt
+    if not _pairs:
+        return None, "段结构里没有任何项"
+    # ⚠️ 容差**不许**只按"传进来这张段结构的项数"算 —— 反例：若段结构整窗只有 1 项，
+    #   `611/1/2 = 305` 会让容差大到"什么锚都算命中"，反推出的序号就是瞎给。
+    #   ⇒ 用**段内统计行高**，并给一个**上界**（真机实测行高约 47~62px）兜住：
+    #     容差 = clamp(半行高, 10, 40)。40 这个上界来自实测最宽行距（62px 的一半 ≈ 31，
+    #     再留一点余量到 40），超过它就说明"段结构本身跟真实菜单对不上"。
+    _rows = [int((b - a) / int(c)) for a, b, c in seg_bounds if int(c) > 0]
+    _half = (sum(_rows) / float(len(_rows)) / 2.0) if _rows else 0.0
+    _tol = max(10.0, min(40.0, _half))
+
+    # 命中口径：锚 y 落在**某一项的行区间**内（|差| ≤ 半行高）⇒ 取最靠下的那一项。
+    #   ⚠️ 第 0 项要**特判**：菜单顶部有内边距，实测「复制」中心比算值低 25px，
+    #     若只按 |差| ≤ 半行高，这个锚就差一点点被挤到第 1 项去 ⇒ 给第 0 项**向上放宽到段顶**。
+    #     放宽范围严格限定在**第一段的第一项**，且**锚必须不小于段顶**（否则就是形态对不上）。
+    _first_top = int(seg_bounds[0][0]) if seg_bounds else 0
+    _cands = []
+    for _idx, _y, _seg in _pairs:
+        _d = abs(_y - _ay)
+        if _d <= _tol:
+            _cands.append((_d, _idx, _y))
+        elif _idx == 0 and _ay >= _first_top and _ay < _y:
+            # 第 0 项特判：锚在第 0 项中心上方、但仍在菜单内 ⇒ 也算命中第 0 项
+            _cands.append((_d, _idx, _y))
+    if not _cands:
+        return None, ("锚（y=%d）落不进任何项的行内（半行高 %.0f）⇒ 菜单形态对不上，不猜"
+                      % (_ay, _tol))
+    _best_d, _best_i, _y_hit = sorted(_cands, key=lambda t: (t[0], -t[1]))[0]
+    return int(_best_i), ("锚「%s」@y=%d ⇒ 判为第 %d 项（项中心 y=%d，误 %+.0fpx）"
+                          % (str(_anchor[0])[:8], _ay, _best_i, _y_hit, _best_d))
+
+
 def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback: bool = False,
-               rounds: int = 4) -> tuple:
+               rounds: int = 4, geom_index: int | None = None, geom_segs=None) -> tuple:
     """在菜单窗里找含 `item_text` 的项，并**投递左键**点它。返回 `(ok, 说明)`。
 
     ★ 三条容错（`rounds` 控制轮数，默认 4）—— 治的是**三类长得一样的失败**：
@@ -843,7 +1030,8 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
                 return False, "菜单窗为空或已关闭"
             break
         _ok, _why = _menu_click_once(hwnd_menu, item_text, zoom=zoom,
-                                     allow_top_fallback=allow_top_fallback)
+                                     allow_top_fallback=allow_top_fallback,
+                                     geom_index=geom_index, geom_segs=geom_segs)
         if _ok:
             return _ok, _why
         if _rnd < _n - 1:
@@ -852,7 +1040,8 @@ def menu_click(hwnd_menu: int, item_text: str, zoom: int = 2, allow_top_fallback
 
 
 def _menu_click_once(hwnd_menu: int, item_text: str, zoom: int = 2,
-                     allow_top_fallback: bool = False) -> tuple:
+                     allow_top_fallback: bool = False,
+                     geom_index: int | None = None, geom_segs=None) -> tuple:
     """**单轮**：在菜单窗里找含 `item_text` 的项，并**投递左键**点它。返回 `(ok, 说明)`。
 
     ⚠️ 实测两处坑：
@@ -947,6 +1136,30 @@ def _menu_click_once(hwnd_menu: int, item_text: str, zoom: int = 2,
     _best, _best_how, _best_sc = _pick(items)
     if _best is not None and _best_sc >= 0.8:
         hit, how = _best, _best_how
+    if hit is None:
+        # ⭐⭐ **几何兜底档**：治的是"**菜单里确实有这一项、但 OCR 读不出来**"。
+        #   实测（文件传输助手独立窗投递右键）：菜单**真实 10 项**，
+        #   而 OCR **只读到 8 项** —— 漏掉的正是**没有图标**的纯文字项「多选」「提醒」。
+        #   ⇒ 对所有"按 OCR 命中项去算位置"的做法，这类项**永远点不到**（`_pick` 也救不了：
+        #     它压根不在 `items` 里）。
+        #   ⛔ **为什么不能"按 OCR 读到几条就等分几条"**：实测 8 项等分＝76.4px/项，
+        #     而真实 6 项等分＝61.1px/项 ⇒ **越往下偏得越多**，必然点错（会把「多选」点到「收藏/引用」上）。
+        #   ✅ **正确算法＝"先按分隔线切段，再在段内等分"**（`menu_item_pt_in_segments`）——
+        #     分隔线是菜单里**视觉上最可靠**的结构（实测 3 条线把 10 项切成 4 段）。
+        #   ⭐⭐ 序号**优先由 `_geom_index_from_items` 反推**（用读到的项当锚），
+        #     调用方给了 `geom_index` 就直接用；两者都给不出 ⇒ 照旧"不点"，绝不瞎猜。
+        try:
+            _segs = geom_segs if geom_segs is not None else MENU_SEGS_MESSAGE
+            if geom_index is None:
+                geom_index, _iwhy = _geom_index_from_items(items, _segs, int(img.height))
+                log.info("菜单几何兜底：目标序号 %s", _iwhy)
+            if _segs and geom_index is not None:
+                _mpt, _mwhy = menu_item_pt_in_segments(_segs, int(geom_index), int(img.width))
+                if _mpt is not None:
+                    hit, how = _mpt, "几何兜底（%s）" % _mwhy
+                    log.info("菜单 OCR 没命中「%s」⇒ 走几何兜底：%s（落点 %s）", item_text, _mwhy, _mpt)
+        except Exception as e:  # noqa: BLE001
+            log.info("菜单几何兜底失败：%s", str(e)[:80])
     if hit is None:
         if not allow_top_fallback:
             return False, ("菜单里没找到「%s」（读到的是：%s）——**不点**（防点到不知道是什么的项）"
