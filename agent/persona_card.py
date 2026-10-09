@@ -12,7 +12,11 @@
   `background` 身份背景 · `personality` 性格 · `speech` 说话风格 · `motive` 动机 ·
   `values` 价值观 · `rules` 行为规则 · `limits` 缺点局限
 ⛔ 另外两个**不属于七字段**但必须有的层：
-  · `disclosure` —— **AI 身份披露段**：扮演**真人/已有人物**时**强制存在且不可删**（合规）；
+  · `disclosure` —— **AI 身份披露段**：扮演**真人/已有人物**时**强制存在且不可删**（合规）。
+    ⭐ **但它是"写给用户看"的、不进模型上下文**（2026-10-10 用户口径）：
+      - 卡里必须留着它（`import_card` 对真人卡仍强校验）⇒ 尽到**对用户的提醒义务**；
+      - **不拼进模型提示词**（`render_prompt` 默认不注入）⇒ 不削弱扮演、不影响体验；
+      - 模型侧的合规改走**一行轻量指令**（"被直接问到时如实说是 AI；平时别主动提"）。
   · `examples` —— **示例对话**：单独一层（报告 2.2：示例是语气锚定的第一杠杆）。
 """
 from __future__ import annotations
@@ -204,11 +208,33 @@ def _persona_cfg(cfg=None) -> dict:
 
 
 def disclosure_text(name: str = "") -> str:
-    """**AI 身份披露段**（第 108 项）—— 扮演真人/已有人物时**必须**带上，且**不可关闭**。"""
+    """**AI 身份披露段**（第 108 项）—— 扮演真人/已有人物时**必须**带上，且**不可关闭**。
+
+    ⭐ 用途＝**给用户看**（尽提醒义务），**不进模型提示词**（见模块头与 `render_prompt`）。
+    界面/导出件展示这一段，让用户知道"这是在扮演"；模型侧不念它（改走轻量合规行）。
+    """
     who = ("「%s」" % _as_text(name)) if _as_text(name) else "这个角色"
     return ("【AI 身份披露（不可省略）】我在群里是以 AI 身份出现的；%s 是**扮演**，"
             "不是本人。被直接问到时如实说明我是 AI；引用资料时写明来源，"
             "并区分「有据」与「我的推断」。编造本人的话（名言、承诺、私事）**不做**。" % who)
+
+
+def disclosure_for_user(card_or_fields) -> str:
+    """取一张卡的**披露段原文**（给界面/导出展示用；**不进模型上下文**）。
+
+    真人卡没写 ⇒ 回落 `disclosure_text()` 的默认文案；自创卡没写 ⇒ 返回空串。
+    """
+    try:
+        f = card_or_fields if isinstance(card_or_fields, dict) else {}
+        mode = str(f.get("_mode") or f.get("mode") or "").strip().lower()
+        d = _as_text(f.get("disclosure"))
+        if d:
+            return d
+        if mode == "real":
+            return disclosure_text(_as_text(f.get("name")))
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def render_prompt(card_or_fields, *, mode: str = "invented", round_no: int = 0, cfg=None) -> str:
@@ -216,11 +242,15 @@ def render_prompt(card_or_fields, *, mode: str = "invented", round_no: int = 0, 
 
     分层与顺序（越靠前影响力越大 —— 报告 2.1）：
       ① 身份（背景）→ ② 性格 → ③ 语言 → ④ 动机 → ⑤ 价值观 → ⑥ 规则 → ⑦ 局限
-      → **示例对话（独立一层）** → **披露段（真人扮演时强制）** → **防漂移提醒（每 N 轮）**
+      → **示例对话（独立一层）** → **轻量合规行（真人扮演时）** → **防漂移提醒（每 N 轮）**
+
+    ⭐ **披露段不再进模型上下文**（2026-10-10 用户口径）：披露段是**写给用户看**的
+      （`disclosure_for_user()` / 卡里 `disclosure` 字段），**不拼进提示词** ——
+      整段念会削弱扮演；模型侧的合规改走一行**轻量指令**（被直接问到时才承认）。
 
     参数
-      `mode`     —— `invented`（自创角色）/ `real`（真人或已有人物）。
-                   ⛔ `real` **必须**带披露段；`disclosure_required=False` 也**不许**把它去掉。
+      `mode`     —— `invented`（自创角色）/ `real`（真人或已有人物）。真实体只影响
+                    **是否加轻量合规行**；不管哪种模式，**都不注入披露段原文**。
       `round_no` —— 当前对话轮次；`persona.drift_remind_every`（默认 12）轮注入一次轻提醒。
     """
     f = to_fields(card_or_fields) if not isinstance(card_or_fields, dict) or "text" in (card_or_fields or {}) \
@@ -239,10 +269,11 @@ def render_prompt(card_or_fields, *, mode: str = "invented", round_no: int = 0, 
     ex = _as_text(f.get("examples"))
     if ex:
         lines.append("【示例对话（照这个语气，不要照抄内容）】\n%s" % ex)
-    # 披露：真人扮演**强制**；卡里自己写了就沿用（仍视为必须存在）
-    _disc = _as_text(f.get("disclosure"))
-    if str(mode).lower() == "real" or _disc:
-        lines.append(_disc or disclosure_text(nm))
+    # ⭐ 合规改走**轻量一行**：扮演真人时加"被问到时如实说"；**不注入披露段原文**
+    #   （原文留给用户看；整段念进模型会让它反复自曝身份、把扮演带垮）。
+    if str(mode).lower() == "real":
+        lines.append("【底线】有人直接问你是不是 AI、或问你是不是%s本人时，如实说明你是 AI；"
+                     "平时别主动提这茬，像%s那样说话就行。" % (nm or "那位", nm or "本人"))
     # 防漂移：每 N 轮一次（`0` ⇒ 关；正常轮次**不注入**）
     try:
         every = int(c.get("drift_remind_every") if c.get("drift_remind_every") is not None else 12)

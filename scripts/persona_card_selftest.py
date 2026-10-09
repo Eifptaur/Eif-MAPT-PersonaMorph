@@ -84,10 +84,19 @@ ok("B3 只渲染**写了的**字段（空字段不留空壳标题）",
 #   （语义一样，形态不撞 —— 别去调基线）。
 _DISC = "AI 身份披露"
 _HINT = "提醒（每 12 轮一次）"
-ok("B4★ `mode=real` ⇒ **必有 AI 身份披露段**（卡里没写也要补上）",
-   _DISC in PC.render_prompt(_f, mode="real"), "")
+# ⭐ 2026-10-10 口径变更：披露段**不进模型上下文**（写给用户看的），模型侧改走**轻量合规行**。
+ok("B4★ `mode=real` ⇒ 模型文本里**不许**出现披露段原文（披露只给用户看）",
+   _DISC not in PC.render_prompt(_f, mode="real"), "")
+ok("B4b★ `mode=real` ⇒ 改注入**轻量合规行**（被问到时才承认，平时不主动提）",
+   "是不是 AI" in PC.render_prompt(_f, mode="real")
+   and "平时别主动提" in PC.render_prompt(_f, mode="real"), "")
+ok("B4c★ 卡里**自己写了**披露段也**不许**拼进模型文本（一处不漏）",
+   _DISC not in PC.render_prompt(dict(_f, disclosure="【AI 身份披露】我是 AI"), mode="real"), "")
 ok("B5★ 反向锚：自创角色且卡里没写 ⇒ **不该**凭空加披露段（别把口径用反）",
    _DISC not in PC.render_prompt(_f, mode="invented"), "")
+ok("B5b★ `disclosure_for_user()` 仍能取到披露段（写给用户看的那一份没丢）",
+   bool(PC.disclosure_for_user(dict(_f, _mode="real")).strip())
+   and PC.disclosure_for_user(dict(_f, _mode="invented")) == "", "")
 ok("B6★ 防漂移：第 12 轮**注入**提醒；第 11 轮**不注入**（反向对照）",
    (_HINT in PC.render_prompt(_f, round_no=12))
    and (_HINT not in PC.render_prompt(_f, round_no=11)), "")
