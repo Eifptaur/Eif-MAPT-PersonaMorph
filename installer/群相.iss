@@ -53,13 +53,14 @@ PrivilegesRequired=lowest
 ;    启动时**弹一个"为所有用户装 / 只为我装"的选择框** —— 实测把 /VERYSILENT 都顶掉了，
 ;    静默装变成弹窗（2026-10-09 踩过）。我们的口径本来就是"装到当前用户目录、免 UAC"，
 ;    不需要让用户选模式。
-; ⭐ **目录页开着**（`DisableDirPage=no`）：**要让用户自己选装到哪**（2026-10-10 用户口径）。
-;   理由：装到哪是用户自己的事，由不得我们替他定。
-;   ⇒ 为什么开 Inno 这页而不是改启动器 P2：P2 在 `launcher-src/launcher.cs`（C#）里，
-;     而**本环境拦 C# 编译器**（实测 csc/dotnet 均不可用）⇒ 改了也编译不出来。
-;     Inno 这页由 Inno 自己管路径：快捷方式、卸载项、自检路径全走 `{app}` 变量，
-;     改目录**自动跟随**，不会留残留（不像启动器那套要自己同步）。
-; ⛔ 目录页之外的页面仍全部关掉（避免冒出系统风格的欢迎/就绪/完成页）。
+; ⛔ **目录页必须关掉**（`DisableDirPage=yes`）—— 2026-10-10 踩过的**硬 bug**：
+;    下面 `[Code]` 里 `WizardForm.Visible := False` 把 Inno 窗口**整个藏了**
+;    （`InitializeWizard` + `CurPageChanged` 双重隐藏）。开着目录页 ⇒ 页面出来了
+;    但**用户看不见、点不到「下一步」** ⇒ 安装永远卡在那一步。
+;    而且用户点名：**看到的必须是启动器那套自绘四页**（`launcher-src/`，含「安装位置」页），
+;    「那个窗口是 inno 的默认的，不是我们设计的」⇒ 本 exe 只管**静默铺文件**，
+;    铺完拉起 `群相.exe`，界面交给自绘向导。
+; ⛔ Inno 自带向导的页面**全部关掉**（含目录页）：欢迎/就绪/完成页一个都不许冒出来。
 DisableProgramGroupPage=yes
 OutputDir={#OutDir}
 OutputBaseFilename=群相-Setup-{#AppVersion}
@@ -76,15 +77,18 @@ UninstallDisplayIcon={app}\{#AppExe}
 SetupLogging=yes
 ; ⛔ 不显示"选择是否创建快捷方式"那种系统页之外的多余页；快捷方式走 [Tasks]
 AllowNoIcons=yes
-; ⛔ Inno 自带向导的页面**除目录页外全部关掉** —— 这个 exe 基本不负责"给用户看界面"，
+; ⛔ Inno 自带向导的页面**全部关掉** —— 这个 exe 不负责"给用户看界面"，
 ;    它只做"把包铺到用户机器上"这一件事；用户看到的界面是装完后拉起的
 ;    `群相.exe`（`launcher-src/` 那套自绘四页向导：欢迎 / 安装位置 / 正在安装 / 完成）。
-;    ⭐ **例外：目录页 `DisableDirPage=no` 开着**（2026-10-10 用户口径：要让用户选装到哪）。
+;    关页 + 下面的 [Code] 隐藏窗口，两者一起才能做到"双击后看不到系统风格窗口"。
 DisableWelcomePage=yes
-DisableDirPage=no
+DisableDirPage=yes
 DisableReadyPage=yes
 DisableFinishedPage=yes
 DisableStartupPrompt=yes
+; ⭐ **图标必须是我们的**（2026-10-10 用户点名："setup 的图标不是我们的图标"）。
+;    与启动器同源：`launcher.cs` 多处 `assets\app.ico`（`Icon.ExtractAssociatedIcon`）。
+SetupIconFile=..\assets\app.ico
 
 [Languages]
 ; ChineseSimplified.isl 由构建器保证存在（放在本文件同目录）——
