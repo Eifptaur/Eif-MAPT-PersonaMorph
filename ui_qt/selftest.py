@@ -2909,6 +2909,7 @@ def t_veradv() -> None:
     calls: list = []
     st_state: dict = {"with_item": True}
     patch_calls: list = []
+    auto_state: dict = {"on": False}   # 开机自启假状态（GET 读、POST 改）
 
     class _H(BaseHTTPRequestHandler):
         def _send(self, obj): # noqa: N802
@@ -2923,6 +2924,11 @@ def t_veradv() -> None:
             calls.append(self.path)
             if "/api/version/allow" in self.path:
                 self._send({"ok": True})
+            elif "/api/autostart" in self.path:
+                self._send({"ok": True,
+                            "autostart": {"enabled": auto_state["on"], "supported": True},
+                            "text": ("已设为开机自启（当前用户级）" if auto_state["on"]
+                                     else "当前未开机自启")})
             elif "/api/ui-layout" in self.path:
                 self._send({"ok": True, "layout": {"sidebar_items": ["聊天", "通讯录"]}})
             elif "/api/status" in self.path:
@@ -2964,6 +2970,13 @@ def t_veradv() -> None:
                 self._send({"ok": True})
             elif "/api/cursor/upload" in self.path:
                 self._send({"ok": True})
+            elif "/api/autostart" in self.path:
+                auto_state["on"] = bool(body.get("enable"))
+                self._send({"ok": True,
+                            "message": "已设为开机自启" if auto_state["on"] else "已取消开机自启",
+                            "autostart": {"enabled": auto_state["on"], "supported": True},
+                            "text": ("已设为开机自启（当前用户级）" if auto_state["on"]
+                                     else "当前未开机自启")})
             else:
                 self._send({"ok": True})
 
@@ -3251,6 +3264,35 @@ def t_veradv() -> None:
            and "背景已应用" in bu_btn.property("c8_note").text(),
            str([c[:120] for c in calls if "background" in c]))
 
+        # ── ui 页：开机自启一键切换（先读当前态、再取反）──
+        auto_btn = [b for b in uip.findChildren(Btn)
+                    if b.property("web_action") == "autostartToggle"][0]
+        calls.clear()
+        auto_btn.click()
+        _wait(lambda: any("/api/autostart#" in c for c in calls))
+        _wait(lambda: "已打开开机自启" in auto_btn.property("c8_note").text())
+        ck("开机自启：先 GET 读当前态（未开）→ POST {enable:true} 取反 → 回显「已打开」",
+           any("/api/autostart" in c and "#" not in c for c in calls)
+           and any("/api/autostart" in c.split("#")[0] and "#" in c and '"enable": true' in c
+                   for c in calls)
+           and "已打开开机自启" in auto_btn.property("c8_note").text(),
+           str([c for c in calls if "autostart" in c])
+           + " lb=" + auto_btn.property("c8_note").text())
+        ck("开机自启：假后端状态已被改成开（下一次 GET 应读到 enabled=true）",
+           auto_state["on"] is True, str(auto_state))
+
+        calls.clear()
+        auto_btn.click()
+        _wait(lambda: any("/api/autostart" in c and "#" in c for c in calls))
+        _wait(lambda: "已关闭开机自启" in auto_btn.property("c8_note").text())
+        ck("开机自启：再点一次 ⇒ 读到已开、POST {enable:false} 关掉（按钮是「取反」不是「置位」）",
+           any("/api/autostart" in c.split("#")[0] and "#" in c and '"enable": false' in c
+               for c in calls)
+           and "已关闭开机自启" in auto_btn.property("c8_note").text()
+           and auto_state["on"] is False,
+           str([c for c in calls if "autostart" in c]) + " state=" + str(auto_state)
+           + " lb=" + auto_btn.property("c8_note").text())
+
         # ── cursor 页：重置/保存 ──
         wrap_c = panels_qt.build_panel(t, "cursor")
         cup = wrap_c.widget()
@@ -3327,10 +3369,12 @@ def t_g5() -> None:
     need = {"keySave", "keyReset", "wxDirProbe", "wxDirSave", "wxOpenSite", "utExport",
             "utImport", "utReload", "utBarProblems", "fsAdd", "wavefxApply",
             "utGuide", "utBarGuide", "ttsGuide", "igGuide", "vgGuide", "vsGuide",
-            "irGuide", "fsGuide"}
-    ck("g5 注册表：19 个新 aid 全部接入（ACT_CUSTOM 35 键：新增「资源市场」marketOpen），"
+            "irGuide", "fsGuide", "musicApply", "autostartToggle"}
+    # ⚠️ **不写死 ACT_CUSTOM 的总数**（旧写法 `== 35` ⇒ 每加一个动作就误红一次；
+    #    2026-10-10 加 musicApply 时正是这么炸的）。判据只该钉「该在的都在」。
+    ck("g5 注册表：新 aid 全部接入（含「音乐推荐」musicApply），"
        "wxRecheck 不进 ACT_CUSTOM（它在追加区已有原生实现，走 _AIDS_COVERED_ELSEWHERE 跳过）",
-       need <= set(ACT_CUSTOM) and len(ACT_CUSTOM) == 35 and "wxRecheck" not in ACT_CUSTOM,
+       need <= set(ACT_CUSTOM) and "wxRecheck" not in ACT_CUSTOM,
        "ACT_CUSTOM=%d 缺=%s" % (len(ACT_CUSTOM), sorted(need - set(ACT_CUSTOM))))
 
     guides = _web_guides()
@@ -3352,6 +3396,7 @@ def t_g5() -> None:
     opened: list = []
     wx_save = {"fail": False}
     ut_state = {"n2": False}
+    auto_state = {"on": False}   # 开机自启的假状态（GET 读它、POST 改它）
     EXPORT_TEXT = '{"tools":[{"name":"weather","host":"api.weather.com","usage":"输入城市名"}]}'
     DOC_JSON = ('{"name":"weather","host":"api.weather.com",'
                 '"whitelist":["api.weather.com"],"desc":"查天气"}')
@@ -3386,6 +3431,11 @@ def t_g5() -> None:
                 self._send({"ok": True, "text": EXPORT_TEXT})
             elif "/api/tools/toggle" in self.path:
                 self._send({"ok": True})
+            elif "/api/autostart" in self.path:
+                self._send({"ok": True,
+                            "autostart": {"enabled": auto_state["on"], "supported": True},
+                            "text": ("已设为开机自启（当前用户级）" if auto_state["on"]
+                                     else "当前未开机自启")})
             elif "/api/status" in self.path:
                 tools = [{"name": "weather", "enabled": True, "source": "第三方",
                           "host": "api.weather.com", "calls": 3, "errors": 0}]
@@ -3423,6 +3473,13 @@ def t_g5() -> None:
                 self._send(IMPORT_RESP)
             elif "/api/file_search/add" in self.path:
                 self._send({"ok": True, "note": "目录已加入，共 12 个文件可搜"})
+            elif "/api/autostart" in self.path:
+                auto_state["on"] = bool(body.get("enable"))
+                self._send({"ok": True,
+                            "message": "已设为开机自启" if auto_state["on"] else "已取消开机自启",
+                            "autostart": {"enabled": auto_state["on"], "supported": True},
+                            "text": ("已设为开机自启（当前用户级）" if auto_state["on"]
+                                     else "当前未开机自启")})
             else:
                 self._send({"ok": True})
 
@@ -14583,6 +14640,42 @@ def t_no_window_bully_guard() -> None:
 
 #: 判据全表。`main()` 按此顺序执行；`--only` 按名字筛、`--fast` 按下面的慢表跳。
 #  顺序即执行顺序（部分判据依赖前面判据留下的现场，勿随意重排）。
+def t_shoot_teardown_guard() -> None:
+    """出图闸门必须**销毁**窗口，不许只 `close()`。
+
+    ⛔ 现场（2026-10-09，出图时被卡住才挖出来）：每个镜头都 `_mk` 一棵完整 `Shell`；
+       这些树在 grab 之后若只 `close()`，就留在内存里不释放。
+       实测（whale）：单跑任意一个镜头都正常，连跑「整窗 → 导航 → 二次确认」时
+       **第三个镜头会卡死在 `_mk` 里**（前面几棵没释放的树把它拖住）。
+       加 `_teardown()`（`close()` + `deleteLater()` + 排空事件）后连跑 8 个镜头 4.8s 跑完。
+
+    本判据是**源码级**的（不真渲染）：扫 `shoot.py`，确认（a）`_teardown` 存在且做了销毁、
+    （b）各个镜头都走 `_teardown`、没有裸 `close()` 漏网。
+    """
+    sp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shoot.py")
+    src = Path(sp).read_text(encoding="utf-8")
+
+    ck("shoot.py 有 _teardown（关窗 + deleteLater + 排空事件）",
+       "def _teardown(" in src and ".deleteLater()" in src
+       and "sendPostedEvents" in src)
+
+    # 镜头的收尾必须走 _teardown；裸 close 只允许出现在 _teardown 自己里。
+    body = src.split("def _teardown(", 1)[-1]
+    body = body.split("def shot_", 1)[-1] # 只留镜头区，去掉 _teardown 自身
+    n_teardown = body.count("_teardown(")
+    n_bare = body.count(".close()")
+    ck("各镜头收尾一律走 _teardown，没有裸 close() 漏网",
+       n_teardown >= 8 and n_bare == 0,
+       "teardown=%d bare_close=%d" % (n_teardown, n_bare))
+
+    # 新加的两个引导弹窗镜头必须在册（缺件引导 = 用户点名的「三段式、每件一窗」）
+    ck("镜头表含「环境引导」（一个弹窗·把微信调成浅色/标准字号）",
+       "shot_envguide" in src and "环境引导" in src)
+    ck("镜头表含「缺件引导」初始段与进度段",
+       "shot_missing" in src and "shot_missing_progress" in src
+       and "缺件引导" in src)
+
+
 ALL_TESTS = (
     t_syntax, t_nav, t_themes, t_runtime_render, t_fonts_rgba, t_usability, t_panels,
     t_visual, t_badges, t_status_chain, t_bot_controls, t_window_chrome, t_dpi_motion,
@@ -14619,6 +14712,7 @@ ALL_TESTS = (
     t_scene_frames_guard, t_asr_backend_guard, t_watermark_latest_minus1_guard,
     t_qt_no_msgbox_guard, t_mirror_fetch_guard, t_projection_rows_guard, t_clean_tree_guard,
     t_search_paste_guard, t_prefetch_parallel_guard, t_filewatch_guard, t_session_rows_projection_guard, t_emoji_usage_guard, t_emoji_code_guard, t_hot_words_guard,
+    t_shoot_teardown_guard,
 )
 
 #: `--fast` 跳过的判据：**按最近一次全量的逐条计时选出来的当前最慢几名**。

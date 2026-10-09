@@ -404,6 +404,10 @@ class UpdateBar(QFrame):
                     post_api("/api/restart")
 
                 run_bg(_rs, name="upd-restart")
+            elif state == "need_kill":
+                # 有文件被别的程序占用 ⇒ 自绘弹窗把"谁占用了什么"摆出来，问用户要不要临时关掉它。
+                # 点「确定」⇒ 带 allow_kill + PID 重跑（后端先关占用者、再继续装）；「取消」⇒ 什么都不做。
+                self._ask_kill(j)
             elif state == "error":
                 self._set_progress("更新失败：%s（可以再点一次「立即更新」重试）"
                                    % (j.get("why") or "未知原因"), warn=True)
@@ -414,6 +418,58 @@ class UpdateBar(QFrame):
 
         # 下一次 900ms tick 会再来一遍；这里的轮询只为把这一次的结果收回来
         run_async(_work, _apply, page=self, interval=150, name="upd-poll")
+
+    def _ask_kill(self, j: dict) -> None:
+        """「有程序正占用要更新的文件」——自绘弹窗（确定 / 取消），0 系统 MessageBox。
+
+        列出 `lockedBy` 里的「占用者（PID）占用 了哪个文件」，问用户是否临时关掉它。
+        同意 ⇒ `POST /api/update_apply {allow_kill:true, killed:[pid…]}`，重新起轮询；
+        拒绝 ⇒ 如实说"文件没有任何改动"（此时后端一件都没换）。
+        """
+        lk = j.get("lockedBy") or {}
+        procs = list(j.get("procNames") or [])
+        lines, pids = [], []
+        for rel, info in (lk or {}).items():
+            for u in ((info or {}).get("users") or []):
+                pid = u.get("pid")
+                if pid and pid not in pids:
+                    pids.append(pid)
+                lines.append("· %s（PID %s）占用了 %s"
+                             % (u.get("name") or "未知程序", pid or "?", rel))
+        if not lines:
+            lines.append("· 查不到具体是哪个程序占用的（可能是系统进程）")
+        lines.append("同意后会临时关掉它，更新完自动重启；你的其它文件与数据一概不动。")
+        d = ConfirmDialog(
+            self.t, self.window(),
+            "有程序正占用要更新的文件",
+            "更新要替换的文件，现在被下面这些程序占用：",
+            lines,
+            confirm_label="关掉它并继续",
+            cancel_label="取消",
+            dangerous=False,
+        )
+        d.exec()
+        if not d.result_ok:
+            self._set_progress("已取消更新（文件没有任何改动）。想更新时再点一次「立即更新」。")
+            return
+        self._set_progress("正在关掉占用者并继续更新…")
+
+        def _work(box: dict) -> None:
+            from agent_bridge import post_json # noqa: PLC0415
+
+            box["r"] = post_json("/api/update_apply", {"allow_kill": True, "killed": pids})
+
+        def _apply(box: dict) -> None:
+            r = box.get("r")
+            if not isinstance(r, dict) or r.get("ok") is False:
+                why = r.get("why") if isinstance(r, dict) else None
+                self._set_progress("继续更新失败：%s" % (why or "没连上后台"))
+                self._style(warn=True, visible=True)
+                return
+            self._polling = True
+            self._poll_iv.start()
+
+        run_async(_work, _apply, page=self, interval=150, name="upd-kill")
 
     def _render_running(self, j: dict) -> None:
         ver = str((self._cur or {}).get("theirs") or j.get("version") or "新版本")

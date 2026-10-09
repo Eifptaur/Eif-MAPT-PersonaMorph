@@ -2647,6 +2647,12 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
         ver_lb.setText(("当前版本对：本机微信版本 %s · 适配层 %s" % (wv, ad or "-"))
                        if wv and wv != "unknown" else "当前版本对：本机微信版本读不到")
         allow = vg.get("allow") if isinstance(vg.get("allow"), bool) else None
+        # ⛔ 「本次允许发送」是**会话期用户决定**，不许被后台补数的 status 回填盖掉：
+        #    实测踩过 —— 点「放行」后 gate_lb 显示"已放行"，紧接着 `_mtx_load` 的
+        #    异步 status 回来把它覆盖成"版本门：读不到"（用户看着像没生效）。
+        #    用户自己的放行决定优先级高于后台读到的旧快照。
+        if getattr(page, "_c10_allow_local", False):
+            return
         if allow is None:
             gate_lb.setText("版本门：读不到（不影响发送）")
             badge.set("idle", "读不到")
@@ -2712,6 +2718,8 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
             gate_lb.setText("已放行（只对本次运行有效）：发送会按未验证版本对继续，"
                             "出问题就在本页点「升级适配层」（产品后台自己装）。")
             gate_lb.setStyleSheet(f"color:{t.ok};background:transparent;")
+            # 打上"用户已放行"的本地标记 ⇒ 后台 status 回填不再覆盖这一行（见 _render_mtx）
+            page._c10_allow_local = True
 
         run_async(_work, _apply, page=page, interval=150, name="vermat-allow")
 
@@ -7088,6 +7096,60 @@ def _act_wx_open_site(btn, note) -> None:
         _c8_say(note, t, "已尝试打开官网：%s（打不开就手动复制到浏览器）" % u, "ok")
 
 
+def _act_music_apply(btn, note) -> None:
+    """音乐推荐：系统浏览器打开 **QQ 音乐 key 申请页**（教用户自己去申请）。
+
+    为什么要有这个按钮：QQ 音乐那一档要用户自己的 `qmk-` key ⇒ 光一个输入框不够，
+    得把"去哪儿申请"点得到。地址优先读配置 `music.qqmusic_apply_url`，读不到用官方固定址。
+    """
+    from PySide6.QtCore import QUrl # noqa: PLC0415
+    from PySide6.QtGui import QDesktopServices # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    u = "https://y.qq.com/n/ryqq_v2/qqmusic_skills"
+    try:
+        from config_io import read_path as _rp # noqa: PLC0415
+        _u = str(_rp("music.qqmusic_apply_url", "") or "").strip()
+        if _u:
+            u = _u
+    except Exception: # noqa: BLE001
+        pass
+    try:
+        QDesktopServices.openUrl(QUrl(u))
+    except Exception: # noqa: BLE001
+        pass
+    if note is not None and t is not None:
+        _c8_say(note, t, "已尝试打开 QQ 音乐 key 申请页：%s（打不开就手动复制到浏览器）" % u, "ok")
+
+
+def _act_autostart_toggle(btn, note) -> None:
+    """开机自启一键切换（web `autostartToggle` 对齐）。
+
+    为什么用「切换」而不是勾选框：Qt 面板由 web HTML 解析生成，裸 `<input type=checkbox>`
+    不解析成控件（见 `sec_meta` 的取舍）⇒ 同一个后端入口，Qt 侧给一颗按钮。
+    先 GET 读**当前真实状态**（以启动文件夹里的文件为准，用户手动删过也能读对），
+    再 POST 取反；绝不凭按钮文字猜状态。只走用户级启动文件夹，不需要管理员。
+    """
+    from agent_bridge import post_json # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+
+    def _run() -> str:
+        st = config_io.get_json("/api/autostart", timeout=10.0) or {}
+        cur = bool((st.get("autostart") or {}).get("enabled"))
+        want = not cur
+        r = post_json("/api/autostart", {"enable": want}, timeout=15.0) or {}
+        if not r.get("ok"):
+            raise Exception(str(r.get("error") or r.get("message") or "后端没说明原因"))
+        txt = str(r.get("text") or r.get("message") or "").strip()
+        head = "已打开开机自启" if want else "已关闭开机自启"
+        return (head + "。" + txt) if txt else head
+
+    _post_action_raw(btn, note, _run, "正在切换…")
+
+
 def _act_ut_reload(btn, note) -> None:
     """web utReload 对齐：GET /api/tools/reload 重扫清单 → 回显数量，
     并触发下方清单卡重载（page._ut_reload 钩子）。"""
@@ -8054,6 +8116,10 @@ ACT_CUSTOM = {
                   "真接后端：/api/wechat/dir 保存当前填的目录并重探（失败会说明回落目录）"),
     "wxOpenSite": (_act_wx_open_site,
                    "打开微信官网 weixin.qq.com（系统浏览器）"),
+    "musicApply": (_act_music_apply,
+                   "打开 QQ 音乐 key 申请页（y.qq.com/n/ryqq_v2/qqmusic_skills，系统浏览器）"),
+    "autostartToggle": (_act_autostart_toggle,
+                        "真接后端：/api/autostart（先读当前态再取反；用户级启动文件夹，免管理员）"),
     "utExport": (_act_ut_export,
                  "真接后端：/api/tools/export 生成可分享的工具清单文档（可复制/另存 .json）"),
     "utImport": (_act_ut_import,
@@ -9107,8 +9173,9 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
                          "或看「检测中心」的依赖体检）" % str(vr.get("why") or "缺")[:60])
         asr = (vr.get("asr") or {}) if isinstance(vr, dict) else {}
         if isinstance(asr, dict) and asr.get("ok") is False:
-            manual.append("Windows 语音识别")
-            lines.append("音频识别：%s（Windows 功能——设置 → 时间和语言 → 语音，装完重启生效）"
+            manual.append("语音识别")
+            lines.append("音频识别：%s（想让识别更准可以自己装一份 faster-whisper——"
+                         "可选，不装也能用，在「缺件引导」里能看到）"
                          % str(asr.get("why") or "不可用")[:50])
         state["pkgs"] = pkgs
         state["manual"] = manual

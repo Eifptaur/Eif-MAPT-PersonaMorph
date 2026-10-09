@@ -76,6 +76,35 @@ def _touched(rel: str) -> bool:
     return True
 
 
+def _diff_rels(base_dir: str, files: dict) -> tuple:
+    """**只挑出"内容真不一样"的文件**：逐件比 `base_dir` 下现有文件的哈希与包内哈希。
+
+    为什么要有这一步（用户口径）：更新时**不盲换**——相同的文件一个字节都不动，
+    只替换真正不同的那些。好处：
+      · 少写盘、少触发杀软/索引；
+      · 被占用而需要用户处理的，**只剩真变化的文件**（没变的不碰，自然不占用）；
+      · 更新完能如实报"实际换了 N 件 / 已是最新 M 件"，而不是笼统一句"换了 300 件"。
+
+    返回 `(changed, unchanged)`：两个都是**已排序的本体相对路径**表。
+      · `changed`  = 包里有、且现有内容与包内**不同**（含"现有缺失"＝新增，必须换）；
+      · `unchanged`= 两边哈希**逐字节一致**（跳过，不动它）。
+    读现有文件失败（读不了/权限）⇒ 归入 `changed`（宁可多换一次，也不许"以为一样就不换"）。
+    """
+    changed, unchanged = [], []
+    for rel in sorted(files):
+        if not _touched(rel):
+            continue
+        tp = os.path.join(base_dir, rel.replace("/", os.sep))
+        try:
+            if os.path.exists(tp) and sha256_file(tp) == files[rel]:
+                unchanged.append(rel)
+                continue
+        except Exception:
+            pass # 读不了 ⇒ 当作"需换"，交给换入阶段去判真故障
+        changed.append(rel)
+    return changed, unchanged
+
+
 def sha256_file(p: str) -> str:
     h = hashlib.sha256()
     with open(p, "rb") as fh:
@@ -410,6 +439,60 @@ def releases_root(target: str = ROOT) -> str:
     return os.path.join(target, "releases")
 
 
+def _lock_users(path: str) -> list:
+    """查"谁占用了这个文件"。查不到 ⇒ **空表**（调用方按"查不出占用者"如实展示，不编进程名）。"""
+    try:
+        from . import file_lock
+        r = file_lock.who_locks([path])
+        return list(r.get("users") or [])
+    except Exception as _e:  # noqa: BLE001
+        log.debug("占用查询失败（当作查不到）：%s", _e, exc_info=True)
+        return []
+
+
+def _kill_pids(pids, killed=None) -> list:
+    """**临时关掉**这批 PID（用户已点头）。只关**用户显式同意的那几个**，返回实际关掉的 PID。
+
+    ⛔ 三条纪律：
+      · 只关传进来的 PID（不按名字杀、不整棵树杀——用户的浏览器/编辑器绝不能被误伤）；
+      · 关之前**再确认一次进程名**（PID 可能被系统复用 ⇒ 名字对不上就不动）；
+      · 关不掉的（权限/已退出）不算失败，如实记进 `killed` 名单供回报。
+    """
+    done = []
+    for pid in (pids or []):
+        try:
+            pid = int(pid)
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            import psutil # 项目已依赖（探进程用于投递档）
+        except Exception:  # noqa: BLE001
+            psutil = None
+        if psutil is None:
+            break
+        if pid in (0, 4): # 系统空闲/System 进程：绝不碰
+            continue
+        try:
+            if pid == os.getpid():
+                continue # 自己：不自杀（本进程要负责收尾/重启）
+            p = psutil.Process(pid)
+            p.terminate() # 先温和请求退出（不是 kill），给它清理的机会
+            try:
+                p.wait(timeout=3.0)
+            except Exception: # noqa: BLE001
+                p.kill() # 3 秒还没退 ⇒ 强杀（用户已点头，且这是"挡住了更新"的进程）
+            done.append(pid)
+        except Exception as _e:  # noqa: BLE001
+            log.debug("关掉 PID %s 失败（跳过，如实回报）：%s", pid, _e, exc_info=True)
+    if killed is not None:
+        try:
+            killed.extend(done)
+        except Exception:  # noqa: BLE001
+            pass
+    return done
+
+
+
 def read_pointer(target: str = ROOT):
     """读 `releases/current.txt` 里的**版本目录名**（该跑哪一份）；文件不存在/读不出 ⇒ `None`。
 
@@ -466,12 +549,22 @@ def _pointer_name_ok(ver: str) -> bool:
 
 
 def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = False, progress=None,
-               layout: str = "inplace"):
-    """整包换入。返回 `(rc, msg, detail)`：rc 0=成功（可能带"跳过被占用的文件"）、1=失败已回滚、2=前置不成立。
+               layout: str = "inplace", allow_kill: bool = False, killed=None):
+    """整包换入。返回 `(rc, msg, detail)`：rc 0=成功、1=失败已回滚、2=前置不成立、
+    3=**有文件被别的进程占用、等用户点头**（`detail["lockedBy"]` 给占用者清单）。
 
     顺序（少一步都不安全）：
       读清单 → 版本已是最新就停 → **只读**算包的文件树哈希并与清单对齐 → 干跑就到此为止
-      → 逐件快照 → 换入（跳过被占用件）→ 逐件组合校验 → 失败回滚 → 写 `data/installed.json`
+      → **只挑内容不同的文件** → 逐件快照 → 换入（**撞占用：先查占用者**）
+      → 逐件组合校验 → 失败回滚 → 写 `data/installed.json`
+
+    `allow_kill`（撞占用怎么办，**默认 False＝不许动别人的进程**）：
+      · `False` ⇒ 一旦检出"文件被占用"，**不跳过、不回滚**（此刻一件都还没换），
+        直接把占用者清单抛回给调用方（rc=3）⇒ 前端弹窗问用户；
+      · `True`  ⇒ 调用方**已拿到用户点头**，`killed` 里是允许关掉的 PID 集合 ⇒
+        换入前先关掉这些占用者，再继续（关不掉的仍如实报）。
+    ⛔ 纪律：**绝不静默跳过**——被占用的文件要么等用户处理，要么带着用户同意去关掉它，
+      不许留一个"半装"给用户自己猜。
 
     `layout`（两种装法）：
       · `"inplace"`（**默认**）＝原地覆盖 `target` 下那份（历史行为，一字不改）。
@@ -517,14 +610,28 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
         return 1, ("包内容与清单对不上（文件树哈希 %s… ≠ 清单 %s…）⇒ 一个文件都没动"
                    % (got_tree[:12], want_tree[:12])), {"got": got_tree, "want": want_tree, "files": n_files}
 
-    rels = [r for r in sorted(files) if _touched(r)]
+    rels_all = [r for r in sorted(files) if _touched(r)]
     skipped_scope = [r for r in sorted(files) if not _touched(r)]
-    if not rels:
+    if not rels_all:
         return 2, "包里没有可换入的本体文件（顶层=%s）" % top, {}
 
+    # ⛔ **只换真不一样的**：先按"目标现有哈希 vs 包内哈希"筛一遍。
+    #   · `inplace`  ⇒ 目标＝安装根那份，能比 ⇒ 真筛（相同的不碰）；
+    #   · `versioned`⇒ 目标是**新目录**（本来没有），全都要装 ⇒ 不做筛选（`changed`＝全集）。
+    #   ⚠️ 两处都仍保留 `rels_all` 作为"包内本体全集"，供组合校验用（校验比的是"装好的树"）。
+    _base_for_diff = target
+    rels, unchanged = _diff_rels(_base_for_diff, files) if _layout != "versioned" else (list(rels_all), [])
+
+    # 逐件比完**没有一件需要换** ⇒ 目标其实已经与包一致（版本号可能不同，但内容一样）。
+    #   如实报"已是最新"，不空跑一趟（也就不会误报"换了 0 件"这种让人犯嘀咕的话）。
+    if not rels:
+        return 0, ("逐件比对后没有需要替换的文件（%d 件内容完全相同）⇒ 已是最新，什么都没做"
+                   % len(unchanged)), {"status": "current", "unchanged": len(unchanged)}
+
     if dry:
-        return 0, "【干跑】包内 %d 件（本体 %d / 不碰 %d），版本 %s → %s" % (
-            n_files, len(rels), len(skipped_scope), cur.get("version") or "?", want_ver), {"dry": True}
+        return 0, "【干跑】包内 %d 件（本体 %d / 不碰 %d）；其中需换入 %d 件、已相同 %d 件，版本 %s → %s" % (
+            n_files, len(rels_all), len(skipped_scope), len(rels), len(unchanged),
+            cur.get("version") or "?", want_ver), {"dry": True}
 
     # ---- versioned 布局：把这份代码装进 releases/<版本>/，最后只翻指针 ----
     # ⛔ 与 inplace 的差别只有两点：① 写到哪（新目录，不是原地）；② 收尾写什么（写指针，不是
@@ -602,7 +709,11 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                          % (len(bad), "、".join(bad[:3])))
             return 1, why + tail, {"rolledBack": okr, "rollbackFailed": bad}
 
-        # ---- ④ 换入（**只有"被占用"才跳过**；其它错误一律回滚，不许降级成"部分成功"）----
+        # ---- ④ 换入（**只挑内容不同的**；撞占用 ⇒ 查占用者，不许静默跳过）----
+        #   ⛔ 老行为：被占用 ⇒ `locked.append(...)` + `continue`（留个"半装"让用户自己猜）。
+        #      新行为（用户口径）：**检出占用 ⇒ 查是谁占用 ⇒ 抛回前端弹窗**；只有拿到用户
+        #      "临时关掉它"的点头（`allow_kill=True` 且 PID 在 `killed` 里）才动手关。
+        need_kill = {} # {rel: {"path":…, "users":[…]}} —— 需要用户点头才能关的占用
         for rel in rels:
             sp = os.path.join(src_root, rel.replace("/", os.sep))
             tp = os.path.join(_ver_target, rel.replace("/", os.sep))
@@ -614,11 +725,41 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
                 # ⚠️ 第一版把**任何** OSError 都当"文件被占用"跳过 ⇒ 磁盘满/权限不对
                 #    这类真故障会被降级成"部分成功"，用户以为更新好了、其实没换。
                 #    自检 self_update_selftest 的 F 段就是拿这个当反面证据（模拟磁盘错误必须回滚）。
-                if _is_locked(e, tp):
-                    locked.append("%s（%s）" % (rel, str(e)[:60]))
-                    continue
-                # 权限类真故障要**指对方向**（别让用户去找一个不存在的"占用者"）
-                return rollback("换入失败：%s（%s）%s" % (rel, str(e)[:80], _perm_hint(e, tp)))
+                if not _is_locked(e, tp):
+                    # 权限类真故障要**指对方向**（别让用户去找一个不存在的"占用者"）
+                    return rollback("换入失败：%s（%s）%s" % (rel, str(e)[:80], _perm_hint(e, tp)))
+                # —— 真被占用：查出占用者，交给"杀不杀"的决策 ——
+                _who = _lock_users(tp)
+                if allow_kill and _who:
+                    # 用户已点头 ⇒ 关掉这批 PID，然后**重试这一件**
+                    _kill_pids([u["pid"] for u in _who], killed)
+                    try:
+                        time.sleep(0.25) # 给被关进程一点退出时间（句柄释放是异步的）
+                        shutil.copy2(sp, tp)
+                        placed.append(rel)
+                        continue
+                    except Exception as e2: # noqa: BLE001
+                        # 关了还写不进去 ⇒ 如实记成"关掉后仍被占用"（可能还有别的占用者）
+                        _who = _lock_users(tp) or _who
+                        need_kill[rel] = {"path": tp, "users": _who, "why": str(e2)[:80]}
+                        continue
+                need_kill[rel] = {"path": tp, "users": _who, "why": str(e)[:80]}
+
+        # 有文件仍需用户点头才能关 ⇒ **不回滚、不跳过**：此刻若一件都没换 ⇒ 直接 rc=3 抛回。
+        #   （已换入的件下次进来会因"哈希已相同"被跳过，接着从这批未换的开始。）
+        if need_kill:
+            _u = []
+            for v in need_kill.values():
+                _u.extend(v.get("users") or [])
+            _names = "、".join(sorted({(x.get("name") or ("PID %d" % x.get("pid"))) for x in _u})) or "未知程序"
+            _n = len(need_kill)
+            return 3, ("有 %d 个文件正被别的程序占用（%s）⇒ 需要先关掉它们才能继续。"
+                       "已关掉的会接着装，没关掉的下次还会提示。" % (_n, _names)), {
+                "phase": "locked", "lockedBy": need_kill, "lockedCount": _n,
+                "procNames": sorted({(x.get("name") or ("PID %d" % x.get("pid"))) for x in _u}),
+                "pids": sorted({int(x.get("pid")) for x in _u if x.get("pid")}),
+                "placedSoFar": len(placed),
+            }
 
         # ---- ⑤ 组合校验：逐件重算（换入件必须与清单哈希逐一对上）----
         # ⛔ 这一步抛异常（文件被占用/被删/读不了）**必须回滚**，不许"报失败但已经全换完"。
@@ -669,7 +810,9 @@ def apply_full(manifest: dict, zip_path: str, target: str = ROOT, dry: bool = Fa
 
 # ── 给控制台用的"一次更新"作业（进度可轮询）──────────────────────────────
 JOB = {"state": "idle", "phase": "", "why": "", "msg": "", "got": 0, "total": 0,
-       "version": "", "needRestart": False, "at": 0}
+       "version": "", "needRestart": False, "at": 0,
+       # 「有文件被占用、等用户点头」时这两项给前端弹窗用（其它状态恒为空）
+       "lockedBy": {}, "procNames": []}
 _LOCK = threading.Lock()
 
 
@@ -711,8 +854,13 @@ def _note_seen(version: str) -> None:
         pass
 
 
-def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None):
-    """一条龙：拉清单 → 下载（可给现成包）→ 整包换入。返回 dict（CLI/自测/控制台共用）。"""
+def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None,
+             allow_kill=False, killed=None):
+    """一条龙：拉清单 → 下载（可给现成包）→ 整包换入。返回 dict（CLI/自测/控制台共用）。
+
+    `allow_kill` / `killed` 转交 `apply_full`：撞占用时，默认**不杀**（rc=3 抛回占用者清单，
+    由前端弹窗问用户）；拿到用户点头后再带 `allow_kill=True` + 允许关的 PID 重跑一次。
+    """
     from . import update_check as uc # 延迟导入：控制台只要读状态时不拉起这条链
     if progress is None:
         progress = lambda got, total: _set(got=int(got), total=int(total)) # noqa: E731
@@ -817,7 +965,18 @@ def run_once(manifest=None, zip_path=None, target=ROOT, dry=False, progress=None
             return {"ok": False, "rc": 1, "why": why_dl, "phase": "download"}
 
     _set(state="running", phase="verify", why="正在校验包内容")
-    rc, msg, detail = apply_full(manifest, zip_path, target, dry=dry, progress=progress)
+    rc, msg, detail = apply_full(manifest, zip_path, target, dry=dry, progress=progress,
+                                 allow_kill=allow_kill, killed=killed)
+    # ⛔ rc=3＝"有文件被占用、在等用户点头"：**不是失败、也不是成功**。
+    #   把占用者清单原样抛回给调用方（控制台弹窗问用户），**不动盘、不删包、不重启**。
+    #   下次带 `allow_kill=True` 重跑时，本次已换入的件会因"哈希相同"被跳过，接着装剩下的。
+    if rc == 3:
+        _set(state="need_kill", phase="locked", why=msg, msg=msg,
+             needRestart=False, lockedBy=detail.get("lockedBy") or {},
+             procNames=detail.get("procNames") or [])
+        return {"ok": False, "rc": 3, "msg": msg, "detail": detail, "version": theirs,
+                "phase": "locked", "need_kill": True, "lockedBy": detail.get("lockedBy") or {},
+                "procNames": detail.get("procNames") or [], "needRestart": False}
     # 装完就把下载缓存删掉——
     # 暂存/备份目录在 apply_full 的 finally 里已经清了，这里只剩这个 zip（每版一个、4.5MB 量级）。
     # 失败时**留着**，方便重试与排障；下次成功后再清。
@@ -908,17 +1067,25 @@ def _relaunch_after_update(version: str = "") -> None:
     os._exit(0) # 更新＝换新代码跑，本进程必须让位
 
 
-def start_async(target=ROOT):
-    """给控制台按钮用：**防重入**地起一条后台更新（立刻返回当前作业状态）。"""
+def start_async(target=ROOT, allow_kill=False, killed=None):
+    """给控制台按钮用：**防重入**地起一条后台更新（立刻返回当前作业状态）。
+
+    `allow_kill=True`（＋`killed` 里的 PID）＝用户已看过占用提示并点了「确定」，
+    允许临时关掉挡路的进程；默认 False ⇒ 撞占用就回报 `need_kill`，由前端弹窗问。
+    """
     with _LOCK:
         if JOB.get("state") == "running":
             return {"ok": True, "state": "running", "note": "更新已经在做了", "job": dict(JOB)}
         JOB.update({"state": "running", "phase": "probe", "why": "", "msg": "", "got": 0,
-                    "total": 0, "needRestart": False, "version": "", "at": int(time.time())})
+                    "total": 0, "needRestart": False, "version": "", "at": int(time.time()),
+                    "lockedBy": {}, "procNames": []})
 
     def _worker():
         try:
-            r = run_once(target=target)
+            r = run_once(target=target, allow_kill=allow_kill, killed=killed)
+            if r.get("rc") == 3:
+                # 等用户点头：状态已由 run_once 置成 need_kill，这里不覆盖成 error
+                return
             if not r.get("ok"):
                 _set(state="error", why=r.get("why") or r.get("msg") or "更新失败",
                      phase=r.get("phase") or "apply")

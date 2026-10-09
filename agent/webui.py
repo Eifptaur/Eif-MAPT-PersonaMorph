@@ -2420,7 +2420,12 @@ def _make_handler(parent):
             # 原 _handle_body_request:1045
             try:
                 from . import update_apply as _ua
-                self._json(_ua.start_async())
+                # 前端"占用提示弹窗"点「确定」时会带 `allow_kill=true` + `killed=[PID…]`：
+                # 表示用户已看过占用者清单、同意临时关掉它们再更新。默认不带 ⇒ 撞占用只回报、不杀。
+                _d = data if isinstance(data, dict) else {}
+                _ak = bool(_d.get("allow_kill"))
+                _kl = _d.get("killed") if isinstance(_d.get("killed"), list) else None
+                self._json(_ua.start_async(allow_kill=_ak, killed=_kl))
             except Exception as e:
                 self._json({"ok": False, "why": "起不动更新作业：%s" % str(e)[:80]}, 500)
 

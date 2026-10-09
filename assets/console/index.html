@@ -976,6 +976,32 @@ th{color:var(--tx2);font-weight:500}
         if (j.state === 'done') {
           show((j.msg || '更新完成') + ' · 正在重启，页面稍后会自己连回来', '');
           try { await postJSON('/api/restart', {}); } catch (e) { }
+        } else if (j.state === 'need_kill') {
+          // 有文件被别的程序占用 ⇒ 弹窗把"是谁占用了什么"摆出来，问用户要不要临时关掉它。
+          // 用户点「确定」⇒ 带 allow_kill + PID 重跑（后端先关占用者、再继续装）；点「取消」⇒ 什么都不做。
+          var lk = j.lockedBy || {}, procs = j.procNames || [], pids = [];
+          var lines = ['更新需要替换的文件，正被下面这些程序占用：'];
+          Object.keys(lk).forEach(function (rel) {
+            var us = (lk[rel] && lk[rel].users) || [];
+            us.forEach(function (u) {
+              if (u && u.pid && pids.indexOf(u.pid) < 0) pids.push(u.pid);
+              lines.push('· ' + ((u && u.name) || '未知程序') + '（PID ' + ((u && u.pid) || '?') + '）占用了 ' + rel);
+            });
+          });
+          if (!procs.length) lines.push('（查不到具体是哪个程序占用的）');
+          lines.push('要临时关掉它、然后继续更新吗？关掉的程序会自动重启。');
+          var okKill = await new Promise(function (res) {
+            var m2 = confirmBox('有程序正占用要更新的文件', lines, '关掉它并继续', function () { res(true); });
+            var no2 = m2.querySelector('#cboxNo');
+            if (no2) no2.onclick = function () { maskClose(m2); m2.remove(); res(false); };
+          });
+          if (!okKill) { show('已取消更新（文件没有任何改动）。想更新时再点一次「立即更新」。', ''); return; }
+          try {
+            var r2 = await postJSON('/api/update_apply', { allow_kill: true, killed: pids });
+            if (!r2 || r2.ok === false) { show('继续更新失败：' + ((r2 && r2.why) || '未知原因'), 'warn'); return; }
+          } catch (e) { show('继续更新失败：' + e, 'warn'); return; }
+          show('正在关掉占用者并继续更新…', '');
+          _iv = setInterval(pollJob, 900);
         } else if (j.state === 'error') {
           show('更新失败：' + (j.why || '未知原因') + '（可以再点一次「立即更新」重试）', 'warn');
         } else {
@@ -1870,6 +1896,23 @@ th{color:var(--tx2);font-weight:500}
       <div class="row" data-ws="zhipu"><label>engine</label><div class="grow"><input type="text" id="wsEngine" placeholder="search_std"></div></div>
       <div class="row"><label>请求数</label><div class="grow"><input type="number" id="wsCount" min="1" max="50"></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（联网搜索）</button></div>
+    </section>
+<section id="sec-music" class="card" data-sec data-mg="sec-model">
+      <div class="sec-hd"><h2>音乐推荐</h2><span class="st" id="stMusic">读取中</span></div>
+      <div class="desc">群里有人说「推荐首歌」「来点适合下雨天的」「跑步听点带劲的」时用它。⭐ <b>默认走在线曲库</b>（网易云公开接口，<b>不用填任何东西、开箱即用</b>）—— 推荐的是别人按场景攒的歌单里的曲子，不是热单堆砌。</div>
+      <div class="row"><label>出网</label><input type="checkbox" data-cfg="music.online_allowed"><span class="hint">关掉 ⇒ 不联网，退到本机记住的那几首（功能会弱很多）。发出去的只有你那句「想要什么样的」，发聊天记录、不发联系人。</span></div>
+      <div class="row"><label>数据源</label><div class="grow"><select data-cfg="music.source">
+        <option value="netease">网易云（免 key，推荐）</option><option value="qqmusic">QQ 音乐（需自填 key）</option></select></div></div>
+      <div class="row"><label>优先歌单</label><input type="checkbox" data-cfg="music.want_playlist"><span class="hint">开（推荐）：先从别人攒的<b>歌单</b>里挑，更容易推出「你没听过但合口」的；关掉就直接搜单曲。</span></div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="sub">QQ 音乐（可选 —— 想用就自己申请一个 key）</div>
+      <div class="desc">QQ 音乐的官方接口要一个自己的 key（个人绑定，免费）。<b>不填也不影响上面网易云那一档</b>；想用 QQ 音乐就按下面三步走：<br>
+        ① 用浏览器打开 <a href="https://y.qq.com/n/ryqq_v2/qqmusic_skills" target="_blank" rel="noopener">y.qq.com/n/ryqq_v2/qqmusic_skills</a>；<br>
+        ② 按页面提示登录你的 QQ 音乐账号，生成一串 <b>qmk-</b> 开头的 key，复制它；<br>
+        ③ 粘到下面这个框里，保存；再回上面把「数据源」选成「QQ 音乐」。</div>
+      <div class="row"><label>QQ 音乐 Key</label><div class="grow"><input type="password" data-cfg="music.qqmusic_key" placeholder="qmk-xxxxxxxx（留空＝不用 QQ 音乐这一档）" autocomplete="off"></div></div>
+      <div class="btns"><button class="pri" data-save>保存设置（音乐推荐）</button>
+        <button class="ghost" id="musicApply">打开 QQ 音乐申请页</button></div>
     </section>
 <section id="sec-memory" class="card" data-sec>
       <h2>记忆（群友印象）</h2>
@@ -2815,6 +2858,10 @@ th{color:var(--tx2);font-weight:500}
       <div class="sub">① 启动与外观</div><div class="row"><label>开机自动启动</label><div class="grow">
         <input type="checkbox" id="autostartCk">
         <span class="hint" id="autostartHint">可选：勾选后开机自动运行。是"当前用户"级（免管理员），随时取消；取消＝删掉启动文件夹里那个文件。</span>
+      </div></div>
+      <div class="row"><label>一键切换</label><div class="grow">
+        <button class="ghost" id="autostartToggle" title="一键开关：读当前状态后取反">切换开机自启</button>
+        <span class="hint">和上面那个勾选框等价：点一下把当前状态取反（开着就关、关着就开）。</span>
       </div></div>
       <div class="row"><label>显示缩放</label><div class="grow"><select data-cfg="ui.coord_scale">
         <option value="auto">按系统自动检测</option><option value="1.0">100%</option>
@@ -4413,7 +4460,7 @@ async function loadStatus(){  try{
           });
           if(v.ok === false){
             const tip = document.createElement('div');
-            tip.textContent = '补齐办法：缺解码器 → pip install pilk（可选第三方，GPL-3.0，不随包分发）；缺识别引擎 → 系统里装中文语音识别（Windows 设置 → 时间和语言 → 语音）。';
+            tip.textContent = '补齐办法：缺解码器 → pip install pilk（可选第三方，GPL-3.0，不随包分发）；缺识别引擎 → 想让识别更准可以自己装一份 faster-whisper（可选，不装也能用）。';
             w2.appendChild(tip);
           }
         }
@@ -5892,10 +5939,10 @@ const GUIDES = {
   },
   voice: {
     title: '语音转文字：缺引擎怎么办',
-    intro: '链路＝微信语音(.silk) → 解码 → Windows 内置听写。两段各缺各补，缺哪段面板上会写出来。',
+    intro: '链路＝微信语音(.silk) → 解码 → 识别。两段各缺各补，缺哪段面板上会写出来。',
     steps: [
       '缺**解码器**：装一个 Python 包 pilk（可选第三方依赖，GPL-3.0，不随本项目分发）——命令在下面，复制到终端跑一次即可',
-      '缺**识别引擎**：Windows 设置 → 时间和语言 → 语音 → 安装中文语音识别（装完回来点「测试引擎」）',
+      '缺**识别引擎**：想让识别更准可以自己装一份 faster-whisper（**可选，不装也能用**，体积较大、第一次用要联网下模型）；装不装由你决定',
       '两样齐了，面板顶上的状态会变成「可用」；引擎没配好时机器人**不会假装识别过**，它会照实说缺什么。'
     ],
     copy: [{label: '复制安装命令', text: 'pip install pilk'}],
@@ -6275,7 +6322,8 @@ async function onboarding(){
   function obPend(){ return ((_obEnv && _obEnv.items) || []).filter(it=> it.ok !== true); }
   function obTotal(){ return 3 + 1 + 1 + obPend().length + 1; }  // 配置3 + 恢复1 + 环境校准1 + 缺件N + 体检1
 
-  /* 第 5 步：环境校准（微信字号"标准" / 浅色 / 100% 缩放 / OCR）——文案用后端那份 */
+  /* 第 5 步：环境校准（只两项 —— 微信浅色 / 微信标准字号）——文案用后端那份
+     ⛔ 不许出现显示缩放/OCR：缩放会搞坏用户所有软件，OCR 是程序自己的活。 */
   function obRenderHint(){
     const box = $('obEnv'); if(!box) return;
     const h = _obHint || {};
@@ -6439,6 +6487,11 @@ $('balance-badge').onclick = loadBalance;
   };
 })();
 $('rawJsonBtn').onclick = ()=>{ window.open('/api/config'+(URL_TOKEN?('?token='+URL_TOKEN):''),'_blank'); };
+/* 音乐推荐：QQ 音乐 key 申请页（教用户自己申请）—— 用系统浏览器打开 */
+if($('musicApply')) $('musicApply').onclick = ()=>{
+  const u = (getPath(cfg,'music.qqmusic_apply_url') || 'https://y.qq.com/n/ryqq_v2/qqmusic_skills');
+  try{ window.open(u,'_blank'); }catch(e){}
+};
 $('pauseBtn').onclick = async ()=>{
   const btn = $('pauseBtn');
   if(!btn || btn.dataset.busy === '1') return;
@@ -7518,6 +7571,23 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
       loadAutostart();
     });
     loadAutostart();
+  })();
+  /* 开机自启的**按钮**形态：Qt 端不便渲染裸 checkbox，统一用一个按钮切换（web 两个入口等价）。
+     点一下＝把当前状态取反（勾选态 → 关掉；未勾 → 打开）。 */
+  (function(){
+    const b = $('autostartToggle'); if(!b) return;
+    b.addEventListener('click', async ()=>{
+      const ck = $('autostartCk');
+      const want = !(ck && ck.checked);
+      b.disabled = true;
+      try{
+        const r = await getJSON('/api/autostart', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                   body: JSON.stringify({enable: want})});
+        toast(r.ok ? (r.message || '已设置') : ('没设置成功：' + (r.error || '未知原因')));
+      }catch(e){ toast('设置失败：' + e.message); }
+      b.disabled = false;
+      loadAutostart();
+    });
   })();
 
   /* ⑥ 逐字浮动：光标划过卡片标题时拆成字（一次拆好缓存）*/
