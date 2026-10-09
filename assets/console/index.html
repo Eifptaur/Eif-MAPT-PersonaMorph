@@ -1276,6 +1276,7 @@ th{color:var(--tx2);font-weight:500}
       <div class="row"><label>允许盲试点击</label><input type="checkbox" data-cfg="wechat.allow_click_hunting"><span class="hint">默认关：侧栏图标认不出来时绝不猜位置乱点（只在确认是「发现」时才点）。开了它才会按图标顺序/比例试点几下——试错会点到你其它图标上。</span></div>
       <div class="row"><label>最小化提醒</label><input type="checkbox" data-cfg="wechat.minimize_warning"><span class="hint">勾选=当微信被最小化、而下面「最小化时自己还原」又是关的（那时我抓不到画面、切会话与发送都干不了），就把原因和两条出路说清楚；关掉＝这类情况只静默记一行。</span></div>
       <div class="row"><label>最小化时自己还原</label><input type="checkbox" data-cfg="wechat.restore_minimized"><span class="hint">勾选=微信被最小化时，程序把它**不激活地**还原到屏幕上再继续（不激活、不动鼠标；只是窗口会重新出现）。**干完活不会再帮你收回去**——窗口留在桌面上（只压到后台），嫌乱请自己收。取消勾选＝最小化时如实停下</span></div>
+      <div class="row"><label>最小化时仍走右键</label><input type="checkbox" data-cfg="wechat.right_click_when_minimized"><span class="hint">**默认关**。勾选=即使微信最小化，拍一拍/引用/消息菜单也照样试（右键）。关掉=最小化时**不做**这类操作，如实记一行原因——因为最小化抓不到画面，右键气泡的落点算不准，点下去可能点到别处，反而干扰你正在做的事（拍一拍、引用本身能投递，但最小化时容易点偏）</span></div>
       <div class="row"><label>会不会跟你抢操作</label><span class="hint">全程只发投递消息：你在别处打字、别的窗口盖住微信，都不影响它干活。只有一种情况会撞车——**你正在同一个会话里切会话或打字**时，它可能和你抢同一步操作；撞了它会用聊天区内容复核，对不上就让步、不硬凑。</span></div>
       <div class="sub">③ 监听与目录</div>
       <div class="row"><label>群白名单</label>
@@ -1962,6 +1963,33 @@ th{color:var(--tx2);font-weight:500}
             <span class="mg-lg" data-t="topic">话题</span>
           </div>
           <div class="hint">圆越大＝这个人/这个群越重要；实线＝「在群里」「聊到」，虚线＝「同群」（两个人同在一个群）。</div>
+        </div>
+      </div>
+      <div class="sub">群年报</div>
+      <div class="row"><label>看哪个群</label>
+        <div class="grow">
+          <select id="rcScope">
+            <option value="">跟上面选中的群一致</option>
+            <option value="__all">本机所有会话（汇总）</option>
+          </select>
+          <span class="hint" id="rcHint">把这段时间的聊天总结成一份年报：语录榜、表情榜、梗进化史、夜猫子榜。全部在本机聚合，不花一点额度。</span>
+        </div>
+      </div>
+      <div class="row"><label>生成年报</label>
+        <div class="grow">
+          <button id="rcAnnual" class="ghost" title="读本机消息库聚合成年报；没聊天记录会说没数据，不会出空白报告">生成年报</button>
+          <span class="hint">点一下按上面选的群出年报；结果直接显示在下面。</span>
+        </div>
+      </div>
+      <div class="row"><label>年报内容</label>
+        <div class="grow">
+          <div id="rcBody" class="hint" style="white-space:pre-wrap;line-height:1.7">（还没生成，点上面的「生成年报」）</div>
+        </div>
+      </div>
+      <div class="row"><label>分享卡</label>
+        <div class="grow">
+          <button id="rcCard" class="ghost" title="把年报画成一张 3:4 的分享卡（PNG，存在本机数据目录）；没数据不画空白卡">出分享卡</button>
+          <span class="hint" id="rcCardRst">出一张 3:4 的图片卡，存到本机数据目录，可直接分享。</span>
         </div>
       </div>
       <div class="row"><label>清除记忆</label><div class="grow">
@@ -7783,6 +7811,63 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
       MG.view.k = Math.max(0.3, Math.min(3, k));
       mgDraw();
     }, {passive:false});
+  })();
+
+  /* ⑨ 群年报：选会话 → 生成年报（语录/表情/梗进化/夜猫子）→ 出 3:4 分享卡。
+     全部本机聚合，不发外网；没数据时如实说「没数据」，不出空白报告/空白卡。 */
+  function rcPickChat(){
+    const sc = $('rcScope'); const cur = $('memChats');
+    if(sc && sc.value === '__all') return '';
+    return (cur && cur.value) ? cur.value : '';
+  }
+  function rcShowAnnual(r){
+    const box = $('rcBody'); if(!box) return;
+    if(!r || !r.ok){ box.textContent = '没数据：' + ((r && r.note) || '这个会话还没有聊天记录'); return; }
+    const L = [];
+    L.push('会话：' + (r.name || '（未命名）') + '　消息数：' + (r.total || 0));
+    const sp = r.span || {};
+    if(sp.days) L.push('跨度：约 ' + sp.days + ' 天');
+    const senders = r.top_senders || [];
+    if(senders.length){
+      L.push('');
+      L.push('【话最多】');
+      senders.slice(0, 5).forEach((x, i)=> L.push((i + 1) + '. ' + (x.who || '未知') + '（' + (x.n || 0) + ' 条）'));
+    }
+    const owls = r.night_owls || [];
+    if(owls.length){
+      L.push('');
+      L.push('【夜猫子榜】' + owls.slice(0, 3).map(x=> (x.who || '') + '（' + (x.n || 0) + '）').join('、'));
+    }
+    const types = r.types || [];
+    if(types.length){
+      L.push('');
+      L.push('【都发些什么】' + types.slice(0, 6).map(x=> (x.name || '') + ' ' + (x.n || 0)).join('　'));
+    }
+    if(r.longest) { L.push(''); L.push('【最长一条】' + r.longest); }
+    if(r.truncated) L.push('\n（只统计了最近 ' + (r.read_limit || '') + ' 条，更早的没算进来）');
+    box.textContent = L.join('\n');
+  }
+  async function rcLoadAnnual(){
+    const ck = rcPickChat();
+    try{
+      const r = await getJSON('/api/report/annual' + (ck ? ('?chat_key=' + encodeURIComponent(ck)) : ''));
+      if(!r.ok){ toast('生成不了：' + (r.note || '未知原因')); }
+      rcShowAnnual(r);
+    }catch(e){ toast('生成不了：' + e.message); }
+  }
+  async function rcMakeCard(){
+    const ck = rcPickChat();
+    try{
+      const r = await postJSON('/api/report/card', {chat_key: ck});
+      const rst = $('rcCardRst');
+      if(!r.ok){ toast('出不了卡：' + (r.note || '未知原因')); if(rst) rst.textContent = (r.note || '没成功'); return; }
+      if(rst) rst.textContent = '已生成：' + (r.path || '（见数据目录）');
+      toast('分享卡已生成');
+    }catch(e){ toast('出不了卡：' + e.message); }
+  }
+  (function(){
+    const ba = $('rcAnnual'); if(ba) ba.addEventListener('click', ()=>rcLoadAnnual());
+    const bc = $('rcCard'); if(bc) bc.addEventListener('click', ()=>rcMakeCard());
   })();
 
   /* ⑥ 逐字浮动：光标划过卡片标题时拆成字（一次拆好缓存）*/

@@ -468,6 +468,30 @@ def main():
     ok("⑭ ★源码锚：`pane_left`（准确）与扫描起点（宁小）**分开两个变量**",
        "_scan_lo = min(pane_left, _lib_pl)" in _wxsrc, "")
 
+    # ── ⑮ 最小化时默认**不做**右键类操作（拍一拍/引用/消息菜单）──
+    # 用户口径：最小化抓不到帧 ⇒ 头像/气泡落点算不准，点下去可能点到别处、干扰前台操作。
+    #   ⇒ 门必须在 `_right_click_menu` **最前面**（投递那条路也要挡），默认拒（配置默认 False）。
+    from agent.config import DEFAULT_CONFIG as _DEF
+    _rc_start = _wxsrc.find("def _right_click_menu(self")
+    _rc_end = _wxsrc.find("\n    def ", _rc_start + 10)
+    _rcm = _wxsrc[_rc_start:_rc_end] if _rc_start >= 0 else ""
+    # ⛔ 剥掉 docstring 再比位置：解释性文字里先提了 `_right_click_menu_posted`，
+    #   不剥会把"门在投递之后"判反（自指陷阱同款）。
+    import re as _re
+    _rcm_body = _re.sub(r'"""[\s\S]*?"""', '""', _rcm)
+    ok("⑮ ★最小化门在 `_right_click_menu` 里的位置**早于**投递调用（投递也不能漏挡）",
+       ("_win_minimized()" in _rcm_body and "_right_click_menu_posted" in _rcm_body
+        and _rcm_body.index("_win_minimized()") < _rcm_body.index("_right_click_menu_posted")), "")
+    ok("⑮ ★门是**默认拒**：`right_click_when_minimized` 缺省 False",
+       bool(((_DEF.get("wechat") or {}).get("right_click_when_minimized")) is False), "")
+    ok("⑮ 判定函数 `_win_minimized` 用 `IsIconic` 且取不到句柄时按**没最小化**（fail-open 不挡用户）",
+       ("def _win_minimized" in _wxsrc and "IsIconic" in _wxsrc), "")
+    ok("⑮ `_right_click_when_minimized_ok` 读配置失败 ⇒ False（fail-closed 按拒）",
+       "_right_click_when_minimized_ok" in _wxsrc, "")
+    _web = open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
+    ok("⑮ web 控制台有对应开关（data-cfg 绑定 + 默认不勾）",
+       'data-cfg="wechat.right_click_when_minimized"' in _web, "")
+
     print("\n== 汇总：%d 通过 / %d 失败 ==" % (len(PASS), len(FAIL)))
     if FAIL:
         print("失败项：")

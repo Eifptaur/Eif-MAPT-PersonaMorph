@@ -1572,7 +1572,11 @@ _AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe", "rg
                           "marketOpenBtn",
                           # mgDraw：记忆页的图谱卡里已有原生按钮（`memory_panel` 的
                           #   `b_mg_draw`，画自绘力导向图）⇒ 元数据行再渲染一颗会重名。
-                          "mgDraw"}
+                          "mgDraw",
+                          # rcAnnual / rcCard：记忆页的「群年报」卡里已有原生按钮
+                          #   （`memory_panel` 的 `b_rc_annual`/`b_rc_card`，走
+                          #   `/api/report/annual` 与 `/api/report/card`）⇒ 同 mgDraw。
+                          "rcAnnual", "rcCard"}
 # 这两个下拉是 web **纯 JS 专属控件**（providerSel 静态选项+change 联动、modelSel
 # 动态填充），Qt 由模型页追加区原生实现（objectName 同名）——元数据行只渲染出
 # 假/空下拉。fbKind 这类「无 cfg 但有静态

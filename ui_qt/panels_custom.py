@@ -4686,17 +4686,123 @@ def memory_panel(t: Tokens) -> QWidget:
         b_mg_draw.clicked.connect(lambda _=False: _mg_draw())
         page._mg_draw = _mg_draw # 供 ACT_CUSTOM 里同一函数的入口复用（不重写一遍）
         page._mg_view = mg_view
-        # ★ 三级索引：web 侧 memory 页有两组（`记忆图谱` / `图怎么读`）——
+        lay.addWidget(gcard)
+        lay.addWidget(_mg_legend)
+
+        # ── 群年报（web `rcAnnual`/`rcCard` 的 Qt 等价物）──
+        #    读本机消息库聚合成年报（`/api/report/annual`），再出一张 3:4 分享卡
+        #    （`/api/report/card`）。全部本机、零 token；没数据如实说「没数据」。
+        rcard = Card(t)
+        rcard.body.addWidget(h2(t, "群年报"))
+        rcard.body.addWidget(desc(
+            t, "把这段时间的聊天总结成一份年报：谁话最多、谁是夜猫子、都发些什么。"
+               "全部在本机聚合，不花一点额度；没聊天记录会说没数据。"))
+        _rc_row = FlowBox(t, spacing=6)
+        b_rc_annual = Btn("生成年报", t, "primary")
+        b_rc_annual.setObjectName("rcAnnual")
+        b_rc_annual.setProperty("web_action", "rcAnnual")
+        b_rc_card = Btn("出分享卡", t, "ghost")
+        b_rc_card.setObjectName("rcCard")
+        b_rc_card.setProperty("web_action", "rcCard")
+        _rc_all = QCheckBox("本机所有会话（汇总）")
+        _rc_all.setObjectName("rcScopeAll")
+        _rc_row.add(b_rc_annual)
+        _rc_row.add(b_rc_card)
+        _rc_row.add(_rc_all)
+        rcard.body.addWidget(_rc_row)
+        _rc_body = desc(t, "（还没生成，点上面的「生成年报」）")
+        _rc_body.setWordWrap(True)
+        rcard.body.addWidget(_rc_body)
+        _rc_note = desc(t, "")
+        rcard.body.addWidget(_rc_note)
+
+        def _rc_pick() -> str:
+            if _rc_all.isChecked():
+                return ""
+            return chat_sel.currentData() or ""
+
+        def _rc_annual_text(r: dict) -> None:
+            L = ["会话：%s　消息数：%s" % (r.get("name") or "（未命名）", r.get("total") or 0)]
+            sp = r.get("span") or {}
+            if sp.get("days"):
+                L.append("跨度：约 %s 天" % sp["days"])
+            ss = r.get("top_senders") or []
+            if ss:
+                L.append("")
+                L.append("【话最多】")
+                for i, x in enumerate(ss[:5], 1):
+                    L.append("%d. %s（%s 条）" % (i, x.get("who") or "未知", x.get("n") or 0))
+            ow = r.get("night_owls") or []
+            if ow:
+                L.append("")
+                L.append("【夜猫子榜】" + "、".join(
+                    "%s（%s）" % (x.get("who") or "", x.get("n") or 0) for x in ow[:3]))
+            ty = r.get("types") or []
+            if ty:
+                L.append("")
+                L.append("【都发些什么】" + "　".join(
+                    "%s %s" % (x.get("name") or "", x.get("n") or 0) for x in ty[:6]))
+            if r.get("longest"):
+                L.append("")
+                L.append("【最长一条】" + str(r["longest"]))
+            if r.get("truncated"):
+                L.append("")
+                L.append("（只统计了最近 %s 条，更早的没算进来）" % (r.get("read_limit") or ""))
+            _rc_body.setText("\n".join(L))
+
+        def _rc_run(which: str) -> None:
+            ck = _rc_pick()
+            b_rc_annual.setEnabled(False)
+            b_rc_card.setEnabled(False)
+            if which == "annual":
+                _rc_note.setText("正在本机聚合…")
+            else:
+                _rc_note.setText("正在出分享卡…")
+            box2: dict = {}
+
+            def _work2(b: dict) -> None:
+                try:
+                    if which == "annual":
+                        b["r"] = config_io.get_json(
+                            "/api/report/annual" + (f"?chat_key={ck}" if ck else ""), timeout=30.0)
+                    else:
+                        b["r"] = post_json("/api/report/card", {"chat_key": ck}, timeout=60.0)
+                except Exception as e: # noqa: BLE001
+                    b["err"] = str(e)
+
+            def _land2(b: dict) -> None:
+                if not _ui_alive(page):
+                    return
+                b_rc_annual.setEnabled(True)
+                b_rc_card.setEnabled(True)
+                r = b.get("r") if isinstance(b.get("r"), dict) else {}
+                err = b.get("err")
+                if err or not r.get("ok"):
+                    _rc_note.setText("没成：" + str(err or r.get("note") or "未知原因"))
+                    return
+                if which == "annual":
+                    _rc_annual_text(r)
+                    _rc_note.setText("")
+                else:
+                    _rc_note.setText("已生成：" + str(r.get("path") or "（见数据目录）"))
+
+            run_async(_work2, _land2, page=page, interval=200, name="report-%s" % which)
+
+        b_rc_annual.clicked.connect(lambda _=False: _rc_run("annual"))
+        b_rc_card.clicked.connect(lambda _=False: _rc_run("card"))
+        page._rc_run = _rc_run # 供 ACT_CUSTOM 里的按钮入口复用
+        lay.addWidget(rcard)
+
+        # ★ 三级索引：web 侧 memory 页有三组（`记忆图谱` / `图怎么读` / `群年报`）——
         #   标成组起点，顶部锚点条才会生成、点了才真能滚。组名从 web 的 `.sub` 原文取（一处真值）。
         from panels_qt import mark_group as _mark_group # noqa: PLC0415
 
         if not all((_mark_group(page, "memory", 0, gcard),
-                    _mark_group(page, "memory", 1, _mg_legend))):
+                    _mark_group(page, "memory", 1, _mg_legend),
+                    _mark_group(page, "memory", 2, rcard))):
             page._c8_group_mismatch = True
-        lay.addWidget(gcard)
-        lay.addWidget(_mg_legend)
-    except Exception as _e: # noqa: BLE001 — 图谱是增值件，挂了也不该拖垮整个记忆页
-        log.debug("挂记忆图谱卡失败：%s", _e, exc_info=True)
+    except Exception as _e: # noqa: BLE001 — 图谱/年报是增值件，挂了也不该拖垮整个记忆页
+        log.debug("挂记忆图谱/群年报卡失败：%s", _e, exc_info=True)
 
     lay.addStretch(1)
     return page

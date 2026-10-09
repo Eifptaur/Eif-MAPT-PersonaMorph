@@ -1606,6 +1606,48 @@ def _make_handler(parent):
                 self._json({"ok": False, "nodes": [], "links": [],
                             "error": str(e)[:120]}, 500)
 
+        def _rapi_report_annual(self, path, data, parsed, method):
+            """群年报（只读）：读消息库聚合成年报 ⇒ `{ok, name, total, ...}`。
+
+            `?chat_key=` 指定会话；不给就用第一条有消息的会话。**本机聚合、零 token**。
+            聚合逻辑全在 `agent/report_card.py`（`annual`），这里只做 HTTP 壳。
+            """
+            try:
+                from . import report_card as _rc
+                q = parse_qs(parsed.query)
+                ck = (q.get("chat_key") or q.get("chat") or [""])[0]
+                self._json(_rc.annual(str(ck or "")))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "name": "", "total": 0,
+                            "note": str(e)[:120]}, 500)
+
+        def _rapi_report_card_post(self, path, data, parsed, method):
+            """出 3:4 分享卡 ⇒ `{ok, path, report, note}`。
+
+            ⛔ 没数据不出图（`annual.ok` 为假 ⇒ 直接把原因带回去，不画空白卡）。
+            写盘目录由 `report_card` 自己定（`config.DATA_DIR`），这里只转发 `chat_key`。
+            """
+            try:
+                from . import report_card as _rc
+                _d = data if isinstance(data, dict) else {}
+                ck = str(_d.get("chat_key") or _d.get("chat") or "")
+                self._json(_rc.export(ck))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "path": "", "report": {}, "note": str(e)[:120]}, 500)
+
+        def _rapi_report_book(self, path, data, parsed, method):
+            """名场面精华簿（只读）：GET 列已挑进来的名场面 ⇒ `{ok, picks, note}`。
+
+            `?chat_key=` 为空则读全部；每条带 `by`（谁挑的）。
+            """
+            try:
+                from . import report_card as _rc
+                q = parse_qs(parsed.query)
+                ck = (q.get("chat_key") or q.get("chat") or [""])[0]
+                self._json(_rc.book(str(ck or "")))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "picks": [], "note": str(e)[:120]}, 500)
+
         def _rapi_wordcloud(self, path, data, parsed, method):
             """热词词云（第 136 项）：按会话出一张 PNG ⇒ `{ok, path, words, note, top}`。
 

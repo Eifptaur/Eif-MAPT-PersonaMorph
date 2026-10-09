@@ -11214,6 +11214,37 @@ class WeChatAdapter:
             log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
             return False
 
+    def _win_minimized(self) -> bool:
+        """主窗现在是不是**最小化**（`IsIconic`）？任何一步取不到 ⇒ False（按"没最小化"）。
+
+        判定口径与 `tools._voice_win_minimized` 一致：只读 `IsWindowIconic`，拿不到句柄就
+        按"没最小化"处理 —— 宁可让后续链路自己如实失败，也不许因为"判不了"把用户挡在门外。
+        """
+        try:
+            gui = self._get_gui()
+            hwnd = int(getattr(gui, "main_hwnd", 0) or 0)
+            if not hwnd:
+                return False
+            import ctypes
+            return bool(ctypes.windll.user32.IsIconic(int(hwnd)))
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+            return False
+
+    def _right_click_when_minimized_ok(self) -> bool:
+        """最小化时**要不要**继续走右键链（默认**不许**）。
+
+        = `wechat.right_click_when_minimized`（默认 False）。读配置出任何问题 ⇒ False。
+        这道门收的是"最小化抓不到帧、落点算不准 ⇒ 右键气泡可能点到别处"这条现实风险：
+        与其点错干扰用户，不如如实拒绝、把原因摆到日志/控制台。
+        """
+        try:
+            from .config import get_config
+            cfg = get_config() or {}
+            return bool((cfg.get("wechat") or {}).get("right_click_when_minimized", False))
+        except Exception: # noqa: BLE001
+            return False
+
     def _right_click_menu(self, gui, rel_x: int, rel_y: int, label: str, delay: float = 0.7) -> bool:
         """在相对坐标 (rel_x, rel_y) 处右键，OCR 弹出菜单，点含 label 的项。
 
@@ -11225,6 +11256,12 @@ class WeChatAdapter:
         菜单项是小字条（高 < 46）、位于光标右下方附近——防止把聊天文本里
         的「拍一拍」误当成菜单项。
         """
+        # ⛔ 最小化门（默认拒）：主窗最小化时**抓不到帧** ⇒ 头像方块/气泡落点全算不准，
+        #   投递右键即便"发出去了"，等回来的菜单窗也可能认错、点偏，反而干扰用户前台操作。
+        #   口径：宁可不做，也不点错（`wechat.right_click_when_minimized` 默认 False）。
+        if self._win_minimized() and not self._right_click_when_minimized_ok():
+            log.info("主窗最小化且未允许 ⇒ 不做右键类操作（%s）：抓不到帧、落点算不准，宁可不点", label)
+            return False
         if self._right_click_menu_posted(gui, rel_x, rel_y, label, delay):
             return True
         if not self._real_mouse_allowed():

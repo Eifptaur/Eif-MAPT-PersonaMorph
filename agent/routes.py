@@ -86,6 +86,9 @@ ROUTES = {
     "/api/memory": ("GET", "POST"),
     "/api/memory/graph": ("GET",),
     "/api/memory/deep-profile": ("POST",),
+    "/api/report/annual": ("GET",),
+    "/api/report/card": ("POST",),
+    "/api/report/book": ("GET",),
     "/api/open-path": ("GET", "POST"),
     "/api/pause": ("POST",),
     "/api/persona/ai-enrich": ("POST",),
@@ -361,6 +364,15 @@ HANDLERS = {
     },
     "/api/memory/graph": {
         "GET": "_rapi_memory_graph",
+    },
+    "/api/report/annual": {
+        "GET": "_rapi_report_annual",
+    },
+    "/api/report/card": {
+        "POST": "_rapi_report_card_post",
+    },
+    "/api/report/book": {
+        "GET": "_rapi_report_book",
     },
     "/api/memory/deep-profile": {
         "POST": "_rapi_memory_deep_profile_post",

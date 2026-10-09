@@ -203,5 +203,35 @@ ok("G2★ 执行体 `_exec_yearbook` 存在且三动作齐全",
 ok("G3★ 提示词里点了 `yearbook`（否则模型不知道有这个工具）",
    "yearbook" in _prompt_src, "")
 
+print("\n── H. 前端点得到（路由 + web + Qt）──")
+# ⛔ 守的是"后端有、前端点不到"这类**纸面能力**：年报模块再完整，没接路由/没入口
+#    ⇒ 用户永远看不到。三条链缺一不可：路由注册 → web 入口 → Qt 入口。
+_routes_src = io.open(os.path.join(ROOT, "agent", "routes.py"), encoding="utf-8").read()
+_webui_src = io.open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+_html_src = io.open(os.path.join(ROOT, "assets", "console", "index.html"),
+                    encoding="utf-8").read()
+_pq_src = io.open(os.path.join(ROOT, "ui_qt", "panels_qt.py"), encoding="utf-8").read()
+_pcs_src = io.open(os.path.join(ROOT, "ui_qt", "panels_custom.py"), encoding="utf-8").read()
+
+ok("H1★ 路由表里有 `/api/report/annual`（GET）", '"/api/report/annual": ("GET",)' in _routes_src, "")
+ok("H2★ 路由表里有 `/api/report/card`（POST）", '"/api/report/card": ("POST",)' in _routes_src, "")
+ok("H3★ 三个年报 handler 已接进 HANDLERS",
+   all(('"_rapi_report_annual"' in _routes_src,
+        '"_rapi_report_card_post"' in _routes_src,
+        '"_rapi_report_book"' in _routes_src)), "")
+ok("H4★ webui 里三个 handler 实现都在",
+   all(("def _rapi_report_annual" in _webui_src,
+        "def _rapi_report_card_post" in _webui_src,
+        "def _rapi_report_book" in _webui_src)), "")
+ok("H5★ web 控制台有入口按钮（rcAnnual + rcCard，且各自独立一行防被吞）",
+   'id="rcAnnual"' in _html_src and 'id="rcCard"' in _html_src, "")
+ok("H6★ web 有对应 JS 动作（rcLoadAnnual / rcMakeCard 真打路由）",
+   "rcLoadAnnual" in _html_src and "/api/report/annual" in _html_src
+   and "/api/report/card" in _html_src, "")
+ok("H7★ Qt 记忆页有年报卡原生按钮（objectName rcAnnual/rcCard）",
+   'setObjectName("rcAnnual")' in _pcs_src and 'setObjectName("rcCard")' in _pcs_src, "")
+ok("H8★ Qt 覆盖名单登记了 rcAnnual/rcCard（否则元数据行会再渲染一颗同名按钮）",
+   '"rcAnnual"' in _pq_src and '"rcCard"' in _pq_src, "")
+
 print("\n== 群年报判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
