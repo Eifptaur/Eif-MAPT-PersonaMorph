@@ -112,3 +112,10 @@ assets/feedback_endpoint.json
 
 # 判据跑出来的截图（运行产物，不进库）
 ui_qt/shots/
+
+# ── 安装程序构建的中间产物（本地生成，出包时现算）──
+#   `installer/build/payload/` 是把「含依赖包」zip 解开的副本（约 300 MB），
+#   `installer/build/群相-Setup-*.exe` 是编译产物。两者都能由 `scripts/make_installer.py`
+#   一键重建 ⇒ 不进库（进库等于把 300 MB 二进制塞进 git 历史）。
+#   `installer/群相.iss` 与 `installer/ChineseSimplified.isl` 是**源**，必须进库。
+installer/build/
