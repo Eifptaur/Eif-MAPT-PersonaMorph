@@ -54,7 +54,7 @@ def rune_value(ch: str) -> int:
 #   "版本号没变、但包的内容变了" ⇒ 照常提示更新。
 # ⚠️ **它对已经在跑的老版无效**（老版没有这段代码，只认版本号）⇒ 老用户只能靠**版本号前进**触达；
 #   这正是"修一个 bug 就发一个版本号"那条口径的由来（见上面 docstring）。
-BUILD = '39c463c78d3d'
+BUILD = 'b883d690b091'
 
 import hashlib as _hashlib # noqa: E402
 import os as _os # noqa: E402
