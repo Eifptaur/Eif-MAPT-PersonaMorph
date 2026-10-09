@@ -206,6 +206,23 @@ ok("⑤c ★窗高由「四页里最深那块」反推（分页后新引入的�
    "bottomMost" in _L and "Math.Max(Math.Max(btnClose.Bottom, cardWelcome.Bottom)" in _L, "")
 ok("⑤d 页签高度不写死像素（按 `LineHeight` 实测给）",
    "StyleKit.LineHeight(StyleKit.Ui(StyleKit.TextScale.Small, FontStyle.Bold))" in _L, "")
+# ⛔ 按钮行排布**不许**拿 `Control.Visible` 当"这页有没有这颗按钮"的判据。
+#   根因：`Visible` 的 getter 会把**父窗体自身可不可见**算进去 —— 构造函数里窗体还没 `Show()`，
+#   于是 `btnNext.Visible` 恒为 false ⇒ 整段定位被跳过，按钮停在 (0,0)、再被 `Apply`
+#   统一下移成左上角 (0,38)。实测指纹：「关闭」对（位置在 BuildUI 里直接设，不判 Visible）、
+#   「上一步/开始安装」错（唯一走这段排的）。
+ok("⑤e ★按钮排布不判 `Control.Visible`（改判页序逻辑）",
+   "&& btnNext.Visible" not in _L and "&& btnBack.Visible" not in _L,
+   "")
+# ⛔ 文案里不许出现 Markdown（WinForms 的 Label 不解析 `**`，会原样显示星号）。
+#   只扫**字符串字面量**；注释先剥掉 —— 注释里偶尔会出现英文双引号，
+#   不剥的话正则会跨过注释把一段中文当字面量抓出来（实测踩过这个误报）。
+_L_CODE = "\n".join(ln for ln in _L.splitlines() if not ln.strip().startswith("//"))
+_STR_LITS = re.findall(r'"([^"\\\n]*)"', _L_CODE)
+ok("⑤f ★用户可见文案里没有 Markdown 星号（Label 不解析，会原样显示）",
+   not any("**" in _s and _s.strip("*") for _s in _STR_LITS),
+   "命中：%s" % [s[:24] for s in _STR_LITS if "**" in s and s.strip("*")][:3])
+# ⚠️ 上面那句排除了**纯星号串**（如 `"****"`）—— 那是 token 掩码的正当用法，不是 Markdown。
 
 
 print("\n── ⑥ `ShortcutInDir` 的口径修复（改名漏改的真 bug）──")

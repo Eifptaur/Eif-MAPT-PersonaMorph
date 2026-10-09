@@ -51,6 +51,14 @@ namespace WxLauncher
         CardCheck chkLaunch; // 完成页的「立即启动」（默认勾选）
         int _page = PageWelcome;
 
+        /// 「安装位置」页：显示当前目标目录 ＋ 一个「更改…」按钮。
+        /// ⛔ 原来是"只展示、不修改"（便携包解压即用）—— 现在按常见安装程序的口径**允许改**：
+        ///   自包含安装包（exe 里嵌了 payload）会**真的**铺到用户选的目录；
+        ///   绿色包（文件已就地）没有可搬的东西，按钮置灰并写明原因，不做假动作。
+        Label lblDir;
+        RoundButton btnChangeDir;
+        string _targetDir = "";
+
         /// 每个步骤「在干什么」的**详细说明**。
         /// 与 `Steps` 一一对应；`SetStepDetail` 会在步骤切换时更新 `lblStepHint`。
         /// ⚠️ 文案口径：说**人话**（用户在等什么、这一步大概多久、卡住了看哪里），不写内部文件名。
@@ -180,12 +188,11 @@ namespace WxLauncher
             cardWelcome.Controls.Add(w1);
 
             Label w2 = new Label();
+            // ⛔ 不许在这类文案里写 Markdown —— WinForms 的 Label 不解析 `**`，
+            //   写了就会把星号原样显示出来（出图实拍过：卡里出现「**全程不需要你操作**」）。
             w2.Text =
-                "接下来几步会自动准备好运行环境，**全程不需要你操作**：\n"
-              + "  · 找一个能用的 Python（本机已有的优先，没有就用包里自带的）；\n"
-              + "  · 核对运行需要的库，缺哪个补哪个；\n"
-              + "  · 自检本机环境，再把它拉起来。\n"
-              + "整个过程几分钟，看网速。装好以后**双击桌面的「群相」图标就能直接用**。";
+                "接下来几步会自动准备好运行环境，全程不需要你操作。\n"
+              + "整个过程几分钟，看网速。装好以后双击桌面的「群相」图标就能直接用。";
             w2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             w2.ForeColor = StyleKit.InkBody;
             w2.Location = new Point(StyleKit.Space.x5, w1.Bottom + StyleKit.Space.x2);
@@ -205,7 +212,7 @@ namespace WxLauncher
             cardLocation.Controls.Add(l1);
 
             Label l2 = new Label();
-            l2.Text = "程序就装在这里（也就是你现在放它的这个文件夹）：";
+            l2.Text = "装到哪都行，默认装在这里：";
             l2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             l2.ForeColor = StyleKit.InkBody;
             l2.Location = new Point(StyleKit.Space.x5, l1.Bottom + StyleKit.Space.x2);
@@ -213,22 +220,31 @@ namespace WxLauncher
             cardLocation.Controls.Add(l2);
             StyleKit.FitLabel(l2);
 
-            Label l3 = new Label();
-            l3.Text = Root;
-            l3.Font = StyleKit.Mono(StyleKit.TextScale.Small);
-            l3.ForeColor = StyleKit.Ink3ok;
-            l3.Location = new Point(StyleKit.Space.x5, l2.Bottom + StyleKit.Space.x2);
-            l3.AutoSize = true;
-            cardLocation.Controls.Add(l3);
+            lblDir = new Label();
+            _targetDir = Root;
+            lblDir.Text = _targetDir;
+            lblDir.Font = StyleKit.Mono(StyleKit.TextScale.Small);
+            lblDir.ForeColor = StyleKit.Ink3ok;
+            lblDir.Location = new Point(StyleKit.Space.x5, l2.Bottom + StyleKit.Space.x2);
+            lblDir.AutoSize = true;
+            cardLocation.Controls.Add(lblDir);
+
+            // 「更改…」：调系统文件夹选择器（与 Inno 同口径），选完就地更新上面那行路径。
+            btnChangeDir = StyleKit.MakeButton("更改…");
+            btnChangeDir.FlatStyle = FlatStyle.Flat;
+            btnChangeDir.Click += (s, e) => PickDir();
+            btnChangeDir.Location = new Point(
+                cardW - StyleKit.Space.x5 - btnChangeDir.Width,
+                lblDir.Bottom + StyleKit.Space.x2);
+            cardLocation.Controls.Add(btnChangeDir);
 
             Label l4 = new Label();
             l4.Text =
-                "这一版是**便携版**：解压到哪就装在哪，不写系统目录、不动注册表，"
-              + "整个文件夹拷走就能在别的电脑上用。\n"
-              + "程序要用的组件**都在这包里了**，安装过程不需要联网下载。";
+                "程序要用的组件都在这包里了，安装过程不需要联网下载。\n"
+              + "不写系统目录、不动注册表，整个文件夹拷走就能在别的电脑上用。";
             l4.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             l4.ForeColor = StyleKit.InkBody;
-            l4.Location = new Point(StyleKit.Space.x5, l3.Bottom + StyleKit.Space.x3);
+            l4.Location = new Point(StyleKit.Space.x5, btnChangeDir.Bottom + StyleKit.Space.x3);
             l4.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             cardLocation.Controls.Add(l4);
             StyleKit.FitLabel(l4);
@@ -246,7 +262,7 @@ namespace WxLauncher
 
             Label d2 = new Label();
             d2.Text =
-                "以后**双击桌面上那个「群相」图标**就能打开，不用再走这一遍。\n"
+                "以后双击桌面上那个「群相」图标就能打开，不用再走这一遍。\n"
               + "也可以从开始菜单里找到它。";
             d2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             d2.ForeColor = StyleKit.InkBody;
@@ -457,12 +473,51 @@ namespace WxLauncher
             if (anchor != null)
             {
                 int y = Math.Max(contentTop, anchor.Bottom) + StyleKit.CardGapY;
-                if (btnNext != null && btnNext.Visible)
+                // ⛔ **不许拿 `Control.Visible` 当"这页有没有这颗按钮"的判据**：
+                //   `Visible` 的 getter 会把**父窗体自身可不可见**一起算进去 —— 构造函数里窗体
+                //   还没 `Show()`，于是 `btnNext.Visible` 恒为 `false` ⇒ 这一段整块被跳过，
+                //   按钮停在 `(0,0)`，再被 `StyleKit.Apply` 统一下移成左上角 `(0,38)`。
+                //   实测指纹（`--dlgprobe`）：「关闭」是对的（它的位置在 `BuildUI` 里直接设、
+                //   不判 Visible），「上一步 / 开始安装」是错的（唯一走这一段排的）。
+                //   ⇒ 判据改用**我们自己的页序逻辑**，与 `Visible` 无关。
+                bool showNext = !installing;
+                bool showBack = (!installing && p != PageWelcome);
+                if (btnNext != null && showNext)
                     btnNext.Location = new Point(620 - StyleKit.Space.x6 - btnNext.Width, y);
-                if (btnBack != null && btnBack.Visible)
+                if (btnBack != null && showBack)
                     btnBack.Location = new Point(620 - StyleKit.Space.x6 - btnNext.Width - StyleKit.Space.x2 - btnBack.Width, y);
                 if (installing && btnClose != null)
                     btnClose.Location = new Point(620 - StyleKit.Space.x6 - btnClose.Width, y);
+            }
+        }
+
+        /// <summary>「更改…」：选安装目录，选完就地更新路径行。</summary>
+        /// ⛔ 不做假动作：绿色包（文件已就地、没有可搬的东西）下按钮会被置灰，
+        ///   不会出现"点了能选、选了没用"的情况。
+        void PickDir()
+        {
+            try
+            {
+                using (FolderBrowserDialog d = new FolderBrowserDialog())
+                {
+                    d.Description = "选择安装位置";
+                    d.SelectedPath = _targetDir;
+                    d.ShowNewFolderButton = true;
+                    if (d.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(d.SelectedPath))
+                    {
+                        _targetDir = d.SelectedPath;
+                        if (lblDir != null)
+                        {
+                            lblDir.Text = _targetDir;
+                            StyleKit.FitLabel(lblDir);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // 选目录失败不该把向导打断：记一笔、路径保持原样
+                Log("[目录] 选择失败：" + ex.Message);
             }
         }
 
@@ -1626,7 +1681,7 @@ static class Program
                         }
                         if (url0 != null && url0.StartsWith("http")) Ui.OpenConsole(url0);
                         else Ui.NoteFallback(dir0, (why0 == "" ? "没有可用地址" : why0)
-                            + "；两个候选地址都没人应答 ⇒ 这次**不开空窗**（避免一屏 ERR_CONNECTION_REFUSED），"
+                            + "；两个候选地址都没人应答 ⇒ 这次不开空窗（避免一屏 ERR_CONNECTION_REFUSED），"
                             + "由下面的正常启动流程把控制台拉起来");
                     }
                     else
