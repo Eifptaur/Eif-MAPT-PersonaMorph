@@ -145,6 +145,7 @@
  "max_concurrent_runs": 2,
  "send": {
   "only_popup": true,
+  "pin_target_first": false,
   "min_gap_ms": 1000,
   "max_gap_ms": 3000,
   "by_length_ms": 20,

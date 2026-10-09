@@ -4722,6 +4722,26 @@ class WeChatAdapter:
         except Exception:
             return False
 
+    def _pin_target_first(self) -> bool:
+        """**「开窗时先置顶目标会话」开关**（`send.pin_target_first`，内置默认 **False**）。
+
+        为什么**默认关**：置顶会**改用户自己的会话列表顺序**（用户能看见）⇒ 属于"动用户界面"
+        的动作 ⇒ 默认不做，要开必须**由用户在前端显式勾**（不许替用户做成默认行为）。
+
+        开着时：`ensure_popup` 在"目标行不在可见区 / 读不出它在第几行"这两条路上，
+        **先**对那一行投右键 → 菜单里选「置顶该聊天」（候选词见
+        `wechat_windows.PIN_MENU_LABELS`；⛔ 匹配不上就不点），置顶后目标恒在最上方
+        ⇒ 再走"直接点第一条"。
+        ⛔ **只采信 `pinned_how == "sort_gt_last"`**（唯一的正面证据）：名单里的 True 可能是假的
+        （见 PLAN 第 220/221 项 —— 置顶判据在真实账号上召回率 ≈ 11%），照假 True 去点会点到别的会话。
+
+        关着时 ⇒ 行为与加这个开关之前**完全一致**（零回归）。
+        """
+        try:
+            return bool((self.cfg.get("send") or {}).get("pin_target_first", False))
+        except Exception:
+            return False
+
     def _only_popup(self) -> bool:
         """**「只对独立窗操作」闸门**（`send.only_popup`，内置默认 **True** ＝切会话链已废）。
 

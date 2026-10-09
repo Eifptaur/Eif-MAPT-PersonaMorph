@@ -3647,6 +3647,82 @@ def park_popup(hwnd: int, *, why: str = "") -> dict:
 #     且以"独立窗口是否真的出现"为最终判据。
 POPUP_MENU_LABELS = ("独立窗口显示", "在新窗口打开", "独立窗口", "单独窗口", "在单独窗口中打开")
 
+#: 「置顶该聊天」的**候选菜单词**（用词随微信版本可能变 ⇒ 多候选，全匹配不上就不点）。
+#  为什么只给这几个：置顶是**显式命令**，改的是用户自己的会话列表顺序 ⇒
+#  ⛔ 宁可如实报"找不到菜单项"，也**绝不**退到"点最上面那一项"（那会点到别的命令）。
+PIN_MENU_LABELS = ("置顶该聊天", "置顶聊天", "置顶该会话", "置顶")
+
+#: `send.pin_target_first` 开关的**读取口** —— 就是 `wechat.WeChat._pin_target_first()`
+#  （**同一个类**：`adapter` 就是 `WeChat` 实例 ⇒ 直接用它的方法，不另建第二个读取点，
+#   否则"同键两处读"会漂）。下面这个薄封装只是为了让调用点读起来短、且**异常一律回 False**。
+def pin_target_first_enabled(adapter) -> bool:
+    """读 `send.pin_target_first`（**默认 False**）。adapter 为空/无该方法/异常 ⇒ 一律 False。
+
+    ⇒ **唯一的判定实现仍在 `wechat.WeChat._pin_target_first()`**（判据 `pin_target_selftest.py`
+      D 段钉的就是"它被真调用"这件事）。
+    """
+    try:
+        _fn = getattr(adapter, "_pin_target_first", None)
+        return bool(_fn()) if callable(_fn) else False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def pin_session_via_menu(adapter, chat_name: str, *, row_y_phys: int | None = None) -> tuple:
+    """**对目标会话投右键 → 菜单里选「置顶该聊天」** ⇒ `(ok, why)`。
+
+    ⚠️ **本函数只在 `send.pin_target_first` 开着时才会被调用**（调用点自己判）。
+    它**会改动用户自己的会话列表顺序**（置顶项跑到最上面）——这就是这个开关**必须默认关**的原因。
+
+    前提（都由调用方保证）：
+      · 目标会话行**当前在列表里可见**（`row_y_phys` 给了行中心 y；不给则回退到按名字挑行）；
+      · 列表左沿/头像列可用（x 用 `AVATAR_X_DIP × 缩放` 换算，与开窗落点同源 ⇒ 同一套坐标系）。
+
+    ⛔ 三条纪律（与右键开窗那条路同源）：
+      ① 菜单项**多候选**匹配，**匹配不到就不点**（绝不退到"点最上面那项"）；
+      ② 点完**不假设成功** —— 由调用方**回读 DB**（`pinned_how == "sort_gt_last"`）确认；
+         本函数只负责"把那条命令投出去"，**不宣称已生效**；
+      ③ 失败**如实返回原因**，不静默。
+    """
+    if adapter is None:
+        return False, "没有 adapter ⇒ 投不了右键"
+    _main = find_main_window()
+    if not _main:
+        return False, "找不到主窗 ⇒ 投不了右键"
+    # 行 y：调用方给了就用；没给就现挑（按名字）
+    if row_y_phys is None:
+        try:
+            from agent import chat_ocr as _co
+            _im, _ = grab_window(_main, physical=True)
+            _pk = _co.pick_target_row(_im, chat_name) if _im is not None else None
+            if _pk and _pk.get("ok"):
+                row_y_phys = int(_pk.get("y_abs") or 0) or None
+        except Exception as _eP:  # noqa: BLE001
+            log.debug("置顶路挑行没成：%s", str(_eP)[:80])
+    if not row_y_phys:
+        return False, "量不到目标行的 y ⇒ 不投右键（不猜）"
+    # x：与开窗落点**同一套 DIP 换算**（头像列）⇒ 保证投在会话行内
+    try:
+        _sc = win_scale(_main)
+    except Exception:  # noqa: BLE001
+        _sc = 1.0
+    _x_phys = int(round(AVATAR_X_DIP * _sc))
+    _gui = getattr(adapter, "gui", None)
+    if _gui is None:
+        return False, "取不到 GUI ⇒ 投不了右键"
+    _tried = []
+    for _lb in PIN_MENU_LABELS:
+        try:
+            _hit = bool(adapter._right_click_menu_posted(
+                _gui, _x_phys, int(row_y_phys), _lb, delay=1.0))
+        except Exception as _eRC:  # noqa: BLE001
+            _hit = False
+            log.info("置顶路·右键异常（%s）：%s", _lb, str(_eRC)[:80])
+        _tried.append(_lb)
+        if _hit:
+            return True, "已投右键并选中菜单项「%s」（⛔ 是否真生效要回读 DB 确认）" % _lb
+    return False, "右键菜单里找不到置顶项（试过 %s）⇒ 不点" % ("、".join(_tried),)
+
 
 #: 开窗失败时给前端展示的一条"请人工处理"信息：模块级只存**最近一条**，带 TTL。
 #  状态接口每几秒读一次 ⇒ 前端弹一次窗（同一条只弹一次，不反复打扰）；
@@ -4071,6 +4147,16 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
         #   **不滚列表**：滚动会让**用户眼前的列表动**，比开搜索窗更打扰 ⇒ 改走**搜索定位**：
         #     搜索（完整名）⇒ 单击结果行 ⇒ 切到该会话 ⇒（它成为列表里的高亮行）⇒ 双击高亮行 ⇒ 开窗。
         #   两步都已真机实测（见 `_open_popup_via_search` 的说明）。
+        # ⛔ **可选：先置顶目标会话**（`send.pin_target_first`，**默认关**）
+        #   为什么放在"改走搜索"**之前**：置顶之后目标恒在最上方 ⇒ 后面那条
+        #   "读高亮行 y、双击它"会**稳得多**（不受列表滚动影响）。
+        #   但它**会改动用户自己的会话列表顺序** ⇒ 默认关，且开的时候调用方必须是用户显式勾的。
+        if pin_target_first_enabled(adapter):
+            _po, _pwhy = pin_session_via_menu(adapter, chat_name,
+                                              row_y_phys=int(round(first_row_center_phys)))
+            out["pin_attempt"] = {"ok": bool(_po), "why": str(_pwhy)[:160],
+                                  "at": "not_visible", "order": int(order)}
+            log.info("置顶路（目标行不在可见区）：%s", str(_pwhy)[:120])
         _sh, _swhy = _open_popup_via_search(chat_name, adapter)
         if _sh:
             out.update(ok=True, hwnd=int(_sh), how="search_then_highlight", step="opened",
@@ -4098,6 +4184,14 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
         #   而**搜索路根本不依赖绿带行身份**（它靠"搜到名字 → 单击结果行 → 双击高亮行"）
         #   ⇒ 这里**应当**像"目标行不在可见区"那一支一样改走搜索，而不是把整条链判死
         #     ——"没有独立窗就自己把它点出来"是本项目的既定口径，读不出身份不该成为终点。
+        # ⛔ **可选：先置顶目标会话**（`send.pin_target_first`，**默认关**）—— 同上面的说明。
+        #   这条路是"连按名字挑行也没挑到"⇒ 先用置顶把目标顶到最上面，再试搜索。
+        if pin_target_first_enabled(adapter):
+            _po2, _pwhy2 = pin_session_via_menu(adapter, chat_name,
+                                                row_y_phys=int(round(first_row_center_phys)))
+            out["pin_attempt"] = {"ok": bool(_po2), "why": str(_pwhy2)[:160],
+                                  "at": "id_unknown", "order": int(order)}
+            log.info("置顶路（读不出行身份）：%s", str(_pwhy2)[:120])
         _sh2, _swhy2 = _open_popup_via_search(chat_name, adapter)
         if _sh2:
             out.update(ok=True, hwnd=int(_sh2), how="search_then_highlight", step="opened",
