@@ -35,7 +35,6 @@ _iso14.all_()  # 判据不许写产品的 data/ 与 logs/
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 from agent import update_apply as UA  # noqa: E402
-from agent import version as V  # noqa: E402
 
 PASS = FAIL = 0
 

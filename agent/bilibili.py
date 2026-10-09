@@ -114,11 +114,10 @@ def channels_download_support():
         return False, ("视频号下载**未启用**（「微信」面板那个开关默认关，本技能不开任何东西）⇒ "
                        "想用就在面板里打开它、再点「怎么用」看三步；"
                        "现在遇到视频号链接，可以先把它存成本地文件发我 —— 那条路是通的")
-    try:
-        import playwright  # noqa: F401
-        _pw = True
-    except Exception:
-        _pw = False
+    # ⛔ 探测用 `find_spec`，**不许 `import playwright` 试**：playwright 包体很大，
+    #    而这里只判"装没装"、一个符号都不用 ⇒ import 纯属白吃常驻内存。
+    import importlib.util as _ilu
+    _pw = _ilu.find_spec("playwright") is not None
     if not _pw:
         return False, ("视频号下载已启用，但本机**还没装 Playwright** ⇒ 点「微信」面板的「怎么用」"
                        "看三步：装 Playwright → 在专用窗口里扫码登录一次腾讯元宝 → 之后长期有效"
@@ -192,12 +191,15 @@ def download_external(url: str, out_dir: str, timeout: int = 300):
 
 
 def ytdlp_available():
-    """yt-dlp 能不能用（**先查 python 模块，再查可执行**）。返回 `(ok, how|why)`。"""
-    try:
-        import yt_dlp  # noqa: F401
+    """yt-dlp 能不能用（**先查 python 模块，再查可执行**）。返回 `(ok, how|why)`。
+
+    ⛔ 探测用 `find_spec`，**不许 `import yt_dlp` 试**：yt-dlp 带一大坨依赖（约 25 MB），
+       而本函数只回答"能不能下"、**一个符号都不用** ⇒ import 纯属白吃内存。
+       真要用它时（`_download_via_ytdlp`）再 import，代价只在"确实点了下载"那一刻付。
+    """
+    import importlib.util as _ilu
+    if _ilu.find_spec("yt_dlp") is not None:
         return True, "python -m yt_dlp"
-    except Exception:
-        pass
     p = ytdlp_bin()
     if p:
         return True, p

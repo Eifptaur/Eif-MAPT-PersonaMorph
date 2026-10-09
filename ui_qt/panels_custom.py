@@ -67,6 +67,25 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]
 
 
+def _append_card(page: QWidget, card: QWidget) -> None:
+    """把 appendix 卡挂到宿主页上（**宿主没有布局时也不许炸**）。
+
+    ⛔ 原来 13 处 appendix 统一写 `page.layout().addWidget(card)` —— 宿主不是
+      `QVBoxLayout` 容器时 `page.layout()` 是 `None`，这句抛 `AttributeError`；
+      而 `build_panel` 里 appendix 的异常是**静默吞掉**的 ⇒ **该卡后半段（含首次取数、
+      事件接线）整段不执行，且不报任何错**（实测：简报卡的下拉永远停在一项占位、
+      `/api/wechat-groups` 一次都不请求）。
+    ⇒ 统一走这里：有布局就进布局；没有就只挂父子关系（Qt 接管所有权），
+      控件照常存在、后续接线照常跑 —— 比"静默死掉"强得多。
+    """
+    lay = page.layout()
+    if isinstance(lay, QVBoxLayout):
+        lay.addWidget(card)
+    else:
+        card.setParent(page)
+        card.show()
+
+
 def _hex(c) -> str:
     return c.name(QColor.NameFormat.HexArgb)
 
@@ -456,13 +475,19 @@ def overview_panel(t: Tokens) -> QWidget:
 
     b_calc.clicked.connect(_fc_calc)
 
-    def _refresh() -> None:
+    def _refresh(st_in: dict | None = None) -> None:
+        """把 `/api/status` 快照刷进两组格子。
+
+        `st_in` 给了就用它（后台线程取回的那条路）；没给就**同步取一次**
+        —— 供 8 秒定时器与"用户手动点刷新"用。**建页首帧绝不走同步那条**
+        （见下面 `_refresh` 的首次调用改成 `_refresh({})` + 后台补数）。
+        """
         # 首帧（还没拿到过任何数据）才写「读取中」；只要拿到过一次，后续读失败
         # 一律写「读不到」——不然 8 秒轮询遇到一次网络抖动，整片格子会从
         # 「运行中/2465 秒」倒退回「读取中」，看起来就是「明明有结果还显示检测中」。
         if not _qt_alive(cells["run"]):
             return
-        st = config_io.get_json("/api/status") or {}
+        st = st_in if st_in is not None else (config_io.get_json("/api/status") or {})
         # 两组格子一起处理（运行状态组 + 用量成本组）。用量成本组同样要跟着
         # 「读不到 / 读取中」走 —— 漏了它，读失败时那 11 格会停在上一轮的数字上，
         # 看起来像"这些值一直没动"。
@@ -581,7 +606,39 @@ def overview_panel(t: Tokens) -> QWidget:
         ucaps["pcost"].setText({"daily": "今日", "weekly": "本周",
                                 "monthly": "本月"}.get(_pt, "本周期") + "用量")
 
-    _refresh()
+    # ⛔ 首帧**不许同步打网络**：原来 `_refresh()` 直调 `config_io.get_json("/api/status")`，
+    #    后端没起/响应慢时它就是建页最大的那块（实测 profile：overview 首次构建 2.42s，
+    #    其中 **2.32s 全在这一个调用**，含 `console_url()` 复查的 1.5s）。
+    #    ⇒ 首帧先按"还没数据"渲染（格子写「读取中」，随后被真值覆盖），
+    #      真值由一次后台取数补上；之后 8 秒定时器照旧（那时同步等一下无妨，主线程已空闲）。
+    _refresh({})
+
+    def _ov_boot() -> None:
+        """首帧后补一次真值（后台线程取 → 主线程渲染）。"""
+        box: dict = {"done": False, "st": None}
+
+        def _work() -> None:
+            try:
+                box["st"] = config_io.get_json("/api/status") or {}
+            except Exception: # noqa: BLE001
+                box["st"] = {}
+            box["done"] = True
+
+        import threading as _th # noqa: PLC0415
+        _th.Thread(target=_work, daemon=True, name="ov-boot").start()
+
+        def _apply() -> None:
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                QTimer.singleShot(200, _apply)
+                return
+            _refresh(box["st"] if isinstance(box["st"], dict) else {})
+
+        QTimer.singleShot(200, _apply)
+
+    _ov_boot()
+
     timer = QTimer(page)
     timer.setInterval(8000) # web loadStatus 同款 8 秒
     timer.timeout.connect(_refresh)
@@ -1631,10 +1688,16 @@ def check_panel(t: Tokens) -> QWidget:
     bd_url = _mk_video_row("外链视频解析开关")
     card3.body.addWidget(vid_note)
 
-    def _refresh_video() -> None:
-        """读 /api/status 的 media.video（拿不到就全部落 idle，**绝不默认写 ok**）。"""
+    def _refresh_video(st_in: dict | None = None) -> None:
+        """读 /api/status 的 media.video（拿不到就全部落 idle，**绝不默认写 ok**）。
+
+        `st_in` 给了就用它（后台取回那条路）；没给就同步取（用户点「刷新」时用）。
+        ⛔ 建页首帧走 `_refresh_video({})` + 后台补数 —— 原写法在建页时同步
+          `get_json("/api/status")`，后端没起时把建页卡住（实测 check 页首次
+          构建 2.36s 主要在此）。
+        """
         try:
-            st = config_io.get_json("/api/status") or {}
+            st = st_in if st_in is not None else (config_io.get_json("/api/status") or {})
         except Exception: # noqa: BLE001
             st = {}
         vid = ((st.get("media") or {}).get("video") or {}) if isinstance(st, dict) else {}
@@ -1672,8 +1735,38 @@ def check_panel(t: Tokens) -> QWidget:
         vid_note.setText("读取成功 · %s（与网页控制台同一份 /api/status 快照）"
                          % time.strftime("%H:%M:%S"))
 
-    _refresh_video()
-    card3.body.addWidget(_row_btn_refresh(t, _refresh_video))
+    # 首帧：只按"还没数据"渲染（全落 idle），真值走后台补 —— 不阻塞建页。
+    _refresh_video({})
+
+    def _vid_boot() -> None:
+        import threading as _th # noqa: PLC0415
+        box: dict = {"done": False, "st": {}}
+
+        def _work() -> None:
+            try:
+                box["st"] = config_io.get_json("/api/status") or {}
+            except Exception: # noqa: BLE001
+                box["st"] = {}
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="check-vid-boot").start()
+
+        def _apply() -> None:
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                QTimer.singleShot(200, _apply)
+                return
+            _refresh_video(box["st"] if isinstance(box["st"], dict) else {})
+
+        QTimer.singleShot(200, _apply)
+
+    _vid_boot()
+
+    # ⚠️ 这里必须包一层 lambda：`clicked` 信号会带一个 `checked` 布尔过来，
+    #    直接连 `_refresh_video` 会让它收到 `False`（被当成"给了快照"）⇒
+    #    点「刷新」永远显示"读不到"。包一层丢掉那个参数即可。
+    card3.body.addWidget(_row_btn_refresh(t, lambda *_: _refresh_video()))
     lay.addWidget(card3)
 
     lay.addStretch(1)
@@ -1765,15 +1858,26 @@ def sessions_panel(t: Tokens) -> QWidget:
         badge.set("idle", f"{n} 条" if n else "暂无记录")
         _sync_sel_btn()
 
-    def load_sessions() -> None:
-        _eb: dict = {}
-        try:
-            r = config_io.get_json("/api/sessions?limit=30", timeout=5.0, err_box=_eb)
-        except Exception as e: # noqa: BLE001
-            r = None
-            _eb["err"] = str(e)
+    def load_sessions(_pre: dict | None = None, *_a) -> None:
+        """读 `/api/sessions` 渲染运行记录。
+
+        `_pre` 给了就用它（后台取回的 `{"r":..., "err":...}`），**不发起网络**
+        —— 建页首帧走这条路（内部会碰控件，必须主线程调）。没给就同步取。
+        ⚠️ `*_a`：`clicked` 信号会带一个 `checked` 布尔过来，不兜住就会把
+            `False` 当成"给了快照"⇒ 点「刷新」永远显示"读不到"。
+        """
+        if isinstance(_pre, dict):
+            r, _err = _pre.get("r"), _pre.get("err")
+        else:
+            _eb: dict = {}
+            try:
+                r = config_io.get_json("/api/sessions?limit=30", timeout=5.0, err_box=_eb)
+            except Exception as e: # noqa: BLE001
+                r = None
+                _eb["err"] = str(e)
+            _err = _eb.get("err")
         if not isinstance(r, dict):
-            snote.setText("读不到记录：" + _read_fail_hint(_eb.get("err")))
+            snote.setText("读不到记录：" + _read_fail_hint(_err))
             badge.set("err", "读不到")
             return
         if r.get("ok") is False:
@@ -1845,14 +1949,41 @@ def sessions_panel(t: Tokens) -> QWidget:
             snote.setText("会话日志已清除" if (r and (r.get("ok") or r.get("note")))
                           else f"清空失败：{e or (r or {}).get('error') or '后台没连上'}")))
 
-    b_refresh.clicked.connect(load_sessions)
+    b_refresh.clicked.connect(lambda *_: load_sessions())
     b_sel.clicked.connect(_del_selected)
     b_undo.clicked.connect(_undo)
     b_clear.clicked.connect(_clear_sessions)
     # 自检钩子
     page.c12_list = sess_list
     page.c12_load = load_sessions
-    load_sessions()
+    # ⛔ 建页那次**不许同步打网络**：`load_sessions()` 带 `get_json(timeout=5.0)`，
+    #    后端没起时把建页卡住（实测 profile：记录页首次构建 2.08s 全在这）。
+    #    ⇒ 首帧由后台线程只取数、主线程渲染。
+    def _sess_boot() -> None:
+        import threading as _th # noqa: PLC0415
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            rb: dict = {}
+            try:
+                rb["r"] = config_io.get_json("/api/sessions?limit=30", timeout=5.0, err_box=rb)
+            except Exception as e: # noqa: BLE001
+                rb["r"], rb["err"] = None, str(e)
+            box["r"], box["done"] = rb, True
+
+        _th.Thread(target=_work, daemon=True, name="c12-sess-boot").start()
+
+        def _apply() -> None:
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                QTimer.singleShot(200, _apply)
+                return
+            load_sessions(box["r"])
+
+        QTimer.singleShot(200, _apply)
+
+    _sess_boot()
 
     # ── 存档卡（#arcList，web :2112-2122）──
     acard = Card(t)
@@ -1884,11 +2015,20 @@ def sessions_panel(t: Tokens) -> QWidget:
     acard.body.addWidget(anote)
     lay.addWidget(acard)
 
-    def load_arc_chats() -> None:
-        try:
-            r = config_io.get_json("/api/archive", timeout=5.0)
-        except Exception: # noqa: BLE001
-            r = None
+    def load_arc_chats(_pre: dict | None = None, *_a) -> None:
+        """读 `/api/archive` 填存档卡的下拉与摘要。
+
+        `_pre` 给了就用它（后台取回的 `{"r":...}`），**不发起网络** —— 建页首帧走这条。
+        `*_a` 兜 `clicked` 信号多带的 `checked` 参数（不然点「刷新」会把 `False`
+        当成"给了快照"⇒ 下拉永远空）。
+        """
+        if isinstance(_pre, dict):
+            r = _pre.get("r")
+        else:
+            try:
+                r = config_io.get_json("/api/archive", timeout=5.0)
+            except Exception: # noqa: BLE001
+                r = None
         chats = (r or {}).get("chats") or []
         arc_chat.clear()
         for c in chats:
@@ -1923,8 +2063,33 @@ def sessions_panel(t: Tokens) -> QWidget:
         anote.setText(f"该会话 {len(items)} 条存档条目")
 
     b_arc_load.clicked.connect(load_arc)
-    b_arc_reload.clicked.connect(load_arc_chats)
-    load_arc_chats()
+    b_arc_reload.clicked.connect(lambda *_: load_arc_chats())
+    # ⛔ 建页那次不许同步打网络：`load_arc_chats()` 带 `get_json(timeout=5.0)`
+    #    （实测 profile：记录页首次构建 2.07s 里它占一份）。后台取数 → 主线程渲染。
+    def _arc_boot() -> None:
+        import threading as _th # noqa: PLC0415
+        box: dict = {"done": False, "r": None}
+
+        def _work() -> None:
+            try:
+                box["r"] = {"r": config_io.get_json("/api/archive", timeout=5.0)}
+            except Exception: # noqa: BLE001
+                box["r"] = {"r": None}
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="c12-arc-boot").start()
+
+        def _apply() -> None:
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                QTimer.singleShot(200, _apply)
+                return
+            load_arc_chats(box["r"])
+
+        QTimer.singleShot(200, _apply)
+
+    _arc_boot()
 
     # 原始 JSON 折叠查看
     jcard = Card(t)
@@ -2415,27 +2580,65 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
     btn_stop.clicked.connect(_on_stop)
 
     def _sync_stop_btn() -> None:
-        """按"现在真有没有在跑的作业"决定「停下」按钮显不显示（与 web 同判据）。"""
+        """按"现在真有没有在跑的作业"决定「停下」按钮显不显示（与 web 同判据）。
+
+        ⛔ **建页不发起网络**：`_load_status(block=False)` 只读缓存；缓存空时先按
+          "没有在跑的作业"处理（按钮不显示），随后由后台那次取数补上。原来这里
+          同步打网络 ⇒ 后端没起时建页被卡住（实测 wechat 页首次构建 4.5s 主要就是它）。
+        """
+        def _render(st: dict) -> None:
+            try:
+                _jb2 = (st.get("jobs") or {}) if isinstance(st, dict) else {}
+                _has = any(isinstance(j, dict) and j.get("running")
+                           and not j.get("canceling") and j.get("pid")
+                           for j in _jb2.values())
+            except Exception: # noqa: BLE001
+                _has = False
+            try:
+                btn_stop.setVisible(bool(_has))
+            except Exception: # noqa: BLE001 — 面板可能已被重建，控件没了就当无事
+                pass
+
         try:
             import panels_qt as _pq2  # noqa: PLC0415
 
             _st2 = _pq2._load_status()
-            _jb2 = (_st2.get("jobs") or {}) if isinstance(_st2, dict) else {}
-            _has = any(isinstance(j, dict) and j.get("running") and not j.get("canceling") and j.get("pid")
-                       for j in _jb2.values())
         except Exception: # noqa: BLE001
-            _has = False
-        btn_stop.setVisible(bool(_has))
+            _st2 = {}
+        _render(_st2)
+        # 缓存空 ⇒ 后台补一次真值，回来再判（首帧不阻塞）
+        if not _st2:
+            # ⛔ `run_async` 的 `work` 必须**接收 box 参数并往 box 里写**——
+            #    原来写成 `def _work() -> dict: ... return {...}`（0 参 + 靠返回值）
+            #    ⇒ `run_async` 调 `work(box)` 时 `TypeError` 被吞，落地体拿到空 box。
+            def _work(box: dict) -> None:
+                try:
+                    import panels_qt as _pq  # noqa: PLC0415
+
+                    box["st"] = _pq._load_status(block=True)
+                except Exception: # noqa: BLE001
+                    box["st"] = {}
+
+            run_async(_work, lambda box: _render(box.get("st") or {}),
+                      page=page, interval=200, name="c10-stopbtn")
 
     _sync_stop_btn()
 
-    def _render_mtx() -> None:
-        try:
-            import panels_qt # noqa: PLC0415
+    def _render_mtx(st: dict | None = None) -> None:
+        """渲染"版本对 + 版本门"两个标签。
 
-            st = panels_qt._load_status()
-        except Exception: # noqa: BLE001
-            st = {}
+        `st` 给了就直接用（异步取回的那条路）；没给就**只读缓存**（`block=False`）。
+        ⛔ 建页那一次**不许**同步打网络：原写法同步 `_load_status()`，后端没起时
+          建页被卡住（wechat 页首次构建 4.5s 的组成部分之一）。缓存空 ⇒ 先如实写
+          "读不到"，随后由下面的后台补数覆盖。
+        """
+        if st is None:
+            try:
+                import panels_qt # noqa: PLC0415
+
+                st = panels_qt._load_status()
+            except Exception: # noqa: BLE001
+                st = {}
         vm = (st.get("version") or {}) if isinstance(st, dict) else {}
         vg = (st.get("version_gate") or {}) if isinstance(st, dict) else {}
         wv = str(vm.get("wechat") or "").strip()
@@ -2457,6 +2660,37 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
         else:
             gate_lb.setText("版本门：按严格档暂停发送。可在本页关掉 version_gate.strict")
             badge.set("err", "拦停")
+
+    def _mtx_load() -> None:
+        """建页后**后台**补一次真值（缓存里**没有版本门**时才需要）—— 首帧不阻塞。
+
+        ⛔ 判"要不要补"的锚必须是**这一页真正读的那两个字段**
+          （`version` / `version_gate`），不能是"缓存非空"：
+          实测踩过 —— 原来写 `if _load_status(): return`，而缓存里只要有任何一份
+          别的接口留下的 status（哪怕 `version_gate` 全缺），它就认定"建页已渲染过"
+          ⇒ **永远不补数**，标签一直停在「版本门：读不到」（判据实测就是这条）。
+        """
+        try:
+            import panels_qt as _pq3  # noqa: PLC0415
+
+            _c = _pq3._load_status()
+            if isinstance(_c, dict) and ("version_gate" in _c or "version" in _c):
+                _render_mtx(_c) # 缓存里已经有了 ⇒ 立刻按它渲染，不必再等后台
+                return
+        except Exception: # noqa: BLE001
+            pass
+
+        # ⛔ `run_async` 的 `work` 必须**接收 box 参数并往 box 里写**（见上一处的说明）。
+        def _work(box: dict) -> None:
+            try:
+                import panels_qt as _pq4  # noqa: PLC0415
+
+                box["st"] = _pq4._load_status(block=True)
+            except Exception: # noqa: BLE001
+                box["st"] = {}
+
+        run_async(_work, lambda box: _render_mtx(box.get("st") or {}),
+                  page=page, interval=200, name="vermat-mtx")
 
     def _on_allow() -> None:
         # web vmAllow（:7594-7601）：GET /api/version/allow 写「本次允许发送」的
@@ -2483,7 +2717,8 @@ def vermat_panel(t: Tokens, on_save=None) -> QWidget:
 
     btn_allow.clicked.connect(_on_allow)
     page._c10_mtx_refresh = _render_mtx
-    _render_mtx()
+    _render_mtx() # 建页首帧：只读缓存（不阻塞）
+    _mtx_load()   # 缓存空 ⇒ 后台补一次真值
 
     # 更新卡异步拉一次（不阻塞面板构建）
     _fetch(_render_upd)
@@ -3368,7 +3603,85 @@ def persona_panel(t: Tokens) -> QWidget:
     b_sort_off.clicked.connect(lambda: (state.__setitem__("sort", 0),
                                         b_sort.setText("↓ 按评估分数排序"), _render()))
     b_restore.clicked.connect(_restore_prev)
-    load_personas()
+    # ⛔ 建页那次**不许同步打网络**：`load_personas()` 内部串行 5 个 `get_json`
+    #    （personas / custom / scores / favs / persona.cats，各 timeout=5.0）——
+    #    后端没起时最坏能等十几秒。实测 profile：人设页首次构建 2.93s 全在这。
+    #    ⚠️ 但 `set_personas()` 会 `_render_cats()`/`_render()` **直接碰 Qt 控件** ⇒
+    #       整条 `load_personas()` 不能丢进后台线程（跨线程操作控件是未定义行为）。
+    #    ⇒ 拆成两半：后台线程**只取数**，取回后在主线程调 `set_personas()` 渲染。
+    def _fetch_personas() -> tuple:
+        """只取数（**不碰任何控件**）—— 可在后台线程跑。返回 `(items, err)`。"""
+        ebox: dict = {}
+        try:
+            r = config_io.get_json("/api/personas", timeout=5.0, err_box=ebox)
+        except Exception as e: # noqa: BLE001
+            r, ebox = None, {"err": str(e)}
+        items = (r or {}).get("personas") or [] if isinstance(r, dict) else []
+        try:
+            rc = config_io.get_json("/api/personas/custom", timeout=5.0) or {}
+            for c in (rc.get("custom") or []):
+                items.append({"name": c.get("name"), "key": c.get("key"),
+                              "text": c.get("text"), "cat": c.get("cat") or "自定义"})
+        except Exception: # noqa: BLE001
+            pass
+        scores = {}
+        try:
+            rs = config_io.get_json("/api/personas/scores", timeout=5.0) or {}
+            for x in (rs.get("rows") or []):
+                scores[x.get("key")] = x
+        except Exception: # noqa: BLE001
+            pass
+        favs = {}
+        try:
+            rf = config_io.get_json("/api/personas/favs", timeout=5.0) or {}
+            favs = rf.get("favs") or {}
+        except Exception: # noqa: BLE001
+            pass
+        cats = {}
+        try:
+            rc2 = config_io.get_json("/api/persona/cats", timeout=5.0) or {}
+            if isinstance(rc2, dict):
+                cats = {"built": list(rc2.get("built") or []),
+                        "user": [c for c in (rc2.get("user") or [])
+                                 if isinstance(c, dict) and c.get("name")]}
+        except Exception: # noqa: BLE001
+            pass
+        for p in items:
+            sc = scores.get(p.get("key")) or {}
+            p["__score"] = sc.get("model")
+            p["fav"] = bool(favs.get(p.get("key")))
+        return items, ebox.get("err"), cats
+
+    def _load_first_async() -> None:
+        """建页首帧：后台取数 → 主线程渲染（一次都不阻塞建页）。"""
+        import threading as _th # noqa: PLC0415
+        box: dict = {"done": False, "items": [], "err": None, "cats": {}}
+
+        def _work() -> None:
+            try:
+                box["items"], box["err"], box["cats"] = _fetch_personas()
+            except Exception as _e: # noqa: BLE001
+                box["err"] = str(_e)[:120]
+            box["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="c12-first-load").start()
+
+        def _apply() -> None:
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                QTimer.singleShot(200, _apply)
+                return
+            state["load_err"] = box["err"]
+            if box["cats"]:
+                state["built"] = list(box["cats"].get("built") or [])
+                state["user_cats"] = {c.get("name"): (c.get("desc") or "")
+                                      for c in (box["cats"].get("user") or [])}
+            set_personas(box["items"]) # ← 主线程渲染
+
+        QTimer.singleShot(200, _apply)
+
+    _load_first_async()
 
     # ── 评分补足块（pScoreLLM / pEnrich / pWebFetch 真接后端，:1326-1336）──
     rcard = Card(t)
@@ -3988,18 +4301,28 @@ def memory_panel(t: Tokens) -> QWidget:
             return
         load_memory(chat_sel.currentData() or "")
 
-    def load_memory(chat_key: str = "") -> None:
+    def load_memory(chat_key: str = "", _pre: dict | None = None) -> None:
+        """读 `/api/memory` 并渲染。
+
+        `_pre` 给了就用它（后台线程取回的 `{"r":..., "err":...}` ），**不发起网络**
+        —— 建页首帧走这条路（内部会碰控件，必须留在主线程调）。
+        没给就同步取（用户点刷新/切会话时用）。
+        """
         state["chat_key"] = chat_key
-        _eb: dict = {}
-        try:
-            r = config_io.get_json("/api/memory" + (f"?chat_key={chat_key}" if chat_key else ""),
-                                   timeout=5.0, err_box=_eb)
-        except Exception as e: # noqa: BLE001
-            r = None
-            _eb["err"] = str(e)
+        if isinstance(_pre, dict):
+            r, _err = _pre.get("r"), _pre.get("err")
+        else:
+            _eb: dict = {}
+            try:
+                r = config_io.get_json("/api/memory" + (f"?chat_key={chat_key}" if chat_key else ""),
+                                       timeout=5.0, err_box=_eb)
+            except Exception as e: # noqa: BLE001
+                r = None
+                _eb["err"] = str(e)
+            _err = _eb.get("err")
         if not isinstance(r, dict):
             # 「读不到」有两种：连不上（拒连/超时）与后端给了非 JSON。文案要能让用户动起来。
-            why = _read_fail_hint(_eb.get("err"))
+            why = _read_fail_hint(_err)
             mnote.setText(f"读不到记忆：{why}")
             badge.set("err", "读不到")
             return
@@ -4027,19 +4350,28 @@ def memory_panel(t: Tokens) -> QWidget:
         if callable(fn):
             fn()
 
-    def load_groups() -> None:
-        _eb: dict = {}
-        try:
-            r = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=_eb)
-        except Exception as e: # noqa: BLE001
-            r = None
-            _eb["err"] = str(e)
+    def load_groups(_pre2: dict | None = None) -> None:
+        """读 `/api/wechat-groups` 填共享群勾选。
+
+        `_pre2` 给了就用它（后台取回的 `{"r":..., "err":...}`），**不发起网络**
+        —— 建页首帧走这条路。没给就同步取（用户点「刷新」时用）。
+        """
+        if isinstance(_pre2, dict):
+            r, _err2 = _pre2.get("r"), _pre2.get("err")
+        else:
+            _eb: dict = {}
+            try:
+                r = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=_eb)
+            except Exception as e: # noqa: BLE001
+                r = None
+                _eb["err"] = str(e)
+            _err2 = _eb.get("err")
         # ⛔ 读失败 ≠ 没有群：后端 ok=False 时（微信没接上 / contact.db 被占用）
         #    也返回空 groups —— 直接说「未检测到群」会把用户引去查"为什么没群"，
         #    而真实原因是"这次没读到"。这里按状态分开说（web 侧 loadMemGroups 只读 groups，
         #    但 web 另有 pickGroups 判 ok 的路径；Qt 面板是唯一入口，必须自己判）。
         if not isinstance(r, dict):
-            _clear_group_checks("读不到群列表：" + _read_fail_hint(_eb.get("err")))
+            _clear_group_checks("读不到群列表：" + _read_fail_hint(_err2))
             return
         if r.get("ok") is False:
             reason = str(r.get("error") or "读取失败")
@@ -4228,8 +4560,47 @@ def memory_panel(t: Tokens) -> QWidget:
     page.c12_groups = mem_groups
     page.c12_binds = binds
 
-    load_memory("")
-    load_groups()
+    # ⛔ 建页那次**不许同步打网络**：`load_memory("")` 与 `load_groups()` 各带一个
+    #    `get_json(timeout=5.0)`，后端没起时把建页卡住（实测 profile：记忆页首次
+    #    构建 2.91s 主要在此）。⇒ 两个请求丢一个后台线程去取（**只取数、不碰控件**），
+    #      取回后在主线程调上面两个函数渲染（它们会改控件，不能跨线程）。
+    def _mem_boot() -> None:
+        import threading as _th # noqa: PLC0415
+        box: dict = {"done": False, "m": None, "g": None}
+
+        def _work() -> None:
+            mb: dict = {}
+            try:
+                mb["r"] = config_io.get_json("/api/memory", timeout=5.0, err_box=mb)
+            except Exception as e: # noqa: BLE001
+                mb["r"], mb["err"] = None, str(e)
+            try:
+                gb: dict = {}
+                gb["r"] = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=gb)
+            except Exception as e: # noqa: BLE001
+                gb["r"], gb["err"] = None, str(e)
+            box["m"], box["g"], box["done"] = mb, gb, True
+
+        _th.Thread(target=_work, daemon=True, name="c12-mem-boot").start()
+
+        def _apply() -> None:
+            if not _ui_alive(page):
+                return
+            if not box["done"]:
+                QTimer.singleShot(200, _apply)
+                return
+            # ⛔ **不许无条件用空态覆盖用户已经选的群**：`_apply` 是建页后 200ms 才落的
+            #    定时器 —— 若这 200ms 里用户已经选了会话（`state["chat_key"]` 非空），
+            #    再调 `load_memory("")` 会把 `chat_key` 打回空、列表跳回"未选群"，
+            #    用户看到的是一次莫名其妙的回退（判据里实测：追加那条 body 的
+            #    `chat_key` 是空串）。⇒ 只在"用户还没选过"时才渲染空态。
+            if not state.get("chat_key"):
+                load_memory("", _pre=box["m"])   # ← 主线程渲染
+            load_groups(_pre2=box["g"])
+
+        QTimer.singleShot(200, _apply)
+
+    _mem_boot()
     lay.addStretch(1)
     return page
 
@@ -4967,7 +5338,7 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(grid_w)
     note = desc(t, "")
     card.body.addWidget(note)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     state: dict = {"all": []}
 
@@ -4994,13 +5365,17 @@ def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
             cv.setContentsMargins(0, 0, 0, 0)
             cv.setSpacing(0)
             name = str(e.get("name") or "")
+            # ⚠️ 拼 URL 必须用 `file`（**带扩展名**的真文件名），不是 `name`（无扩展名的键）：
+            #    服务端 `/assets/emoji/` 只认 `xxx.(jpg|png|gif…)`，拿无扩展名的 name 去要 ⇒ 必 404
+            #    ⇒ 就是"收藏夹一张图都不显示"的原因。老数据没有 `file` 时退回 `name`（尽量显示）。
+            _fname = str(e.get("file") or name)
             img = QLabel()
             img.setFixedSize(44, 44)
             img.setAlignment(_Qt.AlignCenter)
             img.setStyleSheet("border:1px solid %s;border-radius:8px;background:rgba(0,0,0,.15);"
                               % getattr(t, "bd", "#334"))
             try:
-                req = _uq.Request(base + "/assets/emoji/" + _up.quote(name),
+                req = _uq.Request(base + "/assets/emoji/" + _up.quote(_fname),
                                   headers={"User-Agent": "persona-morph-qt"})
                 with _uq.urlopen(req, timeout=3.0) as rr:
                     pm = QPixmap()
@@ -5130,7 +5505,7 @@ def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(fs_host)
     fs_note = desc(t, "")
     card.body.addWidget(fs_note)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     from PySide6.QtWidgets import QCheckBox as _QCB # noqa: PLC0415 — 局部别名不遮蔽模块级名
 
@@ -5378,7 +5753,7 @@ def _model_local_appendix(t: Tokens, page: QWidget) -> None:
     lv.setContentsMargins(0, 0, 0, 0)
     lv.setSpacing(8)
     card.body.addWidget(list_host)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     def _use_local(base_url: str, model: str) -> None:
         """「用这个」：只把地址与模型名填进上方输入框，仍需用户点保存（web 同款语义）。"""
@@ -5560,7 +5935,7 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
         btn_row.addWidget(b)
     btn_row.addStretch(1)
     card.body.addLayout(btn_row)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     state: dict = {"presets": [], "preset": "", "polling": False, "filling": False}
     poll_timer = QTimer(card)
@@ -5857,7 +6232,7 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
 
     _make_row("TTS 服务", "连通测试", "/api/voice/probe", "voice_reply.http_url")
     _make_row("变声服务", "变声连通测试", "/api/voice/vc-probe", "voice_reply.vc_url")
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
 
 # ── community / feedback 动作接线 ──
@@ -7277,10 +7652,14 @@ def _market_dialog(t: Tokens, parent, kind: str = "persona") -> None:
         acts = FlowBox(t, spacing=6)
         b_up = Btn("上传到网站", t, "ghost")
         b_up.setEnabled(ready)
-        b_up.clicked.connect(lambda _=False, _k=k: _market_upload(dlg, _k))
+        b_up.clicked.connect(lambda _=False, _k=k: _market_upload(t, dlg, _k))
+        b_get = Btn("用口令取件", t, "ghost")
+        b_get.setToolTip("审核通过后拿到 6 位口令，用它把作品取回本机")
+        b_get.clicked.connect(lambda _=False, _k=k: _market_code_get(t, dlg, _k))
         b_site = Btn("打开网站", t, "ghost")
         b_site.clicked.connect(lambda _=False, _k=k: _market_open_site(_k))
         acts.add(b_up)
+        acts.add(b_get)
         acts.add(b_site)
         body_lay.addWidget(acts)
 
@@ -7335,22 +7714,268 @@ def _market_act(dlg, action: str, kind: str, item_id: str) -> None:
     _async_post(None, api, {"kind": kind, "id": item_id}, _done, timeout=60.0)
 
 
-def _market_upload(dlg, kind: str) -> None:
-    """选一个本机文件 → 攒元数据。⛔ 站没建好时不发任何请求，只如实说是哪一步没就绪。"""
-    from PySide6.QtWidgets import QFileDialog # noqa: PLC0415
+def _market_upload(t: Tokens, parent, kind: str) -> None:
+    """投稿上传：选文件 → 填标题/作者 → 三步直传 → 如实回显。
 
-    path, _sel = QFileDialog.getOpenFileName(dlg, "选择要上传的文件")
+    对齐网站方的《客户端上传对接说明》：
+      · 选完文件**先本地预检**（类型白名单 / ≤ 20 MB）——不合格**一个请求都不发**
+        （省一次限流配额，也免得用户白等）；
+      · `formLoadedAt` 在**打开这个弹窗那一刻**取（服务端靠"提交时刻 − 它 < 3 秒"
+        判机器人；用户不可能 3 秒填完，所以正常一定通过）；
+      · ⛔ **不带 `website`**（那是蜜罐字段）；
+      · 收到「命中隔离区」（400 `INVALID_PARAM`）时**不许重试** —— 那条提交没丢，
+        只是要站长人工看 ⇒ 提示语必须说成"已收到，等人工确认"，不能说"失败请重试"。
+    """
+    import time as _time # noqa: PLC0415
+
+    from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, # noqa: PLC0415
+                                   QLineEdit, QVBoxLayout)
+
+    from widgets import Field # noqa: PLC0415
+    from panels_qt import _line # noqa: PLC0415
+
+    path, _sel = QFileDialog.getOpenFileName(
+        parent, "选择要上传的文件", "",
+        "允许的类型 (*.zip *.md *.txt *.json *.svg *.png *.webp)")
     if not path:
         return
 
-    def _done(r, e): # noqa: ANN001
-        try:
-            dlg.accept()
-        except Exception: # noqa: BLE001
-            pass
+    form_loaded_at = int(_time.time() * 1000) # ⭐ 时间陷阱：此刻＝表单加载完成
 
-    _async_post(None, "/api/market/upload",
-                {"kind": kind, "filename": os.path.basename(path)}, _done, timeout=20.0)
+    dlg = QDialog(parent)
+    dlg.setObjectName("updDialog")
+    dlg.setModal(True)
+    dlg.resize(560, 300)
+    from widgets import drag_dialog_cls # noqa: PLC0415
+    dlg = drag_dialog_cls("UploadDialog")(parent)
+    dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+    dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    dlg.setModal(True)
+    dlg.enable_drag()
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(0, 0, 0, 0)
+    shell = QFrame()
+    shell.setObjectName("UploadCard")
+    shell.setStyleSheet(f"#UploadCard{{background:{surface_bg(t)};border:1px solid {t.bd};"
+                        f"border-radius:{t.radius_card + 2}px;}}")
+    outer.addWidget(shell)
+    box = QVBoxLayout(shell)
+    box.setContentsMargins(24, 22, 24, 18)
+    box.setSpacing(10)
+
+    tl = QLabel("上传到资源站")
+    tl.setFont(qfont(t, 16, 600))
+    tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+    box.addWidget(tl)
+
+    kb = QLabel(os.path.basename(path))
+    kb.setFont(qfont(t, 12))
+    kb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    doc = globals().get("ElideLabel")
+    kb.setToolTip(path)
+    box.addWidget(kb)
+
+    # 本地预检（不合格就直接说，不往下走）
+    _ok, _code, _msg, _size, _ctype = (True, "ok", "", 0, "")
+    try:
+        import market_probe as _mp # noqa: PLC0415 —— 见下：本地预检走同一张白名单
+        _ok, _code, _msg, _size, _ctype = _mp.precheck_local(path)
+    except Exception: # noqa: BLE001
+        _ok, _size = True, os.path.getsize(path)
+
+    info = QLabel(("%.1f MB" % (_size / 1048576.0)) if _size else "")
+    info.setFont(qfont(t, 12))
+    info.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    box.addWidget(info)
+    if not _ok:
+        info.setText(_msg)
+        info.setStyleSheet(f"color:{t.err};background:transparent;")
+
+    # ⛔ `Field(t, label, desc, control)` 的第 2 参是**左侧标签**、取值要读它挂的 `control`
+    #    —— 不能写成 `Field(t, "标题")` 然后就找 `Field` 要值（那样既没有输入框、
+    #    也没有取值口）。这里按仓库既有写法：先 `_line(...)` 造输入框，再塞进 `Field`。
+    t_title = _line(t, placeholder="留空 = 用文件名")
+    t_author = _line(t, placeholder="留空 = 不署名")
+    box.addWidget(Field(t, "标题", "作品名（站点列表上显示）", t_title))
+    box.addWidget(Field(t, "作者", "署名（可留空）", t_author))
+
+    note = QLabel("")
+    note.setWordWrap(True)
+    note.setFont(qfont(t, 12))
+    note.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    box.addWidget(note)
+
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_cancel = Btn("取消", t, "ghost")
+    b_ok = Btn("开始上传", t, "primary")
+    b_ok.setObjectName("updOk")
+    row.addWidget(b_cancel)
+    row.addWidget(b_ok)
+    box.addLayout(row)
+    b_ok.setEnabled(bool(_ok))
+    if not _ok:
+        note.setText(_msg)
+
+    def _set_note(txt: str, tone: str = "info") -> None:
+        note.setText(txt)
+        col = {"info": t.tx2, "ok": t.ok, "err": t.err, "warn": t.warn}.get(tone, t.tx2)
+        note.setStyleSheet(f"color:{col};background:transparent;")
+
+    def _go() -> None:
+        b_ok.setEnabled(False)
+        b_cancel.setEnabled(False)
+        _set_note("正在上传…")
+
+        def _done(r, e): # noqa: ANN001
+            if e or not isinstance(r, dict):
+                _set_note("上传失败：%s" % (e or "后台没连上"), "err")
+                b_ok.setEnabled(True)
+                b_cancel.setEnabled(True)
+                return
+            if r.get("ok") is not True:
+                code = str(r.get("code") or "")
+                msg = str(r.get("message") or "上传失败")
+                if code == "INVALID_PARAM":
+                    # ⛔ 隔离区：提交**没丢**，只是要人工看 —— 说成"已收到"，不说"请重试"
+                    _set_note("提交已收到，需要站长人工确认。" + msg, "warn")
+                    b_ok.setText("关闭")
+                    b_ok.setEnabled(True)
+                    b_cancel.setEnabled(True)
+                    b_ok.clicked.disconnect()
+                    b_ok.clicked.connect(dlg.accept)
+                    return
+                if code == "RATE_LIMITED":
+                    wait = int(r.get("retryAfter") or 0)
+                    _set_note("今天传得太频繁了，等 %d 秒再试" % wait if wait
+                              else "今天传得太频繁了，等一会儿再试", "warn")
+                else:
+                    _set_note("上传失败：" + msg, "err")
+                b_ok.setEnabled(True)
+                b_cancel.setEnabled(True)
+                return
+            _set_note("已提交，等待审核。口令会在审核通过后发给你。", "ok")
+            b_ok.setText("完成")
+            b_ok.setEnabled(True)
+            b_cancel.setEnabled(True)
+            b_ok.clicked.disconnect()
+            b_ok.clicked.connect(dlg.accept)
+
+        _async_post(dlg, "/api/market/upload",
+                    {"kind": kind, "path": path,
+                     "title": t_title.text().strip(),
+                     "author": t_author.text().strip(),
+                     "formLoadedAt": form_loaded_at},
+                    _done, timeout=600.0)
+
+    b_ok.clicked.connect(_go)
+    b_cancel.clicked.connect(dlg.reject)
+    dlg.exec()
+
+
+def _market_code_get(t: Tokens, parent, kind: str) -> None:
+    """口令取件：输 6 位口令 → 校验 → 通过就下载到本栏目录。
+
+    服务端**故意不区分**"口令不存在"和"存在但没文件" ⇒ 统一按"口令无效"说。
+    """
+    from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout # noqa: PLC0415
+
+    from widgets import drag_dialog_cls # noqa: PLC0415
+
+    dlg = drag_dialog_cls("CodeDialog")(parent)
+    dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+    dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    dlg.setModal(True)
+    dlg.enable_drag()
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(0, 0, 0, 0)
+    shell = QFrame()
+    shell.setObjectName("CodeCard")
+    shell.setStyleSheet(f"#CodeCard{{background:{surface_bg(t)};border:1px solid {t.bd};"
+                        f"border-radius:{t.radius_card + 2}px;}}")
+    outer.addWidget(shell)
+    box = QVBoxLayout(shell)
+    box.setContentsMargins(24, 22, 24, 18)
+    box.setSpacing(10)
+
+    tl = QLabel("用口令取件")
+    tl.setFont(qfont(t, 16, 600))
+    tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+    box.addWidget(tl)
+
+    hint = QLabel("输入审核通过后发给你的 6 位口令（字母数字，不含 I/L/O/U）")
+    hint.setWordWrap(True)
+    hint.setFont(qfont(t, 12))
+    hint.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    box.addWidget(hint)
+
+    code_in = QLineEdit()
+    code_in.setPlaceholderText("例如 A1B2C3")
+    code_in.setFixedHeight(34)
+    code_in.setFont(qfont(t, t.body_size + 2))
+    code_in.setStyleSheet(field_qss(t))
+    code_in.setMaxLength(6)
+    box.addWidget(code_in)
+
+    note = QLabel("")
+    note.setWordWrap(True)
+    note.setFont(qfont(t, 12))
+    note.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    box.addWidget(note)
+
+    row = QHBoxLayout()
+    row.addStretch(1)
+    b_cancel = Btn("取消", t, "ghost")
+    b_ok = Btn("取件", t, "primary")
+    b_ok.setObjectName("codeOk")
+    row.addWidget(b_cancel)
+    row.addWidget(b_ok)
+    box.addLayout(row)
+
+    def _go() -> None:
+        code = (code_in.text() or "").strip().upper()
+        if len(code) != 6:
+            note.setText("口令是 6 位")
+            note.setStyleSheet(f"color:{t.err};background:transparent;")
+            return
+        b_ok.setEnabled(False)
+        note.setText("正在校验口令…")
+        note.setStyleSheet(f"color:{t.tx2};background:transparent;")
+        save_dir = ""
+        try:
+            from market_probe import kind_save_dir # noqa: PLC0415
+            save_dir = kind_save_dir(kind)
+        except Exception: # noqa: BLE001
+            save_dir = ""
+
+        def _done(r, e): # noqa: ANN001
+            if e or not isinstance(r, dict) or r.get("ok") is not True:
+                msg = (r or {}).get("message") if isinstance(r, dict) else None
+                note.setText(msg or ("取件失败：%s" % (e or "后台没连上")))
+                note.setStyleSheet(f"color:{t.err};background:transparent;")
+                b_ok.setEnabled(True)
+                return
+            if r.get("downloaded"):
+                note.setText("已取回并保存到：" + str(r.get("path") or ""))
+                note.setStyleSheet(f"color:{t.ok};background:transparent;")
+                b_ok.setText("完成")
+                b_ok.clicked.disconnect()
+                b_ok.clicked.connect(dlg.accept)
+            else:
+                note.setText("口令有效：「%s」（自己手动下载即可）" % str(r.get("title") or ""))
+                note.setStyleSheet(f"color:{t.ok};background:transparent;")
+                b_ok.setText("完成")
+                b_ok.clicked.disconnect()
+                b_ok.clicked.connect(dlg.accept)
+            b_ok.setEnabled(True)
+
+        _async_post(dlg, "/api/market/code",
+                    {"code": code, "saveDir": save_dir}, _done, timeout=600.0)
+
+    b_ok.clicked.connect(_go)
+    b_cancel.clicked.connect(dlg.reject)
+    code_in.returnPressed.connect(_go)
+    dlg.exec()
 
 
 def _market_open_site(kind: str) -> None:
@@ -7594,7 +8219,7 @@ def _feedback_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(files_lb)
     card.body.addWidget(fl_note)
     card.body.addWidget(lb)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     _IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
     _FB_MAX, _FB_IMG_MB, _FB_FILE_MB = 4, 2, 20
@@ -7865,7 +8490,7 @@ def _web_search_appendix(t: Tokens, page: QWidget) -> None:
     hint = desc(t, "Bing 免 Key；其余引擎填「引擎 Key」与「接口地址」（留空=官方默认；"
                    "DeepSeek 另有模型、智谱另有 engine）。")
     card.body.addWidget(hint)
-    page.layout().addWidget(card)
+    _append_card(page, card)
     page._ws_card = card
     page._ws_provider = combo
     page._ws_widgets = {"api_key": key_w, "base_url": url_w, "model": model_w,
@@ -8020,7 +8645,7 @@ def _model_provider_linkup(t: Tokens, page: QWidget) -> None:
     mv.addWidget(medit)
     mrow.addLayout(mv, 1)
     card.body.addLayout(mrow)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     # 落点：隐藏 QLineEdit 挂 _c8_binds（kind=text → _ctrl_value 走 text()），
     # combo/edit 任一变化都同步到它 ⇒ _collect / 改完即生效 自动带上 api.model。
@@ -8212,7 +8837,7 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(bf_rows_host)
     card.body.addWidget(desc(t, "代价说清：这段文字会随该会话的请求一起发给模型（用本机模型则不出本机）；"
                                 "相关性判断是字面匹配——换个说法可能匹配不上，那这一次就不注入。"))
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     def _bf_key() -> str:
         return (bf_key.text() or "").strip() or str(bf_chat.currentData() or "")
@@ -8302,39 +8927,68 @@ def _briefs_appendix(t: Tokens, page: QWidget) -> None:
         _bf_load()
 
     def _bf_chats() -> None:
-        _eb: dict = {}
-        try:
-            r = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=_eb)
-        except Exception as e: # noqa: BLE001
-            r = None
-            _eb["err"] = str(e)
-        groups = (r or {}).get("groups") or [] if isinstance(r, dict) else []
-        cur = str(bf_chat.currentData() or "")
-        bf_chat.clear()
-        if not groups:
-            # 读失败与"确实没有群"分开说（下拉本来就能手填 key，这里只把原因说清）
-            if not isinstance(r, dict):
-                bf_chat.addItem("（读不到群聊：" + _read_fail_hint(_eb.get("err"))
-                                + "；可在下面手填 key）", "")
-            elif r.get("ok") is False:
-                bf_chat.addItem("（读不到群聊：" + str(r.get("error") or "读取失败")
-                                + "；可在下面手填 key）", "")
-            else:
-                bf_chat.addItem("（没读到群聊，可在下面手填 key）", "")
-        for g in groups:
-            wxid = str(g.get("wxid") or "")
-            bf_chat.addItem(str(g.get("name") or g.get("wxid") or ""), "group:" + wxid)
-        if cur:
-            i = bf_chat.findData(cur)
-            if i >= 0:
-                bf_chat.setCurrentIndex(i)
-        _bf_load()
+        """填充"预设信息"页的会话下拉（`/api/wechat-groups`）。
+
+        ⛔ **建页那次不许同步打网络**：原来 `_bf_chats()` 在面板构建时直调，
+          `get_json(timeout=5.0)` 一卡就是 5 秒（后端没起/响应慢时）——
+          实测 profile 里 wechat 页首次构建 4.5s 有它一份。
+          改成"先亮下拉、后台取回再填"：与 web 侧"延时 1.2s 再加载"同一个意图
+          （都是为了让页面先出来），但这里更彻底 —— 一次都不阻塞主线程。
+        """
+        # ⛔ `run_async` 的约定是 `work(box)` —— **必须接住那个 box 参数**并把结果写进去
+        #    （不要把结果当返回值 `return`：`run_async` 读的是 `box`，不是返回值）。
+        #    之前这里写成 `def _work() -> dict: ... return {...}`（0 参 + 靠返回值）⇒
+        #    `run_async` 调 `work(box)` 直接 `TypeError`，异常被吞进 `box["_err"]`，
+        #    `_apply` 照跑但 `box["r"]` 是 None ⇒ **下拉永远只显示占位项，且不报错**
+        #    （实测就是这样：`/api/wechat-groups` 一次都没请求）。
+        def _work(box: dict) -> None:
+            _eb: dict = {}
+            try:
+                box["r"] = config_io.get_json("/api/wechat-groups", timeout=5.0, err_box=_eb)
+            except Exception as e: # noqa: BLE001
+                box["r"], _eb["err"] = None, str(e)
+            box["eb"] = _eb
+
+        def _apply(box: dict) -> None:
+            try:
+                if not _qt_alive(bf_chat):
+                    return
+            except Exception: # noqa: BLE001
+                pass
+            r, _eb = box.get("r"), (box.get("eb") or {})
+            groups = (r or {}).get("groups") or [] if isinstance(r, dict) else []
+            cur = str(bf_chat.currentData() or "")
+            bf_chat.blockSignals(True)
+            bf_chat.clear()
+            if not groups:
+                # 读失败与"确实没有群"分开说（下拉本来就能手填 key，这里只把原因说清）
+                if not isinstance(r, dict):
+                    bf_chat.addItem("（读不到群聊：" + _read_fail_hint(_eb.get("err"))
+                                    + "；可在下面手填 key）", "")
+                elif r.get("ok") is False:
+                    bf_chat.addItem("（读不到群聊：" + str(r.get("error") or "读取失败")
+                                    + "；可在下面手填 key）", "")
+                else:
+                    bf_chat.addItem("（没读到群聊，可在下面手填 key）", "")
+            for g in groups:
+                wxid = str(g.get("wxid") or "")
+                bf_chat.addItem(str(g.get("name") or g.get("wxid") or ""), "group:" + wxid)
+            if cur:
+                i = bf_chat.findData(cur)
+                if i >= 0:
+                    bf_chat.setCurrentIndex(i)
+            bf_chat.blockSignals(False)
+            # blockSignals 期间 setCurrentIndex 不发信号 ⇒ 显式补一次"按当前选中加载"，
+            # 否则预设信息列表永远空着（原来这条靠 currentIndexChanged 顺带触发）。
+            _bf_load()
+
+        run_async(_work, _apply, page=page, interval=200, name="bf-chats")
 
     b_bf_rf.clicked.connect(_bf_chats)
     bf_chat.currentIndexChanged.connect(lambda _i: _bf_load())
     bf_key.editingFinished.connect(_bf_load)
     b_add.clicked.connect(_bf_add)
-    _bf_chats() # web :1183 同款：进页自动加载（web 延时 1.2s，这里直接同步）
+    _bf_chats() # web :1183 同款：进页自动加载（web 延时 1.2s，这里改后台线程）
 
 
 def _wechat_recheck_appendix(t: Tokens, page: QWidget) -> None:
@@ -8351,7 +9005,7 @@ def _wechat_recheck_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addLayout(row)
     note = desc(t, "")
     card.body.addWidget(note)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     def _recheck() -> None:
         note.setText("正在重新检测微信…")
@@ -8393,7 +9047,7 @@ def _media_components_appendix(t: Tokens, page: QWidget) -> None:
     brow.addWidget(btn)
     brow.addStretch(1)
     card.body.addLayout(brow)
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     state: dict = {"pkgs": [], "manual": []}
 
@@ -8566,7 +9220,7 @@ def _rowgeom_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addLayout(brow)
     card.body.addWidget(desc(t, "会话列表的行高从屏幕量出来：量到就记住，下次没量到先用它。"
                                "改了系统缩放或微信字号之后点「重新测量」清掉旧值。"))
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     def _load() -> None:
         def _work(box: dict) -> None:
@@ -8628,7 +9282,7 @@ def _rhythm_appendix(t: Tokens, page: QWidget) -> None:
     card.body.addWidget(state)
     card.body.addWidget(desc(t, "同会话两段话之间的随机间隔：抹掉「几秒内连刷」这个脚本签名。"
                                "档位只是取一套参数 —— 上面填了单项值就会盖过档位。"))
-    page.layout().addWidget(card)
+    _append_card(page, card)
 
     def _load() -> None:
         def _work(box: dict) -> None:

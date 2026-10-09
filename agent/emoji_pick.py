@@ -10,17 +10,31 @@ EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 
 def list_emojis() -> list:
+    """收藏夹里的表情清单。
+
+    ⚠️ 两个字段各有用途，别合并：
+      · `name`＝**去掉扩展名**的名字 —— 喂给模型挑表情用（`pick()`）、也是 `send_emoji` 的键，
+        历史口径，**不许改**（改了模型上下文与工具入参全变）。
+      · `file`＝**带扩展名的真文件名** —— 界面按它拼 `/assets/emoji/<file>` 取图。
+        原来没有这个字段，界面只能拿 `name` 去拼 ⇒ **少个 .jpg 就被服务端的文件名白名单
+        判 404**（`webui.py:706` 要求 `xxx.(jpg|png|gif…)`）⇒ 表情包收藏夹**一张图都显示不出来**。
+      · `.thumb.*` 是**缩略图缓存**，不是独立表情 ⇒ 跳过，免得数量虚高、点进去还是同一张。
+    """
     try:
         files = sorted(glob.glob(os.path.join(EMOJI_DIR, "*")),
                        key=lambda p: os.path.getmtime(p), reverse=True)
         out = []
-        for i, f in enumerate(files):
+        for f in files:
+            base = os.path.basename(f)
+            if ".thumb." in base: # 缩略图不是表情本体
+                continue
             try:
                 sz = os.path.getsize(f)
             except Exception as _e:
                 log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 sz = 0
-            out.append({"index": i, "name": os.path.splitext(os.path.basename(f))[0], "size": sz})
+            out.append({"index": len(out), "name": os.path.splitext(base)[0],
+                        "file": base, "size": sz})
         return out
     except Exception as _e:
         log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)

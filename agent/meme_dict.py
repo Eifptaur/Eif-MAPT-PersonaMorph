@@ -28,6 +28,8 @@ import os
 import re
 import time
 
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+
 log = logging.getLogger("persona-morph")
 
 #: 词表条数封顶（超了丢最老的）—— 单文件 JSONL，长期占用几十 KB 量级
@@ -99,7 +101,7 @@ def _write(rows: list) -> bool:
         with open(tmp, "w", encoding="utf-8") as fh:
             for r in rows:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
         return True
     except Exception as e:  # noqa: BLE001
         log.debug("写梗词典失败：%s", e, exc_info=True)

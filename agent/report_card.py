@@ -22,6 +22,8 @@ import os
 import re
 from collections import Counter
 
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+
 log = logging.getLogger(__name__)
 
 #: 默认最多读多少条（越大越慢；**读满要标 truncated**）
@@ -412,7 +414,7 @@ def _load_book() -> list:
 
 
 def _write_book(rows) -> bool:
-    """整份写回精华簿（同目录先写 `.tmp` 再 `os.replace` ⇒ 中途断电不会留半份）。"""
+    """整份写回精华簿（同目录先写 `.tmp` 再 `persist.replace_into` ⇒ 中途断电不会留半份）。"""
     p = _book_path()
     try:
         d = os.path.dirname(p)
@@ -422,7 +424,7 @@ def _write_book(rows) -> bool:
         with open(tmp, "w", encoding="utf-8") as fh:
             for r in (rows or []):
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
         return True
     except Exception as e:  # noqa: BLE001
         log.warning("精华簿写不下去：%s", e)

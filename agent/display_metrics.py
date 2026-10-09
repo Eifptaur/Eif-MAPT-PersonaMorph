@@ -27,10 +27,8 @@ import time
 
 log = logging.getLogger("persona-morph")
 
-from .config import DATA_DIR
-
 # ⛔ **同一个档案的路径只有 `env_profile` 一个定义点**（原来这里又 join 了一遍同样的路径，
-#   两处必然漂；而且判据隔离口也只该有一个）。`DATA_DIR` 仍留着是因为本文件别处还要用它。
+#   两处必然漂；而且判据隔离口也只该有一个）。
 from .env_profile import PATH # noqa: E402  （与 `env_profile` 同一份档案，别再自己拼一遍）
 _LOCK = threading.RLock()
 _MEM = {"metrics": None}   # 进程内缓存（省得每次读盘）

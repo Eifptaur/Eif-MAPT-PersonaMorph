@@ -2176,6 +2176,14 @@ def t_catmgr() -> None:
     try:
         page = persona_panel(THEMES["whale"])
         page.show()
+        # ⛔ 建页路径**已改成"不阻塞"**：人设列表走后台取数、主线程渲染
+        #    （见 panels_custom._load_first_async）。原来这里建完页立刻取控件状态，
+        #    是在"建页=同步取数"的旧前提下写的 —— 现在必须**驱动事件循环等回填**，
+        #    否则读到的是首帧空态（实测：built=[] user={}），判据会假失败。
+        _deadline = _time.time() + 5.0
+        while _time.time() < _deadline and not page.c12_cats_state()[0]:
+            QApplication.processEvents()
+            _time.sleep(0.05)
         built, user_cats = page.c12_cats_state()
         ck("分区元数据入 state：built/user 来自 /api/persona/cats（web :6084-6088 同款）",
            built == ["网络热门"] and user_cats.get("用户分区A") == "自定义分区测试",
@@ -4375,6 +4383,10 @@ def t_g7() -> None:
                                        _row_btn(pp, "删除")))
 
         chat_sel = pp.findChild(QComboBox, "memChats")
+        # ⛔ 下拉由建页后的**后台取数**填充（`_mem_boot`）⇒ 这里必须驱动事件循环等它到位，
+        #    否则立刻 `count()` 只有占位项、`setCurrentIndex(1)` 静默不触发
+        #    ⇒ `state["chat_key"]` 一直空（实测：追加那条约 `chat_key=''`）。
+        _wait(lambda: chat_sel is not None and chat_sel.count() >= 2)
         ck("g7 群选下拉存在且已填充", chat_sel is not None and chat_sel.count() >= 2,
            "sel=%s n=%s" % (chat_sel is not None, chat_sel.count() if chat_sel else -1))
         chat_sel.setCurrentIndex(1) # data="CK" → 按群加载
@@ -5145,6 +5157,10 @@ def t_g10() -> None:
         QApplication.processEvents()
         bf_chat = wp.findChild(QComboBox, "bfChat")
         b_add = wp.findChild(Btn, "bfAdd")
+        # ⛔ 会话下拉由建页后的**后台取数**填充（`_bf_chats` 改成了不阻塞建页）
+        #    ⇒ 必须驱动事件循环等它到位，否则读到的是空占位（实测：n=0）。
+        _wait(lambda: bf_chat is not None and bf_chat.count() >= 1
+              and str(bf_chat.itemData(0) or "") == "group:g1")
         ck("g10 简报卡在场（群下拉自动填充 + 添加钮）",
            bf_chat is not None and bf_chat.count() >= 1
            and str(bf_chat.itemData(0) or "") == "group:g1" and b_add is not None,
@@ -9990,6 +10006,79 @@ def t_packaged_modules_guard() -> None:
        "agent/__绝不存在的模块__.py" not in _tracked, "")
 
 
+def t_run_async_signature_guard() -> None:
+    """自检：**传给 `run_async` 的 `work` 必须能接住那个 box 参数**（棘轮）。
+
+    为什么值得一条常驻闸门：`run_async(work, on_done)` 的约定是
+      `work(box)` —— 后台线程往 **box** 里写结果，`on_done(box)` 在主线程读 box 落地。
+    若把 `work` 写成 `def _work() -> dict: ... return {...}`（0 参 + 靠返回值），
+    `run_async` 调 `work(box)` 时抛 `TypeError`；**而它被 `run_async` 吞进 box["_err"]**，
+    `on_done` 照常执行、只是拿到空 box ⇒ **整条链路静默失效**：
+    取数没发生、界面停在占位态、控制台不报任何错（实测：wechat 页简报卡的下拉
+    永远只有一项占位、`/api/wechat-groups` 一次都不请求，而判据只查 `count()>=1`
+    就绿了 —— 差点当成"没这功能"）。
+    ⇒ 这里按 AST 静态拦：`run_async` 第一实参只要是个"就地定义的函数"，就必须有
+      至少 1 个位置参数（`*args` / `**kwargs` 也算兜得住）。
+
+    ⚠️ 只查**能静态看到**的（函数名字面量 or 本文件内 def 后直接传）。
+    """
+    import ast as _ast # noqa: PLC0415
+    import os as _o # noqa: PLC0415
+
+    _root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+    _bad: list = []
+    _scanned = 0 # 分母：真扫过多少个 run_async 调用点
+
+    for _sub in ("ui_qt",):
+        for _dp, _dn, _fns in _o.walk(_o.path.join(_root, _sub)):
+            _dn[:] = [d for d in _dn if d != "__pycache__"]
+            for _fn in sorted(_fns):
+                if not _fn.endswith(".py"):
+                    continue
+                _p = _o.path.join(_dp, _fn)
+                try:
+                    _tree = _ast.parse(open(_p, encoding="utf-8", errors="ignore").read())
+                except Exception: # noqa: BLE001
+                    continue
+                # 本文件里"就地定义的函数的签名"：名字 → 位置参数个数（None=接 *args）
+                _defs: dict = {}
+                for _n in _ast.walk(_tree):
+                    if isinstance(_n, _ast.FunctionDef):
+                        _A = _n.args
+                        if _A.vararg is not None:
+                            _defs[_n.name] = None # *args 兜得住
+                        else:
+                            _defs[_n.name] = len(_A.posonlyargs) + len(_A.args)
+                for _n in _ast.walk(_tree):
+                    if not (isinstance(_n, _ast.Call)
+                            and isinstance(_n.func, _ast.Name)
+                            and _n.func.id == "run_async" and _n.args):
+                        continue
+                    _scanned += 1
+                    _arg0 = _n.args[0]
+                    # ① 直接传函数名：查本文件里的定义
+                    if isinstance(_arg0, _ast.Name) and _arg0.id in _defs:
+                        _pc = _defs[_arg0.id]
+                        if _pc is not None and _pc < 1:
+                            _bad.append((_o.path.relpath(_p, _root).replace("\\", "/"),
+                                         _n.lineno, _arg0.id, _pc))
+                    # ② 传 lambda：看它的参数列表
+                    elif isinstance(_arg0, _ast.Lambda):
+                        _A = _arg0.args
+                        _pc = None if _A.vararg is not None else (
+                            len(_A.posonlyargs) + len(_A.args))
+                        if _pc is not None and _pc < 1:
+                            _bad.append((_o.path.relpath(_p, _root).replace("\\", "/"),
+                                         _n.lineno, "<lambda>", _pc))
+
+    ck("run_async 的 work 必须能接住 box 参数（否则整条异步链静默失效）",
+       len(_bad) == 0,
+       "扫了 %d 个调用点；违规 %s" % (_scanned, _bad or "无"))
+    # ⭐ 分母守卫：真的扫到了东西（否则这条闸门是在空过）
+    ck("run_async 签名闸门：真的扫到了调用点（分母守卫）",
+       _scanned >= 10, "scanned=%d" % _scanned)
+
+
 def t_dead_import_guard() -> None:
     """自检：**全仓未用 import 只许降不许升**（棘轮）。
 
@@ -14510,6 +14599,7 @@ ALL_TESTS = (
     t_surface_bg_guard,
     t_field_guard,
     t_default_value_guard, t_dead_import_guard, t_guard_family_guard,
+    t_run_async_signature_guard,
     t_packaged_modules_guard, t_winops_guard, t_keys_guard, t_atomic_write_guard,
     t_landing_discipline_guard,
     t_subnav_guard, t_subnav_coverage_guard, t_emoji_index_guard, t_emoji_codes_guard,

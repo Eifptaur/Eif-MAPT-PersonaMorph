@@ -17,7 +17,6 @@ import logging
 import os
 import sys
 import threading
-import time
 
 log = logging.getLogger("persona-morph")
 

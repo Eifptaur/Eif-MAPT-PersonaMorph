@@ -226,6 +226,10 @@ class Shell(QWidget):
         # 这样初始主题 ≠ config 值的多 Shell 场景（shoot 取证）不会被跟随逻辑拽回。
         self._theme_seen = str(config_io.read_path("ui.theme", "") or "")
         self._orig_texts: dict = {} # 鲸语切换的原文缓存（控件重建后清空）
+        # 顶栏那几颗徽章的**上次已知值**（余额/监听/模型）：切主题走 `_rebuild` 会整条重建顶栏，
+        # 新控件是空的 ⇒ 用这里的值回填，避免"重建后显示空/查询中 → 看起来像又重问了一遍"。
+        # 与 `_orig_texts` 不同：**不随重建清空**（清空就失去意义）。
+        self._chip_cache: dict = {}
         # ── 鲸落视觉本体（ocean.py）：底图 + tint + 三层波浪，只在 whale 主题启用 ──
         self._wp_path: Path | None = None # 当前底图来源（含自定义背景判路）
         self._wp_fp = None # (path, mtime_ns, size)：换同扩展名新图也要认出来
@@ -1045,7 +1049,12 @@ class Shell(QWidget):
         #       原来这里是"一个裸 QLabel 再并排一个裸 QPushButton" ——
         #       没有胶囊承载，看着就是"一堆字符"，和旁边几颗胶囊不是一套东西。
         self.bal_chip, self.bal_badge = _mk_chip("余额", "chip_balance")
-        self.bal_badge.setText("查询中…")
+        # ⛔ 切主题走 `_rebuild` ⇒ 这条顶栏会**整条重建**。重建后新控件是空的，
+        #    若直接写"查询中…"，用户看到的就是"余额又重问了一遍"（监听/模型同理）。
+        #    ⇒ 先用**上次已知的值**回填，只有第一次（还没值）才说"查询中…"；
+        #      定时器/首次拉取仍照常跑，数据真回来了再覆盖 —— 界面上"不闪、不重问"。
+        _bal_prev = getattr(self, "_chip_cache", {}).get("balance")
+        self.bal_badge.setText(_bal_prev if _bal_prev else "查询中…")
         self.bal_badge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bal_badge.setToolTip("点击刷新余额（只读查询）")
         self.bal_badge.mousePressEvent = lambda _e: self._load_balance()
@@ -1071,17 +1080,26 @@ class Shell(QWidget):
         self.bal_chip.layout().addWidget(self.bal_mask)
         self._chip_wide.append(self.bal_mask) # 收缩态要连它一起收
 
-        self.bal_timer = QTimer(self)
-        self.bal_timer.setInterval(30000) # web 同款 30s
-        self.bal_timer.timeout.connect(self._load_balance)
-        self.bal_timer.start()
+        # ⛔ 定时器**只建一次**：`_build` 每次重建都跑（切主题走 `_rebuild`），
+        #    原来这里无条件 `QTimer(self)` + `start()` ⇒ 每切一次主题就**多一个** 30s 定时器，
+        #    且新定时器接管后第一跳往往就是"立刻再查一次余额"（用户看到的"重问一遍"）。
+        #    父对象是 `self`（Shell 自身不重建）⇒ 复用即可，别重建。
+        if getattr(self, "bal_timer", None) is None:
+            self.bal_timer = QTimer(self)
+            self.bal_timer.setInterval(30000) # web 同款 30s
+            self.bal_timer.timeout.connect(self._load_balance)
+            self.bal_timer.start()
         lay.addWidget(self.bal_chip)
 
         _box_l, self.chip_listen = _mk_chip("监听", "chip_listen")
+        # 回填上次的值（不是新建的"空胶囊"）——理由同余额：`_rebuild` 会整条重建顶栏，
+        # 新控件没值 ⇒ 用户看到"监听数又空了、又在重拉"。真值回来时 `_poll_badges` 会覆盖。
+        self.chip_listen.setText(getattr(self, "_chip_cache", {}).get("listen") or "—")
         self.chip_listen.setToolTip("正在监听的会话数（群 + 私聊）；白名单与私聊档位在「微信」页")
         lay.addWidget(_box_l)
 
         _box_m, self.chip_model = _mk_chip("模型", "chip_model")
+        self.chip_model.setText(getattr(self, "_chip_cache", {}).get("model") or "—")
         lay.addWidget(_box_m)
 
         # ── 「改完即生效」胶囊（web `#autoChip` L752）──
@@ -1221,8 +1239,11 @@ class Shell(QWidget):
             b = None
         display = str(_cio.read_path("ui.balance_display") or "real")
         fake = str(_cio.read_path("ui.balance_fake") or "")
-        self.bal_badge.setText(_balance_text(b, display, fake))
+        _txt = _balance_text(b, display, fake)
+        self.bal_badge.setText(_txt)
         self.bal_mask.setText({"real": "显示", "hide": "已隐藏"}.get(display, "已改"))
+        # 记下来：顶层重建（切主题）时新徽章拿它回填，用户看不到"重问一遍/闪一下空值"
+        self._chip_cache["balance"] = _txt
 
     def _balance_mask(self) -> None:
         """余额显示三选一（web balMask :5564-5610）：照实 / 隐藏 / 改成指定数字。
@@ -2387,6 +2408,7 @@ class Shell(QWidget):
             n = (lis.get("groups", 0) + lis.get("privates", 0)
                  if isinstance(lis, dict) else 0)
             lb.setText(str(n))
+            self._chip_cache["listen"] = str(n)
         mo = getattr(self, "chip_model", None)
         if mo is not None:
             m = s.get("model")
@@ -2395,6 +2417,7 @@ class Shell(QWidget):
             else:
                 txt = (str(m).strip() if m else "") or "—"
             mo.setText(txt)
+            self._chip_cache["model"] = txt
 
     def _on_auto_apply(self, on: bool) -> None:
         """顶栏「改完即生效」开关 —— 与各面板底部那颗写**同一个 QSettings 键**。

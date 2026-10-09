@@ -49,6 +49,9 @@ ROUTES = {
     "/api/market/install": ("POST",),
     "/api/market/uninstall": ("POST",),
     "/api/market/upload": ("POST",),
+    "/api/market/check": ("POST",),
+    "/api/market/code": ("POST",),
+    "/api/market/health": ("GET",),
     "/api/config": ("GET", "POST"),
     "/api/cursor/reset": ("POST",),
     "/api/cursor/upload": ("POST",),
@@ -254,6 +257,17 @@ HANDLERS = {
     },
     "/api/market/upload": {
         "POST": "_rapi_market_upload_post",
+    },
+    # 投稿前的本地预检（类型/大小）—— 与直传共用同一张扩展名白名单，只认一处
+    "/api/market/check": {
+        "POST": "_rapi_market_check_post",
+    },
+    # 口令校验 + 取件（一条路走完；saveDir 给了才落盘）
+    "/api/market/code": {
+        "POST": "_rapi_market_code_get_post",
+    },
+    "/api/market/health": {
+        "GET": "_rapi_market_health_get",
     },
     "/api/config": {
         "GET": "_rapi_config",

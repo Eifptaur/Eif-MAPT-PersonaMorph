@@ -11,7 +11,6 @@
 
 用法：runtime\\python\\python.exe scripts/pick_row_selftest.py
 """
-import io
 import os
 import sys
 

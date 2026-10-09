@@ -197,6 +197,19 @@ class Card(QFrame):
     whale 走**玻璃**（半透明白叠在深海底 + 发光边），light 走**实底 + 1px 描边**，
     dark 走**实底 + 1px 描边 + 无阴影**（近黑底上阴影看不见，是错的装饰）。
     ⇒ 这正是"三套主题差异要在设计思路层面拉开"的落点，不是换几个色值。
+
+    ⛔ **不许给 Card 挂 `QGraphicsDropShadowEffect`**（2026-10-09 实测撤掉）：
+      挂上它之后 Qt 必须把**该控件及其整棵子树**渲进离屏 buffer 再合成 —— 页面上
+      有 N 张卡就是 N 次离屏合成，且每建一张卡都要重建一次 FBO。实测（同一台机、
+      同一份 overview 页，只改这一处）：
+        · overview 页构建 **2704 ms → 67 ms**（40 倍）
+        · wechat  页构建 **4551 ms → 67 ms**（68 倍）
+      用户看到的现象就是「从概览切到微信要卡好几秒」。
+      而**视觉上几乎看不出差别**：阴影只是卡边外几像素一层极淡的蓝晕，在深色海底
+      底图上贡献接近于零（A/B 截图逐像素比对过）。花 40 倍时间换一层看不见的晕，
+      这笔账不划算 ⇒ 改成**靠 QSS 描边提亮**表达层级（下面 `_card_qss`）。
+      ⚠️ 弹窗/浮层（`_card_dialog` 那类）仍可用 effect：一页至多一两个，
+         不在"页面构建"的热路径上；但**列表/网格里成片出现的控件一律不许挂**。
     """
 
     def __init__(self, t: Tokens, pad: int = 18, parent: QWidget | None = None):
@@ -208,35 +221,22 @@ class Card(QFrame):
         lay.setContentsMargins(pad, pad, pad, pad)
         lay.setSpacing(12)
         self.body = lay
+        self.setStyleSheet(_card_qss(t))
 
-        if t.glass:
-            # 玻璃：靠中性描边 + 外发光，不用阴影（阴影在深色海面上会脏）
-            # ⚠️ 截图（whale-1）反馈：原来的 --bd 只有 .16 透明度，卡片边几乎看不见
-            #    ⇒ 层级全靠"发光"撑，远看是一片糊。这里**在玻璃形态内部**把描边提亮一档，
-            #      并把发光收一点 —— 让"边"负责划界、"光"只负责气质。
-            #      注意：这是**在 whale 这一套主题内部**的修正，不是三套趋同。
-            edge = rgba(t.q("blue"), 52).name(QColor.NameFormat.HexArgb)
-            self.setStyleSheet(
-                f"#Card{{background:{t.card};border:1px solid {edge};"
-                f"border-radius:{t.radius_card}px;}}"
-            )
-            self._glow = QGraphicsDropShadowEffect(self)
-            self._glow.setBlurRadius(22)
-            self._glow.setOffset(0, 5)
-            self._glow.setColor(rgba(t.q("blue"), 26))
-            self.setGraphicsEffect(self._glow)
-        else:
-            self.setStyleSheet(
-                f"#Card{{background:{t.card};border:{t.card_border}px solid {t.bd};"
-                f"border-radius:{t.radius_card}px;}}"
-            )
-            if t.key != "dark":
-                sh = QGraphicsDropShadowEffect(self)
-                sh.setBlurRadius(10)
-                sh.setOffset(0, 1)
-                sh.setColor(QColor(0, 0, 0, 18))
-                self.setGraphicsEffect(sh)
-            # dark：刻意不加阴影 —— 近黑底上的阴影等于噪声
+
+def _card_qss(t: Tokens) -> str:
+    """卡片的 QSS（三主题各自一套，**不用 QGraphicsEffect**）。
+
+    · whale：玻璃。描边**提亮一档**（原来 .16 透明度太淡，远看是一片糊）
+      —— 让"边"负责划界。原先靠外发光补层级，那条光现在由描边承担。
+    · light / dark：实底 + 1px 描边（dark 刻意不加任何"阴影感"）。
+    """
+    if t.glass:
+        edge = rgba(t.q("blue"), 52).name(QColor.NameFormat.HexArgb)
+        return (f"#Card{{background:{t.card};border:1px solid {edge};"
+                f"border-radius:{t.radius_card}px;}}")
+    return (f"#Card{{background:{t.card};border:{t.card_border}px solid {t.bd};"
+            f"border-radius:{t.radius_card}px;}}")
 
 
 # ---------------------------------------------------------------- 主按钮

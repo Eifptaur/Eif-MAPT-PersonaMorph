@@ -24,6 +24,8 @@ import logging
 import os
 import re
 
+from . import persist # noqa: E402 原子换档：撞共享冲突要退避重试（见 persist.replace_into）
+
 log = logging.getLogger("persona-morph")
 
 #: 一次最多给几首（提示词口径是 2~3；给多了就是"列歌单"，不是推荐）
@@ -93,7 +95,7 @@ def _write(rows: list) -> bool:
         with open(tmp, "w", encoding="utf-8") as fh:
             for r in rows:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        os.replace(tmp, p)
+        persist.replace_into(tmp, p)
         return True
     except Exception as e:  # noqa: BLE001
         log.debug("写音乐标签表失败：%s", e, exc_info=True)

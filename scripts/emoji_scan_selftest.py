@@ -13,7 +13,6 @@
 用法：runtime\\python\\python.exe scripts\\emoji_scan_selftest.py
 """
 import io
-import json
 import os
 import sys
 import tempfile

@@ -2865,14 +2865,96 @@ def _make_handler(parent):
                 self._json({"ok": False, "error": str(e)}, 500)
 
         def _rapi_market_upload_post(self, path, data, parsed, method):
+            """投稿上传（真发网络）。文件由客户端本机读，走三步：presign → PUT → 登记。
+
+            ⛔ **不把文件塞进这个 JSON**（服务端限 1 MB）—— 传的是**本机路径**，
+              由本进程读盘 → 直传。所以这个接口是**给本机 Qt 用的**，不是给浏览器用的。
+            ⛔ 失败要把接口给的 `code` **原样带出去**（界面靠它判"能不能重试"：
+              `INVALID_PARAM` 可能是命中隔离区 ⇒ 提交没丢、只是要人工看、**不许重试**）。
+            """
             try:
-                from . import market # noqa: PLC0415
-                self._json(market.prepare_upload(str(data.get("kind") or ""),
-                                                 str(data.get("filename") or ""),
-                                                 str(data.get("title") or ""),
-                                                 str(data.get("author") or "")))
-            except Exception as e:
-                self._json({"ok": False, "error": str(e)}, 500)
+                from . import market_upload  # noqa: PLC0415
+                r = market_upload.submit_file(
+                    str(data.get("kind") or ""),
+                    str(data.get("path") or ""),
+                    title=str(data.get("title") or ""),
+                    author=str(data.get("author") or ""),
+                    form_loaded_at=int(data.get("formLoadedAt") or 0),
+                )
+                self._json(r)
+            except Exception as e:  # noqa: BLE001
+                code = getattr(e, "code", "failed")
+                msg = getattr(e, "message", None) or str(e)
+                self._json({"ok": False, "code": code, "message": msg,
+                            "retryAfter": getattr(e, "retry_after", 0)})
+
+        def _rapi_market_check_post(self, path, data, parsed, method):
+            """上传**之前**的本地预检：文件在不在、类型对不对、有没有超 20 MB。
+
+            放在这里（而不是让界面自己判）是为了"只认一处"——扩展名白名单同时
+            也是直传时声明 content-type 的依据，两处各写一份迟早漂移。
+            """
+            try:
+                from . import market_upload  # noqa: PLC0415
+                ok, code, msg, size, ctype = market_upload.precheck(str(data.get("path") or ""))
+                self._json({"ok": bool(ok), "code": code, "message": msg,
+                            "size": size, "contentType": ctype})
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "code": "failed", "message": str(e)})
+
+        def _rapi_market_code_get_post(self, path, data, parsed, method):
+            """口令校验 + 取件（一条路走完）。`save_dir` 给了就落盘，不给只校验。
+
+            服务端**故意不区分**"口令不存在"和"存在但没文件" ⇒ 统一按"口令无效"说。
+            """
+            try:
+                from . import market_upload  # noqa: PLC0415
+                code = str(data.get("code") or "")
+                rows = market_upload.verify_codes([code])
+                hit = next((x for x in rows if str(x.get("code") or "").upper() == code.upper()), None)
+                if not hit or not hit.get("found"):
+                    self._json({"ok": False, "code": "code-not-found",
+                                "message": "口令无效（或这条还没通过审核）"})
+                    return
+                out = {"ok": True, "code": code, "kind": str(hit.get("kind") or ""),
+                       "id": str(hit.get("id") or ""), "title": str(hit.get("title") or ""),
+                       "version": str(hit.get("version") or ""),
+                       "fileSize": int(hit.get("fileSize") or 0),
+                       "sha256": str(hit.get("sha256") or ""),
+                       "downloaded": False}
+                save_dir = str(data.get("saveDir") or "").strip()
+                if save_dir:
+                    raw, fname, _ctype = market_upload.download_by_code(code)
+                    # ⛔ 落盘前校验哈希（站上登记过才有可比）—— 对不上就别装
+                    want = str(hit.get("sha256") or "").lower()
+                    if want:
+                        got = __import__("hashlib").sha256(raw).hexdigest()
+                        if got != want:
+                            self._json({"ok": False, "code": "hash-mismatch",
+                                        "message": "下载下来的文件和站上登记的对不上，已丢弃"})
+                            return
+                    name = fname or (str(hit.get("id") or code) + ".zip")
+                    name = os.path.basename(name)  # ⛔ 防路径穿越
+                    dest = os.path.join(save_dir, name)
+                    os.makedirs(save_dir, exist_ok=True)
+                    with open(dest, "wb") as f:
+                        f.write(raw)
+                    out["downloaded"] = True
+                    out["path"] = dest
+                self._json(out)
+            except Exception as e:  # noqa: BLE001
+                code = getattr(e, "code", "failed")
+                msg = getattr(e, "message", None) or str(e)
+                self._json({"ok": False, "code": code, "message": msg,
+                            "retryAfter": getattr(e, "retry_after", 0)})
+
+        def _rapi_market_health_get(self, path, data, parsed, method):
+            """探资源站在不在（启动时/上传前用）。"""
+            try:
+                from . import market_upload  # noqa: PLC0415
+                self._json(market_upload.health())
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "version": "", "error": str(e)})
 
         def _rapi_scoring_import_post(self, path, data, parsed, method):
             # 原 _handle_body_request:1400

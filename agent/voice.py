@@ -102,11 +102,11 @@ def _pilK_ok() -> tuple:
 
 
 def _pilK_ok_raw() -> tuple:
-    try:
-        import pilk # noqa: F401
+    # ⛔ 只查在不在，**不许 `import pilk` 试**：这是纯探测（判据只用它的存在性）。
+    import importlib.util as _ilu
+    if _ilu.find_spec("pilk") is not None:
         return True, "已装（pip pilk）"
-    except Exception as e:
-        return False, "未装：%s（pip install pilk）" % type(e).__name__
+    return False, "未装（pip install pilk）"
 
 
 def _silk_exe_ok() -> tuple:

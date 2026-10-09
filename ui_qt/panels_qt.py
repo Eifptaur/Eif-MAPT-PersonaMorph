@@ -1297,14 +1297,29 @@ _STATUS_CACHE: dict = {}
 _STATUS_FAIL_TS: float = 0.0 # 后端连不上时 30s 内不再重试（否则每次惰性建页同步卡 3 端口×超时）
 
 
-def _load_status() -> dict:
-    """/api/status 快照（进程内缓存 3 秒，避免每行打一次网络；失败缓存 30 秒）。"""
+def _load_status(block: bool = False) -> dict:
+    """/api/status 快照（进程内缓存 3 秒，避免每行打一次网络；失败缓存 30 秒）。
+
+    ⛔ `block` 默认 **False**：**建页路径上一次网络都不许打**。
+      原来这里无条件同步 `urlopen`（先试 3210、失败再试 3211，各 0.8s 超时），
+      建页时每个状态位第一次都要走一遍 ⇒ **后端没起/响应慢时，建页被同步卡住**。
+      实测（后端未起，profile 抓到的调用栈就是本函数）：
+        · wechat 页首次构建 **4532 ms**，其中 **4478 ms 全在 `socket.connect` 等待**
+      用户看到的就是「从概览切到微信要卡好几秒」。
+      ⇒ 建页只读**已有缓存**（`block=False`）；真要取数走 `_fetch_status_async`
+        那条后台线程（它自带 `current_url` 候选 + 两端口兜底，本函数不必重复做）。
+      ⇒ `block=True` 只留给**已经在后台线程里**的调用方（那些地方同步等没关系）。
+    """
     global _STATUS_FAIL_TS
     now = time.time()
     if _STATUS_CACHE.get("t") and now - _STATUS_CACHE["t"] < 3.0:
         return _STATUS_CACHE.get("st") or {}
     if now - _STATUS_FAIL_TS < 30.0:
         return {}
+    if not block:
+        # 建页路径：**只回缓存**。缓存空就如实回空（调用方会显示「读取中」，
+        # 随后异步取数回来再覆盖）—— 绝不为了一次显示去同步等网络。
+        return _STATUS_CACHE.get("st") or {}
     st = {}
     import urllib.request # noqa: PLC0415
 

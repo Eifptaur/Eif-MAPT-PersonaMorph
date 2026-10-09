@@ -17,7 +17,6 @@
   G **不碰发送链**：`agent/skills.py` 源码里不出现发送/窗口相关调用。
   H **接线**：`build_tool_defs()` 在启用且有条目时才注册 `skill`；`_exec_skill` 真存在。
 """
-import inspect
 import json
 import os
 import sys

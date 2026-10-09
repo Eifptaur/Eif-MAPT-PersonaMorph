@@ -278,7 +278,7 @@ def device_id() -> str:
         tmp = persist.tmp_for(DEVICE_FILE)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"id": did, "at": time.time()}, f)
-        os.replace(tmp, DEVICE_FILE)
+        persist.replace_into(tmp, DEVICE_FILE)
     except Exception as _e:  # noqa: BLE001
         log.debug("写设备 ID 失败（按无 ID 处理）：%s", _e, exc_info=True)
         return ""

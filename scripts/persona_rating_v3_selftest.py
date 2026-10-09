@@ -34,8 +34,6 @@ def ok(name, cond, detail=""):
                              "  [{}]".format(detail) if detail else ""))
 
 
-import _srcslice as _ss  # noqa: E402
-
 SRC = io.open(os.path.join(ROOT, "agent", "persona_rating.py"), encoding="utf-8").read()
 from agent import persona_rating as R  # noqa: E402
 from agent import persona_card as PC  # noqa: E402

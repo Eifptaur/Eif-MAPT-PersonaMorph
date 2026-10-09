@@ -306,9 +306,10 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> bool:
-    """写排程状态（原子替换：先写临时文件再 `os.replace`，断电不留半个坏文件）。"""
+    """写排程状态（原子替换：先写临时文件再 `persist.replace_into`，断电不留半个坏文件）。"""
     import json as _json
     import os as _os
+    from . import persist # noqa: PLC0415 原子换档：撞共享冲突要退避重试
     try:
         p = _state_path()
         d = _os.path.dirname(p)
@@ -317,7 +318,7 @@ def save_state(state: dict) -> bool:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             _json.dump(state if isinstance(state, dict) else {}, fh, ensure_ascii=False)
-        _os.replace(tmp, p)
+        persist.replace_into(tmp, p)
         return True
     except Exception as e:  # noqa: BLE001
         log.debug("写排程状态失败（不影响本轮，最多下次重排）：%s", e, exc_info=True)

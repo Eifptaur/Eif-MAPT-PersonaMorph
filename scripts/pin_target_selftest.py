@@ -125,7 +125,6 @@ ok("D4 ★⛔ 置顶调用**全在安全阀之后**（主路=正常可见时不�
 
 print("── E. 访问器语义：默认 False ＋ 异常回 False（不打坏就涨）──")
 # 直接**行为核**（不锚字面）：造一个假 cfg 对象，看返回值
-import types  # noqa: E402
 
 
 class _FakeCfg:

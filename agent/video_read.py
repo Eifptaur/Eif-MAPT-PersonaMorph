@@ -99,18 +99,15 @@ def asr_backend() -> dict:
     才是"把一段音频转成带时间戳的字幕"的正解。
     ⛔ 但"装没装"是**环境事实** ⇒ 这里**现算**：装了就优先走真的，没装就如实说在用兜底 ——
     **不许在提示词/面板里声称"我们有语音识别"而实际用的是听写引擎**。
+    ⛔ 探测必须用 `find_spec`，**不许 `import` 试**：`import whisper` 会把 torch 拖进常驻内存
+       （实测 +446 MB —— whisper 硬依赖 torch）；本函数被状态面板调用，用户没点语音也会触发。
     """
-    try:
-        import faster_whisper  # noqa: F401
+    import importlib.util as _ilu
+    if _ilu.find_spec("faster_whisper") is not None:
         return {"ok": True, "kind": "faster_whisper",
                 "detail": "faster-whisper（CTranslate2，CPU 友好、体积小）"}
-    except Exception:
-        pass
-    try:
-        import whisper  # noqa: F401
+    if _ilu.find_spec("whisper") is not None:
         return {"ok": True, "kind": "openai_whisper", "detail": "openai-whisper"}
-    except Exception:
-        pass
     st = asr_status()
     if st.get("ok"):
         return {"ok": True, "kind": "sapi",

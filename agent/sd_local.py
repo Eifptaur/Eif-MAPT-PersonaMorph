@@ -213,12 +213,20 @@ def server_url(port: int = None) -> str:
 
 # ——————————————— 状态 ———————————————
 def _deps_ok() -> tuple:
-    try:
-        import torch # noqa: F401
-        import diffusers # noqa: F401
+    """torch / diffusers 装没装 —— **只查在不在，不把它装进来**。
+
+    ⛔ 原来写的是 `import torch` / `import diffusers` 试一下（`# noqa: F401`）。
+       后果不是"多花几十毫秒"：**`import torch` 会把整套 CUDA 运行库拖进常驻内存**，
+       实测干净子进程 36.5 MB → 482.6 MB（**+446 MB**），且这道检查被控制台
+       "看一眼生图状态"就会触发 ⇒ 用户根本没点生图，内存也被吃掉 446 MB。
+    ⇒ 改用 `importlib.util.find_spec`：只查包在不在（不执行包体），**零内存代价**。
+       ⚠️ 传**顶层包名**（`torch` / `diffusers`）：传子模块名会拉起父包，等于白改。
+    """
+    import importlib.util as _ilu
+    _missing = [n for n in ("torch", "diffusers") if _ilu.find_spec(n) is None]
+    if not _missing:
         return True, ""
-    except Exception as e: # noqa: BLE001
-        return False, "运行库没装（torch/diffusers）：%s" % str(e)[:60]
+    return False, "运行库没装（%s）" % "/".join(_missing)
 
 
 def server_alive(port: int = None) -> bool:

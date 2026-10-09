@@ -70,7 +70,7 @@ def _save(d: dict) -> None:
         tmp = persist.tmp_for(state_path())
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False)
-        os.replace(tmp, state_path())
+        persist.replace_into(tmp, state_path())
     except Exception as e:  # noqa: BLE001
         log.debug("会话控制状态写盘失败（不影响本次动作）：%s", str(e)[:80])
 

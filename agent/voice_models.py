@@ -366,13 +366,14 @@ def status(cfg: dict | None = None) -> dict:
         out["engine"] = "edge-tts"
         out["voice"] = edge_voice(c)
         out["voices"] = [{"name": v, "label": lab} for v, lab in EDGE_VOICES]
-        try:
-            import edge_tts # noqa: F401
+        # ⛔ 只查在不在，**不许 `import edge_tts` 试**：那是纯探测（下面只读它的存在性、
+        #    不用它任何符号），import 会把包体与依赖拖进常驻内存（约 9 MB）。
+        import importlib.util as _ilu
+        if _ilu.find_spec("edge_tts") is not None:
             out["ok"] = True
             out["why"] = "edge-tts（免费神经语音，需要联网；失败会%s）" % (
                 "按 edge_fallback 退回系统声音" if c.get("edge_fallback", True) else "如实报错、不静默")
-        except Exception as _e:
-            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        else:
             out["ok"] = False
             out["why"] = "选了 edge-tts 但本机没装它（py -3 -m pip install edge-tts）"
         return out
