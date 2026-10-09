@@ -4084,13 +4084,62 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
                 out["row_source"] = {"how": _pk.get("how"), "name": _pk.get("name"),
                                      "score": _pk.get("score"), "rows": _pk.get("rows")}
                 _pk_y = int(_pk.get("y_abs") or 0) or None
+            elif _pk:
+                # ⛔ **没挑到也要记下来**（真机事故，PLAN 第 269 项）：原来这里只有 `ok` 分支
+                #   ⇒ "全行 0 分"时 `row_source` 缺字段、下面又照旧用"首行中心＋序号×行高"算落点，
+                #   相当于**悄悄退回那条最不可信的换算**。现在如实落档，供下面那条闸门判。
+                out["row_source"] = {"how": _pk.get("how") or "none", "name": _pk.get("name") or "",
+                                     "score": _pk.get("score") or 0.0,
+                                     "rows": _pk.get("rows"), "note": _pk.get("note")}
         except Exception as _eP2:  # noqa: BLE001
             log.debug("按名字挑行没成（继续走原路）：%s", str(_eP2)[:80])
 
+    # ⛔⛔ **挑行不可信时的闸门**（真机事故，PLAN 第 269 项）：
+    #   现场：8 行 OCR 全乱码、每行相似度 `score=0.0` ⇒ `pick_target_row` 退到
+    #   `how="highlight_fallback"`（＝"其他行都不像，用绿底行"）⇒ 调用方拿绿底行坐标**直接双击**
+    #   ⇒ **真把无关的「腾讯新闻」开成了一个独立窗**，而函数自己报 `ok=False`
+    #   —— "报失败"却已经动了用户的界面。根因＝**把"不算匹配"的落点当匹配用**。
+    #   ⇒ 现规矩：只有在**判据可信**时才许用挑行落点；不可信 ⇒ **不许双击**，改走搜索（搜索按名字搜，不依赖列表读数）。
+    _rs = out.get("row_source") or {}
+    _rs_how = str(_rs.get("how") or "")
+    _rs_sc = float(_rs.get("score") or 0.0)
+    #   ① `highlight_fallback` + `score<=0` ＝ 一个行都没匹配上（最坏一档）⇒ 落点**整段作废**；
+    #   ② `highlight_fallback` + `score>0` ＝ 有弱相关行 ⇒ **必须再核一次身份**（读那一行名字跟目标比）。
+    if _rs_how == "highlight_fallback" and _rs_sc <= 0:
+        out["row_source_trust"] = {"ok": False, "how": _rs_how, "score": _rs_sc,
+                                   "why": "挑行全部 0 分（OCR 与目标无一相关）⇒ 落点作废"}
+        _pk_y = None
+        log.warning("挑行全部 0 分 ⇒ 弃用挑行落点（不双击，改走搜索）")
+    elif _rs_how == "highlight_fallback":
+        # 弱相关 ⇒ 核身份：用**挑行时那个同一个打分器**（`_row_score`）再打一次分，
+        #   ⛔ 口径必须一致 —— 换个打分器会出现"挑行说像、复核说不像"的自相矛盾。
+        try:
+            from agent import chat_ocr as _co4
+            _nm_got = str(_rs.get("name") or "")
+            _sc_recheck, _how_recheck = _co4._row_score(_nm_got, chat_name)
+            _nm_ok = float(_sc_recheck or 0.0) >= 1.0          # 只有"完全相等"才放行
+        except Exception:  # noqa: BLE001
+            _nm_ok = False
+            _how_recheck = "recheck_error"
+        out["row_source_trust"] = {"ok": _nm_ok, "how": _rs_how, "score": _rs_sc,
+                                   "got": str(_rs.get("name") or ""),
+                                   "recheck_score": float(_sc_recheck if isinstance(_sc_recheck, (int, float)) else 0.0),
+                                   "why": "绿底行兜底档 ⇒ 已用同一打分器复核（须完全相等才放行）"}
+        if not _nm_ok:
+            _pk_y = None
+            log.warning("绿底行兜底档复核不过（读数 %r 与目标 %r 不相等）⇒ 弃用挑行落点（不双击，改走搜索）",
+                        str(_rs.get("name") or "")[:40], str(chat_name)[:40])
+
     # ★ 落点：**物理像素**（window_rect / grab_window 都是物理口径）
     #    · 有"按名字挑到的行"（`_pk_y`）⇒ **以它为准**（这是最直接的量：那一行就在那儿）；
-    #    · 否则仍用原来的"首行中心 + 序号 × 行高"。
-    y_phys = int(_pk_y) if _pk_y else int(round(first_row_center_phys + int(order) * row_pitch_phys))
+    #    · 否则仍用"首行中心 + 序号 × 行高" —— ⛔ **但这条换算是全链最不可信的一环**
+    #      （它假设"DB 序号 == 屏幕行号"，列表一滚就错），所以只在**它自己有依据**时才用。
+    _trust = out.get("row_source_trust") or {}
+    _y_from_pick = _pk_y is not None
+    y_phys = int(_pk_y) if _y_from_pick else int(round(first_row_center_phys + int(order) * row_pitch_phys))
+    out["y_source"] = {"how": "pick_row" if _y_from_pick else "order_x_pitch",
+                       "y_phys": int(y_phys),
+                       "trust_ok": bool(_trust.get("ok")) if _trust else None}
     # ⭐ x：**用 DIP 常数 × 窗口真实缩放**，不再"现场量两个互相矛盾的值再取中点"。
     #   为什么不"现场量名字左沿与列表右沿再取中点"：这两个读数**单位不一致**
     #   （一个偏物理、一个是目测值），换台机器就可能互相矛盾；旧写法在矛盾时会把 `pane` 撑大，

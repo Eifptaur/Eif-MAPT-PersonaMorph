@@ -2144,16 +2144,29 @@ def pick_target_row(img, target_name: str, others=(), db_others=None, pane_left:
             out.update(ok=True, y_abs=int(_scored[0]["y"]), name=_scored[0]["name"],
                        score=float(_scored[0]["score"]), how="name_unique")
             return out
-    # 兜底：其他行都不像（或并列分不开）⇒ 用绿底行
+    # 兜底：其他行都不像（或并列分不开）⇒ 用绿底行**当参考**，但**分成两档**。
     try:
         _h = highlight(img) or {}
         _hy = int(_h.get("y_abs") or 0)
     except Exception:  # noqa: BLE001
         _hy = 0
-    if _hy:
-        _near = min(_scored, key=lambda r: abs(int(r["y"]) - _hy), default=None) if _scored else None
+    # ⛔ 为什么必须分档（真机事故，PLAN 第 269 项）：
+    #   原来只有一档 `highlight_fallback` 且 `ok=True` ⇒ 调用方照着 `y_abs` 直接双击。
+    #   真机上出现过：**8 行 OCR 全乱码、`_scored` 里每行 `score=0.0`** ⇒ 走这档 ⇒
+    #   拿绿底行坐标双击，**真把无关的「腾讯新闻」开成了一个独立窗**，而函数自己报 `ok=False`
+    #   ——"报失败"却已经动了用户的界面。根因＝**把"不算匹配"的落点当匹配用**。
+    #   ⇒ 现口径：`score<=0` ⇒ `how="none"` 且 **`ok=False`**（**不给落点**，调用方无从下手）；
+    #              `score>0` ⇒ 仍是 `highlight_fallback`，但**调用方必须再核一次身份**才许双击。
+    _fb_sc = float(((min(_scored, key=lambda r: abs(int(r["y"]) - _hy), default=None) or {})
+                    .get("score") or 0.0)) if _hy else 0.0
+    if _hy and _fb_sc > 0:
+        _near = min(_scored, key=lambda r: abs(int(r["y"]) - _hy), default=None)
         out.update(ok=True, y_abs=_hy, name=str((_near or {}).get("name") or ""),
-                   score=float((_near or {}).get("score") or 0.0), how="highlight_fallback")
+                   score=_fb_sc, how="highlight_fallback")
+    elif _hy:
+        # 一个行都没匹配上（全 0 分）⇒ **如实说没挑到**，不提供落点。
+        out.update(ok=False, y_abs=0, how="none",
+                   note="全部行的名字相似度都是 0（OCR 读数与目标无一相关）⇒ 不给落点")
     return out
 
 

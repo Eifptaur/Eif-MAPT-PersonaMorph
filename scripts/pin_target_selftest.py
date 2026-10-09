@@ -99,7 +99,7 @@ ok("D1 ★`wechat_windows.pin_target_first_enabled` 回落到 `_pin_target_first
    ('_pin_target_first' in _ps), "")
 # D2：那个薄封装有真实调用点（`pin_target_first_enabled(adapter)`）
 _calls_win = [ln for ln in WIN_SRC.splitlines()
-              if "pin_target_first_enabled(adapter)" in ln and "def " not in ln]
+              if "pin_target_first_enabled(adapter)" in ln and not ln.lstrip().startswith("def ")]
 ok("D2 ★薄封装有真实调用点（`pin_target_first_enabled(adapter)`）",
    len(_calls_win) >= 1, "找到 %d 处" % len(_calls_win))
 # D3：调用点挂在**两条既有退路**上（目标行不在可见区 / 读不出行身份）—— 顺序即意图：
@@ -174,19 +174,19 @@ print("── F. 反向锚（打坏必须报红，证明上面的断言真的在
 _mut_dft = re.sub(r'("pin_target_first"\s*:\s*)False', r'\1True',
                   io.open(os.path.join(ROOT, "agent", "config.py"), encoding="utf-8").read(), count=1)
 ok("F1 ★反向锚：DEFAULTS 改成 True ⇒ A1 那条断言**会**变红",
-   ('"pin_target_first": True' in _mut_dft), "（变异已生成，断言按正则真的会变假）")
+   _sm.has(_mut_dft, '"pin_target_first": True'), "（变异已生成，断言按正则真的会变假）")
 
 # F2：把 web 那行删掉 ⇒ B1 必须变假
 _mut_web = "\n".join(ln for ln in WEB_SRC.splitlines()
                      if ('data-cfg="%s"' % KEY) not in ln)
 ok("F2 ★反向锚：删掉 web 勾选框那一行 ⇒ B1 那条断言**会**变红",
-   (('data-cfg="%s"' % KEY) not in _mut_web), "")
+   not _sm.has(_mut_web, 'data-cfg="%s"' % KEY), "")
 
 # F3：把访问器换成 `return True` ⇒ E1（键缺失回 False）必须变假
 _mut_acc = re.sub(r"(def _pin_target_first\(self\) -> bool:.*?)(\n    def )",
                   r"\1\n        return True\n\2", WECHAT_SRC, count=1, flags=re.S)
 ok("F3 ★反向锚：访问器改成 `return True` ⇒ E1/E4 那两条断言**会**变红",
-   ("return True" in _mut_acc), "")
+   _sm.has(_mut_acc, "return True"), "")
 ok("F4 分母守卫：本判据的 OK/FAIL 总数 ≥ 14（不许静默少跑）",
    (PASS + FAIL) >= 14, "实跑 %d 条" % (PASS + FAIL))
 

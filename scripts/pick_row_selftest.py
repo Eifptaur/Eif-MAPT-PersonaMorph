@@ -62,10 +62,24 @@ try:
     r1 = CO.pick_target_row(object(), "文件传输助手")
     ok("B1 唯一最高分 ⇒ `name_unique` 且 y 就是那一行（337）",
        r1["ok"] and r1["how"] == "name_unique" and r1["y_abs"] == 337, str(r1["how"]) + str(r1["y_abs"]))
-    # ② 都不像 ⇒ 退回绿底行
+    # ② 都不像 ⇒ 退回绿底行。⛔ **但必须分两档**（真机事故，PLAN 第 269 项）：
+    #   原来只有一档且 `ok=True` ⇒ 调用方照着落点直接双击 ⇒ 真机上把无关的「腾讯新闻」
+    #   开成了独立窗（当时 8 行 OCR 全乱码、每行 `score=0.0`）。⇒ 现口径：
+    #     · **一个行都没匹配上（全 0 分）** ⇒ `ok=False` / `how="none"`（**不给落点**）；
+    #     · **有弱相关行** ⇒ 仍退绿底行，标 `highlight_fallback`（**调用方须再核身份**）。
     r2 = CO.pick_target_row(object(), "不存在的会话名")
-    ok("B2 ★都不像 ⇒ 退回**绿底行**（`highlight_fallback`）",
-       r2["ok"] and r2["how"] == "highlight_fallback" and r2["y_abs"] == 242, str(r2["how"]))
+    ok("B2 ★全行 0 分 ⇒ **不给落点**（`ok=False` / `how=none`）—— 这条是防「拿绿底行乱双击」的",
+       (not r2["ok"]) and r2["how"] == "none", str(r2["how"]))
+    # ②b 弱相关（两行同分 ⇒ 不唯一 ⇒ 不许硬挑；绿底行在其中一行上）⇒ 退绿底行、标 `highlight_fallback`
+    _keep_rows2 = CO.session_rows
+    CO.session_rows = lambda *a, **k: [{"name": "文件传输助手A", "y_abs": 337},
+                                      {"name": "文件传输助手B", "y_abs": 242},
+                                      {"name": "海绵“，19．“", "y_abs": 437}]
+    CO.highlight = lambda img: {"y_abs": 337, "name": "文件传输助手A", "score": 0.9}
+    r2b = CO.pick_target_row(object(), "文件传输助手")
+    ok("B2b ★有弱相关行但不唯一 ⇒ 退绿底行、标 `highlight_fallback`（供调用方复核）",
+       r2b["how"] == "highlight_fallback", str(r2b["how"]) + "/" + str(r2b["score"]))
+    CO.session_rows = _keep_rows2
     # ③ 两行同分 ⇒ 不唯一 ⇒ 不许硬挑
     CO.session_rows = lambda *a, **k: [{"name": "KC Group A", "y_abs": 100},
                                       {"name": "KC Group B", "y_abs": 200}]

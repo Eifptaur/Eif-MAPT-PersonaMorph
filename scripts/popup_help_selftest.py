@@ -99,5 +99,25 @@ ok("D2★ 文案组装**只有一处**（`whale_text.popup_help_text`），别�
        if "我动动小手" in io.open(os.path.join(ROOT, _p), encoding="utf-8", errors="ignore").read()) <= 1,
    "")
 
+print("\n── E. 挑行不可信 ⇒ 不许双击（真机事故防线，PLAN 第 269 项）──")
+_ww = io.open(os.path.join(ROOT, "agent", "wechat_windows.py"), encoding="utf-8").read()
+_co = io.open(os.path.join(ROOT, "agent", "chat_ocr.py"), encoding="utf-8").read()
+ok("E1★ `pick_target_row` 里「全行 0 分」不再 `ok=True`（事故根因：把不算匹配的落点当匹配用）",
+   _sm.has(_co, "elif _hy:", 'out.update(ok=False, y_abs=0, how="none"'), "")
+ok("E1b★ 只有 `_fb_sc > 0` 才给 `highlight_fallback` 落点",
+   _sm.has(_co, "if _hy and _fb_sc > 0:", 'how="highlight_fallback"'), "")
+ok("E2★★ 调用方见到 `highlight_fallback` **必须复核行名**（同一个打分器 `_row_score`，须完全相等）",
+   _sm.has(_ww, '_rs_how == "highlight_fallback"', "_co4._row_score(_nm_got, chat_name)",
+           ">= 1.0"), "")
+ok("E2b★ 复核不过 ⇒ **弃用挑行落点**（`_pk_y = None`，下面那条安全阀才会真拦）",
+   _sm.has(_ww, "if not _nm_ok:", "_pk_y = None"), "")
+ok("E3★ 挑行失败也**如实落档** `row_source`（原来只有 ok 分支 ⇒ 缺字段时悄悄退回最不可信的换算）",
+   _sm.has(_ww, "elif _pk:", 'out["row_source"] = {"how": _pk.get("how") or "none"'), "")
+ok("E4★ 落点来源**落档成 `y_source`**（`pick_row` / `order_x_pitch` 分得清）",
+   _sm.has(_ww, 'out["y_source"] = {"how": "pick_row" if _y_from_pick else "order_x_pitch"'), "")
+ok("E5 反向锚：闸门判的是 `_pk_y`（把它置 None 才会触发安全阀）——不是判别的变量",
+   _sm.has(_ww, "if (out.get(\"geo_fallback\") and not dry_run and not allow_fallback_click",
+           "and row_order is None and _pk_y is None)"), "")
+
 print("\n== 开窗求助弹窗判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
