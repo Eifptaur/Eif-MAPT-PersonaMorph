@@ -11,8 +11,11 @@
 ;       运行时**零联网**（不下载任何依赖）；
 ;   ③  可足够大 —— 不做体积限制；压缩用 lzma2/max。
 ;
-; ⛔ 免 UAC：PrivilegesRequired=lowest + 默认装到 %LOCALAPPDATA%\群相
+; ⛔ 免 UAC：PrivilegesRequired=lowest + 默认装到 %LOCALAPPDATA%\QunXiang
 ;      （普通群主一弹 UAC 就走掉一半，所以默认不申请管理员）。
+; ⭐ **默认目录名用英文 `QunXiang`**（2026-10-10 用户口径：安装路径要英文）。
+;    中文目录名会让部分依赖（尤其离线 wheel 解压与便携运行时）踩路径编码的坑；
+;    显示名仍用中文「群相」（AppName / 快捷方式 / 卸载项都不变），只有**路径**是英文。
 ;
 ; 编译（由 scripts/make_installer.py 调用，不要手改路径）：
 ;   iscc installer\群相.iss /DAppVersion=2026.10.09 /DPayloadDir=<解压好的目录> /DOutDir=<出包目录>
@@ -39,7 +42,7 @@ AppId={#AppId}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-DefaultDirName={localappdata}\群相
+DefaultDirName={localappdata}\QunXiang
 DefaultGroupName=群相
 ; ⛔ 不装到 Program Files、不申请管理员 ⇒ 全程无 UAC 弹窗
 PrivilegesRequired=lowest
@@ -47,9 +50,13 @@ PrivilegesRequired=lowest
 ;    启动时**弹一个"为所有用户装 / 只为我装"的选择框** —— 实测把 /VERYSILENT 都顶掉了，
 ;    静默装变成弹窗（2026-10-09 踩过）。我们的口径本来就是"装到当前用户目录、免 UAC"，
 ;    不需要让用户选模式。
-; 目录页关掉（见下面 DisableDirPage）：与启动器 P2「安装位置」页口径一致 ——
-;   两边都说明"装在哪"，都不提供改目录（改目录要同步改快捷方式/卸载项/自检路径，
-;   现在没做那套，先不给这个口子）。
+; ⭐ **目录页开着**（`DisableDirPage=no`）：**要让用户自己选装到哪**（2026-10-10 用户口径）。
+;   理由：装到哪是用户自己的事，由不得我们替他定。
+;   ⇒ 为什么开 Inno 这页而不是改启动器 P2：P2 在 `launcher-src/launcher.cs`（C#）里，
+;     而**本环境拦 C# 编译器**（实测 csc/dotnet 均不可用）⇒ 改了也编译不出来。
+;     Inno 这页由 Inno 自己管路径：快捷方式、卸载项、自检路径全走 `{app}` 变量，
+;     改目录**自动跟随**，不会留残留（不像启动器那套要自己同步）。
+; ⛔ 目录页之外的页面仍全部关掉（避免冒出系统风格的欢迎/就绪/完成页）。
 DisableProgramGroupPage=yes
 OutputDir={#OutDir}
 OutputBaseFilename=群相-Setup-{#AppVersion}
@@ -66,12 +73,12 @@ UninstallDisplayIcon={app}\{#AppExe}
 SetupLogging=yes
 ; ⛔ 不显示"选择是否创建快捷方式"那种系统页之外的多余页；快捷方式走 [Tasks]
 AllowNoIcons=yes
-; ⛔ Inno 自带向导的页面**全部关掉** —— 这个 exe 不负责"给用户看界面"，
+; ⛔ Inno 自带向导的页面**除目录页外全部关掉** —— 这个 exe 基本不负责"给用户看界面"，
 ;    它只做"把包铺到用户机器上"这一件事；用户看到的界面是装完后拉起的
 ;    `群相.exe`（`launcher-src/` 那套自绘四页向导：欢迎 / 安装位置 / 正在安装 / 完成）。
-;    关页 + 下面的 [Code] 隐藏窗口，两者一起才能做到"双击后看不到系统风格窗口"。
+;    ⭐ **例外：目录页 `DisableDirPage=no` 开着**（2026-10-10 用户口径：要让用户选装到哪）。
 DisableWelcomePage=yes
-DisableDirPage=yes
+DisableDirPage=no
 DisableReadyPage=yes
 DisableFinishedPage=yes
 DisableStartupPrompt=yes
