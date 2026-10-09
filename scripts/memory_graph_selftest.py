@@ -35,23 +35,25 @@ class _FakeStore:
     """假的 MemoryStore：给两个会话、三个成员、带真实印象正文。"""
 
     def chat_keys(self):
-        return ["group:g1@chatroom", "private:wxid_zzz"]
+        # ⛔ 假数据的账号 id 用 `uid_` 中性名：**不许写成 wxid_ 形状** ——
+        #    出包器的 PII 扫描分不出合成还是真的（踩坑合集：别放宽红线来迁就判据）。
+        return ["group:g1@chatroom", "private:uid_zzz"]
 
     def members(self, chat_key: str):
         if chat_key == "group:g1@chatroom":
             return [
-                {"userId": "wxid_aaa111", "name": "张三",
+                {"userId": "uid_aaa111", "name": "张三",
                  "impressions": [{"content": "喜欢夜跑", "createdAt": 1},
                                  {"content": "夜跑遇到下雨", "createdAt": 2},
                                  {"content": "周末去爬山", "createdAt": 3}]},
-                {"userId": "wxid_bbb222", "name": "李四",
+                {"userId": "uid_bbb222", "name": "李四",
                  "impressions": [{"content": "在山里露营", "createdAt": 4},
                                  {"content": "露营带了无人机", "createdAt": 5}]},
-                {"userId": "wxid_ccc333", "name": "",
+                {"userId": "uid_ccc333", "name": "",
                  "impressions": [{"content": "爬山装备很专业", "createdAt": 6}]},
             ]
-        if chat_key == "private:wxid_zzz":
-            return [{"userId": "wxid_zzz", "name": "老王",
+        if chat_key == "private:uid_zzz":
+            return [{"userId": "uid_zzz", "name": "老王",
                      "impressions": [{"content": "喜欢钓鱼", "createdAt": 7}]}]
         return []
 
@@ -121,7 +123,7 @@ def main() -> int:
             return ["group:big@chatroom"]
 
         def members(self, chat_key):
-            out = [{"userId": "wxid_u%d" % i, "name": "人%d" % i,
+            out = [{"userId": "uid_u%d" % i, "name": "人%d" % i,
                     "impressions": [{"content": "话题", "createdAt": i}]}
                    for i in range(40)]
             return out
