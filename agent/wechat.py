@@ -5806,6 +5806,34 @@ class WeChatAdapter:
         except Exception as _e:  # noqa: BLE001
             return False, "盲粘贴异常:%s" % str(_e)[:50]
 
+    def _search_input_has_text(self, pop_hwnd: int, name: str = "") -> bool:
+        """读**搜索浮层输入框**里现在有没有字 ⇒ `bool`（判断"这一枪投进去了没"）。
+
+        ⛔ 为什么不能信投递接口的返回值：投递接口会**假成功**（返回 True 而字根本没落框）——
+          本模块已记录这现象（投浮层的字它收不到）。**唯一可信的判据＝框里读不读得出字**。
+
+        实现：抓浮层帧 → `search_input_text` 读输入框文本。空串/只有占位词 ⇒ 立刻重试两三次
+        （投递是异步的，给它 ~0.3s 落框）；仍空 ⇒ 判"没投进去"。读取异常一律**当没投进去**
+        （fail-closed：宁可多换一条路投一次，也别把"投空了"当成功往下走）。
+        """
+        try:
+            from . import chat_ocr as _co
+            from . import chat_header as _chh
+            for _k in range(3):
+                _im = _chh.shot_window(int(pop_hwnd))
+                if _im is not None:
+                    try:
+                        _txt = _co.search_input_text(_im) or ""
+                    except Exception:  # noqa: BLE001
+                        _txt = ""
+                    if _txt.strip():
+                        return True
+                if _k < 2:
+                    time.sleep(0.12)
+            return False
+        except Exception:  # noqa: BLE001
+            return False
+
     def _try_search_first(self, chat_id: str, name: str, gui=None) -> tuple:
         """**切会话主路**：搜人名 → 盲粘贴打词 → 点结果 → 内容级复核 ⇒ `(ok, why)`。
 
@@ -7021,11 +7049,35 @@ class WeChatAdapter:
                             log.info("搜索窗没换：%s", _iwhy)
                     except Exception as _e_ih:  # noqa: BLE001
                         log.info("挑搜索窗异常（照旧用原窗）：%s", str(_e_ih)[:60])
-                    ok_t, why_t = self._blind_type_search(int(pop_hwnd), name)
-                    if not ok_t:
-                        return False, "往搜索浮层投字失败：%s" % why_t
+                    # ⭐⭐ **投字：首投浮层（安全底线不变），但"投空了"要**当场**发现并立刻换投主窗。
+                    #   ⛔ 为什么首投**必须是浮层**（不许改成首投主窗）：投主窗有致命风险 ——
+                    #     **浮层没开时字会落进聊天输入框**，用户按一下回车就把群名发进当前那个群
+                    #     （真机现场发生过，删掉才没发出去）。这是"宁可漏发，绝不发错"那条底线。
+                    #   ⛔ 为什么原实现"慢"：它先投浮层 → 然后**死等 ~1.6s 找结果行** → 找不到才改投主窗，
+                    #     再等 ~3.0s。对**投浮层收不到字**的微信版本（第二台机 4.1.13.65 属这档），
+                    #     第一枪必然空，这 ~4.6s 纯属空等；而浮层常在空等期间超时/失焦自关
+                    #     ⇒ 轮到"改投主窗"那枪时浮层已经不在 ⇒ 字没处落 ⇒ 最终输入框仍是空的
+                    #     （回传现场 `input_text=""`，报"字没投进去"）。**现象逐字吻合。**
+                    #   ⇒ 改法：**边投边读输入框**（读得出字＝这一枪成了，读不出＝这一枪空），
+                    #     一旦判空就**立刻**换投另一条路，不再把时间耗在"等结果行"上。
+                    #   ⛔ 两条路都**不认接口返回的 True**（投递接口会"假成功"）——**只认框里有没有字**。
+                    self._clear_search_input(backend, int(pop_hwnd))
+                    _t1_ok, _t1_why = self._blind_type_search(int(pop_hwnd), name)
+                    log.info("搜索投字第一枪＝**浮层盲粘贴**（%s）", str(_t1_why)[:40])
+                    if not _t1_ok:
+                        # 盲粘贴这步本身失败（剪贴板写不进等）⇒ 直接换投主窗
+                        log.info("浮层盲粘贴接口失败 ⇒ 立刻换投主窗")
+                    if not self._search_input_has_text(int(pop_hwnd), name):
+                        # ⭐ 第一枪**投空了**（框里没字）⇒ 立刻换投主窗。安全前提不变：
+                        #   **必须先确认浮层仍然开着** —— 浮层在 ⇒ 键盘焦点在搜索框 ⇒ 字进搜索框；
+                        #   浮层不在时投主窗，字会落进聊天输入框（上面那条底线）。
+                        _p2 = self._find_search_popover(main)
+                        if _p2:
+                            self._clear_search_input(backend, int(pop_hwnd))
+                            _sb_ok, _sb_why = backend.send_text(main, name)
+                            log.info("浮层投空了 ⇒ 第二枪＝**主窗投字**（%s）", str(_sb_why or "ok")[:24])
                     # ⛔ 打完字**也不许**立刻还前台（同上：浮层失去激活就不出结果）——收尾统一还。
-                    for _i in range(8): # 先给浮层 ~1.6s（新版箱形态它收不到字，见下面的兜底）
+                    for _i in range(8): # 给浮层 ~1.6s 出结果行
                         time.sleep(0.2)
                         im3 = _chh.shot_window(int(pop_hwnd))
                         if im3 is None:
@@ -7035,17 +7087,16 @@ class WeChatAdapter:
                         if row:
                             break
                     if not row:
-                        # ⚠️ **箱形态下搜索框逻辑上属于主窗，投给浮层窗口的字它收不到** ——
-                        #    真机同一次会话内对照：投浮层 ⇒ 浮层停在 552×312、找不到行；
-                        #    投主窗 ⇒ 浮层展开成 552×845、立刻找到目标行（x=193 y=228）。
-                        #    两者接口都返回 True（浮层那条是**假成功**）。
-                        #    ⇒ 兜底改投**主窗**。安全前提：**必须先确认浮层仍然开着** ——
-                        #      浮层在 ⇒ 键盘焦点在搜索框 ⇒ 字进搜索框；浮层不在时投主窗，
-                        #      字会落进聊天输入框（那正是本函数开头刻意避免的事）。
+                        # ⚠️ 两条路都投过、仍没出结果行 ⇒ 兜底再**补投一次主窗**（前提同样是
+                        #    "浮层仍开着"）：有些版本**字进框了但结果行渲染得慢**，补一枪主窗 +
+                        #    多给 ~3.0s 是给慢渲染留余量（旧实现那 15 轮就用在这里）。
+                        #    安全前提不变：浮层在 ⇒ 键盘焦点在搜索框 ⇒ 字进搜索框；浮层不在时
+                        #    投主窗，字会落进聊天输入框（那正是本函数开头刻意避免的事）。
                         _p2 = self._find_search_popover(main)
                         if _p2:
                             self._clear_search_input(backend, int(pop_hwnd))
-                            backend.send_text(main, name)
+                            _sb2_ok, _sb2_why = backend.send_text(main, name)
+                            log.info("搜索投字兜底＝**再补主窗**（%s）", str(_sb2_why or "ok")[:24])
                             for _i in range(15): # 再给 ~3.0s
                                 time.sleep(0.2)
                                 im4 = _chh.shot_window(int(pop_hwnd))
