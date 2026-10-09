@@ -187,8 +187,133 @@ _mut_acc = re.sub(r"(def _pin_target_first\(self\) -> bool:.*?)(\n    def )",
                   r"\1\n        return True\n\2", WECHAT_SRC, count=1, flags=re.S)
 ok("F3 ★反向锚：访问器改成 `return True` ⇒ E1/E4 那两条断言**会**变红",
    _sm.has(_mut_acc, "return True"), "")
-ok("F4 分母守卫：本判据的 OK/FAIL 总数 ≥ 14（不许静默少跑）",
-   (PASS + FAIL) >= 14, "实跑 %d 条" % (PASS + FAIL))
+ok("F4 分母守卫：本判据的 OK/FAIL 总数 ≥ 18（不许静默少跑）",
+   (PASS + FAIL) >= 19, "实跑 %d 条" % (PASS + FAIL))
+
+print("── G. 置顶函数**真跑得起来**（真机事故 P0：开关一开就崩 / 永远投不出去）──")
+# ⛔ 为什么单开这一段（PLAN 第 270 项 C-2，第二台机真机实测抓到）：
+#   上面 A~F 全是**静态源码断言**（脚本自己写明"不碰微信"）⇒ 它只验"键在不在、被不被调用"，
+#   **验不出"被调用的那个函数真跑起来会不会炸"**。实测两个 P0 它一个都没抓到：
+#     P0-1 `pin_session_via_menu` 里写**裸名** `find_main_window()`，而 `wechat_windows` **没有模块级同名函数**
+#          ⇒ 开关一开走到这条路就 `NameError`，从本函数抛到 `ensure_popup`，把整条发送链带崩；
+#     P0-2 同一函数用 `getattr(adapter, "gui", None)`，而 GUI 存在 `adapter._gui`（入口 `_get_gui()`）
+#          ⇒ 恒为 None ⇒ 置顶永远"取不到 GUI ⇒ 投不了右键"。
+#   ⇒ 这一段用 **AST** 抠出该函数正文，只查两件事（用 AST 不用文本匹：注释里为解释禁令而写的同名字样会假红）。
+_WW_SRC = io.open(os.path.join(ROOT, "agent", "wechat_windows.py"), encoding="utf-8").read()
+try:
+    _pin_body = _ss.func_src(_WW_SRC, "pin_session_via_menu")
+except Exception as _eG:  # noqa: BLE001
+    _pin_body = ""
+ok("G0 抠到 `pin_session_via_menu` 的正文（抠不到 ⇒ 下面几条就成了空转，必须报红）",
+   bool(_pin_body.strip()), "长度 %d" % len(_pin_body))
+
+import ast as _ast  # noqa: E402
+
+
+def _names_in(body: str):
+    """返回正文里**真正被调用/引用的名字集合**（用 AST，不看注释与字符串）。"""
+    _out = set()
+    if not body.strip():
+        return _out
+    try:
+        _tree = _ast.parse(_dedent_src(body))
+    except Exception:  # noqa: BLE001
+        return _out
+    for _n in _ast.walk(_tree):
+        if isinstance(_n, _ast.Name):
+            _out.add(_n.id)
+        elif isinstance(_n, _ast.Attribute):
+            _out.add(_n.attr)
+    return _out
+
+
+def _dedent_src(body: str) -> str:
+    # 抠出来的方法正文带缩进（`def xxx(self):` 顶头、正文 4 空格）⇒ 缩到 0 再包一层 stub。
+    # ⛔ 不许用"补 4 空格"那种写法：`def` 行本身不缩进 ⇒ 补完仍是 0 列 ⇒ 后面那句
+    #   `startswith("    ")` 判假 ⇒ 整段被换成 `pass` ⇒ 判据空转（实测踩过）。
+    import textwrap as _tw
+    _body = _tw.dedent(body.lstrip("\n"))
+    if not _body.strip():
+        return "def _stub():\n    pass"
+    # 缩进到 stub 内（4 空格），保证 `def` 行也在函数体内
+    _body = "\n".join(("    " + ln) if ln.strip() else ln for ln in _body.splitlines())
+    return "def _stub():\n" + _body
+
+
+# G1：正文里**不许出现裸名 `find_main_window`**（必须带 `_ib.` / `IB.` 前缀）
+#   判据：裸名会被 AST 记成 `Name(id='find_main_window')`；带前缀的只会记 `Attribute(attr='find_main_window')`
+#   ⇒ 我们查的是"有没有一个 Name 节点叫这个名字"。
+def _bare_call_name(body: str, fn: str) -> bool:
+    if not body.strip():
+        return False
+    try:
+        _tree = _ast.parse(_dedent_src(body))
+    except Exception:  # noqa: BLE001
+        return False
+    for _n in _ast.walk(_tree):
+        if isinstance(_n, _ast.Name) and _n.id == fn:
+            return True
+    return False
+
+
+ok("G1★ 置顶函数里**没有裸名 `find_main_window`**（必须是 `_ib.`/`IB.` 前缀；裸名＝NameError 崩）",
+   not _bare_call_name(_pin_body, "find_main_window"),
+   "（找得到裸名 ⇒ 开关一开就崩，真机已复现）")
+
+# G2：取 GUI **不许用 `getattr(adapter, "gui", …)`**（恒为 None ⇒ 永远投不出去）
+#   ⛔ 用 AST 判"有没有 `getattr(…, "gui", …)` 这种取法"，**不看注释/字符串**
+#     （否则我在注释里写一句 `getattr(adapter, "gui", None)` 说明为什么禁它，就会把这条判据假红）。
+def _has_bad_gui_getattr(body: str) -> bool:
+    if not body.strip():
+        return False
+    try:
+        _tree = _ast.parse(_dedent_src(body))
+    except Exception:  # noqa: BLE001
+        return False
+    for _n in _ast.walk(_tree):
+        if isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Name) and _n.func.id == "getattr":
+            if len(_n.args) >= 2 and isinstance(_n.args[1], _ast.Constant) and _n.args[1].value == "gui":
+                return True
+    return False
+
+
+ok("G2★ 置顶函数取 GUI 走 `_get_gui()`，不是 `getattr(adapter, \"gui\", …)`（后者恒 None）",
+   ("_get_gui" in _pin_body) and (not _has_bad_gui_getattr(_pin_body)),
+   "（用错入口 ⇒ 置顶一次都投不出去，真机已复现）")
+
+# G3：反向锚 —— 把裸名重新塞回去，G1 必须变假
+#   ⚠️ 替换目标取**真实代码里那一行**（`_main = int(_ib.find_main_window() or 0)`）；
+#      直接 `.replace("_ib.find_main_window()", ...)` 只会造出 `int(find_main_window() or 0)`，
+#      那仍是 `Name` 节点 ⇒ 也能被抓到。这里用正则从**真实源码**里造变异，更贴近"打坏"的真实形态。
+_mut_pin = re.sub(r"_ib\.find_main_window\(\)", "find_main_window()", _pin_body)
+ok("G3 ★反向锚：把裸名塞回去 ⇒ G1 那条断言**会**变红",
+   _bare_call_name(_mut_pin, "find_main_window") and not _bare_call_name(_pin_body, "find_main_window"),
+   "")
+
+# G4：反向锚 —— 把 GUI 入口改回 `getattr(adapter, "gui", None)`，G2 必须变假
+_mut_pin2 = re.sub(r"getattr\(adapter, \"_get_gui\", None\)",
+                   'getattr(adapter, "gui", None)', _pin_body)
+ok("G4 ★反向锚：GUI 入口改回 `getattr(adapter, \"gui\", …)` ⇒ G2 那条断言**会**变红",
+   _has_bad_gui_getattr(_mut_pin2) and not _has_bad_gui_getattr(_pin_body), "")
+
+# G5：**全仓**不许再出现"用 `getattr(x, "gui", …)` 取 GUI"这种写法
+#   （真机同一类错在 `wechat_windows` 里出现过**两处**：置顶函数 + 开独立窗的右键退路。
+#    只钉一处不防复发，所以扫 `agent/` 全部 .py；用 AST，注释里为解释禁令而写的同名字样不误报。）
+_bad_files = []
+for _fn in sorted(os.listdir(os.path.join(ROOT, "agent"))):
+    if not _fn.endswith(".py"):
+        continue
+    _p = os.path.join(ROOT, "agent", _fn)
+    try:
+        _tk = _ast.parse(io.open(_p, encoding="utf-8").read())
+    except Exception:  # noqa: BLE001
+        continue
+    for _n in _ast.walk(_tk):
+        if isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Name) and _n.func.id == "getattr":
+            if len(_n.args) >= 2 and isinstance(_n.args[1], _ast.Constant) and _n.args[1].value == "gui":
+                _bad_files.append("%s:%d" % (_fn, _n.lineno))
+ok("G5★ 全仓 `agent/` 无 `getattr(…, \"gui\", …)`（GUI 一律走 `_get_gui()`；这类错出过两处）",
+   not _bad_files, "命中：%s" % (", ".join(_bad_files) if _bad_files else "无"))
 
 print("\n=== %d 通过 / %d 失败 ===" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

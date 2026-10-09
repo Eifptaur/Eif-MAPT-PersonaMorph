@@ -3686,7 +3686,16 @@ def pin_session_via_menu(adapter, chat_name: str, *, row_y_phys: int | None = No
     """
     if adapter is None:
         return False, "没有 adapter ⇒ 投不了右键"
-    _main = find_main_window()
+    # ⛔ **必须走 `input_backend.find_main_window()`，不许写成裸名**（真机事故 P0，见
+    #   PLAN 第 270 项 C-2）：本模块**没有模块级的 `find_main_window`**（别处一律
+    #   `IB.find_main_window()` / `_ib.find_main_window()`，且 `input_backend` 是在每个函数内部才 import）
+    #   ⇒ 写裸名会 `NameError: name 'find_main_window' is not defined`，
+    #     从本函数直接抛到 `ensure_popup`，把整条发送链带崩（开关一开必现）。
+    try:
+        from agent import input_backend as _ib
+        _main = int(_ib.find_main_window() or 0)
+    except Exception as _eM:  # noqa: BLE001
+        return False, "取主窗失败（%s）⇒ 投不了右键" % str(_eM)[:60]
     if not _main:
         return False, "找不到主窗 ⇒ 投不了右键"
     # 行 y：调用方给了就用；没给就现挑（按名字）
@@ -3707,7 +3716,17 @@ def pin_session_via_menu(adapter, chat_name: str, *, row_y_phys: int | None = No
     except Exception:  # noqa: BLE001
         _sc = 1.0
     _x_phys = int(round(AVATAR_X_DIP * _sc))
-    _gui = getattr(adapter, "gui", None)
+    # ⛔ **GUI 入口是 `adapter._get_gui()`，不许写 `getattr(adapter, "gui", None)`**
+    #   （真机事故 P0-2，见 PLAN 第 270 项 C-2）：`WeChat` 把 GUI 存在 `self._gui`
+    #   （初始化在 `self._gui = None`、赋值在 `WeChatGUI()` 那两处），**没有 `self.gui` 属性**
+    #   ⇒ 老写法恒为 None ⇒ 置顶永远"取不到 GUI ⇒ 投不了右键"，一次都投不出去。
+    _gui = None
+    try:
+        _gget = getattr(adapter, "_get_gui", None)
+        _gui = _gget() if callable(_gget) else None
+    except Exception as _eG:  # noqa: BLE001
+        log.info("置顶路取 GUI 异常：%s", str(_eG)[:60])
+        _gui = None
     if _gui is None:
         return False, "取不到 GUI ⇒ 投不了右键"
     _tried = []
@@ -4428,7 +4447,15 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
     #     ② 菜单项**多候选**匹配，**匹配不到就不点**（不许学"兜底点最上面那项"——那会点到别的命令）；
     #     ③ 候选词见 `POPUP_MENU_LABELS`（用词随微信版本可能变，全匹配不上时不点）。
     if adapter is not None:
-        _gui_rc = getattr(adapter, "gui", None)
+        # ⛔ **GUI 入口是 `adapter._get_gui()`**（同 P0-2）：`WeChat` 把 GUI 存在 `self._gui`，
+        #   **没有 `self.gui` 属性** ⇒ 老写法 `getattr(adapter, "gui", None)` 恒为 None
+        #   ⇒ 这条右键退路**整段是死的**（一次都走不到）。
+        _gui_rc = None
+        try:
+            _gg = getattr(adapter, "_get_gui", None)
+            _gui_rc = _gg() if callable(_gg) else None
+        except Exception:  # noqa: BLE001
+            _gui_rc = None
         if _gui_rc is not None:
             for _lb in POPUP_MENU_LABELS[:2]:      # 最多试两个候选（每个要点一次右键＋等菜单，别无限试）
                 try:
