@@ -1,6 +1,8 @@
 // 群相 一键启动.exe：图形安装器（C# WinForms，嵌入鲸鱼图标，无控制台）
 // 流程：准备 Python → onestart(事件) → 快捷方式询问 → 自动收尾
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -711,7 +713,7 @@ namespace WxLauncher
                 var pi = new ProcessStartInfo("powershell.exe",
                     "-NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\"");
                 pi.UseShellExecute = false; pi.CreateNoWindow = true;
-                if (forcePortable) { pi.EnvironmentVariables["WX_FORCE_PORTABLE"] = "1"; }
+                if (forcePortable) { ChildEnv.Set(pi, "WX_FORCE_PORTABLE", "1"); }
                 using (var p = Process.Start(pi)) { p.WaitForExit(); return p.ExitCode; }
             }
             catch { return -1; }
@@ -766,7 +768,7 @@ namespace WxLauncher
                 po.CreateNoWindow = true;
                 po.RedirectStandardOutput = true;
                 po.RedirectStandardError = true;
-                po.EnvironmentVariables["WX_GUI"] = "1";
+                ChildEnv.Set(po, "WX_GUI", "1");
                 using (var p = Process.Start(po))
                 {
                     p.OutputDataReceived += (s, e) => { if (e.Data != null && e.Data.StartsWith("@@")) { Log(e.Data); ParseLine(e.Data); } };
@@ -795,6 +797,47 @@ namespace WxLauncher
     }
 
     public static class Ext { public static string[] SubArray(this string[] a, int n) { if (n <= 0) return new string[0]; var r = new string[n]; Array.Copy(a, a.Length - n, r, 0, n); return r; } }
+
+
+    /// <summary>
+    /// 给子进程写环境变量。
+    ///
+    /// ⛔ **不能直接写 `ProcessStartInfo.EnvironmentVariables[name]`**：
+    ///    它是**大小写不敏感**的 `StringDictionary`，首次访问时把当前进程环境整批灌进去；
+    ///    而 Windows 环境块里 `Path` / `PATH` / `path` **可以同时存在**（真机实测三个都在）
+    ///    ⇒ 灌到第二个时抛 `已添加项。字典中的关键字:"Path"所添加的关键字:"PATH"`。
+    ///    该异常从调用处一路冒到启动流程最外层，界面只剩"一键启动失败"，子进程根本没起来。
+    ///
+    /// 处理：先按常规写；失败则**自己重建一份干净的环境字典**（按大小写不敏感去重，同名只留第一个），
+    ///    再写目标变量。这样既修掉本次异常，也不会让子进程丢掉任何变量。
+    /// </summary>
+    internal static class ChildEnv
+    {
+        internal static void Set(ProcessStartInfo psi, string name, string value)
+        {
+            try { psi.EnvironmentVariables[name] = value; return; }
+            catch (Exception) { /* 环境块里有大小写重名 ⇒ 落下去重建 */ }
+
+            try
+            {
+                // 首次灌入已抛过一次异常 ⇒ 这一步拿到的是**半成品字典**
+                //   （`ProcessStartInfo` 在灌入循环之前就把字段赋好了，所以第二次取不再抛）
+                var sd = psi.EnvironmentVariables;
+                sd.Clear();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (DictionaryEntry e in Environment.GetEnvironmentVariables())
+                {
+                    string k = e.Key as string;
+                    if (k == null || !seen.Add(k)) continue;   // 同名不同大小写 ⇒ 只留第一个
+                    sd[k] = e.Value as string;
+                }
+            }
+            catch (Exception) { /* 重建失败也继续：至少把目标变量写进去 */ }
+
+            try { psi.EnvironmentVariables[name] = value; }
+            catch (Exception) { Environment.SetEnvironmentVariable(name, value); }   // 最后退路：进程级设置，子进程照样继承
+        }
+    }
 
 
 
@@ -2774,7 +2817,7 @@ static class Program
                 po.UseShellExecute = false;
                 po.CreateNoWindow = true;
                 po.WorkingDirectory = appRoot;   // 让 onestart.py 以**代码根**为工作目录（它按相对路径找 agent/ 等）
-                po.EnvironmentVariables["WX_GUI"] = "1";
+                ChildEnv.Set(po, "WX_GUI", "1");
                 Process.Start(po);
                 _startAt = DateTime.Now;
                 _healFail = ""; // 上一次的失败结论到此为止，别跟着新一轮显示
