@@ -158,8 +158,8 @@ UserInfoNameRequired=请输入用户名。
 ; *** "Select Destination Location" wizard page
 WizardSelectDir=选择目标位置
 SelectDirDesc=您想将 [name] 安装在哪里？
-SelectDirLabel3=安装程序将安装 [name] 到下面的文件夹中。注意：请选择纯英文路径（路径里不要有中文，也不要有空格），否则程序可能运行不起来。
-SelectDirBrowseLabel=点击“下一步”继续。如果您想选择其他文件夹，点击“浏览”。请记住：要选纯英文路径。
+SelectDirLabel3=安装程序将安装 [name] 到下面的文件夹中。
+SelectDirBrowseLabel=点击“下一步”继续。如果您想选择其他文件夹，点击“浏览”。
 DiskSpaceGBLabel=至少需要有 [gb] GB 的可用磁盘空间。
 DiskSpaceMBLabel=至少需要有 [mb] MB 的可用磁盘空间。
 CannotInstallToNetworkDrive=安装程序无法安装到一个网络驱动器。

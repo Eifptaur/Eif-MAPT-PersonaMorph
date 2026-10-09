@@ -14,8 +14,11 @@
 ; ⛔ 免 UAC：PrivilegesRequired=lowest + 默认装到 %LOCALAPPDATA%\QunXiang
 ;      （普通群主一弹 UAC 就走掉一半，所以默认不申请管理员）。
 ; ⭐ **默认目录名用英文 `QunXiang`**（2026-10-10 用户口径：安装路径要英文）。
-;    中文目录名会让部分依赖（尤其离线 wheel 解压与便携运行时）踩路径编码的坑；
-;    显示名仍用中文「群相」（AppName / 快捷方式 / 卸载项都不变），只有**路径**是英文。
+;    显示名仍用中文「群相」（AppName / 快捷方式 / 卸载项都不变），只有**默认路径**是英文。
+; ⛔ **不许在界面上写"只能选英文路径"**：✅ 中文路径是**支持**的
+;    （`scripts/cmd_entry_selftest.py` 有「非 ASCII 路径回归 P8」判据钉死：
+;     中文目录下仍走自带 Python、**不许**回落系统 py）。
+;    ⇒ 默认给英文是"图省事"，**不是**限制；用户想改到中文目录，随便改。
 ;
 ; 编译（由 scripts/make_installer.py 调用，不要手改路径）：
 ;   iscc installer\群相.iss /DAppVersion=2026.10.09 /DPayloadDir=<解压好的目录> /DOutDir=<出包目录>
