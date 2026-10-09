@@ -154,7 +154,12 @@ namespace WxLauncher
         public const int CardPadX = Space.x5; // 20：卡片左右内边距
         public const int CardPadY = Space.x4; // 16：卡片上内边距
         public const int CardPadB = Space.x4; // 16：卡片下内边距（`SealCard` 用它收口）
-        public const int CardGapY = Space.x3; // 12：卡片与卡片之间的间隙
+        /// 卡片与卡片之间的**纵向**间隙。
+        /// ⚠️ 12 → 16：多卡页（安装页有三张卡）原来 12px 的缝比卡内任意一处留白都小，
+        ///   三张卡的圆角描边贴在一起会看成"一整块"，用户点过"叠在一起／拉开一点"。
+        ///   16 与卡内上/下内边距（`CardPadY`/`CardPadB`）同档 ⇒ 相邻卡之间 32px 呼吸，
+        ///   与卡内 32px 也一致，整页的节奏对得上。
+        public const int CardGapY = Space.x4; // 16：卡片与卡片之间的间隙
 
         /// 卡顶 y 的**唯一来源**（原先是两个值：主窗手写 108，其余 104）。
         ///   `Space.x5`(图标顶 y=20) + `IconSize`(56) + `Space.x7`(28) = **104**。

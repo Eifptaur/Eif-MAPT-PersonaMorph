@@ -4609,6 +4609,95 @@ def memory_panel(t: Tokens) -> QWidget:
         QTimer.singleShot(200, _apply)
 
     _mem_boot()
+
+    # ── 记忆图谱（web `mgCanvas`/`mgDraw` 的 Qt 等价物）──
+    #    web 用 `<canvas>` + JS 力导向；Qt 侧 canvas 不会被 sec_meta 解析成控件
+    #    ⇒ 这里挂一个自绘 QWidget（`ui_qt/memgraph.py`），数据同样走
+    #    `/api/memory/graph`（本机构图、零 token）。按钮 `mgDraw` 走 ACT_CUSTOM。
+    try:
+        from memgraph import MemoryGraphView # noqa: PLC0415
+
+        gcard = Card(t)
+        gcard.body.addWidget(h2(t, "记忆图谱"))
+        gcard.body.addWidget(desc(
+            t, "把「谁在哪个群、记着什么事、这些人之间怎么连」画成一张图 —— "
+               "全部在本机生成，不花一点额度。拖节点可挪位置，滚轮缩放，空白处拖动可平移。"))
+        mg_view = MemoryGraphView(t)
+        mg_view.setObjectName("mgView")
+        gcard.body.addWidget(mg_view)
+        _mg_row = FlowBox(t, spacing=6)
+        b_mg_draw = Btn("画关系图", t, "primary")
+        b_mg_draw.setObjectName("mgDraw")
+        b_mg_draw.setProperty("web_action", "mgDraw")
+        _mg_scope = QCheckBox("只看上面选中的那个群")
+        _mg_scope.setObjectName("mgScopeCur")
+        _mg_row.add(b_mg_draw)
+        _mg_row.add(_mg_scope)
+        gcard.body.addWidget(_mg_row)
+        _mg_note = desc(t, "")
+        gcard.body.addWidget(_mg_note)
+
+        # 「图怎么读」组（web 第二个 `.sub`）：一个色点图例 + 一句怎么读。
+        _mg_legend = Card(t)
+        _mg_legend.setObjectName("mgLegend")
+        _mg_legend.body.addWidget(h2(t, "图怎么读"))
+        _lg = FlowBox(t, spacing=14)
+        for _c, _lb in (("#4FB3F2", "成员"), ("#35F0C0", "会话"), ("#FFD166", "话题")):
+            _dot = QLabel("● " + _lb)
+            _dot.setStyleSheet(f"color:{_c};background:transparent;")
+            _lg.add(_dot)
+        _mg_legend.body.addWidget(_lg)
+        _mg_legend.body.addWidget(desc(
+            t, "圆越大＝这个人/这个群越重要；实线＝「在群里」「聊到」，虚线＝「同群」"
+               "（两个人同在一个群）。"))
+
+        def _mg_paint(r, e) -> None: # noqa: ANN001
+            if e or not isinstance(r, dict) or not r.get("ok"):
+                _mg_note.setText("画不出来：" + str(e or (r or {}).get("error") or "未知原因"))
+                mg_view.set_data({})
+                return
+            mg_view.set_data(r)
+            st = r.get("stats") or {}
+            _mg_note.setText("%s（%s 个会话 / %s 位成员 / %s 条关系）"
+                             % (r.get("note") or "已出图",
+                                st.get("chats", 0), st.get("persons", 0), st.get("links", 0)))
+
+        def _mg_draw() -> None:
+            ck = chat_sel.currentData() or "" if _mg_scope.isChecked() else ""
+            b_mg_draw.setEnabled(False)
+            _mg_note.setText("正在本机构图…")
+            box: dict = {}
+
+            def _work(b: dict) -> None:
+                try:
+                    b["r"] = config_io.get_json(
+                        "/api/memory/graph" + (f"?chat_key={ck}" if ck else ""), timeout=30.0)
+                except Exception as e: # noqa: BLE001
+                    b["err"] = str(e)
+
+            def _land(b: dict) -> None:
+                if not _ui_alive(page):
+                    return
+                b_mg_draw.setEnabled(True)
+                _mg_paint(b.get("r"), b.get("err"))
+
+            run_async(_work, _land, page=page, interval=200, name="mem-graph")
+
+        b_mg_draw.clicked.connect(lambda _=False: _mg_draw())
+        page._mg_draw = _mg_draw # 供 ACT_CUSTOM 里同一函数的入口复用（不重写一遍）
+        page._mg_view = mg_view
+        # ★ 三级索引：web 侧 memory 页有两组（`记忆图谱` / `图怎么读`）——
+        #   标成组起点，顶部锚点条才会生成、点了才真能滚。组名从 web 的 `.sub` 原文取（一处真值）。
+        from panels_qt import mark_group as _mark_group # noqa: PLC0415
+
+        if not all((_mark_group(page, "memory", 0, gcard),
+                    _mark_group(page, "memory", 1, _mg_legend))):
+            page._c8_group_mismatch = True
+        lay.addWidget(gcard)
+        lay.addWidget(_mg_legend)
+    except Exception as _e: # noqa: BLE001 — 图谱是增值件，挂了也不该拖垮整个记忆页
+        log.debug("挂记忆图谱卡失败：%s", _e, exc_info=True)
+
     lay.addStretch(1)
     return page
 

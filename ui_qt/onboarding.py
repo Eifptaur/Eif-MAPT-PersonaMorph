@@ -9,14 +9,17 @@
   2. 机器人昵称 = 你自己微信的原名（写 wechat.bot_nickname）；
   3. **点「恢复」开始工作**（POST /api/resume）—— 正常引导到此完结；
   4. **环境校准**（`/api/status` 的 `env_hint`，与 Qt 面板/web 同一份文案）：
-     **微信字号调"标准" / 浅色主题 / 100% 缩放 / OCR** —— 只提醒、不强制（`agent/env_hint.py` 口径）。
+     **只有两项 —— 微信界面设成浅色 / 微信字号设为标准字号** —— 只提醒、不强制
+     （`agent/env_hint.py` 口径）。
+     ⛔ **只问"微信那一层"的事**（2026-10-10 用户当面纠正）：**显示缩放**会把用户所有软件的
+     图标显示全搞坏、**OCR 引擎**是程序自己该干的活 ⇒ 两样都**不许**出现在这里。
      这几样直接影响**识别准头与像素落点**，排在"缺什么"之前讲；
   5..N. **每个"缺什么"各占一步**（GET /api/env-guide）：虚拟声卡（发真语音条）、ffmpeg、
      语音识别、TTS、依赖补齐 —— 说清「用来干啥 / 现在什么情况 / 怎么补 / 这一类要不要你动手」。
      ⛔ **已就绪的项不单独占步**（否则白让用户点好几下）；
   N+1. 代码与依赖体检（POST /api/selfcheck mode=code，只读展示）。
 
-⛔ **两类不许混**：① **环境校准**（微信字号/浅色/缩放/OCR —— 影响识别准头与落点）
+⛔ **两类不许混**：① **环境校准**（微信浅色 / 微信标准字号 —— 影响识别准头与落点）
 ② **缺什么**（虚拟声卡/ffmpeg/... —— 影响某个功能能不能用）。
 它们**各占自己的步**，**不塞进同一屏**（原先把两类全挤在一个滚动区，
 弹窗只有 620×460 ⇒ 装不下、要滚半天，用户看到的就是"一屏塞满"）。
@@ -338,7 +341,7 @@ class _Wizard(DraggableDialog, QDialog):
         self.step = 3
         self._on_next()
 
-    # ── 环境区：第 4 步＝运行环境校准（env_hint：浅色 / 缩放 / 字号 / OCR），
+    # ── 环境区：第 4 步＝运行环境校准（env_hint：只有微信浅色 / 微信标准字号两项），
     #   然后**每个"功能缺件"各占一步**（虚拟声卡 / ffmpeg / TTS / 语音识别 / pilk）。
     #   ⛔ 两类不许混：① 运行环境（画面校准，影响**识别与落点**）② 功能缺件（影响**某个功能能不能用**）。
     #   原先我把两类塞进同一步的一个滚动区 ⇒ 弹窗 620×460 装不下、挤成"雷霆大画面"。
@@ -409,9 +412,9 @@ class _Wizard(DraggableDialog, QDialog):
         except Exception as e: # noqa: BLE001
             self.resume_hint.setText(f"恢复失败：{e}（也可以稍后在控制台顶部点「恢复」）")
 
-    # ── 第 5 步：环境校准（微信字号"标准" / 浅色 / 100% 缩放 / OCR）──
+    # ── 第 5 步：环境校准（只有两项 —— 微信界面浅色 / 微信字号标准）──
     def _render_step_hint(self) -> None:
-        """把「会让识别/落点失准」的几项摆出来（微信字号标准 / 浅色 / 缩放 / OCR）。
+        """把「会让识别/落点失准」的两项摆出来（微信界面浅色 / 微信字号标准）。
 
         ⛔ 只提醒、不替用户改；文案直接用后端那份（`env_hint.text`），**前端不自己编**。
         拉一次 `/api/env-guide` 只为**算出总步数**（后面有多少个缺件），不在这里展示。
@@ -457,6 +460,12 @@ class _Wizard(DraggableDialog, QDialog):
             self.body_lay.addWidget(desc(
                 t, "接下来 %d 步逐条讲「还缺的是什么、用来干啥、怎么补」。" % len(self._env_pending_cache)))
         row = QHBoxLayout()
+        # ⭐ 「打开引导」：把这几条摆进**一个弹窗**（用户口径："环境引导，弹窗引导"）。
+        #   向导页里仍留一份摘要（用户往下走时不至于两眼一抹黑），
+        #   但弹窗才是"照着调"的主场 —— 它可拖动、不被向导页的行数挤扁。
+        b_open = Btn("打开引导", t, "primary")
+        b_open.clicked.connect(self._open_env_guide)
+        row.addWidget(b_open)
         b_re = Btn("重新检测", t, "ghost")
         b_re.clicked.connect(self._render_step_hint)
         row.addWidget(b_re)
@@ -464,14 +473,32 @@ class _Wizard(DraggableDialog, QDialog):
         self.body_lay.addLayout(row)
         self.b_next.setText("下一步")
 
+    def _open_env_guide(self) -> None:
+        """打开环境引导弹窗（一个弹窗，引导用户把微信调成浅色 + 标准字号）。
+
+        ⚠️ 弹窗**只提醒、不替用户改微信** —— 所以重检按钮只是重拉一次清单。
+        """
+        try:
+            from envguide import EnvGuideDialog # noqa: PLC0415
+            d = EnvGuideDialog(self.t, self, self._hint_fetch())
+            if d.exec():
+                self._render_step_hint() # 用户说"我调好了" ⇒ 重拉清单
+        except Exception as e: # noqa: BLE001
+            self.desc.setText("引导弹窗打不开：%s" % e)
+
     # ── 第 5..N 步：一个功能缺件一步 ──
     def _render_env_item(self, it: dict) -> None:
-        """一个缺项一步 —— 用来干啥 / 现在什么情况 / 怎么补 / 这一类要不要你动手。"""
+        """一个缺项一步 —— 用来干啥 / 现在什么情况 / 怎么补 / 这一类要不要你动手。
+
+        ⭐ 2026-10-09 用户口径：缺件引导改成「**每个缺件一个弹窗**」，
+        每个弹窗都是三段式（忽略/下载 → 后台下载/等待 → 双进度条 → 完成），
+        弹窗上写明**要下载多大**。向导页这边保留摘要，另给一颗「现在就装」直接拉起弹窗。
+        """
         t = self.t
         total = self._env_total_steps()
         st = str(it.get("state") or "unknown")
         head = "还缺一项" if st == "fail" else "这一项读不出"
-        self.desc.setText("第 %d 步/共 %d 步：%s —— **%s**" % (
+        self.desc.setText("第 %d 步/共 %d 步：%s —— %s" % (
             self._env_step_no(), total, head, str(it.get("title") or "")))
         self.mid.setVisible(False)
         self._clear_body()
@@ -487,23 +514,48 @@ class _Wizard(DraggableDialog, QDialog):
         why = str(it.get("why") or "")
         how = str(it.get("how") or "")
         kl = KIND_LABEL.get(str(it.get("install_kind") or "none"), "")
+        dl = it.get("dl") or {}
         if need:
             self.body_lay.addWidget(_lab("用来干啥：" + need, t.tx))
         if why:
             self.body_lay.addWidget(_lab("现在什么情况：" + why, t.tx2))
+        # ⭐ 写明**要下载多大**（用户口径：缺件弹窗上必须有体积）——
+        #   数据来自后端 `env_guide`，前端不自己编数字。
+        if dl.get("size_text"):
+            self.body_lay.addWidget(_lab("要下载的东西：" + str(dl.get("size_text")), t.tx2))
         if how:
             self.body_lay.addWidget(_lab("怎么补：" + how, t.tx2))
         if kl:
             self.body_lay.addWidget(_lab("这一类：" + kl, t.tx3))
         self.body_lay.addWidget(desc(
-            t, "补好之后点下面的「重新检测」确认一下。不想装也能继续用——只是这一项对应的功能用不了。"))
+            t, "点「现在就装」会弹出一个安装窗，你可以让它自己在后台装；"
+               "不想装也能继续用 —— 只是这一项对应的功能用不了。"))
         row = QHBoxLayout()
+        b_go = Btn("现在就装", t, "primary")
+        b_go.clicked.connect(lambda: self._open_missing_guide(it))
+        row.addWidget(b_go)
         b_re = Btn("重新检测", t, "ghost")
         b_re.clicked.connect(self._recheck_env)
         row.addWidget(b_re)
         row.addStretch(1)
         self.body_lay.addLayout(row)
         self.b_next.setText("下一步")
+
+    def _open_missing_guide(self, it: dict) -> None:
+        """打开**这一个**缺件的三段式安装弹窗（每个缺件一个）。
+
+        ⚠️ 弹窗返回后**重拉清单**：用户可能刚点了「后台下载」，也可能点了「忽略」——
+        不管哪种，界面上那行状态都该跟着变，不能停在旧读数上。
+        """
+        try:
+            from envguide import MissingGuideDialog # noqa: PLC0415
+            d = MissingGuideDialog(self.t, self, it)
+            d.exec()
+            self._env_fetch()
+            self._env_pending_cache = self._env_pending()
+            self._render_step_hint()
+        except Exception as e: # noqa: BLE001
+            self.desc.setText("安装窗打不开：%s" % e)
 
     def _recheck_env(self) -> None:
         """重检：重新拉清单，回到运行环境那一步（步号重算）。"""

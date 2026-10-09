@@ -1591,6 +1591,21 @@ def _make_handler(parent):
             except Exception as e:
                 self._json({"ok": False, "error": str(e)})
 
+        def _rapi_memory_graph(self, path, data, parsed, method):
+            """记忆图谱（只读）：把印象与会话画成一张可交互的图。
+
+            本机生成、**零 token**（构图全在 `agent/memory_graph.py`，不调模型）。
+            `?chat_key=` 指定单个会话；不给就出本机所有有记忆的会话总图。
+            """
+            try:
+                from . import memory_graph as _mg
+                q = parse_qs(parsed.query)
+                ck = (q.get("chat_key") or q.get("chat") or [""])[0]
+                self._json(_mg.build(str(ck or "")))
+            except Exception as e: # noqa: BLE001
+                self._json({"ok": False, "nodes": [], "links": [],
+                            "error": str(e)[:120]}, 500)
+
         def _rapi_wordcloud(self, path, data, parsed, method):
             """热词词云（第 136 项）：按会话出一张 PNG ⇒ `{ok, path, words, note, top}`。
 

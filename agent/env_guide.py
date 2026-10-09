@@ -45,15 +45,103 @@ KIND_LABEL = {
     "none": "不用装",
 }
 
+#: 各项「要下载的东西」的元数据：**下载地址 + 体积 + 能不能替用户静默装**。
+#:
+#: 为什么要这张表（2026-10-09 用户口径）：缺件引导的弹窗上**必须写明"要下多大的东西"**，
+#: 用户才好在"现在装 / 以后再说"之间做判断；而"能不能静默装"决定了弹窗给不给进度条。
+#:
+#: ⛔ 体积一律**实测填数**，不许估：
+#:   · VB-CABLE：`curl -sI` 打官方直链，`Content-Length: 1318877`（实测 2026-10-09）；
+#:   · ffmpeg：`imageio-ffmpeg` 轮子里自带（`offline/wheels/imageio_ffmpeg-0.6.0-*.whl`
+#:     实测 31,246,824 字节，解开后二进制 87,638,016 字节）⇒ **随包分发，用户零下载**；
+#:   · 微信 / Windows 语音识别包：官方**没有**稳定直链（官网下载页是按需生成的），
+#:     体积也随版本变 ⇒ `url` 只给官方页面、`size` 记 0（＝"大小以官网为准"，弹窗照实显示）。
+#:
+#: ⚠️ `silent` 三态：
+#:   "yes"  ＝ 我们能完全替用户静默装（不弹任何窗、不问任何问题）；
+#:   "admin"＝ 能替用户装，但**必须提权**（装内核驱动这类 —— 会弹一次系统 UAC，
+#:            躲不掉，如实告诉用户"会弹一次确认"）；
+#:   "no"   ＝ 装不了（要用户自己点/自己开系统功能），我们只给官方地址。
+_DOWNLOAD = {
+    "vmic": {
+        "url": "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip",
+        "size": 1318877,
+        "size_text": "1.3 MB",
+        "silent": "admin",
+        "note": "装完会多出一个「CABLE Input（播放）」和一个「CABLE Output（录音）」，"
+                "微信从录音端就能录到声音；装完要重启一次电脑才生效。",
+    },
+    "ffmpeg": {
+        "url": "https://ffmpeg.org/download.html",
+        "size": 0,
+        "size_text": "不用下载（已随程序自带）",
+        "silent": "no",
+        "note": "这一份已经跟程序一起装好了，你什么都不用做。",
+    },
+    "wechat": {
+        "url": "https://pc.weixin.qq.com/",
+        "size": 0,
+        "size_text": "以官网为准",
+        "silent": "no",
+        "note": "只支持官方 PC 版微信；装完登录你自己的号再回来点重检。",
+    },
+    "asr": {
+        "url": "https://github.com/SYSTRAN/faster-whisper",
+        "size": 0,
+        "size_text": "以官网为准（可选，不装也能用）",
+        "silent": "no",
+        "note": "**可选**：装了识别更准，不装机器人的内置识别照样能用。"
+                "它体积较大、第一次用还要联网下模型 —— 你下不下自己定，我们不代装。",
+    },
+    "silk": {
+        "url": "",
+        "size": 0,
+        "size_text": "不用下载（已随程序自带）",
+        "silent": "yes",
+        "note": "随程序的依赖一起装，不需要联网。",
+    },
+    "deps": {
+        "url": "",
+        "size": 0,
+        "size_text": "不用下载（已随程序自带）",
+        "silent": "yes",
+        "note": "包内自带全部轮子装，不需要联网。",
+    },
+    "tts": {
+        "url": "",
+        "size": 0,
+        "size_text": "不用下载（用系统自带）",
+        "silent": "no",
+        "note": "程序会自己切到系统自带那一档，零安装、不出网；你不用做任何事。",
+    },
+}
+
+
+def download_of(key: str) -> dict:
+    """取某项的下载元数据（没有登记过 ⇒ 返回一份"如实说不知道"的空壳，**不许猜数**）。"""
+    d = _DOWNLOAD.get(str(key) or "") or {}
+    return {
+        "url": str(d.get("url") or ""),
+        "size": int(d.get("size") or 0),
+        "size_text": str(d.get("size_text") or "大小以官网为准"),
+        "silent": str(d.get("silent") or "no"),
+        "note": str(d.get("note") or ""),
+    }
+
 
 def _mk(key, title, need, ok, why, how="", kind="none", action=""):
-    """造一条清单项。`ok` 三态：True＝已就绪 / False＝缺 / None＝读不出（**不许当缺**）。"""
+    """造一条清单项。`ok` 三态：True＝已就绪 / False＝缺 / None＝读不出（**不许当缺**）。
+
+    ⚠️ 额外的 `dl` 字段挂上"要下载什么、多大、能不能静默装"（见 `_DOWNLOAD`）——
+    缺件引导的弹窗**照它显示体积**，不许前端自己编数字。
+    """
     state = "ok" if ok is True else ("unknown" if ok is None else "fail")
     if ok is True:
         kind = "none"
     return {"key": str(key), "title": str(title), "need": str(need), "ok": ok,
             "state": state, "why": str(why or ""), "how": str(how or ""),
-            "install_kind": str(kind), "action": str(action or "")}
+            "install_kind": str(kind), "action": str(action or ""),
+            "dl": download_of(key)}
 
 
 # ── 各项探测（每项独立兜底：一处读不出不影响其余）────────────────────────
@@ -153,7 +241,11 @@ def _item_virtual_mic() -> dict:
 
 
 def _item_tts_engine() -> dict:
-    """合成引擎：把文字念成音频。系统档零安装（Windows 内置 SAPI），edge 档要联网。"""
+    """合成引擎：把文字念成音频。系统档零安装（Windows 内置 SAPI），edge 档要联网。
+
+    ⛔ 这里**不教用户进系统设置**（用户最多只到微信这一层）：程序自己能切到系统档，
+      所以缺了只说"点重检"（程序去切内置档），或让用户决定要不要连网用 edge。
+    """
     try:
         from . import voice_models as vm
         st = vm.status() or {}
@@ -162,8 +254,9 @@ def _item_tts_engine() -> dict:
                        str(st.get("why") or "可用"))
         return _mk("tts", "语音合成引擎", "让机器人能「说话」（合成一段语音）", False,
                    str(st.get("why") or "没有可用的合成引擎"),
-                   "换成「声音来源 → 系统声音」（Windows 内置，零安装、不出网）；"
-                   "或把「声音来源 → edge 神经语音」并连上网",
+                   "点重检就行 —— 程序会自己切到系统自带那一档（零安装、不出网）。"
+                   "想要更自然的音色，也可以在面板里换成在线的 edge 神经语音（那一档要连网，"
+                   "换不换由你定）。",
                    kind="system", action="recheck")
     except Exception as e:  # noqa: BLE001
         return _mk("tts", "语音合成引擎", "让机器人能「说话」（合成一段语音）", None,
@@ -193,7 +286,13 @@ def _item_ffmpeg() -> dict:
 
 
 def _item_asr() -> dict:
-    """语音识别：让机器人「听懂」群友发的语音条。Windows 内置识别要先装中文语言包。"""
+    """语音识别：让机器人「听懂」群友发的语音条。
+
+    ⛔ **不再让用户进系统设置**（用户最多只到微信这一层）：这里给的是**可选下载**——
+      · 随包/内置那一档（Windows 内置识别）能用 ⇒ 直接判就绪；
+      · 想更准 ⇒ 列一档 faster-whisper（**用户自己选下不下，不塞安装包**）。
+    装不装由用户决定，我们不催、不代装。
+    """
     try:
         from . import video_read as vr
         st = vr.asr_status() or {}
@@ -203,9 +302,10 @@ def _item_asr() -> dict:
             return _mk("asr", "语音识别（听懂语音条）", "让机器人能「听懂」群友发的语音", True, note)
         return _mk("asr", "语音识别（听懂语音条）", "让机器人能「听懂」群友发的语音", False,
                    str(st.get("why") or "没有可用的识别引擎"),
-                   "开系统功能：**设置 → 时间和语言 → 语音 → 安装中文语音识别**（装完可能要重启）；"
-                   "想让识别更准可另装 faster-whisper（可选，不在包内）",
-                   kind="system", action="recheck")
+                   "想要识别更准，可以自己装一份 faster-whisper（**可选，不在包内 —— 你下不下都行，"
+                   "不装只是识别效果一般**）。注意它体积较大、第一次用要联网下模型，"
+                   "装不装由你决定，不装照样能用。",
+                   kind="manual", action="openUrl")
     except Exception as e:  # noqa: BLE001
         return _mk("asr", "语音识别（听懂语音条）", "让机器人能「听懂」群友发的语音", None,
                    "识别引擎状态读不出：%s" % str(e)[:60])

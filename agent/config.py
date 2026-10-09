@@ -217,6 +217,18 @@ DEFAULT_CONFIG = {
                    "model": "", "count": 6, "timeout_ms": 20000},
         "providers": [],
     },
+    # ── 音乐推荐（第 139 项）──────────────────────────────────────────
+    # 口径（2026-10-10 用户定的）：**推荐走在线**（本地预置热单库被否掉了 ——
+    # "本地库放一堆热门歌曲，就相当于是脱裤子放屁"）。默认走网易云公开接口（免 key）；
+    # QQ 音乐是可选档，用户自己去官网申请 key 填进来才启用。
+    "music": {
+        "online_allowed": True, # 出网总闸（关掉 ⇒ 退到本地标签库，不联网）
+        "source": "netease",    # 默认数据源：netease（免 key） | qqmusic（需自填 key）
+        "want_playlist": True,  # 优先从"歌单"里挑（歌单＝别人按场景攒的，更像"发现"而不是热单）
+        "qqmusic_key": "",      # QQ 音乐 key（qmk-xxxx）；留空＝不启用这一档
+                                # 申请地址：https://y.qq.com/n/ryqq_v2/qqmusic_skills
+        "qqmusic_apply_url": "https://y.qq.com/n/ryqq_v2/qqmusic_skills",
+    },
     # ── 安全例外（默认全部关闭）────────────────────────────────────────
     #   allow_private_image_hosts：允许「在线图源」指向内网/环回地址（默认关＝SSRF 防护全开）。
     #   只有自建图库服务（本机 http 图源）才需要开；**故意不做控制台开关**，要放开请手改 config.json。

@@ -170,6 +170,14 @@ try:
     ok(snap(target) == before, "**整棵树一个字节都没动**（先只读验再动盘）")
 
     print("── F. 换入中途出错 ⇒ 回滚（覆盖的还原、新增的撤掉）──")
+    # ⚠️ C 段已把目标换成了新版 ⇒ 这里**必须先把目标重置回旧版**，
+    #   否则"只换内容不同的文件"这一步会发现"全都一样"、一件都不写 ⇒ 模拟的写失败无从触发。
+    for rel, body in old.items():
+        write(os.path.join(target, rel.replace("/", os.sep)), body)
+    try:
+        os.remove(os.path.join(target, "agent", "c.py"))
+    except OSError:
+        pass
     real_copy2 = shutil.copy2
     _tgt = os.path.abspath(target)
 
@@ -179,7 +187,9 @@ try:
         return os.path.abspath(str(dst)).startswith(_tgt)
 
     def boom(src, dst, *a, **k):
-        if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/b.py"):
+        # ⚠️ 拦 `agent/a.py`（**内容真变过**的那件），不拦 b.py —— b.py 在包里没变，
+        #   新实现"只换内容不同的文件"会正确地跳过它、压根不会写 ⇒ 拦它永远不触发。
+        if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/a.py"):
             raise OSError("模拟磁盘错误")
         return real_copy2(src, dst, *a, **k)
 
@@ -192,14 +202,19 @@ try:
     ok(open(os.path.join(target, "agent", "a.py"), encoding="utf-8").read() == old["agent/a.py"], "覆盖的已还原")
     ok(not os.path.exists(os.path.join(target, "agent", "c.py")), "新增的已撤掉")
 
-    print("── G. 文件被占用 ⇒ 跳过并如实报告（不许假装成功）——含 V3 回归 ──")
-    # ⛔ 这条夹具原来拿一个**目标里还不存在**的文件当"被占用"样本
-    #   —— 可"拒绝访问 + 目标不存在"恰恰是**目录权限/路径问题**（真故障回滚），不是被占用。
-    #   ⇒ 先把 c.py 造成"已存在"的文件，这条夹具才真正在测"占用"（新判据会正确区分两者）。
-    write(os.path.join(target, "agent", "c.py"), "C=1\n")
+    print("── G. 文件被占用 ⇒ **不肯跳过**、抛回占用者清单（等用户点头）──")
+    # ⛔ 口径变更（2026-10-10）：**不许静默跳过**占用件、也不许报"半装 partial"。
+    #   现在的行为：撞占用 ⇒ 查占用者 ⇒ `rc=3` + `detail["lockedBy"]` 抛回调用方，
+    #   由前端弹窗问用户"要不要临时关掉它"；用户同意后带 `allow_kill=True` 重跑才动手。
+    #   （旧判据测的是"跳过并报 partial"——那是被推翻的老口径。）
+    # 仍然：先把目标重置成"旧版 + c.py 已存在且**内容与包内不同**"，这条夹具才真正在测
+    #   "要换的那件被别人占着"。⚠️ c.py 的现有内容**必须与包内不同** —— 否则新实现
+    #   "只换内容不同的文件"会正确地跳过它、占用分支压根不会走到（第一版夹具就踩了这个坑）。
+    for rel, body in old.items():
+        write(os.path.join(target, rel.replace("/", os.sep)), body)
+    write(os.path.join(target, "agent", "c.py"), "C=OLD  # 与包内不同\n")
     write(os.path.join(target, "data", "installed.json"),
           json.dumps({"version": "1.0.0", "sha256": "x" * 64}))
-
 
     def locked(src, dst, *a, **k):
         if _into_target(dst) and str(dst).replace("\\", "/").endswith("agent/c.py"):
@@ -210,25 +225,59 @@ try:
             raise PermissionError(13, "另一个程序正在使用此文件")
         return real_copy2(src, dst, *a, **k)
 
+    # 第一次：不许杀 ⇒ 应 rc=3 抛回占用者
     shutil.copy2 = locked
     try:
         rc, msg, det = UA.apply_full(man, pkg, target)
     finally:
         shutil.copy2 = real_copy2
-    ok(rc == 0 and det.get("locked"), "占用件 ⇒ 仍算成功但带 locked 清单", str(det.get("locked"))[:80])
-    ok("正被使用" in msg and "agent/c.py" in msg, "消息里点名了没换成的那几件", msg[:100])
-    ok(det.get("status") == "partial", "状态标成 partial（不许说成「已装好」）", str(det.get("status")))
-    ok("再点一次" in msg, "消息给出可照着做的下一步（再点一次更新即可补换）", msg[:120])
-    st = json.load(open(os.path.join(target, "data", "installed.json"), encoding="utf-8"))
-    ok(st.get("locked"), "记录里留了 locked（下次重跑能接着换）")
-    # ⭐ V3 的核心回归：版本**不许**被推上去（否则"再点一次"会被短路成"已是最新"）
-    ok(str(st.get("version") or "") != str((man.get("base") or {}).get("version") or "?"),
-       "版本没有推到位（V3：推了位就再也补不回来了）", str(st.get("version")))
-    ok(det.get("pending") == ["agent/c.py"], "待补清单记下了那一件", str(det.get("pending")))
-    # ⭐ 解锁后重跑必须真的补换（这才是"以后还能补"的证明，不只是记了一笔）
-    rc2, msg2, det2 = UA.apply_full(man, pkg, target)
+    ok(rc == 3, "占用件 ⇒ rc=3（**不肯跳过**，抛回调用方）", "rc=%s msg=%s" % (rc, msg[:80]))
+    ok(bool(det.get("lockedBy")) and "agent/c.py" in det["lockedBy"],
+       "detail 里带上了被占用的那件（lockedBy）", str(list((det or {}).get("lockedBy") or {}))[:80])
+    ok("agent/c.py" in msg or "占用" in msg, "消息里点明了有文件被占用", msg[:120])
+    # ⛔ 关键：**不许**把没换到的当作换好了 —— 这次一件都没换成（c.py 被占、a.py/README 未变）
+    ok(not os.path.exists(os.path.join(target, "data", "installed.json"))
+       or json.load(open(os.path.join(target, "data", "installed.json"), encoding="utf-8")).get("version") != "9.9.9",
+       "没把版本推到位（等用户点头才算装）")
+
+    # 第二次：用户点头（allow_kill=True）⇒ `_kill_pids` 关掉占用者后**必须能装成**。
+    #   模拟"关掉后句柄释放"：`_kill_pids` 一被调用就把 locked 补丁撤下（c.py 恢复可写）。
+    #   ⚠️ 还必须同时 patch `_lock_users` —— 真环境里 c.py 并没有被真占用，`who_locks` 查不到
+    #     占用者；而"查不到占用者 ⇒ 即使点头也不乱杀"是**正确的安全设计**（不知道杀谁就别杀）。
+    #     所以这里显式给它一个假的占用者，才测得到"点头 → 关掉 → 装成"这条链。
+    _released = {"v": False}
+    _real_kill = UA._kill_pids
+    _real_lock_users = UA._lock_users
+
+    def _fake_kill(pids, killed=None):
+        _released["v"] = True # 模拟"进程被关掉、文件不再被占用"
+        if killed is not None:
+            killed.extend(list(pids or []))
+        return list(pids or [])
+
+    def _fake_lock_users(path):
+        if str(path).replace("\\", "/").endswith("agent/c.py") and not _released["v"]:
+            return [{"pid": 4242, "name": "FakeLocker", "service": "", "restartable": False}]
+        return []
+
+    def locked2(src, dst, *a, **k):
+        if (not _released["v"]) and _into_target(dst) \
+                and str(dst).replace("\\", "/").endswith("agent/c.py"):
+            raise PermissionError(13, "另一个程序正在使用此文件")
+        return real_copy2(src, dst, *a, **k)
+
+    UA._kill_pids = _fake_kill
+    UA._lock_users = _fake_lock_users
+    shutil.copy2 = locked2
+    try:
+        rc2, msg2, det2 = UA.apply_full(man, pkg, target, allow_kill=True, killed=[])
+    finally:
+        shutil.copy2 = real_copy2
+        UA._kill_pids = _real_kill
+        UA._lock_users = _real_lock_users
+    ok(rc2 == 0, "点头后 ⇒ 关掉占用者、这次真装成（rc=%s）" % rc2, "msg=%s" % str(msg2)[:80])
     ok(open(os.path.join(target, "agent", "c.py"), encoding="utf-8").read() == new["agent/c.py"],
-       "解锁后重跑 ⇒ 真的补换（V3 回归）", "rc=%s msg=%s" % (rc2, str(msg2)[:60]))
+       "被占用那件（c.py）点头后已换上")
     ok(open(os.path.join(target, "agent", "a.py"), encoding="utf-8").read() == new["agent/a.py"],
        "没被占用的那几件照样换新了")
 

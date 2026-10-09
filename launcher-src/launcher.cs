@@ -61,19 +61,20 @@ namespace WxLauncher
 
         /// 每个步骤「在干什么」的**详细说明**。
         /// 与 `Steps` 一一对应；`SetStepDetail` 会在步骤切换时更新 `lblStepHint`。
-        /// ⚠️ 文案口径：说**人话**（用户在等什么、这一步大概多久、卡住了看哪里），不写内部文件名。
+        /// ⚠️ 文案口径：说**人话**（用户在等什么、这一步大概多久、卡住了看哪里），
+        ///   ⛔ **不写内部实现的词**（Python / 依赖 / 运行库 / 环境变量 / 镜像站…）——
+        ///   用户不需要知道底下跑的是什么，只需要知道"现在到哪一步了、还得等多久"。
         internal static readonly string[] Steps = {
-            "准备 Python 环境",
-            "检查 / 安装依赖",
+            "准备运行环境",
+            "检查运行组件",
             "环境自检",
             "启动机器人",
         };
         internal static readonly string[] StepDetail = {
-            "在本机找一个能用的 Python（3.10~3.12）。\n"
-          + "优先用自带的绿色版，找不到才会去下载 —— 这一步通常几秒，"
-          + "首次下载约 1~2 分钟。",
-            "逐个核对运行需要的第三方库，缺哪个就补哪个。\n"
-          + "已装过的会跳过；需要下载时走国内镜像，进度会显示在下面。",
+            "把运行需要的基础组件就位。\n"
+          + "这些东西都已经随安装包一起装好了，这一步通常只要几秒。",
+            "逐个核对运行需要的组件，缺哪个就补上。\n"
+          + "已经有的会直接跳过，你在这里等它走完就行。",
             "自检本机环境（微信版本、窗口自动化、数据库读取、语音链路等）。\n"
           + "不通过的项目会在控制台的「体检」页给出具体原因和修法。",
             "把机器人拉起来并等控制台就绪。\n"
@@ -190,12 +191,15 @@ namespace WxLauncher
             Label w2 = new Label();
             // ⛔ 不许在这类文案里写 Markdown —— WinForms 的 Label 不解析 `**`，
             //   写了就会把星号原样显示出来（出图实拍过：卡里出现「**全程不需要你操作**」）。
+            // ⛔ 口径：**运行需要的东西全在安装包里**，装的过程**不需要联网** ——
+            //   所以这里不谈网速、不谈耗时（原写"几分钟，看网速"与"自包含"自相矛盾，用户点过）。
+            //   也**不许**出现 Python / 运行库这类内部实现的词：用户不需要知道底下跑什么。
             w2.Text =
-                "接下来几步会自动准备好运行环境，全程不需要你操作。\n"
-              + "整个过程几分钟，看网速。装好以后双击桌面的「群相」图标就能直接用。";
+                "接下来几步会自动把运行需要的东西装好，全程不需要你操作。\n"
+              + "装好以后，双击桌面的「群相」图标就能直接打开。";
             w2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             w2.ForeColor = StyleKit.InkBody;
-            w2.Location = new Point(StyleKit.Space.x5, w1.Bottom + StyleKit.Space.x2);
+            w2.Location = new Point(StyleKit.Space.x5, w1.Bottom + StyleKit.Space.x3);
             w2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             cardWelcome.Controls.Add(w2);
             StyleKit.FitLabel(w2);
@@ -215,7 +219,7 @@ namespace WxLauncher
             l2.Text = "装到哪都行，默认装在这里：";
             l2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             l2.ForeColor = StyleKit.InkBody;
-            l2.Location = new Point(StyleKit.Space.x5, l1.Bottom + StyleKit.Space.x2);
+            l2.Location = new Point(StyleKit.Space.x5, l1.Bottom + StyleKit.Space.x3);
             l2.Size = new Size(cardW - StyleKit.Space.x5 * 2, 1);
             cardLocation.Controls.Add(l2);
             StyleKit.FitLabel(l2);
@@ -307,7 +311,7 @@ namespace WxLauncher
             //   改成"行数 × 当前行高 + 间距"（100% 下仍 ≈118，高 DPI 下自动长高）。
             //   ⚠️ y 同理：原写死 `Space.x4 + 26`，150% 下区头"启动分四步"实高 33px 会压到步骤区
             //   ⇒ 改**跟着 t1 的实测底边走**。
-            stepList.Location = new Point(StyleKit.Space.x5, t1.Bottom + StyleKit.Space.x2);
+            stepList.Location = new Point(StyleKit.Space.x5, t1.Bottom + StyleKit.Space.x3);
             stepList.Size = new Size(cardW - StyleKit.Space.x5 * 2,
                 Math.Max(118, Steps.Length * StyleKit.LineHeight(stepList.Font) + StyleKit.Space.x3));
             cardSteps.Controls.Add(stepList);
@@ -317,11 +321,20 @@ namespace WxLauncher
             lblStepHint.Text = StepDetail[0];
             lblStepHint.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular); // 步骤说明是正文
             lblStepHint.ForeColor = StyleKit.InkBody;
+            // ⛔ `Label` 默认 `AutoSize=true` ⇒ 必须先关掉，否则下面设的 `Size` 会被 AutoSize
+            //   重新算回"单行实高"，多行说明整段只显示一行（`FitLabel` 见 AutoSize 也会直接返回）。
+            lblStepHint.AutoSize = false;
             // ⚠️ （#18）：y 原来按"手写 26 + 手写 118"拼出来 —— 前两者都实测化后跟着新底边走
-            lblStepHint.Location = new Point(StyleKit.Space.x5, stepList.Bottom + StyleKit.Space.x2);
-            lblStepHint.Size = new Size(cardW - StyleKit.Space.x5 * 2, 64);
+            // ⚠️ 间距 8 → 12（`Space.x3`）：步骤列表是"自绘的整块图形"（徽章 + 连接线），
+            //   与下面这段说明文字之间只隔 8px 时，下缘的徽章和文字的升部几乎贴上 ⇒ 看着像叠住。
+            lblStepHint.Location = new Point(StyleKit.Space.x5, stepList.Bottom + StyleKit.Space.x3);
+            // ⚠️ 高度取**四段说明里最长的那一段**要的高度（不是第 1 段的）——
+            //   否则切到更长的步骤时末行会被卡边的裁剪区切掉（出图实拍过第 3 步掉半行）。
+            //   这样几何在 `BuildUI` 一次定死，安装过程中窗口不再跳动。
+            lblStepHint.Size = new Size(cardW - StyleKit.Space.x5 * 2, StepDetailMaxHeight(cardW - StyleKit.Space.x5 * 2));
+            // ⛔ 这里**不能**再 `FitLabel` —— 它按**当前** `Text`（＝第 1 段，最短）量高，
+            //   会把上面按最长段留出来的高度改小，切到长步骤又会被裁（踩过一次）。
             cardSteps.Controls.Add(lblStepHint);
-            StyleKit.FitLabel(lblStepHint);
             StyleKit.SealCard(cardSteps); // #12 F1：高度到这里才定下来（后面两块跟着它的底边走）
 
             // ── 卡片 2：进度（进度条 + 百分比读数 + 当前动作）────────────────────
@@ -340,7 +353,7 @@ namespace WxLauncher
             bar = new RoundBar(); // W6：自绘圆角进度条（Value/Maximum 语义不变，流程代码无需改）
             // ⚠️ （#18 叠字根治）：y 原写死 `Space.x4 + 28` —— 150% 下 t2 实高 33px 会压到进度条
             //   ⇒ 改**跟着 t2 的实测底边走**。
-            bar.Location = new Point(StyleKit.Space.x5, t2.Bottom + StyleKit.Space.x2);
+            bar.Location = new Point(StyleKit.Space.x5, t2.Bottom + StyleKit.Space.x3);
             bar.Size = new Size(cardW - StyleKit.Space.x5 * 2 - 58, 20);
             bar.Style = ProgressBarStyle.Continuous; bar.Maximum = 100;
             cardProg.Controls.Add(bar);
@@ -366,7 +379,7 @@ namespace WxLauncher
             lblSub.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
             lblSub.ForeColor = StyleKit.InkBody;
             // ⚠️ （#18）：y 原写死 `Space.x4 + 56`（按 100% 的 bar 底边配的）⇒ 改跟着 bar 实测底边走
-            lblSub.Location = new Point(StyleKit.Space.x5, bar.Bottom + StyleKit.Space.x2);
+            lblSub.Location = new Point(StyleKit.Space.x5, bar.Bottom + StyleKit.Space.x3);
             lblSub.Size = new Size(cardW - StyleKit.Space.x5 * 2, 34);
             cardProg.Controls.Add(lblSub);
             // ⚠️ 这里**故意不** `FitLabel`：此刻 `lblSub.Text` 还是空的，量出来是 0
@@ -388,9 +401,13 @@ namespace WxLauncher
             logView = new LogView();
             // ⚠️ （#18 叠字根治）：y 原写死 26 —— 150% 下 t3 实高 24px（顶 y=8 ⇒ 底 32）
             //   会压进日志区 ⇒ 改**跟着 t3 的实测底边走**。
-            logView.Location = new Point(StyleKit.Space.x5, t3.Bottom + StyleKit.Space.x1);
-            // 高度同理不写死 44：按"2 行 × 当前行高"给（100% 下 ≈46，与原观感一致）
-            logView.Size = new Size(cardW - StyleKit.Space.x5 * 2, Math.Max(44, StyleKit.LineHeight(logView.Font) * 2));
+            logView.Location = new Point(StyleKit.Space.x5, t3.Bottom + StyleKit.Space.x2);
+            // ⚠️ 高度 2 行 → **3 行**：原来卡在 2 行，日志一多就靠内部滚动，
+            //   而客户区底部本来就空着（用户点过"下面空了一大块，拉开反而更好"）——
+            //   把这块余量给日志区，既不浪费高度，也让"流程区 / 进度区 / 日志区"三段高度更接近、
+            //   整页看着更均衡。行高走 `StyleKit.LineHeight`，高 DPI 下自动长高。
+            logView.Size = new Size(cardW - StyleKit.Space.x5 * 2,
+                Math.Max(66, StyleKit.LineHeight(logView.Font) * 3));
             cardLog.Controls.Add(logView);
             StyleKit.SealCard(cardLog);
             // 三张卡（安装页）的句柄存起来：`GoPage` 要显隐它们（原来它们是纯局部变量）。
@@ -472,6 +489,10 @@ namespace WxLauncher
             CardPanel anchor = installing ? cardLogHolder : (p == PageLocation ? cardLocation : (p == PageDone ? cardDone : cardWelcome));
             if (anchor != null)
             {
+                // ⚠️ 按钮行跟着**当前页卡片的实测底边**走（不是贴窗口底边）：
+                //   窗高是四页里最高那页定的，贴底排会把短页（欢迎/完成）的空白全挤到
+                //   "卡片与按钮之间"，看着更空（出图实拍过一次，反而更难看）。
+                //   跟卡片走 ⇒ 卡片多高按钮就在它下面，空白自然落在按钮之下，读起来是"页脚留白"。
                 int y = Math.Max(contentTop, anchor.Bottom) + StyleKit.CardGapY;
                 // ⛔ **不许拿 `Control.Visible` 当"这页有没有这颗按钮"的判据**：
                 //   `Visible` 的 getter 会把**父窗体自身可不可见**一起算进去 —— 构造函数里窗体
@@ -559,7 +580,7 @@ namespace WxLauncher
         public void ProbeState(int stepIdx)
         {
             GoPage(PageInstalling);
-            SetState("环境自检…", 70, stepIdx, "Python 就绪 · 依赖已就绪 · 正在核对本机环境（第 31 项）");
+            SetState("环境自检…", 70, stepIdx, "运行环境就绪 · 正在核对本机环境（第 31 项）");
             Log("[取证] 步骤列表渲染到第 " + (stepIdx + 1) + " 步（绿勾/蓝点/灰号三态同框）");
             Log("[取证] 当前动作：正在检测微信版本与窗口可操作性…");
         }
@@ -579,14 +600,36 @@ namespace WxLauncher
             SetStepDetail(stepIdx);
         }
 
+        /// 四段步骤说明里，**最长的那一段**在给定宽度下需要多高。
+        /// 用途：`BuildUI` 里给 `lblStepHint` 预留高度 —— 说明文字是随步骤换的，
+        ///   卡片几何必须在构造期一次定死（运行时改几何会让窗口在安装过程中一截一截地长）。
+        /// 尺子用 `StyleKit.MeasureFitHeight`，与 `FitLabel` 同一把，不另造。
+        static int StepDetailMaxHeight(int width)
+        {
+            int h = 0;
+            Font f = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
+            foreach (string s in StepDetail)
+            {
+                int one = StyleKit.MeasureFitHeight(s, f, width);
+                if (one > h) h = one;
+            }
+            return Math.Max(1, h);
+        }
+
         /// 换步骤时更新"这一步在干什么"的说明
+        /// ⚠️ 步骤说明是**每步长度不同**的整段文字（2 行~4 行都有）——
+        ///   但**布局不能跟着变**：卡片高度在 `BuildUI` 里就已经**按最长的那一段**预留好了
+        ///   （见 `StepDetailMaxHeight()`），所以这里只换文字、不动几何。
+        ///   ⛔ 不要在运行时调 `SealCard` / 改窗高 —— 那会让安装过程中窗口一截一截地长，
+        ///     而且多卡页里后两张卡也得跟着挪，是纯粹的自找麻烦。
         void SetStepDetail(int stepIdx)
         {
             if (lblStepHint == null) return;
             lblStepHint.Text = (stepIdx >= 0 && stepIdx < StepDetail.Length)
                 ? StepDetail[stepIdx]
                 : "";
-            StyleKit.FitLabel(lblStepHint);
+            // ⛔ 不在这里 `FitLabel` / 改 `Height`：高度已在 `BuildUI` 里按**最长那段**留好，
+            //   这里跟着当前文字量高只会把预留改小（AutoSize 已关，`Size` 由构造期决定）。
         }
 
         void ParseLine(string line)
@@ -595,7 +638,7 @@ namespace WxLauncher
             if (line.StartsWith("@@PHASE:"))
             {
                 string ph = line.Substring(8).Trim();
-                if (ph == "deps") SetState("检查 / 安装依赖…", 12, 1, "Python 就绪");
+                if (ph == "deps") SetState("检查运行组件…", 12, 1, "基础组件就绪，正在逐个核对运行需要的组件");
                 else if (ph == "selftest") SetState("环境自检…", 70, 2, "");
                 else if (ph == "boot") SetState("启动机器人…", 92, 3, "等待控制台就绪");
             }
@@ -783,11 +826,13 @@ namespace WxLauncher
         {
             try
             {
-                SetState("准备 Python 环境…", 5, 0, "在本机找一个能用的 Python（3.10~3.12），无需你手动安装");
+                // ⛔ 这一行是**用户可见**的当前动作（显示在进度条下方）⇒ 只写人话，
+                //   不能出现 Python / 绿色版 / 版本号这类内部实现的词。
+                SetState("准备运行环境…", 5, 0, "正在把运行需要的基础组件就位，这一步通常只要几秒");
                 string ps1 = Path.Combine(Root, "scripts", "setup_python.ps1");
                 if (!File.Exists(ps1)) { Fail("缺少 scripts\\setup_python.ps1"); return; }
                 int rc = RunSetupPy(ps1, false);
-                Log("准备 Python 完成（退出码 " + rc + "）");
+                Log("运行环境就位（退出码 " + rc + "）");
 
                 // （真根因见 TryPy 的注释）：先按约定找 runtime\python\python.exe，
                 //   再读 logs\python_path.txt —— **两者都可能是"命令 + 参数"**，一律走 TryPy 解析并试跑。
@@ -801,22 +846,23 @@ namespace WxLauncher
                     // 没找到 / 版本不在支持范围（3.10~3.12）⇒ 重跑一次准备脚本；版本不对就强制用绿色版
                     bool force = got && !VerOk(ver);
                     int rc2 = RunSetupPy(ps1, force);
-                    Log("重跑准备 Python（退出码 " + rc2 + (force ? " · 强制绿色版" : "") + "）");
+                    Log("重试运行环境（退出码 " + rc2 + (force ? " · 强制绿色版" : "") + "）");
                     got = TryPy(convPy, out exe, out pre, out ver, out why);
                     if (!got) got = TryPy(ReadPyRaw(pth), out exe, out pre, out ver, out why);
                 }
                 if (!got || !VerOk(ver))
                 {
-                    // 不许出现「请重新解压完整包」这类话——
-                    // 如实说**读到的是什么、为什么不行** + 一个不需要手动解压的下一步。
-                    string detail = got ? ("Python 版本 " + ver + " 不在支持范围，需要 3.10~3.12") : why;
-                    Fail("Python 环境异常（" + detail + "）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版（不用自己解压）");
+                    // ⛔ 用户可见（`Fail` 会把这句话显示出来）⇒ 不出现 Python / 版本号 / 解压包这类词，
+                    //   只说"哪里不对 + 你下一步点哪儿"。
+                    string detail = got ? ("这台机器上的运行组件版本不对") : why;
+                    Fail("运行环境异常（" + detail + "）——点「关闭」后重开一次；仍不行就在控制台点「检查更新」更新一版");
                     return;
                 }
-                Log("Python 就绪：" + exe + (pre.Length > 0 ? (" " + pre) : "") + "（" + why + "）");
+                // 写日志留现场：这里**可以**带技术细节（日志是给排障看的，不是给用户读的）
+                Log("运行组件就绪：" + exe + (pre.Length > 0 ? (" " + pre) : "") + "（" + why + "）");
 
 
-                SetState("检查 / 安装依赖…", 12, 1, "Python 就绪，开始逐个核对依赖库");
+                SetState("检查运行组件…", 12, 1, "基础组件就绪，正在逐个核对运行需要的组件");
                 string onestart = Path.Combine(Root, "scripts", "onestart.py");
                 var po = new ProcessStartInfo(exe, ((pre.Length > 0 ? (pre + " ") : "") + "-X utf8 \"" + onestart + "\"").Trim());
                 po.UseShellExecute = false;
@@ -1072,7 +1118,7 @@ namespace WxLauncher
             Label m2 = new Label();
             m2.Text =
                 "接下来可以这样做：\n"
-              + "  · 什么都不用做 —— 下载和安装自动进行，大约 1~3 分钟（看网速）；\n"
+              + "  · 什么都不用做 —— 装好会自己继续，不用你盯着；\n"
               + "  · 急着用控制台 —— 网页控制台照常能用，不受这次安装影响；\n"
               + "  · 如果最后提示没装上 —— 检查一下网络，重新打开程序会自动再试。";
             m2.Font = StyleKit.Ui(StyleKit.TextScale.Para, FontStyle.Regular);
@@ -2973,30 +3019,27 @@ static class Program
                 // 一个都做不了时**如实说清"这次看不了控制台，但机器人在后台照常跑"**，并写日志留现场。
                 if (!WebView2Guide.HasRuntime())
                 {
+                    // ⑤ 三段式（用户口径："不要教用户做事，要帮用户把事办好"）：
+                    //   ① 缺件窗给「忽略 / 下载」② 点下载 ⇒「后台下载 / 等待」
+                    //   ③ 选等待 ⇒ 当场看两条进度条，装完弹"安装完成，您可以正常使用"。
+                    //   三种结局（后台装中 / 当场装好 / 忽略）都由**窗内自己**走完，
+                    //   这里只认最后那个 `Action` 来收尾。
                     using (WebView2MissingForm f = new WebView2MissingForm(dir, url))
                     {
                         f.ShowDialog();
-                        if (f.Action == "install")
+                        if (f.Action == "install-now")
                         {
-                            string why;
-                            bool done = WebView2Guide.Install(dir, out why);
-                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 一键安装：" + why);
-                            if (done) { Application.Run(new ConsoleForm(url)); }
+                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 已静默装好，打开控制台");
+                            Application.Run(new ConsoleForm(url));
                             return;
                         }
-                        if (f.Action == "browser")
+                        if (f.Action == "download-bg")
                         {
-                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户选了用浏览器打开");
-                            FallbackBrowser(url);
+                            // 后台静默装：窗已经关了，用户去干别的；下次打开控制台就能用。
+                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 已转入后台静默安装（不打扰用户）");
                             return;
                         }
-                        if (f.Action == "copy")
-                        {
-                            try { Clipboard.SetText(url); } catch { }
-                            NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户复制了网址（本机看不了控制台）");
-                            return;
-                        }
-                        NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户点了知道了（未打开控制台）");
+                        NoteFallback(Program.InstallRoot, "缺 WebView2 运行库 ⇒ 用户选择忽略（未打开控制台，机器人照常在后台跑）");
                         return;
                     }
                 }
@@ -3326,7 +3369,7 @@ static class Program
                 // ②"重启窗口期那 2~5 秒真空" ⇒ **不许**把它讲成失败（老实现正是把这几秒
                 //   当成失败，于是永久停在一张红字错误页上）。
                 sb.Append("<h1>后台正在起来…</h1>");
-                sb.Append("<p>刚点了拉起，正在准备 Python 环境、装依赖并连微信，<b>第一次可能要一两分钟</b>。</p>");
+                sb.Append("<p>刚点了拉起，正在把运行环境准备好并连微信，<b>第一次可能要一两分钟</b>。</p>");
                 sb.Append("<p>这个窗口会<b>自己接上</b>，不用刷新，也不用管它。</p>");
                 // b：把"最多等多久"讲在前面 —— 超时的那一刻页面一定会变，不会一直转圈。
                 sb.Append("<p>这里最多等 <b>" + ConsoleForm.HealStartTimeoutSec + " 秒</b>；"

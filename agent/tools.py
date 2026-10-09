@@ -2074,15 +2074,16 @@ def _exec_yearbook(ctx, args):
 
 
 def _exec_recommend_music(ctx, args):
-    """音乐推荐（第 139 项）：按标签给 2~3 首 + 每首一句理由。
+    """音乐推荐（第 139 项）：**在线优先**（网易云免 key / QQ 音乐自填 key）给 2~3 首 + 每首一句理由。
 
-    ⛔ 红线（与模块一致）：**不发音频、不转发、不绕版权**；**没数据不编歌名**。
+    ⛔ 红线（与模块一致）：**不发音频、不转发、不绕版权**；**没数据/没通就别编歌名**。
+    返回值里带 `url`（可点链接），让模型直接转给用户去听。
     """
     try:
         from . import music_rec as _mr
         rem = str(args.get("remember") or "").strip()
         if rem:
-            # 格式「歌名 - 艺人 | 标签1,标签2」⇒ 记进标签表
+            # 格式「歌名 - 艺人 | 标签1,标签2」⇒ 记进本地标签表（在线不通时的兜底信号）
             head, _sep, tail = rem.partition("|")
             title, _s2, artist = head.partition("-")
             okr = _mr.remember(title.strip(), artist.strip(),
@@ -2092,7 +2093,8 @@ def _exec_recommend_music(ctx, args):
         r = _mr.recommend(str(args.get("query") or ""), ctx=str(args.get("ctx") or ""))
         if not r.get("ok"):
             return _err(str(r.get("note") or "推不了（如实转达即可，别编歌名）"))
-        return _ok({"picks": r.get("picks"), "note": r.get("note")})
+        return _ok({"picks": r.get("picks"), "source": r.get("source"),
+                    "note": r.get("note")})
     except Exception as e:
         return _err("推荐失败：%s" % e)
 

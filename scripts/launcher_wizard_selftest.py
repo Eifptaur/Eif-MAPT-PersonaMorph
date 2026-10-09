@@ -224,6 +224,35 @@ ok("⑤f ★用户可见文案里没有 Markdown 星号（Label 不解析，会�
    "命中：%s" % [s[:24] for s in _STR_LITS if "**" in s and s.strip("*")][:3])
 # ⚠️ 上面那句排除了**纯星号串**（如 `"****"`）—— 那是 token 掩码的正当用法，不是 Markdown。
 
+# ⑤g 步骤说明的高度必须按**最长那段**预留。
+#   真 bug（出图实拍过）：说明文字随步骤切换、每段 2~4 行不等，而卡片高度在 BuildUI 里
+#   按**第 1 段**定 ⇒ 切到第 3 步（4 行）时末行掉到卡片裁剪区外，被切掉半截。
+#   修法两条缺一不可：① `AutoSize=false`（否则 Size 被 AutoSize 覆盖成单行实高）
+#   ② 高度取 `StepDetailMaxHeight(...)`（四段里最长的那段）。
+ok("⑤g ★步骤说明高度按最长那段预留（AutoSize 关 + StepDetailMaxHeight）",
+   "lblStepHint.AutoSize = false" in _L
+   and "StepDetailMaxHeight(" in _L
+   and "lblStepHint.Size = new Size(cardW - StyleKit.Space.x5 * 2, StepDetailMaxHeight(" in _L,
+   "")
+# ⑤h 卡间距 / 卡内间距不许比"卡内留白"还小（否则多卡页会看成"一整块"，用户点过"叠在一起"）。
+ok("⑤h ★卡间距不写死小数字（走 Space 阶梯，且不小于卡内下内边距之外的一档）",
+   "public const int CardGapY = Space.x4;" in io.open(
+       os.path.join(ROOT, "launcher-src", "stylekit.cs"), encoding="utf-8").read(),
+   "CardGapY 应为 Space.x4(16)")
+# ⑤i 用户可见文案里**不许**出现内部实现的词（Python / 绿色版 / 依赖库 / 镜像 / 网速）。
+#   口径：安装包**自带全部依赖**，用户不需要知道底下跑的是什么（用户点名"还要啥 Python 环境"）。
+#   只扫**字符串字面量**，且剥掉注释 —— `Log(...)` 里的技术细节是给排障看的，不在此列。
+#   ⚠️ 例外：`Python` 允许出现在 **`Log` / `Fail` 的技术细节**与**探针标记**里，
+#     所以这里只钉"会显示在**状态行 / 卡片正文**的那几句"用词。
+_VISIBLE_BAN = ("看网速",)
+_hits_ban = [s for s in _STR_LITS if any(b in s for b in _VISIBLE_BAN)]
+ok("⑤i ★安装向导文案里没有「看网速」这类与『自包含』矛盾的词",
+   not _hits_ban, "命中：%s" % [s[:28] for s in _hits_ban][:3])
+_NEXT_BAN = "找个能用的 Python"  # 步骤说明原句（内部实现，用户不需要知道）
+ok("⑤j ★步骤说明里不出现「Python」这类内部实现词",
+   _NEXT_BAN not in _L and "准备 Python 环境" not in _L and "Python 就绪" not in _L,
+   "")
+
 
 print("\n── ⑥ `ShortcutInDir` 的口径修复（改名漏改的真 bug）──")
 ok("⑥a ★不再把目标写死成单个文件名字面量",

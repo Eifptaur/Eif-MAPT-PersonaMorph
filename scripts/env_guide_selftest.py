@@ -174,6 +174,49 @@ ck("F10 两侧总步数都＝3(配置)+1(恢复)+1(校准)+N(缺件)+1(体检)",
    "3 + 1 + 1 + len(getattr(self, \"_env_pending_cache\", [])) + 1" in _onb
    and "3 + 1 + 1 + obPend().length + 1" in _html, "")
 
+print("\n[H] 用户层级：缺件引导不许把「进系统设置」推给用户（用户最多只到微信这一层）")
+# 2026-10-10 用户当面纠正：OCR/依赖/驱动是程序自己的活；asr 也不许让用户进系统设置。
+# ⚠️ 自指陷阱：关键字的字面量若出现在本判据自己的源码里 ⇒ 误伤 —— 一律 chr() 拼。
+_pat_settings = "ms-" + "settings:"          # 指向系统设置页的伪协议
+_pat_cn1 = "时间和" + "语言"                  # 「时间和语言」
+_pat_cn2 = "设置 → " + "语音"                 # 教用户点系统设置的写法
+EG_SRC = io.open(os.path.join(ROOT, "agent", "env_guide.py"), encoding="utf-8").read()
+# ⚠️ 这里的 `_code_only` 只收**字符串常量**（＝用户真看到的文案），docstring/注释天然被排除。
+_eg_code = _code_only(EG_SRC)
+ck("H1 分母守卫：剥注释后仍有真文案（剥失败 ⇒ 下面全是假绿）",
+   0 < len(_eg_code) < len(EG_SRC), "%d -> %d" % (len(EG_SRC), len(_eg_code)))
+ck("H2★★ 缺件引导文案里**不许出现「ms-settings:」**（那是把用户推进系统设置页）",
+   _pat_settings not in _eg_code, "")
+ck("H3★★ 缺件引导文案里**不许教用户点「时间和语言」**",
+   _pat_cn1 not in _eg_code, "")
+ck("H4★★ 缺件引导文案里**不许写「设置 → 语音」**这类指路口径",
+   _pat_cn2 not in _eg_code, "")
+# 反向锚：asr 项必须是「用户可选下载」，不是「系统功能」
+_asr_seg = EG_SRC.split("def _item_asr", 1)[-1].split("def _item_silk", 1)[0]
+ck("H5★★ asr 项里明写「可选」（用户自己选下不下，不塞安装包、不催）",
+   "可选" in _asr_seg and "faster-whisper" in _asr_seg, "")
+ck("H6★★ asr 项里明写「不装也能用」（不许把可选件说成必需件）",
+   "不装" in _asr_seg, "")
+# tts：程序自己能切到系统档 ⇒ 不许让用户去改
+_tts_seg = EG_SRC.split("def _item_tts_engine", 1)[-1].split("def _item_ffmpeg", 1)[0]
+ck("H7★★ tts 项里不出现「ms-settings:」（程序自己能切，不用用户去改）",
+   _pat_settings not in _tts_seg, "")
+_tts_dl = EG_SRC.split('"tts": {', 1)[-1].split("},", 1)[0] if '"tts": {' in EG_SRC else ""
+ck("H8 tts 的下载登记里也没把用户推向系统设置页",
+   _pat_settings not in _tts_dl, "")
+# 前端两处：Qt 面板 + 网页控制台
+_panels = io.open(os.path.join(ROOT, "ui_qt", "panels_custom.py"), encoding="utf-8").read()
+_panels_code = _code_only(_panels)
+ck("H9★★ Qt 依赖体检里**不许**再写「设置 → 时间和语言 → 语音」",
+   _pat_cn1 not in _panels_code, "")
+_html2 = io.open(os.path.join(ROOT, "assets", "console", "index.html"), encoding="utf-8").read()
+# 只扫"缺引擎怎么办"那一段（voice 段），避免误伤引擎选择下拉（sapi 是程序内部档）
+_html_voice = _html2.split("voice: {", 1)[-1].split("\n  },", 1)[0] if "voice: {" in _html2 else ""
+ck("H10★★ 网页「缺引擎怎么办」里**不许**再教用户进系统设置",
+   _pat_cn1 not in _html_voice and _pat_cn2 not in _html_voice, "")
+ck("H11 网页缺件提示那行改成了「可选 faster-whisper」口径",
+   "faster-whisper" in _html2, "")
+
 print("\n[G] 真机实测")
 try:
     _raw = json.dumps(_st, ensure_ascii=False)

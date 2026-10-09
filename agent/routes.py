@@ -84,6 +84,7 @@ ROUTES = {
     "/api/local-models": ("GET",),
     "/api/logs": ("GET",),
     "/api/memory": ("GET", "POST"),
+    "/api/memory/graph": ("GET",),
     "/api/memory/deep-profile": ("POST",),
     "/api/open-path": ("GET", "POST"),
     "/api/pause": ("POST",),
@@ -357,6 +358,9 @@ HANDLERS = {
     "/api/memory": {
         "GET": "_rapi_memory",
         "POST": "_rapi_memory_post",
+    },
+    "/api/memory/graph": {
+        "GET": "_rapi_memory_graph",
     },
     "/api/memory/deep-profile": {
         "POST": "_rapi_memory_deep_profile_post",

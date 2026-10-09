@@ -1569,7 +1569,10 @@ _AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe", "rg
                           # marketOpenBtn：社区页追加区（`_community_appendix` 顶部的
                           #   「资源市场」卡）已有原生实现，走 ACT_CUSTOM["marketOpen"]
                           #   ⇒ 元数据行再渲染一颗只会变成两颗同名按钮。
-                          "marketOpenBtn"}
+                          "marketOpenBtn",
+                          # mgDraw：记忆页的图谱卡里已有原生按钮（`memory_panel` 的
+                          #   `b_mg_draw`，画自绘力导向图）⇒ 元数据行再渲染一颗会重名。
+                          "mgDraw"}
 # 这两个下拉是 web **纯 JS 专属控件**（providerSel 静态选项+change 联动、modelSel
 # 动态填充），Qt 由模型页追加区原生实现（objectName 同名）——元数据行只渲染出
 # 假/空下拉。fbKind 这类「无 cfg 但有静态

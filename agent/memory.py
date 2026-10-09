@@ -1390,6 +1390,14 @@ class MemoryStore:
         """同上（`members()` 的别名，面板/工具两处都在用）。"""
         return self.members(chat_key)
 
+    def chat_keys(self) -> list:
+        """本机有记忆的会话列表（记忆图谱等"总览"用途）。
+
+        ⛔ 用**磁盘事实**而不是缓存：缓存只在读过之后才有，图谱要在建页首帧就能枚举。
+          隔离/互通与否不影响这里 —— 图谱画的是"本机有什么"，不是一个群的视角。
+        """
+        return list(chat_keys_on_disk() or [])
+
     def remove(self, chat_key: str, category: str, user_id="", target="", content="", scope="all"):
         """删成员印象。`scope`＝**删除范围**：
 

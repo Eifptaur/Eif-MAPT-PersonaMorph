@@ -127,11 +127,30 @@ def _save(w, name: str) -> str:
     return str(p) # 大小由调用方读
 
 
+def _teardown(*ws) -> None:
+    """关掉并**销毁**这批窗口，再把事件队列排空。
+
+    ⛔ 必须销毁，不能只 `close()`：每个镜头都 `_mk` 一棵完整 `Shell` 控件树，
+       而这些树在被 grab 之后若只 close，就**留在内存里不释放**。
+       实测（whale 主题）：单跑任意一个镜头都正常，连跑「整窗 → 导航 →
+       二次确认」时第三个镜头会**卡死在 `_mk` 里**（前面几个镜头留下的树把
+       资源吃光/因果链留在半途）。加 `deleteLater()` + 排空事件后连跑正常。
+    """
+    for w in ws:
+        try:
+            w.close()
+            w.deleteLater()
+        except Exception: # noqa: BLE001 —— 出图收尾失败不该盖住真正的镜头结果
+            pass
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, 0) # 让 deleteLater 立刻兑现
+
+
 def shot_overview(key: str) -> str:
     """镜头 1：整窗 —— 看整体气质与信息密度。"""
     w, _t = _mk(key)
     p = _save(w, f"{key}-1-整窗")
-    w.close()
+    _teardown(w)
     return p
 
 
@@ -143,7 +162,7 @@ def shot_nav(key: str) -> str:
     from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
     A.processEvents()
     p = _save(w, f"{key}-2-导航搜索")
-    w.close()
+    _teardown(w)
     return p
 
 
@@ -170,8 +189,99 @@ def shot_confirm(key: str) -> str:
     d.show()
     A.processEvents()
     p = _save(d, f"{key}-3-二次确认")
-    d.close()
-    w.close()
+    _teardown(d, w)
+    return p
+
+
+def _envguide_hint() -> dict:
+    """造一份**真的会让人想去调**的环境校准快照（演示用）。
+
+    直接调后端 `agent/env_hint.check()` 拿真结构，再把演示值设成"确实没达标"——
+    本机若已全达标就会拍出一屏 ✓，看不出这一屏长什么样（等于没取证）。
+
+    ⚠️ 只有**两项**（微信浅色、微信标准字号）—— 都是"用户点两下就能改"的微信层级。
+    ⛔ 不许再传 `scale=`/`ocr_ready=`：显示缩放会把用户**所有软件**的图标显示搞坏；
+       OCR 是**程序自己的活**，不该让用户管（2026-10-10 用户当面纠正）。
+    """
+    from agent import env_hint # noqa: PLC0415
+    return env_hint.check(theme="dark", font="大", probe=False)
+
+
+def _missing_demo() -> dict:
+    """造一条"确实缺、且要下载"的缺件（锁**虚拟声卡**：最典型样本）。
+
+    ⛔ 这里**绝不调 `env_guide.status()`**：那会做一次网络探测（读 `logs/console.url`、
+       探端口存活）。在离屏取证进程里，一个"显示过的弹窗 + 网络探测 + 再建 `Shell`"的
+       组合会把第二次 `_mk` 卡死（实测复现：`shot_envguide` → `status()` → `_mk` 停住，
+       而同样三步去掉 `status()` 就正常）。出图只取**静态清单结构**，探测交给真程序跑。
+
+    ⇒ 数据直接读后端 `_mk` 的口径（它内部已把 `download_of(key)` 挂到 `dl`）。
+    """
+    from agent import env_guide # noqa: PLC0415
+    return env_guide._mk( # noqa: SLF001 —— 出图只用它的字段口径，不跑探测
+        "vmic", "虚拟声卡（发真语音条）", "发微信语音条要它", False,
+        "这台电脑上没有可用的虚拟麦克风 —— 装上它，机器人才能发微信语音条。",
+        "装完点重检；它会多出一个「CABLE Input（播放）」和一个「CABLE Output（录音）」",
+        kind="driver", action="vmicInstall")
+
+
+def shot_envguide(key: str) -> str:
+    """镜头 6：环境引导（**一个**弹窗）—— 引导用户把微信调成浅色 + 标准字号。
+
+    ⛔ 这里只**提醒**，不替用户改微信（`env_hint` 三条口径）⇒ 图上不会有"帮你改好"。
+    """
+    w, t = _mk(key)
+    from envguide import EnvGuideDialog # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
+
+    d = EnvGuideDialog(t, w, _envguide_hint())
+    d.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    d.show()
+    A.processEvents()
+    p = _save(d, f"{key}-6-环境引导")
+    _teardown(d, w)
+    return p
+
+
+def shot_missing(key: str) -> str:
+    """镜头 7：缺件引导（**每个缺件一个**弹窗，三段式）—— 拍**初始段**。
+
+    初始段是该交互的门面：一颗「忽略」一颗「下载」＋**写清要下载多大**（用户点名要求）。
+    """
+    w, t = _mk(key)
+    from envguide import MissingGuideDialog # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
+
+    d = MissingGuideDialog(t, w, _missing_demo())
+    d._stage = 1
+    d._apply_stage()
+    d.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    d.show()
+    A.processEvents()
+    p = _save(d, f"{key}-7-缺件引导")
+    _teardown(d, w)
+    return p
+
+
+def shot_missing_progress(key: str) -> str:
+    """镜头 8：缺件引导**第 3 段**（等安装时的双进度条）。
+
+    这一段是"帮用户把事办好"的落点 ⇒ 必须留证：下载条 + 安装条**都在**，且写明关掉也不影响。
+    """
+    w, t = _mk(key)
+    from envguide import MissingGuideDialog # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication as A # noqa: PLC0415
+
+    d = MissingGuideDialog(t, w, _missing_demo())
+    d._stage = 3
+    d._apply_stage()
+    d.bar_dl.setValue(62) # 下载条走到一半，安装条还没动（真实现是 backend 推进度）
+    d.bar_in.setValue(0)
+    d.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    d.show()
+    A.processEvents()
+    p = _save(d, f"{key}-8-缺件引导-进度")
+    _teardown(d, w)
     return p
 
 
@@ -188,7 +298,7 @@ def shot_heal(key: str) -> str:
     ))
     A.processEvents()
     p = _save(w, f"{key}-4-后台死掉")
-    w.close()
+    _teardown(w)
     return p
 
 
@@ -209,7 +319,7 @@ def shot_botpanel(key: str) -> str:
     w._save_bot_panel()
     A.processEvents()
     p = _save(w, f"{key}-5-机器人主面板")
-    w.close()
+    _teardown(w)
     return p
 
 
@@ -219,6 +329,9 @@ SHOTS = [
     ("二次确认（原生真模态）", shot_confirm),
     ("后台死掉（那个场景）", shot_heal),
     ("机器人主面板（真配置+保存回执）", shot_botpanel),
+    ("环境引导（一个弹窗·调微信）", shot_envguide),
+    ("缺件引导（每件一个·初始段）", shot_missing),
+    ("缺件引导（每件一个·进度段）", shot_missing_progress),
 ]
 
 

@@ -745,6 +745,9 @@ button.danger:hover{filter:brightness(1.12)}
 button:disabled{opacity:.5;cursor:not-allowed}
 .hint{color:var(--tx2);font-size:12px;margin-top:6px}
 .hint a{color:var(--blue)}
+/* 记忆图谱的图例：色点由 JS 按主题注入（--c），三种类型一色 */
+.mg-lg{display:inline-flex;align-items:center;gap:5px;margin-right:12px;white-space:nowrap}
+.mg-lg::before{content:'';width:10px;height:10px;border-radius:50%;background:var(--c,#8899a6);display:inline-block}
 pre.out{background:var(--code-bg);color:var(--code-tx);border-radius:10px;padding:12px 14px;font:12px/1.55 ui-monospace,Consolas,monospace;
   overflow:auto;margin-top:8px;white-space:pre-wrap;word-break:break-all}
 
@@ -1929,6 +1932,38 @@ th{color:var(--tx2);font-weight:500}
         <input type="checkbox" data-cfg="memory.summarize_on_exit" checked title="每次关闭机器人时把本次对话总结成群友印象（只在那时调一次模型，平时绝不计费）">
         <span class="hint">每次关闭机器人时自动把本对话总结为群友印象（仅关机时调一次模型；平时不调，不耗用量）。</span>
       </div></div>
+      <div class="sub">记忆图谱</div>
+      <div class="row"><label>看哪些</label>
+        <div class="grow">
+          <select id="mgScope">
+            <option value="">全部（本机所有有记忆的会话）</option>
+            <option value="__cur">只看上面选中的那个群</option>
+          </select>
+          <span class="hint" id="mgHint">把「谁在哪个群、记着什么事、这些人之间怎么连」画成一张图。全部在本机生成，不花一点额度。</span>
+        </div>
+      </div>
+      <div class="row"><label>画关系图</label>
+        <div class="grow">
+          <button id="mgDraw" class="ghost">画关系图</button>
+          <span class="hint">点一下按上面选的范围出图；节点可以拖，滚轮缩放，空白处拖动可平移。</span>
+        </div>
+      </div>
+      <div class="row"><label>关系图</label>
+        <div class="grow">
+          <canvas id="mgCanvas" width="900" height="480" style="width:100%;height:auto;border:1px solid var(--bd);border-radius:10px;background:var(--bg2);cursor:grab"></canvas>
+        </div>
+      </div>
+      <div class="sub">图怎么读</div>
+      <div class="row"><label>图例</label>
+        <div class="grow">
+          <div class="hint">
+            <span class="mg-lg" data-t="person">成员</span>
+            <span class="mg-lg" data-t="chat">会话</span>
+            <span class="mg-lg" data-t="topic">话题</span>
+          </div>
+          <div class="hint">圆越大＝这个人/这个群越重要；实线＝「在群里」「聊到」，虚线＝「同群」（两个人同在一个群）。</div>
+        </div>
+      </div>
       <div class="row"><label>清除记忆</label><div class="grow">
         <div class="btns" style="justify-content:flex-start;gap:8px">
           <button id="memClearSel" class="danger" disabled>清除勾选的印象</button>
@@ -7588,6 +7623,166 @@ if($('uiRecalibrate')) $('uiRecalibrate').onclick = async ()=>{
       b.disabled = false;
       loadAutostart();
     });
+  })();
+
+  /* ⑧ 记忆图谱：把「谁在哪个群、记着什么事、这些人之间怎么连」画成一张可交互的图。
+     为什么自己画（不用 ECharts）：安装包要能**离线自带全部依赖**，引 CDN 一断网就白屏；
+     这张图的需求也很窄（几十上百个点、三类连线），两百行 canvas 就够，还省一个体积。
+     取数：GET /api/memory/graph（后端本机构图，零 token）。 */
+  const MG = { nodes: [], links: [], view: {x:0, y:0, k:1}, drag: null, pan: null, bg:null };
+  const MG_COLOR = { person:'#4FB3F2', chat:'#35F0C0', topic:'#FFD166' };
+  const MG_LABEL = { person:'成员', chat:'会话', topic:'话题' };
+  function mgTheme(){
+    const cs = getComputedStyle(document.documentElement);
+    return { tx: (cs.getPropertyValue('--tx')||'#eee').trim(),
+             tx3: (cs.getPropertyValue('--tx3')||'#999').trim(),
+             line: (cs.getPropertyValue('--bd')||'#555').trim() };
+  }
+  function mgInit(list){
+    // 初始化位置：按类别摊在不同半径的圈上（比全从原点散开收敛快得多）
+    const n = list.length || 1, W = 900, H = 480;
+    list.forEach((d, i)=>{
+      const ring = d.type==='chat' ? 0.62 : (d.type==='person' ? 0.85 : 1.12);
+      const a = (i/n) * Math.PI * 2;
+      d.x = W/2 + Math.cos(a) * ring * W * 0.33;
+      d.y = H/2 + Math.sin(a) * ring * H * 0.33;
+      d.vx = 0; d.vy = 0;
+      d.r = 6 + Math.max(0, Math.min(1, d.importance||0)) * 22;
+    });
+  }
+  function mgStep(){
+    // 一轮力导向：边当弹簧、点互相排斥，再向画布中心收一点重力
+    const N = MG.nodes, L = MG.links, W = 900, H = 480;
+    const idx = {}; N.forEach((d, i)=> idx[d.id] = i);
+    const REP = 5200, K = 0.045, DAMP = 0.86;
+    for(let i=0;i<N.length;i++){
+      for(let j=i+1;j<N.length;j++){
+        let dx = N[j].x-N[i].x, dy = N[j].y-N[i].y;
+        let d2 = dx*dx + dy*dy || 0.01, d = Math.sqrt(d2);
+        const f = REP / d2;
+        const ux = dx/d, uy = dy/d;
+        N[i].vx -= ux*f; N[i].vy -= uy*f; N[j].vx += ux*f; N[j].vy += uy*f;
+      }
+    }
+    L.forEach(l=>{
+      const a = N[idx[l.source]], b = N[idx[l.target]];
+      if(!a || !b) return;
+      let dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy)||0.01;
+      const want = 130 + 60*(1 - Math.min(1, l.weight||1)/3);
+      const f = (d - want) * K * 0.5;
+      const ux = dx/d, uy = dy/d;
+      a.vx += ux*f; a.vy += uy*f; b.vx -= ux*f; b.vy -= uy*f;
+    });
+    N.forEach(d=>{
+      d.vx += (W/2 - d.x) * 0.0035; d.vy += (H/2 - d.y) * 0.0035;
+      d.vx *= DAMP; d.vy *= DAMP;
+      d.x += Math.max(-18, Math.min(18, d.vx));
+      d.y += Math.max(-18, Math.min(18, d.vy));
+    });
+  }
+  function mgDraw(){
+    const cv = $('mgCanvas'); if(!cv) return;
+    const ctx = cv.getContext('2d'); const th = mgTheme();
+    const W = cv.width, H = cv.height;
+    const v = MG.view;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,W,H);
+    ctx.save();
+    ctx.translate(v.x, v.y); ctx.scale(v.k, v.k);
+    // 边
+    MG.links.forEach(l=>{
+      const a = MG.nodes.find(d=>d.id===l.source), b = MG.nodes.find(d=>d.id===l.target);
+      if(!a || !b) return;
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+      ctx.strokeStyle = (l.relation==='同群') ? 'rgba(150,150,150,.28)' : th.line;
+      ctx.lineWidth = Math.max(0.6, Math.min(3, (l.weight||1)*0.8));
+      if(l.relation==='同群') ctx.setLineDash([4,4]); else ctx.setLineDash([]);
+      ctx.stroke(); ctx.setLineDash([]);
+    });
+    // 点 + 标签
+    ctx.font = '12px system-ui,-apple-system,"Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    MG.nodes.forEach(d=>{
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2);
+      ctx.fillStyle = MG_COLOR[d.type] || '#8899a6';
+      ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.4; ctx.strokeStyle = th.tx3; ctx.stroke();
+      ctx.fillStyle = th.tx;
+      // 长名字截断，免得糊成一团
+      const nm = d.name.length > 8 ? d.name.slice(0,8)+'…' : d.name;
+      ctx.fillText(nm, d.x, d.y + d.r + 3);
+    });
+    ctx.restore();
+    // 图例色点
+    document.querySelectorAll('.mg-lg').forEach(el=>{
+      const t = el.getAttribute('data-t');
+      el.style.setProperty('--c', MG_COLOR[t] || '#8899a6');
+    });
+  }
+  function mgRender(data){
+    MG.nodes = (data.nodes||[]).map(d=>Object.assign({}, d));
+    MG.links = (data.links||[]).map(l=>Object.assign({}, l));
+    MG.view = {x:0, y:0, k:1};
+    mgInit(MG.nodes);
+    let n = 0;
+    const tick = ()=>{
+      mgStep(); mgDraw();
+      // 收敛：跑满 240 帧就停（不无限烧 CPU）
+      if(++n < 240) requestAnimationFrame(tick);
+      else { for(let i=0;i<60;i++) mgStep(); mgDraw(); }
+    };
+    requestAnimationFrame(tick);
+    const h = $('mgHint');
+    if(h) h.textContent = (data.note || '') + (data.empty ? '' : '（圆越大＝越重要）');
+  }
+  async function mgLoad(){
+    const cv = $('mgCanvas'); if(!cv) return;
+    const sc = $('mgScope'); const cur = $('memChats');
+    let ck = '';
+    if(sc && sc.value === '__cur' && cur) ck = cur.value || '';
+    try{
+      const r = await getJSON('/api/memory/graph' + (ck ? ('?chat_key=' + encodeURIComponent(ck)) : ''));
+      if(!r.ok){ toast('画不出来：' + (r.error || '未知原因')); return; }
+      mgRender(r);
+    }catch(e){ toast('画不出来：' + e.message); }
+  }
+  (function(){
+    const b = $('mgDraw'); if(!b) return;
+    b.addEventListener('click', ()=>mgLoad());
+    // 画布交互：拖节点 / 空白平移 / 滚轮缩放（纯本地，不发请求）
+    const cv = $('mgCanvas'); if(!cv) return;
+    const toWorld = (ev)=>{
+      const rect = cv.getBoundingClientRect();
+      const sx = cv.width / rect.width, sy = cv.height / rect.height;
+      const px = (ev.clientX - rect.left) * sx, py = (ev.clientY - rect.top) * sy;
+      return { x: (px - MG.view.x)/MG.view.k, y: (py - MG.view.y)/MG.view.k };
+    };
+    cv.addEventListener('mousedown', ev=>{
+      const p = toWorld(ev);
+      const hit = MG.nodes.slice().reverse().find(d=>{
+        const dx=d.x-p.x, dy=d.y-p.y; return dx*dx+dy*dy <= (d.r+4)*(d.r+4);
+      });
+      if(hit){ MG.drag = hit; cv.style.cursor='grabbing'; }
+      else { MG.pan = {x:ev.clientX, y:ev.clientY, ox:MG.view.x, oy:MG.view.y}; }
+    });
+    window.addEventListener('mousemove', ev=>{
+      if(MG.drag){
+        const p = toWorld(ev); MG.drag.x = p.x; MG.drag.y = p.y; MG.drag.vx=0; MG.drag.vy=0; mgDraw();
+      }else if(MG.pan){
+        const rect = cv.getBoundingClientRect();
+        const sx = cv.width/rect.width, sy = cv.height/rect.height;
+        MG.view.x = MG.pan.ox + (ev.clientX-MG.pan.x)*sx;
+        MG.view.y = MG.pan.oy + (ev.clientY-MG.pan.y)*sy;
+        mgDraw();
+      }
+    });
+    window.addEventListener('mouseup', ()=>{ MG.drag=null; MG.pan=null; cv.style.cursor='grab'; });
+    cv.addEventListener('wheel', ev=>{
+      ev.preventDefault();
+      const k = MG.view.k * (ev.deltaY < 0 ? 1.1 : 0.9);
+      MG.view.k = Math.max(0.3, Math.min(3, k));
+      mgDraw();
+    }, {passive:false});
   })();
 
   /* ⑥ 逐字浮动：光标划过卡片标题时拆成字（一次拆好缓存）*/

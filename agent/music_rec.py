@@ -151,15 +151,82 @@ def _hit_tags(query: str) -> list:
 def recommend(query: str = "", *, ctx: str = "", limit: int = MAX_PICKS) -> dict:
     """给一句"想要什么样的" ⇒ `{ok, picks:[{title, artist, why}], note}`。
 
-    ⛔ **库里没数据 ⇒ `ok=False` + 如实说「我还不太熟这块」**（**绝不编歌名**）。
-    ⛔ 每条 `why` 必须来自**真实命中的标签**；命不中标签 ⇒ `why` 写**别的原因**
-      （如「同艺人」），**不编标签**。
+    ## 数据来源：**在线优先，本地兜底**（2026-10-10 用户定的口径）
+
+    "本地库放一堆热门歌曲，就相当于是脱裤子放屁" —— 推荐的价值是"给你一首你
+    没听过但会喜欢的"，本地预置的必然是大路货 ⇒ **默认走在线**（见 `music_online`）：
+      · QQ 音乐 key 已填 ⇒ 走 QQ 音乐官方接口；
+      · 否则 ⇒ 走网易云公开接口（免 key、免登录）；
+      · 出网总闸关掉 / 在线拿不到 ⇒ 退回**本地标签库**（用户聊出来的那批），
+        仍拿不到就如实说"我还不太熟这块"。
+
+    ⛔ **任何一步都不编歌名**：在线不通就说在线不通，本地没数据就说没数据。
+    ⛔ 每条 `why` 必须来自真实命中的标签或真实说出的场景词，**不许编**。
+    """
+    # ① 在线档（默认；`online_allowed=False` 时跳过）
+    if _online_allowed():
+        from . import music_online as _mo
+        want_pl = True
+        try:
+            cfg = _cfg() or {}
+            m = cfg.get("music") if isinstance(cfg.get("music"), dict) else {}
+            want_pl = bool(m.get("want_playlist", True))
+            src = str(m.get("source") or "netease")
+            key = str(m.get("qqmusic_key") or "")
+        except Exception:  # noqa: BLE001
+            src, key = "netease", ""
+        # 在线档：把"想要什么样的"和场景补语合成一句检索词
+        q = str(query or "").strip()
+        if ctx and str(ctx).strip():
+            q = (q + " " + str(ctx).strip()).strip() if q else str(ctx).strip()
+        if q:
+            try:
+                r = _mo.recommend_online(q, source=src, qq_key=key,
+                                         want_playlist=want_pl, limit=limit)
+                if r.get("ok") and r.get("picks"):
+                    return {"ok": True, "picks": r["picks"], "source": r.get("source"),
+                            "note": str(r.get("note") or "") + _RED_LINE}
+            except Exception as e:  # noqa: BLE001
+                log.debug("在线推荐失败，退回本地库：%s", e, exc_info=True)
+    # ② 本地档（在线不通 / 出网关掉时兜底）
+    return _recommend_local(query, ctx=ctx, limit=limit)
+
+
+def _online_allowed() -> bool:
+    """出网总闸：`music.online_allowed`（缺省 True）。读不到配置 ⇒ 不冒进，按 False。"""
+    try:
+        cfg = _cfg() or {}
+        m = cfg.get("music") if isinstance(cfg.get("music"), dict) else {}
+        return bool(m.get("online_allowed", True))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _cfg() -> dict:
+    """读当前配置（读不到 ⇒ 空 dict，绝不让配置层把推荐整个打挂）。"""
+    try:
+        from . import config as _c
+        return _c.load_config() or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _recommend_local(query: str = "", *, ctx: str = "", limit: int = MAX_PICKS) -> dict:
+    """本地标签库推荐（**只给歌名 + 艺人 + 理由**；在线不通时的兜底档）。
+
+    ⛔ 库里没数据 ⇒ `ok=False` + 如实说「我还不太熟这块」；**绝不编歌名**。
+    ⛔ 每条 `why` 必须来自**真实命中的标签**；命不中标签 ⇒ 如实说给不出。
     """
     rows = _load()
     if not rows:
+        # 空 query（没给方向）与"在线没通"是两回事 —— 别混成一句，否则用户看到的是假原因
+        if not str(query or "").strip() and not str(ctx or "").strip():
+            return {"ok": False, "picks": [],
+                    "note": "你得先说想要什么样的（场景 / 心情 / 像哪首）—— "
+                            "⛔ 没方向我不会随便塞几首热歌给你。"}
         return {"ok": False, "picks": [],
-                "note": "我还不太熟这块（本地还没存过任何歌的标签）—— 你可以先告诉我几首你常听的，"
-                        "我记下来下次就能推了；⛔ 我不会凭空编歌名。"}
+                "note": "我这会儿连不上在线曲库（网易云），本地也没存过任何歌的标签 —— "
+                        "你可以先告诉我几首你常听的，我记下来下次就能推了；⛔ 我不会凭空编歌名。"}
     hits = _hit_tags(query)
     # 也把 `ctx`（场景补充，如时段/天气）当作可命中的输入
     if ctx:
@@ -190,14 +257,18 @@ def recommend(query: str = "", *, ctx: str = "", limit: int = MAX_PICKS) -> dict
         if key in seen:
             continue
         seen.add(key)
-        why = "因为%s" % ("、".join(hit)) if hit else ""
         picks.append({"title": str(r.get("title")), "artist": str(r.get("artist")),
-                      "why": ("适合%s的时候听" % "、".join(hit)) if hit else "（暂无理由）"})
+                      "why": ("适合%s的时候听" % "、".join(hit)) if hit else "（暂无理由）",
+                      "url": "", "source": "本地库"})
         if len(picks) >= max(1, int(limit or MAX_PICKS)):
             break
-    return {"ok": True, "picks": picks, "hits": hits,
-            "note": "只给「歌名 + 艺人」，你自己去放（⛔ 我不发音频文件、不转发、不绕版权）。"
-                    "每条都写了**为什么推它**；给 2~3 首就够了，别一次列十首。"}
+    return {"ok": True, "picks": picks, "hits": hits, "source": "本地库",
+            "note": "来自本地标签库（在线这会儿没通）。只给「歌名 + 艺人」，你自己去放"
+                    "（⛔ 我不发音频文件、不转发、不绕版权）。" + _RED_LINE}
+
+
+#: 所有推荐结果都要带的一句红线声明（在线/本地共用，避免两处各写一份走样）
+_RED_LINE = " ⛔ 只给「歌名 + 艺人 + 链接」，我不发音频文件、不转发、不绕平台版权 —— 你自己去放。"
 
 
 def stats() -> dict:

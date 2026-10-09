@@ -101,15 +101,53 @@ else:
 print("\n── C. 「缺运行库」这条链在源码里（不靠肉眼看）──")
 lc = io.open(os.path.join(ROOT, "launcher-src", "launcher.cs"), encoding="utf-8").read()
 wg = io.open(os.path.join(ROOT, "launcher-src", "webview2guide.cs"), encoding="utf-8").read()
+
+
+def _visible(src):
+    """剥掉 `//` 注释与 `/* */` 块注释，只留真正会显示给用户的字面量。
+
+    ⛔ 判「文案里有没有某个词」必须扫**可见文本**：本文件头部的注释里就写着
+       「不许出现『怎么办：点……』」——直接扫原文会被我们自己的注释误伤（判据假失败）。
+    """
+    out, i, n = [], 0, len(src)
+    while i < n:
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+        else:
+            out.append(src[i])
+            i += 1
+    return "".join(out)
+
+
+wgv = _visible(wg)
+# 守一刀：剥注释必须真的剥掉东西，否则剥失败会让下面所有"不许出现 X"的断言假通过。
+ok("剥注释真的生效（不是空串，且确实少了一批字符）", 0 < len(wgv) < len(wg), "%d -> %d" % (len(wg), len(wgv)))
 ok("OpenConsole 里先查运行库（HasRuntime）", "WebView2Guide.HasRuntime()" in lc)
-# ⚠️ 引导器里主按钮的 Action 是**三元式**赋的：主按钮「一键装」、次按钮「用浏览器打开」共用一个
-#    委托（`Action = (pri == ins) ? "install" : "browser"`）⇒ 原来断言字面 `Action = "install"`
-#    会老化（产品改成三元式之后这里就没有那个字面量了）。
-_GUIDE_MAIN_ACTION = 'Action = (pri == ins) ? "install" : "browser"'
-ok("有 install 分支（一键装）", 'f.Action == "install"' in lc and _GUIDE_MAIN_ACTION in wg,
-   "引导器三元式=%s" % (_GUIDE_MAIN_ACTION in wg))
-ok("有 browser 分支（用浏览器打开）", 'f.Action == "browser"' in lc and 'Action = "browser"' in wg)
-ok("有 copy 分支（复制网址）", 'f.Action == "copy"' in lc and 'Action = "copy"' in wg)
+# ⛔ **锚意图、不锚旧文案**：本项守的是"缺运行库 ⇒ 有一个窗口让用户能把它装上"。
+#   2026-10-09 用户把交互改成**三段式**（忽略/下载 → 后台下载/等待 → 双进度条 → 完成），
+#   旧的四按钮 `一键安装并打开/用浏览器打开/复制网址/知道了` 已作废 ⇒ 断言跟着改成三段式。
+#   ① 初始两按钮：「忽略」「下载」
+ok("① 初始给「忽略」", 'MakeButton("忽略")' in wg)
+ok("① 初始给「下载」", 'MakeButton("下载")' in wg)
+# ② 点下载 ⇒ 两按钮：「后台下载」「等待」
+ok("② 给「后台下载」", 'MakeButton("后台下载")' in wg)
+ok("② 给「等待」", 'MakeButton("等待")' in wg)
+# ③ 双进度条（下载 + 安装）
+ok("③ 有下载进度条 barDl", "barDl" in wg and "RoundBar" in wg)
+ok("③ 有安装进度条 barIn", "barIn" in wg)
+ok("③ 装完说「安装完成，您可以正常使用」", "安装完成，您可以正常使用" in wg)
+# ⛔ 不许教用户做事（旧版是"怎么办：点……"那套教程式文案，用户点过）
+#   扫的是**剥掉注释后的可见文本**：注释里写"不许出现怎么办：点"是给我们自己看的，不算。
+ok("★ 没有「怎么办：点…」这类教程式文案", "怎么办：" not in wgv)
+# 动作分支与 `launcher.cs` 的消费端必须对得上（名字不一致 ⇒ 用户点完什么都不会发生）
+ok("launcher.cs 认 `install-now`（当场装好）", 'f.Action == "install-now"' in lc)
+ok("launcher.cs 认 `download-bg`（后台静默装）", 'f.Action == "download-bg"' in lc)
+ok("引导器里真的会赋这两个值",
+   '"install-now"' in wg and '"download-bg"' in wg)
 # ⛔ **锚意图、不锚文案字面**：这里要守的是"缺运行库这条链的**每种结局都写日志留现场**"，
 #    不是"第一参数必须叫 `dir`"。第 162 项把日志落点从代码根改成**安装根**
 #    （`logs\` 永远在安装根）⇒ 断言改成"不限定第一参数"的计数。
