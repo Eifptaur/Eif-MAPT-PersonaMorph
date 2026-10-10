@@ -75,6 +75,16 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 SetupLogging=yes
+; ⛔ **装之前自动把正在跑的群相关掉**，而不是弹一句"请先关闭再安装"让用户自己动手。
+;   `CloseApplications=yes`（默认值，这里显式写出来是为了记下意图）走 Windows 的
+;   Restart Manager：谁占着 `{app}` 下要替换的文件，就关掉谁 —— 启动器与它拉起的
+;   `runtime\python\python.exe` 子进程都占着东西，所以两个都会被收掉。
+; ⛔ `RestartApplications` **必须显式设 no**：它默认是 yes，会让 Inno 把"它自己关掉的"
+;   程序再拉起来；而我们在 `[Run]` 里本来就要启动一次 ⇒ 会同时冒出两个群相。
+; ⛔ 别加 `AppMutex`：那东西只在安装/卸载启动时**检测**并弹"请先关闭应用"，用户得手动关；
+;   而我们要的是**自动关**（见上面 CloseApplications 与 [UninstallRun]），加它反而添麻烦。
+CloseApplications=yes
+RestartApplications=no
 ; ⛔ 不显示"选择是否创建快捷方式"那种系统页之外的多余页；快捷方式走 [Tasks]
 AllowNoIcons=yes
 ; ⛔ Inno 自带向导的页面**全部关掉** —— 这个 exe 不负责"给用户看界面"，
@@ -111,15 +121,42 @@ Name: "{autodesktop}\群相"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 Filename: "{app}\{#AppExe}"; Description: "立即启动群相（首次会准备运行环境）"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; ⛔ 只清程序自己生成的缓存目录。
-;    **绝不加** `Type: filesandordirs; Name: "{app}"` —— 那会把用户的
-;    data\ logs\ config.json runtime\ 一起删掉（那些是运行时产物，不在安装清单里）。
+; ⛔ 只删**程序自己生成/解出来的东西**（白名单式逐条列），
+;    **绝不加** `Type: filesandordirs; Name: "{app}"` 全删 —— 那会把用户的
+;    data\（人设与记忆） config.json（配置） logs\ wechatauto_logs\ 报告\
+;    一起删掉。那些是**用户的东西**，卸载也不该丢；卸载完文件夹还在，
+;    用户想彻底清理就自己删（见 [UninstallRun] 末尾那条说明）。
+;
+; 为什么这几样必须显式列：Inno 卸载时**只删它自己在 [Files] 里装进去的文件**，
+; 之后还要把"空了"的目录删掉。运行期生成的东西不在安装清单里 ⇒ 一个都不删，
+; 而且它们的父目录因此非空 ⇒ 整棵程序目录树也留着。
+Type: filesandordirs; Name: "{app}\runtime"
+; ↑ 程序按 `offline\` 里的运行时 zip 解出来的依赖（几百 MB）—— 不删就是最大的一块残留。
+;   删了下次重装重解一遍（约 30 秒，用包内本地轮子，不联网）。
+Type: filesandordirs; Name: "{app}\releases"
+; ↑ 自更新在 `versioned` 布局下的版本目录（见 `agent/update_apply.py::releases_root`）。
 Type: filesandordirs; Name: "{app}\__pycache__"
+Type: filesandordirs; Name: "{app}\agent\__pycache__"
+Type: filesandordirs; Name: "{app}\scripts\__pycache__"
+Type: filesandordirs; Name: "{app}\ui_qt\__pycache__"
+; ↑ 运行期生成的字节码缓存，散在这几个子目录里（[Files] 里没有它们）。
 
 [UninstallRun]
-; 卸载前先把可能在跑的进程收掉，免得文件占用导致卸载不干净。
-; ⚠️ `RunOnceId` 必须给：不给的话 Inno 编译时会告警，且多次卸载场景下这条会重复执行。
-Filename: "{cmd}"; Parameters: "/c taskkill /f /im {#AppExe} 2>nul"; Flags: runhidden skipifdoesntexist; RunOnceId: "KillRunningApp"
+; 卸载前先收进程（**顺序不能反**）：
+; ① 首选走我们自己的「一键关闭」无界面模式 —— 它的判据是
+;    "可执行文件在**本安装目录下**"，所以能连启动器拉起的
+;    `runtime\python\python.exe` 子进程一起收掉（那些子进程占着 `runtime\` 与 `*.pyc`，
+;    不收掉 Inno 就删不动、卸载留下整棵树）。
+;    ⛔ 绝不能改成 `taskkill /f /im python.exe`：那会把用户**自己跑的** python 一起杀。
+Filename: "{app}\一键关闭.exe"; Parameters: "--silent"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "CloseOursFirst"
+; ② 兜底（老版本装的包可能没有 ①，或它已被用户删掉）：仍按名字收掉启动器，
+;    `/t` ＝连带**子进程树**，把它的 python 子进程一并带走。
+;    ⚠️ `RunOnceId` 必须给：不给的话 Inno 编译时会告警，且多次卸载场景下这条会重复执行。
+Filename: "{cmd}"; Parameters: "/c taskkill /f /im {#AppExe} /t"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "KillRunningApp"
+;
+; ⛔ 卸载**不删**用户数据：data\（人设与记忆） config.json（配置） logs\ wechatauto_logs\ 报告\
+;    一律留在 `{app}` 里。想彻底清理的用户删掉那个文件夹即可 —— 宁可留一份让人自己删，
+;    也不替人删掉不可恢复的东西。
 
 [Code]
 // ⛔ 把 Inno 自带的向导窗口**藏起来**。

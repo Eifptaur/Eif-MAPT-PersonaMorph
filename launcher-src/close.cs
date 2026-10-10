@@ -67,6 +67,36 @@ namespace WxCloser
                 return;
             }
 
+            // 只收进程、不弹窗：给**卸载/覆盖安装**用（安装包在删文件之前调它）。
+            // ⛔ 为什么不让安装包直接 `taskkill /f /im 群相.exe`：那只能按**进程名**杀，
+            //   杀不掉启动器拉起的 `runtime\python\python.exe` 子进程 —— 子进程还占着
+            //   `runtime\`、`agent\*.pyc` 这些文件，Inno 就删不掉，卸载留下整棵树。
+            //   而按名字杀 `python.exe` 又是**绝对不行**的（会连用户自己跑的 python 一起杀）。
+            //   ⇒ 这里复用 `KillAll` 的判据：**只收"可执行文件在本安装目录下"的进程**，
+            //     既覆盖得住子进程，又碰不到目录外的任何东西（铁律见 `Sweep` 的注释）。
+            // 退出码：0＝没有残留，1＝还有没关掉的（给安装包/人工排查用）。
+            if (args != null && args.Length > 0 && args[0] == "--silent")
+            {
+                List<string> k = KillAll(root);
+                bool clean = true;
+                foreach (string s in k)
+                {
+                    if (s != null && (s.StartsWith("⚠") || s.IndexOf("没关掉") >= 0
+                                      || s.IndexOf("未关干净") >= 0))
+                    {
+                        clean = false; break;
+                    }
+                }
+                try
+                {
+                    File.WriteAllLines(Path.Combine(Path.GetTempPath(), "qunxiang-close-silent.log"),
+                                       k.ToArray(), System.Text.Encoding.UTF8);
+                }
+                catch { }
+                Environment.ExitCode = clean ? 0 : 1;
+                return;
+            }
+
             List<string> killed = KillAll(root);
             // ⛔ 第 162 项：`BuildForm` 里只用 `root` 找 `assets\`（窗体图标，随代码走）⇒ 传**代码根**。
             using (Form f = BuildForm(appRoot, killed))
