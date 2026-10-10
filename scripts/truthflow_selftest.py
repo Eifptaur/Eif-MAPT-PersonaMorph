@@ -209,6 +209,18 @@ ok("T12b pmctl 有 `truth` 子命令与菜单项（人真能用它审）",
 ok("T12c pmctl 的确认/否决前**必须提醒看图**（不给「凭字串猜」的机会）",
    _sm.has(_pm, "看图") and _sm.has(_pm, "crops"))
 
+# ── T12d~e：Qt 端入口（后端一直有这套，界面上原先**两端都点不到**）──
+_ui = io.open(os.path.join(ROOT, "ui_qt", "panels_custom.py"), encoding="utf-8").read()
+ok("T12d Qt 检测中心页挂了「真值审阅」卡（用户面前真能点）",
+   _sm.has(_ui, "def _truth_card(") and _sm.has(_ui, '"真值审阅（程序认出来的字，你点头才算数）"'))
+ok("T12e Qt 侧三条动作都在：读待审队列 / 确认 / 否决 / 导出待审包",
+   _sm.has(_ui, '"/api/truth/list"') and _sm.has(_ui, '"/api/truth/confirm"')
+   and _sm.has(_ui, '"/api/truth/reject"') and _sm.has(_ui, '"/api/truth/export"'))
+# ⛔ 反向锚：确认/否决**必须按 (kind, ref, value) 三项定位**（后端按这三项找那条）
+#    —— 只传 value 会在同字串多来源时改错行。
+ok("T12f Qt 的确认/否决带上 kind+ref+value 三项（不许只凭字串）",
+   _sm.has(_ui, '{"kind": kind, "ref": ref, "value": val}'))
+
 # ⛔⛔ 全文件**最末**才把真值库路径还原成用户的 —— 前面所有 `TS.*`（含 T11 的 clear/add）
 #    都必须落在临时库上，否则"跑自检"就成了"清空用户真值"。这条顺序是**硬约束**：
 #    谁把它往前挪（哪怕挪回到 T8 之后），谁就会重新引入"自检毁数据"。

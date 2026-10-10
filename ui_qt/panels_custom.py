@@ -1769,8 +1769,207 @@ def check_panel(t: Tokens) -> QWidget:
     card3.body.addWidget(_row_btn_refresh(t, lambda *_: _refresh_video()))
     lay.addWidget(card3)
 
+    lay.addWidget(_truth_card(t, page))
+
     lay.addStretch(1)
     return page
+
+
+def _truth_card(t: Tokens, page) -> QWidget:
+    """真值审阅 —— 让用户确认「程序认出来的字到底对不对」。
+
+    背景：屏幕识别（OCR）认出来的字串会先存成 `proposed` 候选（`agent/truth_store.py`），
+    只有人工点过「对」的才升成 `human`、才允许进硬指标。这一整套后端一直是齐的，
+    但**两端都没有入口** ⇒ 用户既看不到待审队列，也没法确认。
+
+    为什么归在「检测中心」页：它是"程序认得准不准"这件事的一部分，与代码检测/点击测试同族。
+    契约（对齐 `agent/truth_store.py`）：
+      · 列表 GET `/api/truth/list?limit=` ⇒ `{items:[{kind,ref,value,uncertainty,…}], stats, saving}`
+        （按不确定性**降序** —— 越不确定越先让人看）；
+      · 确认 POST `/api/truth/confirm`、否决 POST `/api/truth/reject`，
+        body 必须是列表里那三项 `{kind,ref,value}`（后端按它们定位那条）；
+      · 导出 GET `/api/truth/export?limit=` ⇒ 出一包「清单 md + 每条放大裁剪图」，
+        让用户**看图判**而不是看字串猜。
+    ⛔ 这里**只转述后端给的话**（条数、省了多少人工、每条的来龙去脉），前端不自己算数。
+    """
+    import threading as _th # noqa: PLC0415
+
+    card = Card(t)
+    card.body.addWidget(h2(t, "真值审阅（程序认出来的字，你点头才算数）"))
+    card.body.addWidget(desc(
+        t, "程序从屏幕上认出来的字，先算「候选」，不会直接拿去用 —— "
+           "你在这里点过「对」的才会被当成可信。看不准的会排在最前面，"
+           "所以只审前几条就够，不用全看完。"))
+    st_line = desc(t, "读取中…")
+    card.body.addWidget(st_line)
+
+    # 逐条「对 / 不对」的宿主 —— 必须在 `_render` 之前建好（`_render` 要往里塞控件）。
+    _btn_host = QWidget()
+    _btn_host.setStyleSheet("background:transparent;")
+    _qgrid = QVBoxLayout(_btn_host)
+    _qgrid.setContentsMargins(0, 0, 0, 0)
+    _qgrid.setSpacing(5)
+    card.body.addWidget(_btn_host)
+
+    area = _plain_area(
+        t, "",
+        placeholder="点「读待审队列」看有哪些字要你点头；点「导出待审包」会把每条连带"
+                    "那块的放大截图一起导出到报告目录，对着图判更准",
+        height=210)
+    area.setReadOnly(True)
+    card.body.addWidget(area)
+
+    row = FlowBox(t, spacing=6)
+    b_load = Btn("读待审队列", t, "primary")
+    b_export = Btn("导出待审包", t, "ghost")
+    b_export.setToolTip("出一包「待审清单.md + 每条放大裁剪图」到 报告/ 目录（看图逐条判）")
+    row.add(b_load)
+    row.add(b_export)
+    card.body.addWidget(row)
+
+    # 待审条目当前快照：确认/否决要按 (kind, ref, value) 定位，所以点按钮时得回查这三项
+    q_box: dict = {"items": []}
+
+    def _render(items: list, stats: dict, saving: dict) -> None:
+        q_box["items"] = items
+        if not items:
+            area.setPlainText("现在没有待审的字（队列空了）。")
+        else:
+            lines = []
+            for i, it in enumerate(items, 1):
+                unc = it.get("uncertainty")
+                try:
+                    unc_s = "可疑度 %.2f" % float(unc)
+                except Exception: # noqa: BLE001
+                    unc_s = "可疑度 ?"
+                lines.append("%d. [%s] %s   （%s）" % (
+                    i, it.get("kind") or "?", str(it.get("value") or "")[:60], unc_s))
+            area.setPlainText("待审 %d 条（越可疑越靠前）：\n\n%s" % (len(items), "\n".join(lines)))
+        # 确认/否决按钮按条重建：一条一行，左边是字串、右边两颗粒。
+        # ⚠️ `_qgrid` 里装的是**嵌套 QHBoxLayout**（不是 widget）⇒ 清空时必须连子布局一起解，
+        #    只 `takeAt().widget()` 会漏掉整条行、越点越多（实测踩过）。
+        # ⚠️ 摘下来的控件必须 `setParent(None)` 再 `deleteLater()`：只 deleteLater 时，
+        #    事件循环没转到那一刻之前控件还挂在树上，重建时会短暂并排（项目同款纪律）。
+        while _qgrid.count():
+            _itm = _qgrid.takeAt(0)
+            _sub = _itm.layout()
+            if _sub is not None:
+                while _sub.count():
+                    _c = _sub.takeAt(0)
+                    _w = _c.widget()
+                    if _w is not None:
+                        _w.setParent(None)
+                        _w.deleteLater()
+                _sub.deleteLater()
+            _w0 = _itm.widget()
+            if _w0 is not None:
+                _w0.setParent(None)
+                _w0.deleteLater()
+        for i, it in enumerate(items[:20]):
+            hb = QHBoxLayout()
+            hb.setContentsMargins(0, 0, 0, 0)
+            hb.setSpacing(8)
+            lb = QLabel("%s. %s" % (i + 1, str(it.get("value") or "")[:34]))
+            lb.setFont(qfont(t, t.body_size))
+            lb.setStyleSheet("color:%s;background:transparent;" % t.tx)
+            hb.addWidget(lb, 1)
+            b_ok = Btn("对", t, "primary")
+            b_ok.clicked.connect(lambda _ch=False, _it=dict(it): _act(_it, True))
+            b_no = Btn("不对", t, "ghost")
+            b_no.clicked.connect(lambda _ch=False, _it=dict(it): _act(_it, False))
+            hb.addWidget(b_ok)
+            hb.addWidget(b_no)
+            grid.addLayout(hb)
+        _render_saving(stats, saving)
+
+    def _render_saving(stats: dict, saving: dict) -> None:
+        try:
+            n_h = int((stats or {}).get("human") or 0)
+            n_p = int((stats or {}).get("proposed") or 0)
+            txt = "人核过的 %d 条 · 还在等你点头的 %d 条" % (n_h, n_p)
+        except Exception: # noqa: BLE001
+            txt = "统计读不到"
+        why = str((saving or {}).get("why") or "").strip()
+        st_line.setText(txt + ("；" + why if why else ""))
+
+    def _act(it: dict, ok: bool) -> None:
+        kind = str(it.get("kind") or "ocr_text")
+        ref = str(it.get("ref") or "")
+        val = str(it.get("value") or "")
+        if not ref or not val:
+            st_line.setText("这一条缺 kind/ref/value，没法提交（列表里应当有这三项）")
+            return
+        api = "/api/truth/confirm" if ok else "/api/truth/reject"
+        st_line.setText("正在提交…")
+
+        def _work(box: dict) -> None:
+            from config_io import post_json # noqa: PLC0415
+
+            box["r"] = post_json(api, {"kind": kind, "ref": ref, "value": val}, timeout=20.0)
+
+        def _apply(box: dict) -> None:
+            r = box.get("r") or {}
+            if r.get("ok") is False:
+                st_line.setText("后端没收下：%s" % (r.get("error") or "没写原因"))
+                return
+            if not r:
+                st_line.setText("提交没拿到回应（后台没连上）")
+                return
+            _load() # 提交后重读队列（后端才是真值，不就地打补丁）
+
+        run_async(_work, _apply, page=page, interval=200, name="c8-truth-act")
+
+    def _load() -> None:
+        st_line.setText("读取中…")
+
+        def _work(box: dict) -> None:
+            from config_io import post_json # noqa: PLC0415
+
+            try:
+                box["r"] = post_json("/api/truth/list", {"limit": 20}, timeout=15.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _apply(box: dict) -> None:
+            if box.get("err"):
+                st_line.setText("读不到待审队列：%s" % box["err"])
+                return
+            r = box.get("r") or {}
+            if r.get("ok") is False:
+                st_line.setText("读不到待审队列：%s" % (r.get("error") or "后台没给原因"))
+                return
+            _render(r.get("items") or [], r.get("stats") or {}, r.get("saving") or {})
+
+        run_async(_work, _apply, page=page, interval=200, name="c8-truth-load")
+
+    def _export() -> None:
+        st_line.setText("正在导出待审包…")
+
+        def _work(box: dict) -> None:
+            from config_io import post_json # noqa: PLC0415
+
+            try:
+                box["r"] = post_json("/api/truth/export", {"limit": 200}, timeout=60.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _apply(box: dict) -> None:
+            if box.get("err"):
+                st_line.setText("导出失败：%s" % box["err"])
+                return
+            r = box.get("r") or {}
+            if r.get("ok") is False:
+                st_line.setText("导出失败：%s" % (r.get("error") or "后台没给原因"))
+                return
+            st_line.setText("已导出 %s 条到：%s" % (r.get("n") or 0, r.get("dir") or "（没给路径）"))
+
+        run_async(_work, _apply, page=page, interval=300, name="c8-truth-export")
+
+    b_load.clicked.connect(_load)
+    b_export.clicked.connect(_export)
+    # 首帧只摆"还没读"的壳，真值不在这里同步取（建页不许阻塞）
+    QTimer.singleShot(50, _load)
+    return card
 
 
 def _row_btn_refresh(t: Tokens, hook) -> QWidget:
