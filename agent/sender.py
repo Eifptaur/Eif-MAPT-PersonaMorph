@@ -22,6 +22,13 @@ log = logging.getLogger("persona-morph")
 
 # 同会话"短窗去重"窗口（秒）：这段时间内已经发过的同一句话，不再重复发（防"连发两次"）。
 _DEDUP_WINDOW_S = 20.0
+# 第 1 层（内存回望）**取多少条历史来比** —— 旧值是 12，在活跃群里盖不住这 20 秒：
+#   群里聊得越热闹，自己刚发的那条越容易被群友的话挤出这 12 条窗口 ⇒ 去重形同虚设。
+#   ⛔ 别往下调。取值＝`store.recent` 的默认口径（80），那是"一倍屏幕的量"，够用且不慢。
+_DEDUP_MEM_LIMIT = 80
+# 第 2 层（**消息库回读**）的时间窗（秒）。与 `wechat.already_sent_recently` 的默认值一致：
+#   那一层专门兜"重试间隔超过 20 秒"与"跨进程/重启后重发"（第 1 层看不见这两种）。
+_DEDUP_DB_WINDOW_S = 120.0
 
 # ── 被引用对象是**媒体消息**时，跳过引用、直接普通发送（F8） ──────────────────
 # 为什么：引用定位靠"在可见画面里 OCR 找到那条消息的文字"（`wechat.reply_quote` 的
@@ -488,14 +495,32 @@ class SendQueue:
         if not parts:
             raise RuntimeError("这一批全被内部故障话术闸拦下（故障只留本机日志，不发群）")
 
-        # 🔴 （用户现场截图：同一条消息「早上好呀！」连发两次）：
-        #   **同会话短窗去重** —— 同一段文本在过去 `_DEDUP_WINDOW_S` 秒内已经给自己发过，就不再发一遍。
-        #   兜的是"同一轮被重跑/重试后重复发送"这类路径（模型自己的 send 与兜底补发都走这里）。
-        _dedup_since = time.time() - _DEDUP_WINDOW_S
+        # 🔴 第 0 层：**本批内部去重** —— 同一批里出现两次一样的文本，只留第一次。
+        #   为什么单独一层：下面两层比的都是"与**历史**比"，本批里自带的重复谁也拦不住
+        #   （模型一轮里给出"哈哈哈／哈哈哈"这种，会原样发两条出去）。
         _deduped = []
+        _seen_in_batch = set()
+        _b0, _b0_src = [], []
+        for _t, _src in zip(parts, part_src):
+            _k = str(_t or "").strip()
+            if _k and _k in _seen_in_batch:
+                log.warning("跳过本批内的重复条（同一批里出现了两次）：%s", _t[:60])
+                _deduped.append(_t)
+                continue
+            if _k:
+                _seen_in_batch.add(_k)
+            _b0.append(_t)
+            _b0_src.append(_src)
+        parts, part_src = _b0, _b0_src
+
+        # 🔴 第 1 层（用户现场截图：同一条消息「早上好呀！」连发两次）：
+        #   **同会话短窗去重**（内存回望）—— 同一段文本在过去 `_DEDUP_WINDOW_S` 秒内
+        #   已经给自己发过，就不再发一遍。兜的是"同一轮被重跑/重试后重复发送"这类路径
+        #   （模型自己的 send 与兜底补发都走这里）。
+        _dedup_since = time.time() - _DEDUP_WINDOW_S
         try:
             _recent_self = [str((m or {}).get("text") or "") for m in
-                            (self.store.recent(chat_key, limit=12, include_self=True) or [])
+                            (self.store.recent(chat_key, limit=_DEDUP_MEM_LIMIT, include_self=True) or [])
                             if (m or {}).get("self") and int(str((m or {}).get("ts") or "0")) / 1000.0 >= _dedup_since]
         except Exception:
             _recent_self = []
@@ -511,14 +536,41 @@ class SendQueue:
                 _kept2_src.append(_src)
             parts = _kept2
             part_src = _kept2_src
-            # 幂等语义：**整批都是重复**时不算失败、也不抛 —— 那条内容确实在
-            # `_DEDUP_WINDOW_S` 秒内已经发出去了，对调用方而言"要发的已经发过"。
-            # 走与 `wechat.send_text` 拦截分支同口径的**幂等成功**，并按 `deduped` 分账
-            # （调用方据此**不计新增发送数、不入重试队列**，但 `append_self` 仍照旧 ——
-            # "我说过什么"的上下文应保持一致）。抛异常会把"其实已发"记成失败，是反的。
-            if not parts:
-                log.info("这一批在 %.0fs 内已发过、全部命中去重 ⇒ 按幂等成功返回（不再抛）", _DEDUP_WINDOW_S)
-                return {"sent": [], "failed": [], "deduped": _deduped}
+
+        # 🔴 第 2 层：**从消息库回读**（`wechat.already_sent_recently`，三态）。
+        #   第 1 层只看内存、只回望 `_DEDUP_WINDOW_S` ＝ 20 秒 ⇒ 它兜不住两件事：
+        #     ① **重试间隔超过 20 秒**才发生的重发；
+        #     ② **跨进程/重启后**的重发 —— 重启后内存里"自己发过什么"是空的，可库里那条还在。
+        #   本层读的是**消息库**（`_db_recent_rows`）⇒ 重启也认得出，这才是"根除"那一层。
+        #   ⛔ 三态语义（`already_sent_recently` 的 docstring 定死，不许简化成两态）：
+        #     `True`＝确实已发过 ⇒ **拦**；`False`＝确实没发过 ⇒ 放行；
+        #     **`None`＝读不出来** ⇒ 按"不知道"处理、**照常发** ——
+        #     不能因为"这次读不到库"就让整条发送链停摆（库故障时什么都不发是更糟的结果）。
+        if self.wechat is not None and hasattr(self.wechat, "already_sent_recently"):
+            _kept3, _kept3_src = [], []
+            for _t, _src in zip(parts, part_src):
+                try:
+                    _dup = self.wechat.already_sent_recently(chat_key, _t,
+                                                             window_s=_DEDUP_DB_WINDOW_S)
+                except Exception:  # noqa: BLE001
+                    _dup = None
+                if _dup is True:
+                    log.warning("跳过重复发送（消息库里 %.0fs 内已发过同一句）：%s",
+                                _DEDUP_DB_WINDOW_S, _t[:60])
+                    _deduped.append(_t)
+                    continue
+                _kept3.append(_t)
+                _kept3_src.append(_src)
+            parts, part_src = _kept3, _kept3_src
+
+        # 幂等语义：**整批都是重复**时不算失败、也不抛 —— 那些内容确实已经发出去了，
+        # 对调用方而言"要发的已经发过"。走与 `wechat.send_text` 拦截分支同口径的
+        # **幂等成功**，并按 `deduped` 分账（调用方据此**不计新增发送数、不入重试队列**，
+        # 但 `append_self` 仍照旧 —— "我说过什么"的上下文应保持一致）。
+        # 抛异常会把"其实已发"记成失败，是反的。
+        if not parts:
+            log.info("这一批全部命中去重（已发过）⇒ 按幂等成功返回（不再抛）")
+            return {"sent": [], "failed": [], "deduped": _deduped}
 
         # 风险闸门：**发之前**判（拦下的提示只在本机/控制台出现，绝不往微信侧发）
         from . import risk as _risk
