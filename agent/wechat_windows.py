@@ -4336,7 +4336,7 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
             return "异常：%s" % str(e)[:60]
         return ""
 
-    def _open_by_human_rhythm(_tgt, tries: int = 4):
+    def _open_by_human_rhythm(_tgt, tries: int = 4, budget_s: float = 3.0):
         """**双击（两枪，间隔 ~175ms）+ 每轮之后检测"独立窗真出来了没有"**；
         没出来就**接着补点**，直到出来或补满 `tries` 轮。返回 `(ok, why)`。
 
@@ -4351,15 +4351,26 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
           （尤其是该行本来就是当前高亮的会话时），于是两枪打完、一个窗都没有。
           而左键落在**会话行**上是**幂等**的：最坏结果就是"又选中一次同一个会话"，
           不会切走、不会误操作 ⇒ 所以可以放心补点。
-        ⛔ 补点**必须有上限**（`tries`）：无限补点会把主窗锁在"一直在点"的状态，
-          用户的鼠标就动不了了。
+        ⛔ **两道边界，缺一不可**：
+          · **轮数上限**（`tries`）：无限补点会把主窗锁在"一直在点"的状态，用户的鼠标就动不了；
+          · **预算上限**（`budget_s`）：本函数跑在 `send_to_popup` 的总预算（`timeout_s`，默认 6 秒）
+            之内，而那段预算**还要留给后面的投递**。⚠️ 且 `ensure_popup` 里的 `t0` 是在**双击之后**
+            才取的（它只管右键那条路）⇒ 双击**不受任何既有截止约束**，必须自带一个；
+            否则"一直在补点"会把 6 秒吃光，**结果一条都发不出去**
+            （＝用户报的「only_popup 拦截」：独立窗没开出来 ⇒ 按口径如实不发）。
+            取 3 秒＝总预算的一半：补点最多花一半，另一半留给开窗兜底与投递。
         """
         err = _one_click(_tgt)               # 双击第一枪
         if err:
             return False, err
         if not double_click:
             return True, "单click（double_click=False）"
+        _t_start = _t.time()
         for _i in range(max(1, int(tries))):
+            if budget_s and (_t.time() - _t_start) >= float(budget_s):
+                log.info("补点开窗：已用满 %.1fs 预算（点了 %d 轮）⇒ 停手，把剩余时间留给投递",
+                         float(budget_s), _i)
+                break
             _t.sleep(DOUBLE_GAP_S)           # ★ 175ms（实测人手间隔）
             err = _one_click(_tgt)           # 第二枪（补齐一轮双击）
             if err:
