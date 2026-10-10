@@ -105,7 +105,12 @@ for cat, keys in NEW_BATCHES.items():
             ok("台账里记了 %s 的出处" % nm.split("（")[0],
                (k in _ledger) or (nm.split("（")[0] in _ledger))
         t = str((PERSONAS.get(k) or {}).get("text", ""))
-        ok("%s 卡里有引用（「」原文或标注）" % nm.split("（")[0], ("「" in t and "」" in t), str(len(t)))
+        # ⛔ 判据名早就写着「「」原文**或标注**」，实现却只认「」 ⇒ **名实不符**：
+        #    返工清单给交付方的口径正是"**二选一**"（有可靠一手台词的用「」引进原文；
+        #    没有的标「（按其口吻）」）。2026-10-11 实测：东方 3 张按清单**标了「按其口吻」**，
+        #    却因为实现只认「」被判红 ⇒ 是判据漏了另一半，不是交付方没改。
+        ok("%s 卡里有引用（「」原文或标注）" % nm.split("（")[0],
+           ("「" in t and "」" in t) or ("按其口吻" in t), str(len(t)))
 _rimi = str(PERSONAS.get("rimi_bd", {}).get("text", ""))
 ok("没有一手台词的卡标了「（按其口吻）」（rimi_bd）", "按其口吻" in _rimi)
 
@@ -158,10 +163,20 @@ print("── D. 新卡不许塞当代网络梗 ──")
 # ⚠️ 自检防假阳（本轮实测两次）：单字「典」会命中「祭典」、「6」会命中生日「6 月 22 日」
 #    ⇒ 只查**多字网络梗**；单字/单数字那类交给人工审（宁可漏判，也不让自检打假红）
 _BAD_WORDS = ("V我50", "yyds", "YYDS", "绝绝子", "退钱", "先吃饭", "典中典", "破防", "栓Q", "666", "awsl", "笑不活了")
+#: **按卡放行**：词表里某个词在某张卡上**属于正当用法**（角色设定），不判网络梗。
+#  ⛔ 加进来必须写明「为什么它是设定」；这是**按卡放行**，不是把词从表里删掉 ——
+#    别的卡用同一个词仍然会被判红（保持判据的灵敏度）。
+_BAD_WORDS_OK = {
+    "soyo_bd": ("破防",
+                "该角色的心结是解散的乐队 CRYCHIC，剧情里被提就会情绪失控 —— "
+                "「缺点局限」原文写「被提CRYCHIC会当场破防」⇒ 是**角色设定**，不是当代网络梗。"
+                "（2026-10-11 需求方确认：「我觉得那个破防指不定是真的，因为我知道这角色他确实会破防」）"),
+}
 for cat, keys in NEW_BATCHES.items():
     for k in keys:
         t = str((PERSONAS.get(k) or {}).get("text", ""))
-        hit = [w for w in _BAD_WORDS if w in t]
+        _allow_w = (_BAD_WORDS_OK.get(k) or ("", ""))[0]
+        hit = [w for w in _BAD_WORDS if w in t and w != _allow_w]
         ok("%s 无网络梗" % k, not hit, str(hit))
 
 print("")
