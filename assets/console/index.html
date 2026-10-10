@@ -2216,6 +2216,7 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">群友发来 B 站链接（或 BV 号）时，机器人可以去查这条视频的标题、UP、时长、简介和字幕，再回答「这视频讲什么」——<b>不会瞎猜</b>，查不到就直说查不到。查的时候需要连一次 B 站（要用网），看不出来源时它不会假装看过。</span></div>
       <div class="row"><label>听B站视频(秒)</label><input type="number" min="10" max="600" data-cfg="bilibili.listen_max_seconds">
         <span class="hint">让它听一条 B 站视频最多听多少秒（默认 120）。只下载声音那一轨，比整段视频小很多。</span></div>
+      <div class="btns"><button class="ghost" id="biliParse">试一下解析这条链接</button><span class="hint" id="biliParseOut">当场查标题 / UP / 时长 / 简介 —— 只让你看看它能不能看懂，不发消息、不改设置。</span></div>
       <div class="row"><label>外链视频解析</label><input type="checkbox" data-cfg="video_url.enabled">
         <span class="hint">默认关。开启后，群友发来 <b>抖音 / 快手 / 小红书 / YouTube</b> 这类外链时，机器人可以把视频下载下来、抽几帧画面看，再回答「这视频讲了什么」——不是只看标题。<b>这条会真下载整段视频</b>（比 B 站那条重得多），而且要装下载器 yt-dlp；没装、下不动或平台不支持时它会如实说原因，<b>绝不假装看过、不编内容</b>。</span></div>
       <div class="mid" id="videoUrlRows">
@@ -6555,6 +6556,26 @@ $('rawJsonBtn').onclick = ()=>{ window.open('/api/config'+(URL_TOKEN?('?token='+
 if($('musicApply')) $('musicApply').onclick = ()=>{
   const u = (getPath(cfg,'music.qqmusic_apply_url') || 'https://y.qq.com/n/ryqq_v2/qqmusic_skills');
   try{ window.open(u,'_blank'); }catch(e){}
+};
+/* 看懂B站链接「试一下」：当场解析一条链接，把标题/UP/时长/简介回显在这一行。
+   只读一次、不发消息、不改设置 —— 用户想确认"它到底能不能看懂这条"。 */
+if($('biliParse')) $('biliParse').onclick = async ()=>{
+  const btn = $('biliParse'), out = $('biliParseOut');
+  if(btn.dataset.busy === '1') return;
+  const u = (window.prompt('粘一条 B 站链接或 BV 号（如 BV1xx411c7mD）：','') || '').trim();
+  if(!u){ return; }
+  btn.dataset.busy = '1'; const old = btn.textContent; btn.textContent = '解析中…';
+  if(out) out.textContent = '';
+  try{
+    const r = await (await fetch('/api/bilibili-parse',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url:u})})).json();
+    if(out) out.textContent = r.ok
+      ? ('✓ '+(r.title||'(无标题)')+'｜UP '+(r.up||'—')+'｜时长 '+(r.duration||'—')
+         + (r.has_sub?'｜有字幕':'｜无字幕'))
+      : ('✗ '+(r.error||'解析失败'));
+  }catch(e){ if(out) out.textContent = '✗ 请求失败：'+e; }
+  btn.dataset.busy = '0'; btn.textContent = old;
 };
 $('pauseBtn').onclick = async ()=>{
   const btn = $('pauseBtn');

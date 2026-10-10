@@ -2879,6 +2879,29 @@ def main():
                 "summary": "通过 %d 项 / 注意 %d 项 / 失败 %d 项" % (ok_n, warn_n, fail_n),
                 "cancelled": _selfcheck_cancel[0]}
 
+    def bilibili_parse_fn(url=""):
+        """「看懂 B 站链接」的试一下：解析一条链接，回标题/UP/时长/简介/有没有字幕。
+
+        只读、不落盘、不发消息 —— 用户在面板上想确认"它到底能不能看懂这条"。
+        解析走 `agent/bilibili.py::info()`（联网一次）。
+        """
+        u = str(url or "").strip()
+        if not u:
+            return {"ok": False, "error": "先填一条 B 站链接（或 BV 号）"}
+        try:
+            from agent import bilibili as _bili
+            r = _bili.info(u)
+            if not r:
+                return {"ok": False, "error": "没解析出内容（链接不对，或这条视频拿不到信息）"}
+            return {"ok": True,
+                    "title": str(r.get("title") or ""),
+                    "up": str(r.get("up") or r.get("owner") or ""),
+                    "duration": str(r.get("duration") or ""),
+                    "desc": str(r.get("desc") or "")[:300],
+                    "has_sub": bool(r.get("subtitle") or r.get("has_sub"))}
+        except Exception as e: # noqa: BLE001
+            return {"ok": False, "error": "解析失败：%s" % str(e)[:120]}
+
     def poke_test_fn(group_wxid="", verify_only=False):
         # 拍一拍诊断：目标直接从微信数据库取（不依赖控制台存档，任何群有人说过话即可）；
         # 手动诊断不受白名单限制（自动拍一拍仍只拍监控中的群）；
@@ -3295,7 +3318,8 @@ def main():
                   watermark_reset_fn=_reset_watermark,
                   pause_fn=lambda: orch.set_paused(True), resume_fn=lambda: orch.set_paused(False),
                   shutdown_fn=shutdown_fn, whale=orch.whale,
-                  poke_test_fn=poke_test_fn, selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
+                  poke_test_fn=poke_test_fn, bilibili_parse_fn=bilibili_parse_fn,
+                  selfcheck_fn=selfcheck_fn, restart_fn=restart_fn,
                   groups_fn=groups_fn, memory_fn=memory_fn,
                   # ⛔ 「刷新群列表」只换 `wechat._groups` 是不够的 ——
                   #   监听侧的 targets 也得重算（否则界面同时出现"读到 N 个群"与"监听目标 0 个"

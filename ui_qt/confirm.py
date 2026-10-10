@@ -448,6 +448,127 @@ class ChoiceDialog(DraggableDialog, QDialog):
         self.enable_drag()
 
 
+class TextPromptDialog(DraggableDialog, QDialog):
+    """**收一行文本**的自绘弹窗（替掉系统 `QInputDialog`）。
+
+    ⛔ 为什么自己造：硬规矩第 1 条是"0 系统 MessageBox"；`QInputDialog` 与
+    `QMessageBox` 同属系统弹窗族，外观与项目其余浮层两条来源。项目此前**没有任何
+    输入弹窗**（`confirm.py` 只有确认/提示/多选一），所以需要输入的地方只能自己画。
+
+    与 `ConfirmDialog` 同一套外壳（自绘圆角卡 ＋ 可拖动 ＋ 居中于父窗）：
+    标题 / 说明 / 一行输入框 / 取消 ＋ 确定。
+
+    契约：
+      · `value`：确定后是**已 strip 的**输入文本；取消或 Esc 是空串（与 `choice` 同口径，
+        调用方**靠空串判"没给"**，不要去比 `result_ok`）。
+      · 默认焦点在输入框（这是要用户填东西的窗，不是危险确认）；回车＝确定。
+      · `allow_empty=False` 时确定钮初始置灰，输入非空才亮。
+    """
+
+    decided = Signal(str)
+
+    def __init__(
+        self,
+        t: Tokens,
+        parent: QWidget,
+        title: str,
+        intro: str = "",
+        placeholder: str = "",
+        initial: str = "",
+        ok_label: str = "确定",
+        cancel_label: str = "取消",
+        allow_empty: bool = False,
+    ):
+        super().__init__(parent)
+        self.t = t
+        self.value = ""
+
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        shell = QFrame()
+        self._apply_shell(shell)
+        outer.addWidget(shell)
+
+        box = QVBoxLayout(shell)
+        box.setContentsMargins(24, 22, 24, 18)
+        box.setSpacing(12)
+
+        tl = QLabel(_clean(title))
+        tl.setFont(qfont(t, 16, 600))
+        tl.setStyleSheet(f"color:{t.tx};background:transparent;")
+        box.addWidget(tl)
+
+        if intro:
+            il = QLabel(_clean(intro))
+            il.setFont(qfont(t, t.body_size))
+            il.setWordWrap(True)
+            il.setMinimumHeight(_wrap_h(_clean(intro), t.body_size, 340))
+            il.setStyleSheet(f"color:{t.tx2};background:transparent;")
+            box.addWidget(il)
+
+        from PySide6.QtWidgets import QLineEdit # noqa: PLC0415
+
+        self.edit = QLineEdit()
+        self.edit.setText(str(initial or ""))
+        self.edit.setPlaceholderText(_clean(placeholder))
+        self.edit.setFont(qfont(t, t.body_size))
+        self.edit.setFixedHeight(34)
+        self.edit.setStyleSheet(field_qss(t))
+        self.edit.textChanged.connect(self._on_changed)
+        box.addWidget(self.edit)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 0)
+        row.setSpacing(10)
+        row.addStretch(1)
+        self.btn_cancel = Btn(cancel_label, t, "ghost")
+        self.btn_cancel.clicked.connect(self._cancel)
+        row.addWidget(self.btn_cancel)
+        self.btn_ok = Btn(ok_label, t, "primary")
+        self.btn_ok.clicked.connect(self._ok)
+        row.addWidget(self.btn_ok)
+        box.addLayout(row)
+
+        if not allow_empty and not str(initial or "").strip():
+            self.btn_ok.setEnabled(False)
+
+        self._center_on(parent)
+        self.edit.setFocus()
+
+    _apply_shell = ConfirmDialog._apply_shell
+    _center_on = ConfirmDialog._center_on
+
+    def _on_changed(self, s: str) -> None:
+        self.btn_ok.setEnabled(bool(s.strip()))
+
+    def _ok(self) -> None:
+        v = self.edit.text().strip()
+        if not v and not self.btn_ok.isEnabled():
+            return
+        self.value = v
+        self.decided.emit(v)
+        self.accept()
+
+    def _cancel(self) -> None:
+        self.value = ""
+        self.decided.emit("")
+        self.reject()
+
+    def keyPressEvent(self, e): # noqa: N802
+        if e.key() == Qt.Key.Key_Escape:
+            self._cancel()
+            return
+        super().keyPressEvent(e)
+
+    def showEvent(self, e): # noqa: N802
+        super().showEvent(e)
+        self.enable_drag()
+
+
 # ---------------------------------------------------------------- 自检
 
 

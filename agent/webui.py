@@ -404,7 +404,9 @@ class WebUI:
                  # ⛔ 补：webui 内部是
                  #   `getattr(parent, "refresh_targets_fn", None)` 取它的，但构造函数从没收过这个参数
                  #   ⇒ persona_morph.py:3041 一传参就 TypeError，**后端整条起不来**（控制台永远起不来）。
-                 refresh_targets_fn=None):
+                 refresh_targets_fn=None,
+                 # 「看懂B站链接」试一下：`(url) -> dict`。不给 ⇒ 面板点"试一下"会如实报错。
+                 bilibili_parse_fn=None):
         self.status_provider = status_provider # () -> dict
         self.log_buffer = log_buffer # collections.deque[str]
         self.test_api_fn = test_api_fn # () -> dict
@@ -417,6 +419,7 @@ class WebUI:
         self.restart_fn = restart_fn or (lambda: None) # () -> None（后台无窗口重启）
         self.whale = whale # agent.whale.WhaleWidget（小鲸鱼挂件，可选）
         self.poke_test_fn = poke_test_fn or (lambda: {"error": "未提供 poke_test_fn"}) # () -> dict
+        self.bilibili_parse_fn = bilibili_parse_fn or (lambda url="": {"ok": False, "error": "未提供 bilibili_parse_fn"}) # (url) -> dict
         self.selfcheck_fn = selfcheck_fn or (lambda: {"ok": False, "error": "未提供 selfcheck_fn"}) # () -> dict
         self.groups_fn = groups_fn or (lambda: {"ok": True, "groups": []}) # () -> dict（群列表）
         # (why) -> None：刷完群列表要重算监听目标。原来是 getattr 取的"隐身属性"，
@@ -2747,6 +2750,20 @@ def _make_handler(parent):
                     self._json(parent.test_api_fn())
                 else:
                     self._json({"ok": False, "error": "未提供 test_api_fn"})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        def _rapi_bilibili_parse_post(self, path, data, parsed, method):
+            """「看懂 B 站链接」的试一下：当场解析一条链接，把结果回给面板。
+
+            只做**一次解析**，不落盘、不发消息 —— 用户想确认"它到底能不能看懂这条"。
+            解析本身在 `agent/bilibili.py::info()`（联网一次查标题/UP/时长/简介/字幕）。
+            """
+            try:
+                if parent.bilibili_parse_fn:
+                    self._json(parent.bilibili_parse_fn(str(data.get("url") or "")))
+                else:
+                    self._json({"ok": False, "error": "未提供 bilibili_parse_fn"})
             except Exception as e:
                 self._json({"ok": False, "error": str(e)})
 

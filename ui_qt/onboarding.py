@@ -416,59 +416,51 @@ class _Wizard(DraggableDialog, QDialog):
     def _render_step_hint(self) -> None:
         """把「会让识别/落点失准」的两项摆出来（微信界面浅色 / 微信字号标准）。
 
-        ⛔ 只提醒、不替用户改；文案直接用后端那份（`env_hint.text`），**前端不自己编**。
+        ⛔ 只提醒、不替用户改。
+        ⭐ **不逐条渲染"✓/!/· 没测到"**（2026-10-10 用户当面纠正）：
+           这是**引导**，不是体检。旧版那三态的最后一项永远是
+           "· 微信字号还没测到（目前没有可靠的读法）"，用户点几次「重新检测」都还是它，
+           像在说"你有问题"却永远修不好 ⇒ 现在只列"要设成什么样"两条，让用户照做。
         拉一次 `/api/env-guide` 只为**算出总步数**（后面有多少个缺件），不在这里展示。
         """
         t = self.t
-        h = self._hint_fetch()
         r = self._env_fetch()
         self._env_items = r.get("items") or []
         self._env_pending_cache = self._env_pending()
         self._env_i = 0
         total = self._env_total_steps()
         self.desc.setText(
-            "第 5 步/共 %d 步：环境校准 —— 这几样会直接影响识别的准头，先对一下。"
+            "第 5 步/共 %d 步：环境校准 —— 这两样会影响识别的准头，顺手调一下。"
             "**只是提醒：不改也能用**，只是容易认错、要多绕一层。" % total)
         self.mid.setVisible(False)
         self._clear_body()
-        items = h.get("items") or []
-        if not items:
-            self.body_lay.addWidget(desc(t, str(h.get("text") or "环境没测到（后台没连上）")))
-        else:
-            box = QWidget()
-            bl = QVBoxLayout(box)
-            bl.setContentsMargins(0, 0, 0, 0)
-            bl.setSpacing(3)
-            _mark = {"ok": ("✓", t.ok), "warn": ("!", t.err), "unknown": ("·", t.tx3)}
-            for it in items:
-                mk, col = _mark.get(str(it.get("level") or ""), ("·", t.tx3))
-                lb = QLabel("%s %s" % (mk, str(it.get("text") or "").replace("**", "")))
-                lb.setWordWrap(True)
-                lb.setFont(qfont(t, t.body_size))
-                lb.setStyleSheet("color:%s;background:transparent;" % col)
-                bl.addWidget(lb)
-                why = str(it.get("why") or "").replace("**", "")
-                if why:
-                    wl = QLabel("　　" + why)
-                    wl.setWordWrap(True)
-                    wl.setFont(qfont(t, t.body_size - 1))
-                    wl.setStyleSheet("color:%s;background:transparent;" % t.tx2)
-                    bl.addWidget(wl)
-            self.body_lay.addWidget(box)
-            self.body_lay.addWidget(desc(t, str(h.get("text") or "").replace("**", "")))
+        box = QWidget()
+        bl = QVBoxLayout(box)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(5)
+        _steps = (
+            "① 微信 → 我 → 设置 → 通用 → 深色模式：选「普通」（浅色界面，深色会让识别认错字）。",
+            "② 微信 → 我 → 设置 → 通用 → 字体大小：拖到中间那档（默认的「标准」，改大改小都会改行高）。",
+        )
+        for _s in _steps:
+            lb = QLabel(_s.replace("**", ""))
+            lb.setWordWrap(True)
+            lb.setFont(qfont(t, t.body_size))
+            lb.setStyleSheet("color:%s;background:transparent;" % t.tx)
+            bl.addWidget(lb)
+        self.body_lay.addWidget(box)
+        self.body_lay.addWidget(desc(
+            t, "这两样按上面的位置调成默认档就行；不想改也能继续用。"))
         if self._env_pending_cache:
             self.body_lay.addWidget(desc(
                 t, "接下来 %d 步逐条讲「还缺的是什么、用来干啥、怎么补」。" % len(self._env_pending_cache)))
         row = QHBoxLayout()
-        # ⭐ 「打开引导」：把这几条摆进**一个弹窗**（用户口径："环境引导，弹窗引导"）。
+        # ⭐ 「打开引导」：把这两条摆进**一个弹窗**（用户口径："环境引导，弹窗引导"）。
         #   向导页里仍留一份摘要（用户往下走时不至于两眼一抹黑），
         #   但弹窗才是"照着调"的主场 —— 它可拖动、不被向导页的行数挤扁。
         b_open = Btn("打开引导", t, "primary")
         b_open.clicked.connect(self._open_env_guide)
         row.addWidget(b_open)
-        b_re = Btn("重新检测", t, "ghost")
-        b_re.clicked.connect(self._render_step_hint)
-        row.addWidget(b_re)
         row.addStretch(1)
         self.body_lay.addLayout(row)
         self.b_next.setText("下一步")
@@ -476,13 +468,13 @@ class _Wizard(DraggableDialog, QDialog):
     def _open_env_guide(self) -> None:
         """打开环境引导弹窗（一个弹窗，引导用户把微信调成浅色 + 标准字号）。
 
-        ⚠️ 弹窗**只提醒、不替用户改微信** —— 所以重检按钮只是重拉一次清单。
+        ⚠️ 弹窗**只提醒、不替用户改微信**；用户点「我已设好」⇒ 刷新本页（让他看到已记录）。
         """
         try:
             from envguide import EnvGuideDialog # noqa: PLC0415
             d = EnvGuideDialog(self.t, self, self._hint_fetch())
             if d.exec():
-                self._render_step_hint() # 用户说"我调好了" ⇒ 重拉清单
+                self._render_step_hint() # 用户点「我已设好」⇒ 刷新本页（让他看到已记录）
         except Exception as e: # noqa: BLE001
             self.desc.setText("引导弹窗打不开：%s" % e)
 

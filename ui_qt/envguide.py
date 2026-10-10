@@ -105,10 +105,13 @@ class EnvGuideDialog(DraggableDialog, QDialog):
        **显示缩放**会把用户所有软件的图标显示全搞坏；**OCR 引擎**是程序自己该干的活
        ⇒ 两样都**不许**出现在这里（用户最多只到微信这一层，再往下他管不了也不会）。
 
-    数据来自 `agent/env_hint.check()`（后台算好，前端不自己编文案）。
-
-    ⛔ 只提醒、不替用户改微信（`env_hint` 的三条口径之一）——
-       所以这里**没有**"帮你改好"的按钮，只有"我调好了，重检一下"。
+    ⭐ **不检测、只告知**（2026-10-10 用户当面纠正）：
+       这是**引导**，不是体检 —— 所以**不显示逐条"✓/!/· 没测到"**。
+       旧版那三态的最后一项永远是"· 微信字号还没测到（目前没有可靠的读法）"，
+       用户点「重检一下」翻来覆去还是这一行 ⇒ 像在说"你有问题"却永远修不好。
+       ⇒ 现在只写清"要设成什么样"，两个按钮：
+         · **我已设好** —— 用户确认后放行（`_confirmed=True`，让调用方按达标处理）；
+         · **下一步** —— 不改也能用，直接过（口径：只提醒、不强制）。
     """
 
     rechecked = Signal()
@@ -116,6 +119,8 @@ class EnvGuideDialog(DraggableDialog, QDialog):
     def __init__(self, t: Tokens, parent: QWidget, hint: dict):
         super().__init__(parent)
         self.t = t
+        #: 用户是否确认"已按上面设好"（`guide_env` 用它回话给调用方）。
+        self._confirmed = False
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(True)
@@ -143,52 +148,36 @@ class EnvGuideDialog(DraggableDialog, QDialog):
         sub.setStyleSheet(f"color:{t.tx2};background:transparent;")
         box.addWidget(sub)
 
-        # 逐条摆出来（✓ 已达标 / ! 建议调 / · 没测到）
-        items = (hint or {}).get("items") or []
-        mark = {"ok": ("✓", t.ok), "warn": ("!", t.err), "unknown": ("·", t.tx3)}
-        if items:
-            wrap = QVBoxLayout()
-            wrap.setContentsMargins(0, 2, 0, 2)
-            wrap.setSpacing(8)
-            for it in items:
-                lvl = str(it.get("level") or "")
-                mk, col = mark.get(lvl, ("·", t.tx3))
-                text = _clean(it.get("text"))
-                if not text:
-                    continue
-                row = QHBoxLayout()
-                row.setContentsMargins(0, 0, 0, 0)
-                row.setSpacing(9)
-                ic = QLabel(mk)
-                ic.setFont(qfont(t, t.body_size, 700))
-                ic.setFixedWidth(14)
-                ic.setStyleSheet(f"color:{col};background:transparent;")
-                row.addWidget(ic, 0, Qt.AlignmentFlag.AlignTop)
-                lb = QLabel(text)
-                lb.setFont(qfont(t, t.body_size))
-                lb.setWordWrap(True)
-                lb.setMinimumHeight(_wrap_h(text, t.body_size, 300))
-                lb.setStyleSheet(f"color:{t.tx};background:transparent;")
-                row.addWidget(lb, 1)
-                wrap.addLayout(row)
-                why = _clean(it.get("why"))
-                if why and lvl == "warn":
-                    wl = QLabel("　　" + why)
-                    wl.setFont(qfont(t, t.body_size - 1))
-                    wl.setWordWrap(True)
-                    wl.setMinimumHeight(_wrap_h(why, t.body_size - 1, 290))
-                    wl.setStyleSheet(f"color:{t.tx3};background:transparent;")
-                    wrap.addWidget(wl)
-            box.addLayout(wrap)
-        else:
-            empty = QLabel(_clean((hint or {}).get("text")) or "环境没测到（后台没连上）。")
-            empty.setFont(qfont(t, t.body_size))
-            empty.setWordWrap(True)
-            empty.setMinimumHeight(_wrap_h(empty.text(), t.body_size, 320))
-            empty.setStyleSheet(f"color:{t.tx2};background:transparent;")
-            box.addWidget(empty)
+        # ⭐ 两件事，写成"用户照做就行"的两步 —— ⛔ 不再逐条摆 ✓/!/· 三态。
+        #   口径见类 docstring：这是**引导**，不是体检；旧版最后一项永远显示
+        #   "微信字号还没测到"，用户点几次"重检"都还是它 ⇒ 自相矛盾。
+        wrap = QVBoxLayout()
+        wrap.setContentsMargins(0, 2, 0, 2)
+        wrap.setSpacing(10)
+        for _n, _tx in (
+            ("1", "微信 → 我 → 设置 → 通用 → 深色模式：选「普通」"
+                  "（也就是浅色界面；深色界面会让屏幕识别认错字）。"),
+            ("2", "微信 → 我 → 设置 → 通用 → 字体大小：拖到中间那档"
+                  "（就是默认的「标准」；调大调小都会让每一行的高度变掉）。"),
+        ):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(9)
+            ic = QLabel(_n)
+            ic.setFont(qfont(t, t.body_size, 700))
+            ic.setFixedWidth(14)
+            ic.setStyleSheet(f"color:{t.blue};background:transparent;")
+            row.addWidget(ic, 0, Qt.AlignmentFlag.AlignTop)
+            lb = QLabel(_tx)
+            lb.setFont(qfont(t, t.body_size))
+            lb.setWordWrap(True)
+            lb.setMinimumHeight(_wrap_h(_tx, t.body_size, 300))
+            lb.setStyleSheet(f"color:{t.tx};background:transparent;")
+            row.addWidget(lb, 1)
+            wrap.addLayout(row)
+        box.addLayout(wrap)
 
-        note = QLabel("调好之后点「我调好了，重检一下」；不想调也行，直接关掉就能继续用。")
+        note = QLabel("设好之后点「我已设好」；不想改也没关系，点「下一步」照样能继续用。")
         note.setFont(qfont(t, t.body_size - 1))
         note.setWordWrap(True)
         note.setMinimumHeight(_wrap_h(note.text(), t.body_size - 1, 320))
@@ -199,10 +188,10 @@ class EnvGuideDialog(DraggableDialog, QDialog):
         row.setContentsMargins(0, 4, 0, 0)
         row.setSpacing(10)
         row.addStretch(1)
-        self.btn_later = Btn("以后再说", t, "ghost")
+        self.btn_later = Btn("下一步", t, "ghost")
         self.btn_later.clicked.connect(self.reject)
         row.addWidget(self.btn_later)
-        self.btn_re = Btn("我调好了，重检一下", t, "primary")
+        self.btn_re = Btn("我已设好", t, "primary")
         self.btn_re.clicked.connect(self._recheck)
         row.addWidget(self.btn_re)
         box.addLayout(row)
@@ -211,6 +200,8 @@ class EnvGuideDialog(DraggableDialog, QDialog):
         self.btn_re.setFocus()
 
     def _recheck(self) -> None:
+        """用户确认"已按上面设好" ⇒ 记一笔并放行（调用方按达标处理，不再判"没测到"）。"""
+        self._confirmed = True
         self.rechecked.emit()
         self.accept()
 
@@ -544,9 +535,15 @@ def _run_with_progress(dlg: "MissingGuideDialog") -> None:
 
 # ---------------------------------------------------------------- 高层入口
 def guide_env(t: Tokens, parent: QWidget, hint: dict) -> bool:
-    """环境引导（一个弹窗）。返回 True ＝ 用户点了"重检一下"。"""
+    """环境引导（一个弹窗）。返回 True ＝ 用户点了「我已设好」（按达标处理）。
+
+    ⚠️ 返回值语义已改（2026-10-10）：旧版是"点了重检一下"，新版是"用户确认已设好"。
+       这是**引导**不是体检 —— 用户说设好了就当真，不再去判"有没有测到"。
+       `hint` 仅作兼容保留（新界面不再逐条渲染它）。
+    """
     d = EnvGuideDialog(t, parent, hint)
-    return d.exec() == QDialog.DialogCode.Accepted
+    ok = d.exec() == QDialog.DialogCode.Accepted
+    return ok and bool(getattr(d, "_confirmed", False))
 
 
 def guide_missing(t: Tokens, parent: QWidget, items: list) -> list:
@@ -578,9 +575,11 @@ def _selftest() -> list:
     # 用 AST 把**注释与文档字符串**整段去掉：`ast.unparse` 只吐代码。
     # ⚠️ 但 `ast.unparse` **会保留 docstring**（它是 `Expr(Constant)` 节点，不是注释）
     #   —— 本文件开头的纪律说明就是 docstring，照样会被抓出来 ⇒ 先手动把 docstring 摘掉。
+    # ⚠️ 必须先 `list(ast.walk(...))` 收全再摘：边 walk 边 pop 会因遍历指针移动漏掉后面的节点
+    #   （实拍：模块级 docstring 摘了、类里的没摘，判据一直命中自己写的说明）。
     try:
         tree = ast.parse(mod)
-        for node in ast.walk(tree):
+        for node in list(ast.walk(tree)):
             body = getattr(node, "body", None)
             if (isinstance(body, list) and body
                     and isinstance(body[0], ast.Expr)
@@ -598,6 +597,9 @@ def _selftest() -> list:
     _tutorial = "怎么办" + chr(65306) + "点"
     # ⛔ 同样必须拼出来：`Thread(` 若写字面量，本行自己就把它引进 `code` 里了（自指陷阱）。
     _rawthread = "Th" + "read("
+    # ⚠️ 同上：这两个也要拼出来（`_selftest` 自身源码在 `code` 里 ⇒ 写字面量自命中）。
+    _notprobed = "没" + chr(27979) + "到"
+    _notchecked = "未" + chr(26816) + "测"
     rows = [
         ("没有用系统 MessageBox（硬规矩 1）", _msgbox not in code, ""),
         ("三段式：初始两按钮「忽略」「下载」", 'Btn("忽略"' in code and 'Btn("下载"' in code, ""),
@@ -607,6 +609,14 @@ def _selftest() -> list:
         ("★ 弹窗上写明要下载多大（读后端 size_text）", "size_text" in code and "要下载的东西" in code, ""),
         ("★ 环境引导＝引导用户调微信（浅色 + 标准字号）",
          "调成这个样子" in code and "不用改也能用" in code, ""),
+        # ⛔ 环境引导**不做体检**：不许再出现三态渲染的痕迹。
+        #    恢复它就等于回到"最后一项永远显示没测到、点几次重检都一样"的老路。
+        ("⛔ 环境引导不渲染三态结论（只讲「该设成什么样」）",
+         _notprobed not in code and _notchecked not in code, ""),
+        ("⛔ 环境引导两个按钮：我已设好 / 下一步",
+         'Btn("我已设好"' in code and 'Btn("下一步"' in code, ""),
+        ("⛔ 确认走 _confirmed 标记（不靠重新检测）",
+         "_confirmed" in code, ""),
         ("⛔ 文案过 _clean（Qt 不解析 Markdown 星号）", "_clean(" in code, ""),
         ("⛔ 没有教程式文案（不出现在弹窗里）", _tutorial not in code, ""),
         # ⛔ 跨线程落地不许手搓（全量棘轮硬零）：必须走 async_ui.run_async，

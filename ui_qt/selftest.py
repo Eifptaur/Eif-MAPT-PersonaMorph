@@ -6566,8 +6566,10 @@ def t_g17() -> None:
     ① 厂商清单/模型列表/Key 前缀运行时解析 web PROVIDERS（不复制）；
     ② 各步渲染与落盘（第 1 步 vendor→model→key，第 3 步群勾选，第 4 步环境总览 + 逐项，恢复/体检）；
     ③ 「已配置 Key 不打扰」的判定（对齐 web :6120-6123）；
-    ④ 环境引导：第 4 步＝**运行环境校准**（`/api/status` 的 `env_hint`：浅色/缩放/字号/OCR），
-       第 5 步起＝**每个功能缺件各一步**（GET `/api/env-guide`）；守"只检测+指路、不强制"红线；
+    ④ 环境引导：第 4 步＝**运行环境校准** —— **只告知"该设成什么样"两条指引**
+       （微信深色模式选普通 / 字号拖回标准档），**不做体检**：不读 `/api/status` 的三态
+       `env_hint`、不渲染"✓/!/· 没测到"；第 5 步起＝**每个功能缺件各一步**（GET `/api/env-guide`）；
+       守"只提醒+指路、不强制"红线；
     ⑤ ⛔ **步数不写死**：0 项缺 ⇒ 运行环境之后直接跳恢复；缺项越多步越多（不许"共 6 步"）。
     """
     import os # noqa: PLC0415
@@ -6682,22 +6684,13 @@ def t_g17() -> None:
        str(captured2.get("wechat.group_name_white_list")))
     ck("g17 第 3 步保存后进入第 4 步（恢复）", w.step == 4, "step=%d" % w.step)
 
-    # ⑦ 第 5 步＝环境校准：读 /api/status 的 env_hint（字号/浅色/缩放/OCR），只提醒不强制
-    _st_calls = {"n": 0}
+    # ⑦ 第 5 步＝环境校准：**只告知怎么设**（微信深色模式/字号），不读 /api/status 做体检。
     _orig_st = onboarding.config_io.get_json
 
     def _fake_env(url, *a, **k):
-        if url.startswith("/api/status"):
-            _st_calls["n"] += 1
-            return {"env_hint": {
-                "level": "warn", "ok": False, "title": "运行环境",
-                "text": "建议调一下运行环境，识别会稳很多：\n· 把微信字号调回**默认**\n"
-                        "不改也能用，只是识别会差一些（会走降级路径、可能要人工兜底）。",
-                "items": [
-                    {"key": "font", "level": "warn", "text": "把微信字号调回**默认**（现在不是默认档）",
-                     "why": "字号会改行高 ⇒ 非默认档等于换了一套几何"},
-                    {"key": "scale", "level": "ok", "text": "显示缩放：100%", "why": ""}],
-                "detail": {"theme": "dark", "scale": 1.0, "font": None, "ocr_ready": True}}}
+        # 只留 /api/env-guide 一档：这一页现在唯一的取数就是它（用来算后面有几个缺件步）。
+        # ⛔ 别把 /api/status 的 env_hint 桩加回来 —— 新口径下这条路径已经不存在，
+        #    留着它会让判据"看起来还在验证体检"，实际永远走不到。
         assert url.startswith("/api/env-guide"), url
         return {"ok": False, "n_ok": 1, "n_fail": 1, "n_total": 2,
                 "why": "1 项还没就绪（补齐后点重检）：虚拟声卡（发真语音条）",
@@ -6717,9 +6710,15 @@ def t_g17() -> None:
         onboarding.config_io.get_json = _orig_st
     _QLabel = __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel
     _hint_text = "".join(lb.text() for lb in w.body.findChildren(_QLabel))
-    ck("g17 第 5 步：读 /api/status 的 env_hint", _st_calls["n"] >= 1, "n=%d" % _st_calls["n"])
-    ck("g17 第 5 步：渲染「字号」这一条", "字号" in _hint_text, _hint_text[:90])
-    ck("g17 第 5 步：渲染「缩放」这一条", "缩放" in _hint_text, _hint_text[:90])
+    # 第 5 步是「告诉用户怎么设」，不是「体检」⇒ 只断言两条指引摆在页面上。
+    # ⛔ 别再加"渲染「字号/缩放」这一条"那种逐条三态断言：那套渲染已按口径删除
+    #    （引导不是体检，不报"没测到"），恢复它等于把用户赶回"永远修不好"的体验。
+    ck("g17 第 5 步：页面给出「深色模式」指引",
+       "深色模式" in _hint_text, _hint_text[:90])
+    ck("g17 第 5 步：页面给出「字体大小」指引",
+       "字体大小" in _hint_text, _hint_text[:90])
+    ck("g17 第 5 步：不许再渲染「没测到」这类体检结论",
+       "还没测到" not in _hint_text and "未检测" not in _hint_text, _hint_text[:90])
     ck("g17 第 5 步：写明「不改也能用」（不强制）",
        "不改也能用" in (w.desc.text() + _hint_text), (w.desc.text() + _hint_text)[:120])
     ck("g17 第 5 步：待讲缺件＝只含未就绪项（微信本体不占步）",

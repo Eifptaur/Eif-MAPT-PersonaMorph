@@ -7291,6 +7291,62 @@ def _act_wx_open_site(btn, note) -> None:
         _c8_say(note, t, "已尝试打开官网：%s（打不开就手动复制到浏览器）" % u, "ok")
 
 
+def _act_bili_parse(btn, note) -> None:
+    """B 站链接解析「试一下」：贴一条链接，当场看后端能不能读懂（只读，不发消息）。
+
+    为什么需要它：后端 `agent/bilibili.py` 一直有完整解析能力，但界面上只有一行
+    「B 站链接解析 已开启/已关闭」的状态徽章 —— 用户没法验证它到底认不认自己的链接，
+    只能去群里发一条才知道成不成。
+
+    契约：弹输入框收链接 ⇒ POST `/api/bilibili-parse` ⇒ 回显 标题／UP主／时长／有无字幕。
+    回显里**不含下载动作**（这条路径只查元信息，不落盘、不影响会话）。
+    """
+    from confirm import TextPromptDialog # noqa: PLC0415
+
+    t = getattr(btn, "t", None)
+    if note is None or t is None:
+        return
+    parent = btn.window()
+    d = TextPromptDialog(
+        t, parent,
+        "试一下解析 B 站链接",
+        "把你看到的链接整条粘进来（手机 App 的分享文本也行，里面带链接就认得出来）。"
+        "这里只查标题、UP 主、时长，不发消息、不改设置。",
+        placeholder="https://www.bilibili.com/video/BV…",
+        ok_label="解析一下",
+    )
+    d.exec()
+    url = str(getattr(d, "value", "") or "").strip()
+    if not url:
+        return
+
+    def _run() -> str:
+        from config_io import post_json # noqa: PLC0415
+
+        r = post_json("/api/bilibili-parse", {"url": url}, timeout=25.0)
+        if r is None:
+            raise RuntimeError("后台没连上，等一下再试")
+        if not r.get("ok"):
+            raise RuntimeError(str(r.get("error") or "没认出这条链接"))
+        parts = ["认出来了：%s" % (r.get("title") or "（没标题）")]
+        if r.get("up"):
+            parts.append("UP 主 %s" % r["up"])
+        sec = r.get("duration")
+        if sec:
+            try:
+                sec = int(float(sec))
+                parts.append("时长 %d 分 %d 秒" % (sec // 60, sec % 60))
+            except Exception: # noqa: BLE001
+                parts.append("时长 %s" % sec)
+        parts.append("字幕：%s" % ("有" if r.get("has_sub") else "没有"))
+        desc = str(r.get("desc") or "").strip()
+        if desc:
+            parts.append("简介：%s" % (desc[:60] + ("…" if len(desc) > 60 else "")))
+        return " · ".join(parts)
+
+    _post_action_raw(btn, note, _run, busy="正在解析这条链接…")
+
+
 def _act_music_apply(btn, note) -> None:
     """音乐推荐：系统浏览器打开 **QQ 音乐 key 申请页**（教用户自己去申请）。
 
@@ -8313,6 +8369,8 @@ ACT_CUSTOM = {
                    "打开微信官网 weixin.qq.com（系统浏览器）"),
     "musicApply": (_act_music_apply,
                    "打开 QQ 音乐 key 申请页（y.qq.com/n/ryqq_v2/qqmusic_skills，系统浏览器）"),
+    "biliParse": (_act_bili_parse,
+                  "自绘输入弹窗收一条链接 ⇒ POST /api/bilibili-parse（只查标题/UP/时长/有无字幕，不发消息）"),
     "autostartToggle": (_act_autostart_toggle,
                         "真接后端：/api/autostart（先读当前态再取反；用户级启动文件夹，免管理员）"),
     "utExport": (_act_ut_export,

@@ -98,6 +98,9 @@ ROUTES = {
     "/api/persona/cats/save": ("POST",),
     "/api/persona/score": ("POST",),
     "/api/persona/web-fetch": ("POST",),
+    # 「看懂B站链接」的**试一下**：POST {url} ⇒ 当场解析一条 B 站链接，
+    # 回 {ok,title,up,duration,desc,has_sub}。给两端面板一个"开关之外还能验证"的入口。
+    "/api/bilibili-parse": ("POST",),
     "/api/personas": ("GET",),
     "/api/personas/custom": ("GET", "POST"),
     "/api/personas/custom/del": ("POST",),
@@ -402,6 +405,9 @@ HANDLERS = {
     },
     "/api/persona/score": {
         "POST": "_rapi_persona_score_post",
+    },
+    "/api/bilibili-parse": {
+        "POST": "_rapi_bilibili_parse_post",
     },
     "/api/persona/web-fetch": {
         "POST": "_rapi_persona_web_fetch_post",
