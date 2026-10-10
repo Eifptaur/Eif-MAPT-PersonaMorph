@@ -7299,6 +7299,9 @@ def _web_guides() -> dict:
 _GUIDE_KEY_OF = {
     "utGuide": "tools", "utBarGuide": "tools", "ttsGuide": "tts", "igGuide": "imggen",
     "vgGuide": "video", "vsGuide": "voice", "irGuide": "image", "fsGuide": "file",
+    # 投稿制作规范（资源市场/上传弹窗里那颗「制作规范」）—— 正文与可复制模板都在
+    # web `GUIDES.submission` 那一份里，Qt 运行时解析，不另抄一份。
+    "subGuide": "submission",
 }
 
 
@@ -8307,8 +8310,16 @@ def _market_dialog(t: Tokens, parent, kind: str = "persona") -> None:
         b_get.clicked.connect(lambda _=False, _k=k: _market_code_get(t, dlg, _k))
         b_site = Btn("打开网站", t, "ghost")
         b_site.clicked.connect(lambda _=False, _k=k: _market_open_site(_k))
+        # ⭐ 制作规范：投稿前先看它 —— 站上收稿就是按这份规范读的
+        #    （人设七段体 / 技能写"使用场景"不写触发词 / 技能工具要打成 zip）。
+        #    正文与可复制模板都在 web `GUIDES.submission` 一份里，这里只是入口。
+        b_sub = Btn("制作规范", t, "ghost")
+        b_sub.setToolTip("投稿要对齐的写法：人设七段体、技能写使用场景、工具技能打成 zip；带一键复制模板")
+        b_sub.clicked.connect(
+            lambda _=False: _guide_open(_GUIDE_KEY_OF["subGuide"], b_sub, None))
         acts.add(b_up)
         acts.add(b_get)
+        acts.add(b_sub)
         acts.add(b_site)
         body_lay.addWidget(acts)
 
@@ -8363,12 +8374,47 @@ def _market_act(dlg, action: str, kind: str, item_id: str) -> None:
     _async_post(None, api, {"kind": kind, "id": item_id}, _done, timeout=60.0)
 
 
-def _market_upload(t: Tokens, parent, kind: str) -> None:
-    """投稿上传：选文件 → 填标题/作者 → 三步直传 → 如实回显。
+#: 投稿时**每类交什么文件**（建设方《回软件方》§2.1 / §3.3 的原文口径）。
+#  ⛔ 这一张表是界面侧的唯一真值：文件选择器的过滤器、类别↔后缀校验、提示话术
+#     全从它取 —— 别在三处各写一遍（漏改一处就是"选得进去、传上去被拒"）。
+_UPLOAD_PROFILE = {
+    "persona": {
+        "filter": "人设正文 (*.md *.txt)",
+        "exts": (".md", ".txt"),
+        "need": "人设是纯文本设定，交一个 .md 或 .txt 就行 —— 不用打包。"
+                "正文请按「制作规范」写成七段体（身份背景 / 性格 / 说话风格 / 动机 / "
+                "价值观 / 行为规则 / 缺点局限）。",
+        "wrong": "人设只能交 .md 或 .txt 的正文文件。要交技能/工具请到对应的那一栏。",
+    },
+    "skill": {
+        "filter": "技能打包 (*.zip)",
+        "exts": (".zip",),
+        "need": "技能里带着说明和可执行脚本，单个文本文件跑不起来 —— "
+                "请把整个技能文件夹打成一个 .zip 再交（不超过 20 MB）。",
+        "wrong": "技能要交 .zip（整个文件夹打包）。单个 .md/.txt 装进软件是用不了的。",
+    },
+    "tool": {
+        "filter": "工具打包 (*.zip)",
+        "exts": (".zip",),
+        "need": "工具里带着入口脚本和清单文件，单个文本文件跑不起来 —— "
+                "请把整个工具文件夹打成一个 .zip 再交（不超过 20 MB）。",
+        "wrong": "工具要交 .zip（整个文件夹打包）。单个 .md/.txt 装进软件是用不了的。",
+    },
+}
 
-    对齐网站方的《客户端上传对接说明》：
-      · 选完文件**先本地预检**（类型白名单 / ≤ 20 MB）——不合格**一个请求都不发**
-        （省一次限流配额，也免得用户白等）；
+
+def _market_upload(t: Tokens, parent, kind: str) -> None:
+    """投稿上传：选文件 → 填名称/作者 → 三步直传 → 如实回显。
+
+    对齐网站方的《客户端上传对接说明》与《回软件方-投稿链路对齐》：
+      · 弹窗**只收两栏**：名称（必填，站上叫 `name`/`title`）＋ 作者（可留空）。
+        ⛔ 不在客户端再展开"版本/说明/使用场景"等字段 —— 站侧从**投稿文件正文**里读，
+          机器该算的（体积/校验值）服务端自己算。
+      · **文件类型必须跟类别对上**（建设方 §2.1 / §3.3）：
+          人设＝单个 `.md`/`.txt`（纯文本设定，不用打包）；
+          技能/工具＝整个文件夹打成的 `.zip`（里面是可执行代码，单个文本文件跑不起来）。
+        选错类别就**当场说清该交什么**，别等上传被拒。
+      · 选完文件**先本地预检**（类型 / ≤ 20 MB）——不合格**一个请求都不发**；
       · `formLoadedAt` 在**打开这个弹窗那一刻**取（服务端靠"提交时刻 − 它 < 3 秒"
         判机器人；用户不可能 3 秒填完，所以正常一定通过）；
       · ⛔ **不带 `website`**（那是蜜罐字段）；
@@ -8383,9 +8429,10 @@ def _market_upload(t: Tokens, parent, kind: str) -> None:
     from widgets import Field # noqa: PLC0415
     from panels_qt import _line # noqa: PLC0415
 
+    # 按类别定"能选什么文件"与"提示话术"（与服务端 §2.1 一致，一处真值）
+    _PF = _UPLOAD_PROFILE.get(str(kind or "").strip().lower()) or _UPLOAD_PROFILE["tool"]
     path, _sel = QFileDialog.getOpenFileName(
-        parent, "选择要上传的文件", "",
-        "允许的类型 (*.zip *.md *.txt *.json *.svg *.png *.webp)")
+        parent, "选择要上传的文件", "", _PF["filter"])
     if not path:
         return
 
@@ -8417,6 +8464,13 @@ def _market_upload(t: Tokens, parent, kind: str) -> None:
     tl.setStyleSheet(f"color:{t.tx};background:transparent;")
     box.addWidget(tl)
 
+    # 类别要求的说明（人设交文本、技能工具交 zip）—— 投稿人最常踩的就是这一条
+    req = QLabel(_PF["need"])
+    req.setWordWrap(True)
+    req.setFont(qfont(t, 12))
+    req.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    box.addWidget(req)
+
     kb = QLabel(os.path.basename(path))
     kb.setFont(qfont(t, 12))
     kb.setStyleSheet(f"color:{t.tx2};background:transparent;")
@@ -8432,6 +8486,14 @@ def _market_upload(t: Tokens, parent, kind: str) -> None:
     except Exception: # noqa: BLE001
         _ok, _size = True, os.path.getsize(path)
 
+    # ⭐ 类别 ↔ 文件类型必须对上（建设方 §2.1）：人设只收 .md/.txt，技能/工具只收 .zip。
+    #    ⛔ 不靠后端拦 —— 用户选完文件就该**当场**知道"这类别不能交这种文件"。
+    if _ok:
+        _ext = os.path.splitext(path)[1].lower()
+        if _ext not in _PF["exts"]:
+            _ok = False
+            _msg = _PF["wrong"]
+
     info = QLabel(("%.1f MB" % (_size / 1048576.0)) if _size else "")
     info.setFont(qfont(t, 12))
     info.setStyleSheet(f"color:{t.tx3};background:transparent;")
@@ -8441,11 +8503,13 @@ def _market_upload(t: Tokens, parent, kind: str) -> None:
         info.setStyleSheet(f"color:{t.err};background:transparent;")
 
     # ⛔ `Field(t, label, desc, control)` 的第 2 参是**左侧标签**、取值要读它挂的 `control`
-    #    —— 不能写成 `Field(t, "标题")` 然后就找 `Field` 要值（那样既没有输入框、
+    #    —— 不能写成 `Field(t, "名称")` 然后就找 `Field` 要值（那样既没有输入框、
     #    也没有取值口）。这里按仓库既有写法：先 `_line(...)` 造输入框，再塞进 `Field`。
-    t_title = _line(t, placeholder="留空 = 用文件名")
+    #    ⭐ 这一栏站上叫「名称」（《回软件方》§2.1 表第一行）：即文件里也有名字，
+    #       这一栏用来在待审队列里给别人看 ⇒ 措辞跟站上对齐，不叫"标题"。
+    t_title = _line(t, placeholder="必填 = 站上队列里显示的名字")
     t_author = _line(t, placeholder="留空 = 不署名")
-    box.addWidget(Field(t, "标题", "作品名（站点列表上显示）", t_title))
+    box.addWidget(Field(t, "名称", "站上列表/待审队列里显示的名字（必填）", t_title))
     box.addWidget(Field(t, "作者", "署名（可留空）", t_author))
 
     note = QLabel("")
@@ -8455,6 +8519,13 @@ def _market_upload(t: Tokens, parent, kind: str) -> None:
     box.addWidget(note)
 
     row = QHBoxLayout()
+    # ⭐ 「制作规范」放在**左边**（不跟"取消/开始上传"挤在右下角）：投稿人多半是
+    #    第一次传、不知道自己写的东西合不合规范 ⇒ 摆在动手之前顺手就能点的地方。
+    b_sub = Btn("制作规范（含可复制模板）", t, "ghost")
+    b_sub.setObjectName("updSpec")
+    b_sub.clicked.connect(
+        lambda _=False: _guide_open(_GUIDE_KEY_OF["subGuide"], b_sub, None))
+    row.addWidget(b_sub)
     row.addStretch(1)
     b_cancel = Btn("取消", t, "ghost")
     b_ok = Btn("开始上传", t, "primary")
@@ -8737,6 +8808,8 @@ ACT_CUSTOM = {
                 "打开应用内引导：怎么加工具 / 自己写一个"),
     "utBarGuide": (_act_guide(_GUIDE_KEY_OF["utBarGuide"]),
                    "打开应用内引导：怎么加工具"),
+    "subGuide": (_act_guide(_GUIDE_KEY_OF["subGuide"]),
+                 "打开制作规范：投稿人设/技能/工具该怎么写，带可一键复制模板"),
 }
 
 

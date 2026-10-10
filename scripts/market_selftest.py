@@ -226,5 +226,55 @@ try:
 except Exception as e:  # noqa: BLE001
     ok("下载分区链路点检", False, "异常：%s" % str(e)[:90])
 
+# ── I. 投稿弹窗对齐建设方口径（《回软件方-投稿链路对齐》）────────────────────
+# 建设方 §2.1/§3.3 写死：人设交单个 .md/.txt；技能/工具**必须**交整个文件夹打的 .zip
+# （里面是可执行代码，单个文本文件跑不起来）。下面守的就是"这条口径在软件里真落地"。
+try:
+    _pcs = open(os.path.join(ROOT, "ui_qt", "panels_custom.py"), encoding="utf-8").read()
+
+    ok("★ 投稿弹窗按类别定文件过滤（存在 _UPLOAD_PROFILE 一处真值）",
+       "_UPLOAD_PROFILE = {" in _pcs)
+    ok("★ 人设档只收 .md/.txt", '("persona"' in _pcs or '"persona": {' in _pcs)
+
+    # 直接把表 import 进来验（不看字符串，看真值）
+    sys.path.insert(0, os.path.join(ROOT, "ui_qt"))
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "_pcs_probe", os.path.join(ROOT, "ui_qt", "panels_custom.py"))
+    # ⚠️ panels_custom 依赖 PySide6 / Qt 事件循环，不能在无 GUI 判据里 import。
+    #    ⇒ 退回"读源码里那张表"的文本口径，字段名逐条钉死。
+    ok("★ 人设档后缀是 .md/.txt（不是跟着工具一起收 zip）",
+       'exts": (".md", ".txt")' in _pcs, "")
+    ok("★ 技能档后缀只有 .zip", '"skill": {\n        "filter": "技能打包 (*.zip)",\n        "exts": (".zip",)' in _pcs, "")
+    ok("★ 工具档后缀只有 .zip", '"tool": {\n        "filter": "工具打包 (*.zip)",\n        "exts": (".zip",)' in _pcs, "")
+    ok("★ 类别↔后缀不符时**当场拦下**并说清该交什么（不靠后端拦）",
+       "if _ext not in _PF[\"exts\"]:" in _pcs and "_PF[\"wrong\"]" in _pcs)
+    ok("★ 弹窗两栏跟站上对齐：名称（不是「标题」）+ 作者",
+       'Field(t, "名称"' in _pcs and 'Field(t, "作者"' in _pcs)
+    ok("★ 上传弹窗里有「制作规范」入口（动手前能顺手点）",
+       'setObjectName("updSpec")' in _pcs and 'b_sub = Btn("制作规范（含可复制模板）"' in _pcs)
+    ok("★ 资源市场弹窗里也有「制作规范」入口",
+       'b_sub = Btn("制作规范", t, "ghost")' in _pcs)
+
+    # 规范正文（可复制模板）在 web GUIDES 里 —— 一处真值，Qt 运行时解析
+    _html = open(os.path.join(ROOT, "assets", "console", "index.html"),
+                 encoding="utf-8").read()
+    ok("★ 制作规范正文落在 web GUIDES.submission（Qt 运行时解析，不另抄一份）",
+       "submission: {" in _html and "制作规范" in _html)
+    ok("★ 规范里点明「七个固定小标题」（建设方 §1.1 口径）",
+       "身份背景 / 性格 / 说话风格 / 动机 / 价值观 / 行为规则 / 缺点局限" in _html)
+    ok("★ 规范里写的是「使用场景」、明确不是触发词（建设方 §1.2）",
+       "使用场景" in _html and "不是\"触发词\"" in _html)
+    ok("★ 规范里说清工具/技能要打成 .zip、人设交 .md/.txt（建设方 §2.1）",
+       "打成一个 .zip" in _html and "交一个 .md 或 .txt 文件" in _html)
+    ok("★ 规范里点明不用写 AI 披露段（建设方 §1.3）",
+       "不用写什么\"我是AI\"的披露段" in _html)
+    ok("★ 规范带可复制模板（人设七段体 / 技能 / 工具）",
+       "复制人设模板（七段体）" in _html and "复制技能模板" in _html)
+    ok("★ Qt 侧把 subGuide 绑到 submission（说明按钮真能打开它）",
+       '"subGuide": "submission"' in _pcs and '"subGuide": (' in _pcs)
+except Exception as e:  # noqa: BLE001
+    ok("投稿弹窗口径点检", False, "异常：%s" % str(e)[:90])
+
 print("\n%d/%d 通过（跳过 %d）" % (PASS, PASS + FAIL, SKIP))
 sys.exit(1 if FAIL else 0)

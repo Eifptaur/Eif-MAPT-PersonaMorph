@@ -3378,17 +3378,18 @@ def t_g5() -> None:
        "ACT_CUSTOM=%d 缺=%s" % (len(ACT_CUSTOM), sorted(need - set(ACT_CUSTOM))))
 
     guides = _web_guides()
-    ck("g5 GUIDES 运行时解析：9 键与 web 一致（tools 6 步 1 复制；voice 复制=pip install pilk）",
+    ck("g5 GUIDES 运行时解析：10 键与 web 一致（tools 6 步 1 复制；voice 复制=pip install pilk）",
        set(guides) == {"tools", "voice", "tts", "image", "forward", "video", "imggen",
-                       "file", "wechat"}
+                       "file", "wechat", "submission"}
        and len(guides["tools"]["steps"]) == 6 and len(guides["tools"]["copy"]) == 1
        and guides["voice"]["copy"] == [("复制安装命令", "pip install pilk")],
        "keys=%s" % sorted(guides))
-    ck("g5 引导映射：8 个说明按钮 aid → web GUIDES 键（utGuide/utBarGuide 同指 tools）",
+    ck("g5 引导映射：9 个说明按钮 aid → web GUIDES 键（utGuide/utBarGuide 同指 tools）",
        set(_GUIDE_KEY_OF) == {"utGuide", "utBarGuide", "ttsGuide", "igGuide", "vgGuide",
-                              "vsGuide", "irGuide", "fsGuide"}
+                              "vsGuide", "irGuide", "fsGuide", "subGuide"}
        and _GUIDE_KEY_OF["utGuide"] == "tools" and _GUIDE_KEY_OF["utBarGuide"] == "tools"
-       and _GUIDE_KEY_OF["irGuide"] == "image", str(_GUIDE_KEY_OF))
+       and _GUIDE_KEY_OF["irGuide"] == "image"
+       and _GUIDE_KEY_OF["subGuide"] == "submission", str(_GUIDE_KEY_OF))
 
     # ── 假后端 ──
     calls: list = []
@@ -6128,12 +6129,12 @@ def t_g14() -> None:
         return _new[-1] if _new else exec_dlgs[-1]
 
     try:
-        # ① GUIDES 全量 actions 解析（10 条 / 5 种 kind）
+        # ① GUIDES 全量 actions 解析（12 条 / 5 种 kind）
         gs = panels_custom._web_guides()
         total = sum(len(g.get("actions") or []) for g in gs.values())
         kinds = {a.get("kind") for g in gs.values() for a in (g.get("actions") or [])}
-        ck("g14 GUIDES 全量 actions 解析（10 条 / gen·open·test·goto·openUrl 五类）",
-           total == 10 and kinds == {"gen", "open", "test", "goto", "openUrl"},
+        ck("g14 GUIDES 全量 actions 解析（12 条 / gen·open·test·goto·openUrl 五类）",
+           total == 12 and kinds == {"gen", "open", "test", "goto", "openUrl"},
            "n=%d kinds=%s" % (total, sorted(kinds)))
 
         # ② 引导弹窗动作按钮 + gen / open
