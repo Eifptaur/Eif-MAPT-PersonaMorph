@@ -114,7 +114,9 @@ JUDGE_KEEP = {
     ("scripts/config_mask_selftest.py", 1),
     ("scripts/console_open_selftest.py", 1),
     ("scripts/misdelivery_selftest.py", 1),
-    ("scripts/self_local_selftest.py", 3),
+    # ⚠️ 3 → 4（2026-10-11）：给 `_self_local_note` 加可选参数后，该文件里又多了一处
+    #    「用 def 行当文本边界」的写法 ⇒ 如实登记，不是放宽标准（改掉就该从表里删）。
+    ("scripts/self_local_selftest.py", 4),
     ("scripts/send_fail_reason_selftest.py", 1),
     ("scripts/send_file_posted_selftest.py", 2),
     ("scripts/send_guard_selftest.py", 4),

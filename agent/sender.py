@@ -30,6 +30,33 @@ _DEDUP_MEM_LIMIT = 80
 #   那一层专门兜"重试间隔超过 20 秒"与"跨进程/重启后重发"（第 1 层看不见这两种）。
 _DEDUP_DB_WINDOW_S = 120.0
 
+
+def _dedup_in_batch(parts: list, part_src: list) -> tuple:
+    """**第 0 层：本批内部去重** ⇒ `(parts, part_src, dropped)` —— 同一批里出现两次一样的文本，
+    只留**第一次**。
+
+    ⭐ 为什么必须单独一层（2026-10-11 用户报障：「重复发好几条同样消息」）：
+      下面两层比的都是"与**历史**比"（内存回望 / 消息库回读），
+      **本批里自带的重复谁也拦不住** —— 模型一轮里给出「哈哈哈／哈哈哈」这种，会原样发两条出去。
+
+    ⚠️ 从 `send_text_batch` 里抽出来的（那函数已 300+ 行，结构棘轮盯着）——
+      **逻辑一字未改**，只是把体量挪个地方。
+    """
+    dropped = []
+    seen = set()
+    keep, keep_src = [], []
+    for t, src in zip(parts, part_src):
+        k = str(t or "").strip()
+        if k and k in seen:
+            log.warning("跳过本批内的重复条（同一批里出现了两次）：%s", t[:60])
+            dropped.append(t)
+            continue
+        if k:
+            seen.add(k)
+        keep.append(t)
+        keep_src.append(src)
+    return keep, keep_src, dropped
+
 # ── 被引用对象是**媒体消息**时，跳过引用、直接普通发送（F8） ──────────────────
 # 为什么：引用定位靠"在可见画面里 OCR 找到那条消息的文字"（`wechat.reply_quote` 的
 #   `target_text` 匹配）。而语音/图片/视频/文件在屏幕上是**气泡/缩略图，不是文字** ⇒
@@ -416,6 +443,37 @@ class SendQueue:
             pass
         return None
 
+    def _dedup_recent_memory(self, chat_key: str, parts: list, part_src: list) -> tuple:
+        """**第 1 层：同会话短窗去重（内存回望）** ⇒ `(parts, part_src, dropped)`。
+
+        （用户现场截图：同一条消息「早上好呀！」连发两次）
+        同一段文本在过去 `_DEDUP_WINDOW_S` 秒内已经给自己发过，就不再发一遍；
+        兜的是"同一轮被重跑/重试后重复发送"这类路径（模型自己的 send 与兜底补发都走这里）。
+
+        ⚠️ 取样条数用 `_DEDUP_MEM_LIMIT`（= `store.recent` 的默认口径），**不再是 12** ——
+          12 条在活跃群里连 20 秒都盖不住（自己发的那条会被群友的话挤出窗口），
+          实测这正是"用着用着就开始重复"的来路。
+        ⚠️ 从 `send_text_batch` 里抽出来的（那函数已 300+ 行，结构棘轮盯着）——**逻辑一字未改**。
+        """
+        _dedup_since = time.time() - _DEDUP_WINDOW_S
+        try:
+            _recent_self = [str((m or {}).get("text") or "") for m in
+                            (self.store.recent(chat_key, limit=_DEDUP_MEM_LIMIT, include_self=True) or [])
+                            if (m or {}).get("self") and int(str((m or {}).get("ts") or "0")) / 1000.0 >= _dedup_since]
+        except Exception:
+            _recent_self = []
+        if not _recent_self:
+            return parts, part_src, []
+        dropped, keep, keep_src = [], [], []
+        for t, src in zip(parts, part_src):
+            if t in _recent_self:
+                log.warning("跳过重复发送（%.0fs 内已发过同一句）：%s", _DEDUP_WINDOW_S, t[:60])
+                dropped.append(t)
+                continue
+            keep.append(t)
+            keep_src.append(src)
+        return keep, keep_src, dropped
+
     def send_text_batch(self, chat_key: str, messages, reply_to_mid=None, at_user_id=None, reply_text="",
                         reply_sender_name=""):
         """发送一批文本。返回 {sent, failed}。reply_text 为被引用消息的原文（定位用），
@@ -475,14 +533,12 @@ class SendQueue:
             parts = _head + [_merged]
             part_src = part_src[:_cap - 1] + ["\n".join(part_src[_cap - 1:])]
 
-        # 🔴 （用户现场截图：群里出现了「（会话投递失败，本轮未发言。）」「发送失败了，没能发出去。」）：
+        # 🔴 （用户现场截图：群里出现了「（会话投递失败，本轮未发言。）」这类内部话术）：
         #   **内部故障话术的机械拦网** —— 以前只写在提示词里（`prompt.py` 第 7 条），模型不听话时照样发进群。
-        #   这是项目红线（故障只许出现在本机控制台与日志），所以在这里**发之前**逐条筛掉。
+        #   这是项目红线（故障只许出现在本机控制台与日志）⇒ 在**发之前**逐条筛掉（走统一入口 `outbound_leak_reason`）。
         _kept = []
         _kept_src = []
         for _t, _src in zip(parts, part_src):
-            # ★ P0-10：闸门走**统一入口** `outbound_leak_reason`
-            #   （内部故障话术 ⊕ 内心独白 ⊕ 原始 XML，见该函数注释）
             _why = outbound_leak_reason(_t)
             if _why:
                 log.warning("拦下出站泄漏（%s）：%s", _why, _t[:60])
@@ -496,46 +552,14 @@ class SendQueue:
             raise RuntimeError("这一批全被内部故障话术闸拦下（故障只留本机日志，不发群）")
 
         # 🔴 第 0 层：**本批内部去重** —— 同一批里出现两次一样的文本，只留第一次。
-        #   为什么单独一层：下面两层比的都是"与**历史**比"，本批里自带的重复谁也拦不住
-        #   （模型一轮里给出"哈哈哈／哈哈哈"这种，会原样发两条出去）。
-        _deduped = []
-        _seen_in_batch = set()
-        _b0, _b0_src = [], []
-        for _t, _src in zip(parts, part_src):
-            _k = str(_t or "").strip()
-            if _k and _k in _seen_in_batch:
-                log.warning("跳过本批内的重复条（同一批里出现了两次）：%s", _t[:60])
-                _deduped.append(_t)
-                continue
-            if _k:
-                _seen_in_batch.add(_k)
-            _b0.append(_t)
-            _b0_src.append(_src)
-        parts, part_src = _b0, _b0_src
+        #   （为什么单列一层、以及"左键可放心补点"那条依据，见 `_dedup_in_batch` 的 docstring）
+        parts, part_src, _d0 = _dedup_in_batch(parts, part_src)
+        _deduped = list(_d0)
 
         # 🔴 第 1 层（用户现场截图：同一条消息「早上好呀！」连发两次）：
-        #   **同会话短窗去重**（内存回望）—— 同一段文本在过去 `_DEDUP_WINDOW_S` 秒内
-        #   已经给自己发过，就不再发一遍。兜的是"同一轮被重跑/重试后重复发送"这类路径
-        #   （模型自己的 send 与兜底补发都走这里）。
-        _dedup_since = time.time() - _DEDUP_WINDOW_S
-        try:
-            _recent_self = [str((m or {}).get("text") or "") for m in
-                            (self.store.recent(chat_key, limit=_DEDUP_MEM_LIMIT, include_self=True) or [])
-                            if (m or {}).get("self") and int(str((m or {}).get("ts") or "0")) / 1000.0 >= _dedup_since]
-        except Exception:
-            _recent_self = []
-        if _recent_self:
-            _kept2 = []
-            _kept2_src = []
-            for _t, _src in zip(parts, part_src):
-                if _t in _recent_self:
-                    log.warning("跳过重复发送（%.0fs 内已发过同一句）：%s", _DEDUP_WINDOW_S, _t[:60])
-                    _deduped.append(_t)
-                    continue
-                _kept2.append(_t)
-                _kept2_src.append(_src)
-            parts = _kept2
-            part_src = _kept2_src
+        #   **同会话短窗去重**（内存回望）—— 理由见 `_dedup_recent_memory` 的 docstring。
+        parts, part_src, _d1 = self._dedup_recent_memory(chat_key, parts, part_src)
+        _deduped.extend(_d1)
 
         # 🔴 第 2 层：**从消息库回读**（`wechat.already_sent_recently`，三态）。
         #   第 1 层只看内存、只回望 `_DEDUP_WINDOW_S` ＝ 20 秒 ⇒ 它兜不住两件事：

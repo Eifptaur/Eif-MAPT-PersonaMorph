@@ -99,7 +99,10 @@ def main():
     # "每次发送都要调"，可**发送链从来没调过**（全库只有一处调用，且不是发送路径）。
     _send = open(os.path.join(_ROOT, "agent", "sender.py"), encoding="utf-8").read()
     chk("G0 ★第 0 层：本批内部去重（同一批里出现两次只留第一条）",
-        "_seen_in_batch" in _send,
+        # ⚠️ 锚点跟着"抽取后的位置"走：三层去重从 `send_text_batch` 抽成了独立函数
+        #    （那函数已 300+ 行、被结构棘轮盯着）⇒ 判据认的是**同文件内的实现**，
+        #    不是"必须长在 send_text_batch 里"（那会一重构就假红）。
+        "def _dedup_in_batch(" in _send and "_dedup_in_batch(parts, part_src)" in _send,
         "本批自带的重复没人拦 ⇒ 一轮里能原样发出两条一样的")
     chk("G1 第 1 层：内存回望的取样条数已调离 12",
         "_DEDUP_MEM_LIMIT" in _send and "limit=12" not in _send,
