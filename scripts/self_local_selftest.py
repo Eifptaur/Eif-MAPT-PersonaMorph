@@ -240,7 +240,7 @@ ok("发文件：登记被 `_looks_like_file_msg` 挡着",
    and _seg3.count("_self_local_note") == 1)
 
 ok("记账走模块级安全入口（没这能力的假对象也不许把成功判成失败）",
-   "def _self_local_note(obj, chat_id, local_id, create_time=None)" in _SRC)
+   "def _self_local_note(obj, chat_id, local_id, create_time=None" in _SRC)
 print("── K. 台账留痕：判自己必须能看出『靠行号判的』──")
 ok("台账带 self_local_hit 字段", '"self_local_hit": bool(sl_hit)' in _SRC)
 ok("台账 why 里写明行号命中",
@@ -260,9 +260,9 @@ ok("L3 `_self_wxid` 为空时**不判自己**（老红线：宁可漏判回声�
    "if self._self_wxid and _sx and _sx == self._self_wxid:" in _impl)
 ok("L4 命中就 return None（跳过这条消息，不往下当群友处理）",
    "if self._self_wxid and _sx and _sx == self._self_wxid:" in _impl
-   and "_self_local_note(self, chat_id, local_id, create_time)" in _impl)
+   and "_self_local_note(self, chat_id, local_id, create_time" in _impl)
 ok("L5 命中顺手补行号台账（图文类下游 `is_self_local` 也靠它）",
-   "_self_local_note(self, chat_id, local_id, create_time)" in _impl)
+   "_self_local_note(self, chat_id, local_id, create_time" in _impl)
 ok("L6 台账单列这一档（`db_self_hit`），下次能一眼定位是哪一档救回的",
    '"db_self_hit"' in _SRC or "db_self_hit" in _SRC)
 ok("L7 台账 why 写明按库发送者命中",

@@ -172,17 +172,20 @@ def ledger_write_error() -> dict:
         return {"err": ""}
 
 
-def _self_local_note(obj, chat_id, local_id, create_time=None) -> None:
+def _self_local_note(obj, chat_id, local_id, create_time=None, sender_id=None) -> None:
     """登记「这条库行是我发的」——**模块级安全入口**：对象没这能力/记账出错都不影响发送。
 
     为什么要这层：登记只是记账（监听侧判自己用），而三个调用点都在**发送成功链**里 ——
     记账出意外（假适配器没有这个方法、盘满、权限）绝不能把一次已经发成功的消息判成失败
     （`send_loop_behavior_selftest` 的假适配器当场暴露过这一点）。
+
+    ⭐ `sender_id`（可选）：那条库行的发送者，用来在"还不知道自己是谁"时把自己认下来
+    （见 `learn_self_from_own_row`）。**只传真值**：拿不准就不传，宁可不学，也不许认错。
     """
     try:
         fn = getattr(obj, "remember_self_local", None)
         if callable(fn):
-            fn(chat_id, local_id, create_time)
+            fn(chat_id, local_id, create_time, sender_id)
     except Exception:
         pass
 
@@ -3538,11 +3541,15 @@ class WeChatAdapter:
         except Exception as e:
             log.debug("自我行号落盘失败（本次进程内仍然生效）：%s", e)
 
-    def remember_self_local(self, chat_id, local_id, create_time=None) -> None:
+    def remember_self_local(self, chat_id, local_id, create_time=None, sender_id=None) -> None:
         """记下「这条库行是我自己刚发出去的」。
 
         ⛔ 调用时机**只允许在 DB 回读确认成功之后** —— 没确认就记账＝把别人的消息登记成自己的，
         后果是那条消息被静默丢掉（漏回），比漏判回声更糟。
+
+        ⭐ `sender_id`（可选）：那条库行的发送者。**只在"我还不知道自己是谁"时**用它把自己认下来
+        （见 `learn_self_from_own_row` 的两道闸）——
+        这是"自己跟自己吵"那条链上**唯一不靠猜**的一个来源：这条消息是我们**亲手发出去的**。
         """
         try:
             lid = int(local_id or 0)
@@ -3550,6 +3557,12 @@ class WeChatAdapter:
             return
         if not lid:
             return
+        # ★ 先学"我是谁"，再记账 —— 两件事独立：学不到也不影响记账（记账只是行号台账）
+        if sender_id is not None:
+            try:
+                self.learn_self_from_own_row(sender_id, chat_id or "", sample="")
+            except Exception as _e:
+                log.debug("从自己那行学「我是谁」失败（不影响记账）：%s", _e)
         self._load_self_local()
         key = str(chat_id or "")
         ct = self._ct_s(create_time)
@@ -3651,6 +3664,73 @@ class WeChatAdapter:
             except Exception:
                 pass
         return d
+
+    def learn_self_from_own_row(self, sender_id, chat_id: str = "", sample: str = "") -> bool:
+        """从「**我们自己发出去、并已 DB 回读确认**的那条库行」学"我是谁"。返回是否学到。
+
+        ⭐ **为什么必须有这一条**（2026-10-11 用户报障：「自己跟自己吵起来」「左右脑互搏」= 把自己当别人）：
+          "我是谁"原本只有三个来源，而它们**恰好会一起落空**：
+            · `get_self_info()`（读 contact.db）—— 代码自己写着"**某些账号/微信版本返回空**"；
+            · `data/self_identity.json` 落盘 —— 它唯一的写入方是"从文本回声学"，
+              而**回声那条（`_is_self_echo`）已按用户要求整条撤了**（回撤是对的：回声是"猜"，
+              会把别人复述你的话判成你的，且一次误判就把别人的号学成自己并落盘）⇒
+              **这个文件从此再没被写过，成了一档死档**；
+            · 账号目录名推 —— 只在目录名"长得像 wxid"时才成立。
+          ⇒ 三者全空 ⇒ `_self_wxid` 为空 ⇒ **所有"这条是不是我发的"判断一起失效** ⇒
+            自己发的每条（尤其**没有正文前缀的图片/表情**）都被当成群友 ⇒ **机器人回自己**。
+
+        ⛔ **为什么会死循环**：想学"我是谁"要先"确认某条是我发的"，而现有的确认点
+          （`_normalize_impl` 那处）**要求 `_self_wxid` 已经有值**才走 ⇒ **空值永远学不到**。
+          ⇒ 破法：在"**DB 回读确认**"那一刻（发文本/图片/文件之后回读到的行），
+            "这条是我发的"是**已知事实**（不是猜）⇒ 那行的发送者就是我们自己。
+
+        ⛔ **两道闸，一个都不能少**（照抄当初为"防把自己认成别人"加的那套）：
+          ① **形状闸**：`_valid_self_id` —— 我们自己那条在库里带的是**数字槽位号**
+             （实测 `sender_id=3`）⇒ 必须先用 `_resolve_sender_wxid` 换成 wxid，
+             且纯数字一律不采纳（历史上正是把 `"3"` 当成了"我自己"）；
+          ② **不覆盖闸**：**只在 `_self_wxid` 为空时采用**。已有值（来自 API/账号目录/落盘）
+             比这条链可信 ⇒ 绝不许被改写，否则一次错就把"我是谁"钉错、而且**是落盘的**。
+        """
+        s = str(sender_id or "").strip()
+        if not s:
+            return False
+        if self._self_wxid:
+            # 已知身份不被改写（闸②）；这条不是错误路径，是常态 ⇒ 只记 debug
+            try:
+                log.debug("已知道自己是谁 ⇒ 不从库行改写（来源 %s）", self._self_wxid_src)
+            except Exception:
+                pass
+            return False
+        try:
+            w = self._resolve_sender_wxid(s, chat_id or "")
+        except Exception as e:  # noqa: BLE001
+            log.debug("从自己那行解析发送者失败（不影响发送）：%s", e)
+            return False
+        if not w or not _valid_self_id(w):
+            # 数字槽位号 / 公众号 / 太短 —— 一律不采纳（闸①）
+            return False
+        self._self_wxid = w
+        self._self_wxid_src = "own_row"
+        self._self_ident_ok = True
+        try:
+            import json as _json
+            p = self._self_id_file()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = persist.tmp_for(p)
+            with open(tmp, "w", encoding="utf-8") as fh:
+                _json.dump({"wxid": w, "acct": _db_account_of(self),
+                            "nickname": self._self_nickname or "",
+                            "from": "own_row", "sample": str(sample or "")[:40],
+                            "at": int(time.time() * 1000)}, fh, ensure_ascii=False, indent=1)
+            persist.replace_into(tmp, p)
+        except Exception as e:  # noqa: BLE001
+            log.warning("自我识别落盘失败（本次进程内仍然生效）：%s", e)
+        try:
+            log.info("学会了「自己是谁」：%s（来源：我们自己发出并回读确认的那条库行，样本 %r）",
+                     _mask_id(w), str(sample or "")[:20])
+        except Exception as _e:
+            log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+        return True
 
     def learn_self_from_echo(self, sender_wxid: str, sample: str = "") -> bool:
         """**已停用**（2026-10-10）：判自己只认微信 ID，"从回声学我是谁"这条一并撤掉。
@@ -4117,7 +4197,7 @@ class WeChatAdapter:
             # 顺带把这条行号补进台账：下次同一条再来，`is_self_local` 这一档也能直接命中
             # （图片/表情类下游还靠它，见 `is_self_local` 的注释）。
             try:
-                _self_local_note(self, chat_id, local_id, create_time)
+                _self_local_note(self, chat_id, local_id, create_time, sender_wxid)
             except Exception:
                 pass
             return None
@@ -5373,7 +5453,8 @@ class WeChatAdapter:
                     continue
                 if str(text)[:20] in str(r.get("content") or ""):
                     try:
-                        _self_local_note(self, chat_id, r.get("local_id"), r.get("create_time"))
+                        _self_local_note(self, chat_id, r.get("local_id"), r.get("create_time"),
+                                               r.get("sender_id") or r.get("real_sender_id"))
                     except Exception:
                         pass
                     try:
@@ -7731,7 +7812,8 @@ class WeChatAdapter:
                     continue # 太旧（多半是上一次同文本）⇒ 不算"这一枪发出去了"
                 if str(text)[:20] and str(text)[:20] in str(_r.get("content") or ""):
                     try:
-                        _self_local_note(self, chat_id, _r.get("local_id"), _r.get("create_time"))
+                        _self_local_note(self, chat_id, _r.get("local_id"), _r.get("create_time"),
+                                                   _r.get("sender_id") or _r.get("real_sender_id"))
                     except Exception:
                         pass
                     log.info("快路径超时后的复核：该会话已有本次文本的新行（local_id=%s）"
@@ -7886,7 +7968,8 @@ class WeChatAdapter:
                     if str(text)[:20] in str(head.get("content") or ""):
                         # 记下「这条库行是我发的」：监听侧以后按**行号**判自己，不再只靠文本回声窗
                         # （见 `is_self_local` 的注释；必须在这一刻记 —— 这是**唯一**能确定行号归属的地方）
-                        _self_local_note(self, chat_id, head.get("local_id"), head.get("create_time"))
+                        _self_local_note(self, chat_id, head.get("local_id"), head.get("create_time"),
+                                             head.get("sender_id") or head.get("real_sender_id"))
                         # DB 回读确认成功 ⇒ 自动补一条"当前窗口尺寸"下的会话头参照
                         # （尺寸变了以后不用人工重标；下次同尺寸就能真正校验）
                         self._learn_chat_header(chat_id, gui=gui)
@@ -8153,7 +8236,8 @@ class WeChatAdapter:
                                      else self._looks_like_img_msg(top))
                             if _ours:
                                 _self_local_note(self, chat_id, top.get("local_id"),
-                                                     top.get("create_time"))
+                                                     top.get("create_time"),
+                                                     top.get("sender_id") or top.get("real_sender_id"))
                             return V_OK, ("投递发图成功（第 %d 枪 %s · %s · DB 回读 local_id=%s type=%s）"
                                           % (_i, _lbl,
                                              "**文件通道**（动图 ⇒ 对方收到的是会动的表情）" if _anim
@@ -8674,7 +8758,8 @@ class WeChatAdapter:
                         if self._looks_like_file_msg(top):
                             # 登记「这条库行是我发的」（发文件回读的 text 是 `[文件/链接/卡片]`，
                             # 文本回声窗对它永远无效 ⇒ 只能靠行号，见 `is_self_local`）
-                            _self_local_note(self, chat_id, top.get("local_id"), top.get("create_time"))
+                            _self_local_note(self, chat_id, top.get("local_id"), top.get("create_time"),
+                                           top.get("sender_id") or top.get("real_sender_id"))
                             try: # 记账只在**DB 回读确认**之后
                                 self._repeat_guard(chat_id, local_path, note=True)
                             except Exception:
