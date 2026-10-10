@@ -4336,21 +4336,42 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
             return "异常：%s" % str(e)[:60]
         return ""
 
-    def _open_by_human_rhythm(_tgt):
-        """**纯双击**（两枪，间隔 ~175ms）。返回 `(ok, why)`。
+    def _open_by_human_rhythm(_tgt, tries: int = 4):
+        """**双击（两枪，间隔 ~175ms）+ 每轮之后检测"独立窗真出来了没有"**；
+        没出来就**接着补点**，直到出来或补满 `tries` 轮。返回 `(ok, why)`。
 
         ⚠️ **不再做"先单击选中再双击"** —— 实测用户就是这么双击的，
           中间不夹单击、不夹长停顿。
+
+        ⭐ 为什么要"补点"（2026-10-11 用户口径，原话）：
+          「他虽然回复很迅速，搜索也点准了，我的群也点对了会话，但是**他就双击了，
+           却没有产生独立窗**。不妨这样，你**投递高频点击，左键投递，直到它检测到
+           独立窗出来**，因为多点几下也不会有问题，**左键是没有问题的**」
+        ⇒ **"双击投出去了" ≠ "窗开了"** —— 实测微信有时把第一枪结算成"刷新该会话"
+          （尤其是该行本来就是当前高亮的会话时），于是两枪打完、一个窗都没有。
+          而左键落在**会话行**上是**幂等**的：最坏结果就是"又选中一次同一个会话"，
+          不会切走、不会误操作 ⇒ 所以可以放心补点。
+        ⛔ 补点**必须有上限**（`tries`）：无限补点会把主窗锁在"一直在点"的状态，
+          用户的鼠标就动不了了。
         """
         err = _one_click(_tgt)               # 双击第一枪
         if err:
             return False, err
         if not double_click:
             return True, "单click（double_click=False）"
-        _t.sleep(DOUBLE_GAP_S)               # ★ 175ms（实测人手间隔）
-        err = _one_click(_tgt)               # 双击第二枪
-        if err:
-            return False, err
+        for _i in range(max(1, int(tries))):
+            _t.sleep(DOUBLE_GAP_S)           # ★ 175ms（实测人手间隔）
+            err = _one_click(_tgt)           # 第二枪（补齐一轮双击）
+            if err:
+                return False, err
+            # ★ 每轮之后**问一次"窗出来了没有"** —— 出来了立刻收手，不再多点
+            try:
+                _p = find_popup(chat_name or "")
+            except Exception as _e:
+                log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
+                _p = {}
+            if (_p or {}).get("hwnd"):
+                return True, ("第 %d 轮开出独立窗" % (_i + 1)) if _i else ""
         return True, ""
 
     def _target_row_is_selected():
