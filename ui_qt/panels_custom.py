@@ -4915,6 +4915,19 @@ def memory_panel(t: Tokens) -> QWidget:
         _rc_note = desc(t, "")
         rcard.body.addWidget(_rc_note)
 
+        # ⭐ 名场面精华簿（只读）：群里有人说「这条留着」时，机器人会把它存进精华簿
+        #    （`data/highlights.jsonl`，**与消息库是两个文件**）⇒ 这里把它列出来。
+        #    ⛔ 「挑」是群友/模型那边的动作（`yearbook` 工具），界面不做"挑" —— 只做"翻"，
+        #       否则就变成"让用户手动挑”，跟设定里"群友说留着才记"是两回事。
+        _rb_row = FlowBox(t, spacing=6)
+        b_rb_open = Btn("看精华簿", t, "ghost")
+        b_rb_open.setObjectName("rbOpen")
+        _rb_row.add(b_rb_open)
+        rcard.body.addWidget(_rb_row)
+        _rb_body = desc(t, "（还没翻开过）")
+        _rb_body.setWordWrap(True)
+        rcard.body.addWidget(_rb_body)
+
         def _rc_pick() -> str:
             if _rc_all.isChecked():
                 return ""
@@ -4949,12 +4962,31 @@ def memory_panel(t: Tokens) -> QWidget:
                 L.append("（只统计了最近 %s 条，更早的没算进来）" % (r.get("read_limit") or ""))
             _rc_body.setText("\n".join(L))
 
+        def _rb_text(r: dict) -> str:
+            """把精华簿的条目排成人看的清单 —— 每条都带「谁挑的」。"""
+            picks = r.get("picks") or []
+            if not picks:
+                return "精华簿还是空的：等群里有人说「这条留着」，机器人就会把它记进来。"
+            L = ["共 %d 条（都是群里有人点名留着的，不是统计出来的）：" % len(picks), ""]
+            for i, x in enumerate(picks[:50], 1):
+                _who = str(x.get("who") or "某人")
+                _by = str(x.get("by") or "某位群友")
+                L.append("%d. 【%s】%s" % (i, _who, str(x.get("text") or "")))
+                L.append("　　—— %s 挑的" % _by)
+            if len(picks) > 50:
+                L.append("")
+                L.append("（还有 %d 条没列出来）" % (len(picks) - 50))
+            return "\n".join(L)
+
         def _rc_run(which: str) -> None:
             ck = _rc_pick()
             b_rc_annual.setEnabled(False)
             b_rc_card.setEnabled(False)
+            b_rb_open.setEnabled(False)
             if which == "annual":
                 _rc_note.setText("正在本机聚合…")
+            elif which == "book":
+                _rb_body.setText("正在翻…")
             else:
                 _rc_note.setText("正在出分享卡…")
             box2: dict = {}
@@ -4964,6 +4996,9 @@ def memory_panel(t: Tokens) -> QWidget:
                     if which == "annual":
                         b["r"] = config_io.get_json(
                             "/api/report/annual" + (f"?chat_key={ck}" if ck else ""), timeout=30.0)
+                    elif which == "book":
+                        b["r"] = config_io.get_json(
+                            "/api/report/book" + (f"?chat_key={ck}" if ck else ""), timeout=30.0)
                     else:
                         b["r"] = post_json("/api/report/card", {"chat_key": ck}, timeout=60.0)
                 except Exception as e: # noqa: BLE001
@@ -4974,14 +5009,23 @@ def memory_panel(t: Tokens) -> QWidget:
                     return
                 b_rc_annual.setEnabled(True)
                 b_rc_card.setEnabled(True)
+                b_rb_open.setEnabled(True)
                 r = b.get("r") if isinstance(b.get("r"), dict) else {}
                 err = b.get("err")
                 if err or not r.get("ok"):
-                    _rc_note.setText("没成：" + str(err or r.get("note") or "未知原因"))
+                    _msg = "没成：" + str(err or r.get("note") or "未知原因")
+                    if which == "book":
+                        _rb_body.setText(_msg)
+                    elif which != "annual":
+                        _rc_note.setText(_msg)
+                    else:
+                        _rc_note.setText(_msg)
                     return
                 if which == "annual":
                     _rc_annual_text(r)
                     _rc_note.setText("")
+                elif which == "book":
+                    _rb_body.setText(_rb_text(r))
                 else:
                     _rc_note.setText("已生成：" + str(r.get("path") or "（见数据目录）"))
 
@@ -4989,6 +5033,7 @@ def memory_panel(t: Tokens) -> QWidget:
 
         b_rc_annual.clicked.connect(lambda _=False: _rc_run("annual"))
         b_rc_card.clicked.connect(lambda _=False: _rc_run("card"))
+        b_rb_open.clicked.connect(lambda _=False: _rc_run("book"))
         page._rc_run = _rc_run # 供 ACT_CUSTOM 里的按钮入口复用
         lay.addWidget(rcard)
 
@@ -6563,6 +6608,44 @@ def _sd_local_appendix(t: Tokens, page: QWidget) -> None:
     refresh()
 
 
+def _play_b64_audio(b64: str, mime: str) -> str:
+    """把一段 base64 音频**当场放出来**（试听用）。返回空串＝放成功，否则返回失败原因。
+
+    ⛔ 为什么用 Windows MCI（`winmm`）而不是第三方库：项目随包体积是硬约束，
+       为"试听一下"引一个音频库不划算；MCI 是系统自带、wav/mp3 都认。
+    ⛔ 临时文件**不立刻删**：MCI 是异步播放，删早了会打断（放完由系统清理临时目录）。
+       失败时把落点留在提示里，用户能自己打开听 —— 比"什么都没发生"强。
+    """
+    import base64 as _b64 # noqa: PLC0415
+    import ctypes # noqa: PLC0415
+    import sys as _sys # noqa: PLC0415
+    import tempfile # noqa: PLC0415
+    if not b64:
+        return "后端没回音频内容"
+    ext = ".mp3" if "mpeg" in str(mime).lower() or "mp3" in str(mime).lower() else ".wav"
+    try:
+        raw = _b64.b64decode(b64)
+    except Exception as e: # noqa: BLE001
+        return "音频内容解不开：%s" % str(e)[:60]
+    try:
+        fd, path = tempfile.mkstemp(prefix="pm-preview-", suffix=ext)
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+    except OSError as e:
+        return "临时文件写不出来：%s" % str(e)[:60]
+    if _sys.platform != "win32":
+        return "当前系统不支持内置播放（文件已存到 %s）" % path
+    try:
+        mci = ctypes.windll.winmm.mciSendStringW
+        alias = "pmpv%d" % (int(time.time() * 1000) % 100000)
+        if mci("open \"%s\" alias %s" % (path, alias), None, 0, None) != 0:
+            return "系统播放器打不开这个文件（已存到 %s）" % path
+        mci("play %s" % alias, None, 0, None)
+        return ""
+    except Exception as e: # noqa: BLE001
+        return "调用系统播放器失败：%s（文件已存到 %s）" % (str(e)[:50], path)
+
+
 def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
     """TTS / 变声服务连通测试卡（web ttsProbe :1790-1807、vcProbe :1823-1841 对齐）。
 
@@ -6634,6 +6717,60 @@ def _tts_probe_appendix(t: Tokens, page: QWidget) -> None:
 
     _make_row("TTS 服务", "连通测试", "/api/voice/probe", "voice_reply.http_url")
     _make_row("变声服务", "变声连通测试", "/api/voice/vc-probe", "voice_reply.vc_url")
+
+    # ── 试听当前音色（对齐 web `#voicePreview` :2259-2264 / JS :2265-2278）──
+    #    web 侧那颗按钮是**纯 JS onclick**（没有 `data-act`），所以 Qt 的
+    #    `_extract_btns` 索引不到它 ⇒ 后端 `GET /api/voice/preview` 一直是"有实现、
+    #    用户点不到"。这里补一个原生入口：合成当前设置下的一小段，当场放出来。
+    #    ⛔ 不发微信、不落盘（后端就是这么做的）；播放用 Windows 自带 MCI，
+    #       不引第三方音频库（随包体积与依赖都省了）。
+    pv_row = QHBoxLayout()
+    pv_lb = QLabel("试听")
+    pv_lb.setFont(qfont(t, 12.5))
+    pv_lb.setStyleSheet(f"color:{t.tx2};background:transparent;")
+    pv_btn = Btn("试听当前音色", t, "ghost")
+    pv_out = QLabel("点一下就能听到「当前设置」合成出来的一段话（不发微信、不落盘）"
+                    "——改完音色/参考音频先在这里听，不用真发一条出去试。")
+    pv_out.setFont(qfont(t, 12))
+    pv_out.setWordWrap(True)
+    pv_out.setStyleSheet(f"color:{t.tx3};background:transparent;")
+    pv_row.addWidget(pv_lb)
+    pv_row.addWidget(pv_btn)
+    pv_row.addWidget(pv_out, 1)
+    card.body.addLayout(pv_row)
+
+    def _preview_run() -> None:
+        pv_btn.setEnabled(False)
+        pv_out.setText("正在合成…")
+        pv_out.setStyleSheet(f"color:{t.tx3};background:transparent;")
+
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/voice/preview", timeout=60.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _apply(box: dict) -> None:
+            pv_btn.setEnabled(True)
+            d = box.get("r") if isinstance(box.get("r"), dict) else {}
+            if box.get("err") or not d.get("ok"):
+                pv_out.setText("合成失败：%s" % (box.get("err")
+                              or d.get("why") or d.get("error") or "未知原因"))
+                pv_out.setStyleSheet(f"color:{t.err};background:transparent;")
+                return
+            why = _play_b64_audio(str(d.get("b64") or ""), str(d.get("mime") or "audio/wav"))
+            if why:
+                pv_out.setText("合成好了（%s 字节）但放不出来：%s —— 文件已存到临时目录，可自己打开听。"
+                               % (d.get("bytes") or 0, why))
+                pv_out.setStyleSheet(f"color:{t.err};background:transparent;")
+                return
+            extra = ("（%s）" % d["voice"]) if d.get("voice") else ""
+            pv_out.setText("已合成 %s 字节%s，正在播放…" % (d.get("bytes") or 0, extra))
+            pv_out.setStyleSheet(f"color:{t.ok};background:transparent;")
+
+        run_async(_work, _apply, page=page, interval=300, name="voice-preview")
+
+    pv_btn.clicked.connect(_preview_run)
     _append_card(page, card)
 
 

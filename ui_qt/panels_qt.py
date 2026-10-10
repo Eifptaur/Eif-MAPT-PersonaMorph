@@ -1576,7 +1576,10 @@ _AIDS_COVERED_ELSEWHERE = {"localProbe", "wxRecheck", "ttsProbe", "vcProbe", "rg
                           # rcAnnual / rcCard：记忆页的「群年报」卡里已有原生按钮
                           #   （`memory_panel` 的 `b_rc_annual`/`b_rc_card`，走
                           #   `/api/report/annual` 与 `/api/report/card`）⇒ 同 mgDraw。
-                          "rcAnnual", "rcCard"}
+                          # rbOpen：同一张卡里的「看精华簿」（`/api/report/book`）——
+                          #   它**没有** web 同名 id（web 侧至今没这个入口），但同属
+                          #   该卡的原生按钮，一起登记免得元数据行另生一颗。
+                          "rcAnnual", "rcCard", "rbOpen"}
 # 这两个下拉是 web **纯 JS 专属控件**（providerSel 静态选项+change 联动、modelSel
 # 动态填充），Qt 由模型页追加区原生实现（objectName 同名）——元数据行只渲染出
 # 假/空下拉。fbKind 这类「无 cfg 但有静态

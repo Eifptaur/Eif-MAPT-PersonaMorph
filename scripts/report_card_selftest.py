@@ -233,5 +233,18 @@ ok("H7★ Qt 记忆页有年报卡原生按钮（objectName rcAnnual/rcCard）",
 ok("H8★ Qt 覆盖名单登记了 rcAnnual/rcCard（否则元数据行会再渲染一颗同名按钮）",
    '"rcAnnual"' in _pq_src and '"rcCard"' in _pq_src, "")
 
+# ── H9~H12：名场面精华簿（`/api/report/book`）──────────────────────────────
+# 它原来**只有后端**（路由 + handler 都在，判据 H1~H4 也覆盖了），但**没有任何人能点开**：
+# web 侧至今没这个 id，Qt 侧也没有入口 ⇒ 典型"后端有、前端没有"。
+# 下面这四条守的就是"点得到"这三条链。
+ok("H9★ 精华簿也有 Qt 入口按钮（objectName rbOpen）",
+   'setObjectName("rbOpen")' in _pcs_src, "")
+ok("H10★ Qt 那个按钮真打 `/api/report/book`（不是画颗装饰按钮）",
+   "/api/report/book" in _pcs_src, "")
+ok("H11★ 读回来的条目按「谁挑的」渲染（`by` 不能丢——丢了就跟自动算的分不清）",
+   'x.get("by")' in _pcs_src and "挑的" in _pcs_src, "")
+ok("H12★ 精华簿按钮也登记进 Qt 覆盖名单（同 rcAnnual）",
+   '"rbOpen"' in _pq_src, "")
+
 print("\n== 群年报判据：%d 通过 / %d 失败 ==" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
