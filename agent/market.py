@@ -27,6 +27,8 @@ import os
 import shutil
 import tempfile
 import time
+import urllib.parse
+import urllib.request
 
 log = logging.getLogger("persona-morph")
 
@@ -177,12 +179,61 @@ def _local_catalog(kind: str) -> list:
 
 
 def _fetch_catalog(kind: str) -> list:
-    """从站上取目录。**站未就绪 ⇒ 空表**（不编造、不缓存假数据）。"""
+    """从站上取目录（"这一栏有哪些能下载"）。**站未就绪 ⇒ 空表**（不编造、不缓存假数据）。
+
+    接口：`GET <site_url>/api/v1/catalog?kind=<kind>` → `{ok:true, kind, items:[...]}`。
+    ⛔ 与投稿半边同口径：**失败就抛**（由 `list_kind` 兜成 `load-failed`），
+       不在这儿吞掉 —— 吞了就变成"站上有东西但界面显示空"，用户以为没资源。
+    ⛔ 只读；走本机直连（`ProxyHandler({})`，不吃系统代理）。
+    """
     if not site_ready():
         return []
-    # 站就绪后在此实现：GET <site_url>/api/catalog?kind=<kind> → 列表 JSON
-    # ⛔ 只读；鉴权与重试照 agent/feedback.py::_post 的口径（设备 ID + 签名）。
-    return []
+    base = str(_cfg().get("site_url") or "").rstrip("/")
+    if not base:
+        return []
+    url = base + "/api/v1/catalog?" + urllib.parse.urlencode({"kind": str(kind or "")})
+    req = urllib.request.Request(url, method="GET",
+                                 headers={"accept": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=float(_cfg().get("catalog_timeout_s") or 15.0)) as resp:
+        d = json.loads(resp.read().decode("utf-8") or "{}")
+    if not isinstance(d, dict) or d.get("ok") is not True:
+        return []
+    items = d.get("items")
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        iid = str(it.get("id") or "").strip()
+        if not iid:
+            continue
+        out.append({
+            "id": iid,
+            "name": str(it.get("name") or iid),
+            "desc": str(it.get("desc") or it.get("description") or ""),
+            "sha256": str(it.get("sha256") or "").lower(),
+            "code": str(it.get("code") or ""),  # 取件口令（有就能走口令那条路）
+            "size": int(it.get("size") or 0),
+        })
+    return out
+
+
+def _norm_id(v) -> str:
+    """比对用的 id 归一化：去扩展名、去空白、小写。
+
+    **为什么需要它**：本机项的 `id` 来源于**文件名**（`install()` 落盘时用 `<safe>.json`），
+    而站上目录的 `id` 是**业务 id**（`test_xiaolin`，不带后缀）。两套口径直接比 ⇒ 永远不相等 ⇒
+    界面会显示"已可下载但没装"，用户重复安装同一份。归一化去后缀即可对齐。
+    （⛔ 只用于**比对**，不用于落盘 —— 落盘名还得带后缀。）
+    """
+    s = str(v or "").strip().lower()
+    for ext in (".json", ".md", ".bin", ".zip"):
+        if s.endswith(ext):
+            s = s[: -len(ext)]
+            break
+    return s
 
 
 def list_kind(kind: str) -> dict:
@@ -213,10 +264,14 @@ def list_kind(kind: str) -> dict:
         log.debug("取站上目录失败 kind=%s：%s", k, e, exc_info=True)
 
     local = _local_catalog(k)
-    installed = {str(x.get("id") or "") for x in local if x.get("installed")}
+    # ⚠️ 本机项的 `id` 是**文件名**（人设/Skill 栏带 `.json` 后缀，工具栏是裸 name），
+    #    站上目录的 `id` 是**业务 id**（不带后缀）⇒ 直接比会**永远比不中**，
+    #    表现为"装完了，可下载列里那一项还是「可安装」"（用户会重复装）。
+    #    ⇒ 两边都归一化（去扩展名）再比。
+    installed = {_norm_id(x.get("id")) for x in local if x.get("installed")}
     for item in remote:
         iid = str((item or {}).get("id") or "")
-        item["installed"] = iid in installed
+        item["installed"] = _norm_id(iid) in installed
         item["source"] = "site"
 
     return {
@@ -402,8 +457,24 @@ def uninstall(kind: str, item_id: str) -> dict:
 
 
 def _fetch_package(kind: str, item_id: str) -> bytes:
-    """从站上取一个资源包。**站未就绪 ⇒ 空**。站建好后在此实现（预签名直链 + 校验）。"""
-    return b""
+    """从站上取一个资源包的字节。**站未就绪 ⇒ 空**。
+
+    两条路，优先走"按 id 直取"（站侧目录里给了 `sha256` 就能校验）：
+      · `GET <site_url>/api/v1/catalog/<kind>/<id>/download` —— 直接给包；
+      · 站侧只登记了取件口令时，调用方改用 `market_upload.download_by_code()`（界面「口令取件」那条）。
+    ⛔ 拿不到就如实返回空 ⇒ `install` 报 `load-failed`，不静默装个空包。
+    """
+    if not site_ready():
+        return b""
+    base = str(_cfg().get("site_url") or "").rstrip("/")
+    if not base:
+        return b""
+    iid = urllib.parse.quote(str(item_id or ""), safe="")
+    url = "%s/api/v1/catalog/%s/%s/download" % (base, urllib.parse.quote(str(kind or ""), safe=""), iid)
+    req = urllib.request.Request(url, method="GET", headers={"accept": "*/*"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=float(_cfg().get("download_timeout_s") or 120.0)) as resp:
+        return resp.read()
 
 
 # --------------------------------------------------------------- 上传半边
