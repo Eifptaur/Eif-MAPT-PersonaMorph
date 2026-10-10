@@ -293,5 +293,25 @@ ok("N2 `_summarize_on_exit` 里排掉自己（`_sid == _self_wxid` 跳过）",
 ok("N3 `_summarize_on_exit` 里排掉主人其他号（`is_owner` 跳过）",
    "orch.wechat.is_owner(_sid" in _seg)
 
+print("── O. 回声判据不许「认错人」（双向包含 ⇒ 把自己认成别人）──")
+# 现场：我刚发「今天好累啊」，同群有人发「今天好累啊我快死了」⇒ 旧的双向包含
+#   （`short in long_`）会把它判成"我的回声" ⇒ ① 那条该回的话被丢掉；② 更糟的是
+#   这一档命中后会调 `learn_self_from_echo(那人的 wxid)` ⇒ **把自己学成那个群友**（且落盘）。
+_ei = _SRC.find("def _is_self_echo")
+_eseg = _SRC[_ei:_ei + 2600] if _ei >= 0 else ""
+ok("O1 `_is_self_echo` 判据②改成**单向**（不再用 `short, long_ = ...` 的双向包含）",
+   _eseg != "" and "short, long_ =" not in _eseg)
+ok("O2 方向固定为「我发的(`ns`) 包含 进来的(`nt`)」（`nt in ns`）",
+   "nt in ns" in _eseg)
+ok("O3 还卡了长度差（进来的比我发的短太多 ⇒ 不像回读）",
+   "len(ns) - len(nt) <=" in _eseg)
+# 学号安全闸：已确认身份时，回声不许改写它。
+_lei = _SRC.find("def learn_self_from_echo")
+_lseg = _SRC[_lei:_lei + 1800] if _lei >= 0 else ""
+ok("O4 `learn_self_from_echo` 里加了闸：**已有 `_self_wxid` 时不许被回声改写**",
+   _lseg != "" and "if self._self_wxid:" in _lseg and "防误判钉错" in _lseg)
+ok("O5 这道闸在赋值 `self._self_wxid = w` **之前**（先拦、再赋值）",
+   _lseg != "" and _lseg.find("防误判钉错") < _lseg.find("self._self_wxid = w"))
+
 print("\n==== 自我行号判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
