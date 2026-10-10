@@ -34,7 +34,7 @@ SECS_OF_THIS_BATCH = (
     "overview", "wechat", "persona", "check",
     "model", "memory", "memory-set", "search", "music", "community", "emoji",
     "media", "tts", "imggen", "videogen", "tools", "poke",
-    "sessions", "feedback", "send", "log", "vermat", "server", "advanced",
+    "sessions", "feedback", "send", "log", "vermat", "server",
     "ui", "json", "cursor", "wavefx",
 )
 

@@ -702,15 +702,25 @@ class WebUI:
             if path.startswith("/assets/emoji/"):
                 # ⚠️ V1：这里原来是 `unquote(basename)`（顺序反了）⇒ 可穿越到仓库根读 config.json。
                 # 现在统一走 `_safe_join`（先 unquote 再 basename + realpath 勾边），并且只认
-                # **表情缓存那种文件名**（md5 十六进制 + 图片后缀），别的一律 404。
-                import re as _re
+                # **图片后缀**的文件，别的一律 404。
+                # ⚠️ 早先的正则写的是 `^[0-9a-zA-Z_-]{6,}\.(ext)$`（只认纯 md5 名）——
+                #    而收藏夹里实际会混进程序自己生成的名字：`<md5>.thumb.png`（缩略图，中间多个点）、
+                #    `58471307405@chatroom_57.png`（按群名命名）⇒ 这些**合法文件被误判 404**，
+                #    界面一屏降级成名称块（用户看到的"表情全显示不出来"）。
+                #    ⇒ 放宽成"**必须以图片后缀结尾、且不含路径分隔符**"即够：
+                #    防穿越已由 `_safe_join` 的 basename + realpath 勾边负责，这里不必再收紧到 md5。
                 emoji_dir = self._data_path("emojis")
                 fp = self._safe_join(emoji_dir, path)
-                if not fp or not _re.match(r"^[0-9a-zA-Z_-]{6,}\.(jpg|jpeg|png|gif|webp|bmp)$",
-                                           os.path.basename(fp), _re.I):
+                _ename = os.path.basename(str(fp or ""))
+                if not fp or "\\" in _ename or "/" in _ename or not re.match(
+                        r"^.+\.(jpg|jpeg|png|gif|webp|bmp)$", _ename, re.I):
                     raise FileNotFoundError(path)
+                _ec = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                       "gif": "image/gif", "webp": "image/webp",
+                       "bmp": "image/bmp"}.get(os.path.splitext(_ename)[1].lower().lstrip("."), "image/png")
                 with open(fp, "rb") as f:
-                    body = f.read()
+                    handler._bytes(f.read(), _ec)
+                return
             if path.startswith("/assets/emoticon/"):
                 # 自定义表情的缩略图（索引条目 `path` 指向的那个文件，目录 data/emoticons/）。
                 # ⚠️ 只认「md5 十六进制 + 图片后缀」这一种文件名形态，与收藏夹同款收口 ——

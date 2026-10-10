@@ -1140,7 +1140,6 @@ th{color:var(--tx2);font-weight:500}
           <a href="#sec-server" class="nav-mg-it"><svg viewBox="0 0 16 16"><rect x="2.4" y="3" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.4" y="8.8" width="11.2" height="4.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.8" cy="5.1" r=".8" fill="currentColor"/><circle cx="4.8" cy="10.9" r=".8" fill="currentColor"/></svg><span class="lb">服务</span></a>
             </div>
           </div>
-          <a href="#sec-advanced"><svg viewBox="0 0 16 16"><path d="M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="11" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span class="lb">高级</span></a>
             </div>
           </div>
           <div class="nav-grp" data-grp="look">
@@ -1337,15 +1336,7 @@ th{color:var(--tx2);font-weight:500}
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <div class="desc">表情包（模型-程序协作）：群里收到有趣的表情，机器人用 <code>collect_emoji</code> 收藏（生成极简概述入库，模型-程序协作），需要时 <code>send_emoji</code> 按概述/语境选一个再发出；也可在下面手动管理。</div>
       <div class="sub">④ 表情与互动</div>
-      <div class="row"><label>行高缓存</label><div class="grow"><b id="rgState">读取中</b><button id="rgForget" class="ghost" style="margin-left:8px">重新测量</button><span class="hint">会话列表的行高是从屏幕量出来的（绿带尺）：量到就记住，下次没量到先用它。改了系统缩放或微信字号之后用「重新测量」清掉旧值 —— 行高错了会算错「该点第几行」。</span></div></div><div class="row"><label>收藏夹表情</label><div class="grow">
-        <input type="text" id="emojiSearch" placeholder="搜索表情（按文件名）" style="margin-bottom:8px">
-        <div id="emojiBox" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;min-height:60px;max-height:240px;overflow-y:auto;border:1px dashed var(--bd);border-radius:10px;padding:10px">
-          <span class="hint">加载中…</span>
-        </div>
-        <button id="emojiRefresh" class="ghost" style="margin-top:6px">刷新</button>
-        <span class="hint" id="emojiCount"></span>
-        <!-- 数据源：搜索只过滤显示，收藏夹太大时自动分页预览（最多显示 60 个 + 滚动） -->
-      </div></div>
+      <div class="row"><label>行高缓存</label><div class="grow"><b id="rgState">读取中</b><button id="rgForget" class="ghost" style="margin-left:8px">重新测量</button><span class="hint">会话列表的行高是从屏幕量出来的（绿带尺）：量到就记住，下次没量到先用它。改了系统缩放或微信字号之后用「重新测量」清掉旧值 —— 行高错了会算错「该点第几行」。</span></div></div>
       <div class="row"><label>说明</label><div class="grow">
         <span class="hint">合并转发消息在聊天记录里显示为「[合并转发] …」，机器人可用 <code>view_merge_forward</code> 查看具体内容。</span>
       </div></div>
@@ -1523,6 +1514,60 @@ th{color:var(--tx2);font-weight:500}
         <option value="2">2：较积极</option><option value="3">3：表情包爱好者</option></select>
         <div class="hint">提示词层面引导，不强制。</div>
       </div></div>
+      <div class="sub">⑥ 朋友圈</div>
+      <div class="desc">刷 / 点赞 / 评论 / 发布。默认全关＝机器人不主动碰朋友圈；打开后按概率低频触发（截图给模型看更耗用量，频率请保守）。</div>
+      <div class="mid">
+        <div class="row"><label>刷朋友圈</label><input type="checkbox" data-cfg="behavior.moments_surf.enabled"><span class="hint">开启后按概率自动刷</span></div>
+        <div class="row"><label>刷-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_surf.probability"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>刷-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_surf.daily_limit"></div>
+        <div class="row"><label>刷-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_surf.cooldown_s"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>点赞</label><input type="checkbox" data-cfg="behavior.like_moments.enabled"></div>
+        <div class="row"><label>评论朋友圈</label><input type="checkbox" data-cfg="behavior.moments_comment.enabled"><span class="hint">默认关（评论是有感而发，不该高频）</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>评-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_comment.probability"></div>
+        <div class="row"><label>评-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_comment.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>发朋友圈</label><input type="checkbox" data-cfg="behavior.moments_publish.enabled"><span class="hint">默认关（公开发布，慎重）</span></div>
+        <div class="row"><label>发-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_publish.probability"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>发-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_publish.daily_limit"></div>
+        <div class="row"><label>发-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_publish.cooldown_s"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>点赞-每日上限</label><input type="number" min="0" data-cfg="behavior.like_moments.daily_limit"></div>
+        <div class="row"><label>点赞-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.like_moments.cooldown_s"></div>
+      </div>
+      <div class="sub">⑦ 提醒 · 节日</div>
+      <div class="row"><label>计时提醒</label><input type="checkbox" data-cfg="timers.enabled">
+        <span class="hint">群友在对话里让你「N 分钟后提醒」，模型就调 set_timer —— <b>只能设到当前会话</b>（工具参数里没有"发给谁"），每条会话最多挂 3 条、全局最多 20 条、30 秒~7 天；到点发送<b>仍然过风险闸门</b>，暂停/禁言期间不发、恢复后补发</span></div>
+      <div class="row"><label>节日问候</label><div class="grow"><select data-cfg="holiday.mode">
+        <option value="off">off：完全不提</option>
+        <option value="passive">passive：只在对话里自然带一句（默认，绝不主动发）</option>
+        <option value="active">active：到点主动问候（必须填下面的白名单）</option></select>
+        <div class="hint">默认 passive ＝ 只往提示词里加一句「今天是 X 节」，<b>一条消息都不会主动发</b>；active 才主动发，且受"白名单 + 每天每会话一次 + 只在 9~21 点"三重限制</div>
+      </div></div>
+      <div class="mid" id="holidayRows">
+        <div class="row"><label>问候白名单</label><div class="grow">
+          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：家人群, 文件传输助手（逗号或换行分隔）"></textarea>
+          <div class="hint">只有名单里的会话会被主动问候；<b>留空＝即使选了 active 也不会主动发</b>（防"节日变群发"）</div>
+        </div></div>
+        <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
+      </div>
+      <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
+      <div class="sub">⑧ 省用量档</div>
+      <div class="row"><label>档位</label><div class="grow">
+        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="token_budget.saver"> 省用量档（每次对话少发给模型一些内容，但模型可能变笨一点）</label>
+        <div class="hint"><b>不勾 ＝ 完整档（默认）</b>：表情码清单、工具完整说明、网页原文、翻聊天记录 100 条 —— 全给模型，效果最好、也最费额度。<br>
+        <b>勾上 ＝ 省用量档</b>：① 不摆表情码清单（少发 ≈1147 字/轮）② 翻聊天记录上限 100→50、网页回执只留头 6000 字＋尾 3000 字 ③ 工具说明只留第一句（工具表是每次请求最大的单块，实测 37 个工具 ≈7324 字）④ 提示模型“能一次调完的别分两轮”。<br>
+        <b>代价（如实说）</b>：后三项属“可能掉效果” —— 长正文中段被省略、模型可能选错工具或漏参数。所以默认不勾；想省钱就勾，觉得变笨了取消即可。</div>
+      </div></div>
       <div class="btns"><button class="pri" data-save>保存设置（身份与响应）</button></div>
     </section>
 <section id="sec-persona" class="card" data-sec>
@@ -1658,6 +1703,9 @@ th{color:var(--tx2);font-weight:500}
       <div class="hint" style="color:var(--err-tx)">注意：拍一拍是右键「对方头像」触发：头像由程序识别，若群内同名/头像辨识不清，理论上有拍到其他群友的风险——所以默认用「简易检测」，确认无误后再完整执行。</div>
       <div class="hint" id="uiTestDetail"></div>
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
+      <div class="sub">本机适配（先试哪条路）</div>
+      <div class="row"><label>按本机战绩自动选路</label><input type="checkbox" data-cfg="env_profile.auto_apply">
+        <span class="hint">默认开。机器人记着"这台机器上哪条路真成过"（切会话路线 / 点击目标 / 识字引擎档位），开着时会**先试更可能成的那条**；**只动"先试哪个"，不动任何安全约束**（不动光标、不主动置前、不群发、不越版本门），而且**连败到阈值就把记忆丢掉**、退回默认顺序。关掉＝只探测、给建议、记事实，不改执行顺序。</span></div>
       <h2>功能自检清单（按重要性排序）</h2>
       <table id="checkList">
         <thead><tr><th style="width:26px">结果</th><th>项目</th><th>怎么测</th><th>预期</th></tr></thead>
@@ -2030,7 +2078,27 @@ th{color:var(--tx2);font-weight:500}
       </div>
       <div class="btns"><button class="pri" data-save>保存设置（记忆共享）</button></div>
     </section>
-<section id="sec-emoji" class="card" data-sec><div class="sec-hd"><h2>表情</h2><span class="st" id="stEmojiIndex">读取中</span></div><div class="desc">自定义表情是图片，模型读不出含义 —— 这里把每张图翻成一句文字（说明 / 适用场面 / 情绪 / 把握），机器人挑表情时才有依据。</div><div class="sub">① 索引概况</div><div class="stat" id="emojiStats"><div class="s"><b id="eiTotal">0</b><span>索引总数</span></div><div class="s"><b id="eiDone">0</b><span>已标注</span></div><div class="s"><b id="eiTodo">0</b><span>待打标</span></div><div class="s"><b id="eiLow">0</b><span>把握不足</span></div><div class="s"><b id="eiAnim">0</b><span>动图</span></div><div class="s"><b id="eiStill">0</b><span>静态图</span></div><div class="s"><b id="eiTop">—</b><span>群友最常用</span></div></div><div class="row"><label>筛选</label><div class="grow"><input type="text" id="eiSearch" placeholder="按说明、场面或编号搜…"><label style="margin-left:12px"><input type="checkbox" id="eiPendingOnly">只看待打标</label><button id="eiRefresh" class="ghost">刷新</button><button id="eiRescan" class="ghost">重扫目录</button><span class="hint" id="eiNote"></span></div></div><div class="sub">② 清单</div><div id="emojiList" style="max-height:420px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px"></div><div class="sub">③ 回填语义（点上面任意一条开始改）</div><div class="mid"><div class="row"><label>说明</label><div class="grow"><input type="text" id="eiCap" placeholder="这张图画了什么、是什么梗"><span class="hint">模型只读这句文字，所以梗图必须把来源写进去</span></div></div><div class="row"><label>适用场面</label><div class="grow"><input type="text" id="eiSit" placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）"></div></div><div class="row"><label>情绪</label><div class="grow"><input type="text" id="eiMoods" placeholder="逗号分隔，如：嘲弄,无奈"></div></div><div class="row"><label>把握</label><div class="grow"><select id="eiConf"><option value="high">高（看图就能确定）</option><option value="low">低（疑似梗，需外部资料）</option></select><input type="text" id="eiMeme" placeholder="梗的出处（可留空）" style="margin-left:8px"></div></div><div class="btns"><button class="pri" id="eiSave">保存语义</button><span class="hint" id="eiWho"></span></div></div><div class="sub">④ 向群友请教</div><div class="row"><label>启用</label><div class="grow"><input type="checkbox" data-cfg="emoji.curiosity.enabled"><span class="hint">低把握的表情，机器人可以在群里问一句「这是什么梗」；群友答对了就记下来（默认关 —— 问多了像刷屏）</span></div></div><div class="row"><label>提问概率</label><div class="grow"><input type="number" min="0" max="1" step="0.05" data-cfg="emoji.curiosity.probability"><span class="hint">每次遇到合适机会，问的概率（0~1）</span></div></div><div class="row"><label>冷却(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.cooldown_s"><span class="hint">同一张表情多久内不再问（默认 21600 ＝ 6 小时）</span></div></div><div class="row"><label>应答窗口(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.answer_window_s"><span class="hint">超过这么久才回的不算回答（默认 120）</span></div></div><div class="row"><label>当前状态</label><div class="grow"><span class="hint" id="eiCurState">读取中…</span></div></div><div class="row"><label>最近学到</label><div class="grow"><span class="hint" id="eiCurLearned">—</span></div></div><div class="sub">⑤ Emoji 库</div><div class="row"><label>可用清单</label><div class="grow"><b id="ecStats">读取中</b><span class="hint">机器人回话时可以直接写这些方括号码，微信会把它变成表情 —— 这份清单与提示词里摆给模型看的那份同源</span></div></div><div class="row"><label>微信表情码</label><div class="grow"><span class="hint" id="ecWx">读取中…</span></div></div><div class="row"><label>情绪组</label><div class="grow"><span class="hint" id="ecMood">读取中…</span></div></div><div class="row"><label>提示词里摆给模型看</label><div class="grow"><input type="checkbox" data-cfg="emoji.prompt_codes"><span class="hint">关掉可省约 1 K 字符/轮；关掉之后模型可能改用「（微笑）」这种文字对付</span></div></div><div class="row"><label>允许 Unicode 表情</label><div class="grow"><input type="checkbox" data-cfg="emoji.allow_unicode"><span class="hint">开启时情绪组里会一并给出表情字符（笑脸那类）；关掉只给微信 [码]</span></div></div></section>
+<section id="sec-emoji" class="card" data-sec><div class="sec-hd"><h2>表情</h2><span class="st" id="stEmojiIndex">读取中</span></div><div class="desc">自定义表情是图片，模型读不出含义 —— 这里把每张图翻成一句文字（说明 / 适用场面 / 情绪 / 把握），机器人挑表情时才有依据。</div><div class="sub">① 索引概况</div><div class="stat" id="emojiStats"><div class="s"><b id="eiTotal">0</b><span>索引总数</span></div><div class="s"><b id="eiDone">0</b><span>已标注</span></div><div class="s"><b id="eiTodo">0</b><span>待打标</span></div><div class="s"><b id="eiLow">0</b><span>把握不足</span></div><div class="s"><b id="eiAnim">0</b><span>动图</span></div><div class="s"><b id="eiStill">0</b><span>静态图</span></div><div class="s"><b id="eiTop">—</b><span>群友最常用</span></div></div><div class="row"><label>筛选</label><div class="grow"><input type="text" id="eiSearch" placeholder="按说明、场面或编号搜…"><label style="margin-left:12px"><input type="checkbox" id="eiPendingOnly">只看待打标</label><button id="eiRefresh" class="ghost">刷新</button><button id="eiRescan" class="ghost">重扫目录</button><span class="hint" id="eiNote"></span></div></div><div class="sub">② 清单</div><div id="emojiList" style="max-height:420px;overflow-y:auto;border:1px solid var(--bd);border-radius:10px;padding:6px"></div>
+      <div class="row"><label>收藏夹表情</label><div class="grow">
+              <input type="text" id="emojiSearch" placeholder="搜索表情（按文件名）" style="margin-bottom:8px">
+              <div id="emojiBox" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;min-height:60px;max-height:240px;overflow-y:auto;border:1px dashed var(--bd);border-radius:10px;padding:10px">
+                <span class="hint">加载中…</span>
+              </div>
+              <button id="emojiRefresh" class="ghost" style="margin-top:6px">刷新</button>
+              <span class="hint" id="emojiCount"></span>
+              <!-- 数据源：搜索只过滤显示，收藏夹太大时自动分页预览（最多显示 60 个 + 滚动） -->
+            </div></div><div class="sub">③ 回填语义（点上面任意一条开始改）</div><div class="mid"><div class="row"><label>说明</label><div class="grow"><input type="text" id="eiCap" placeholder="这张图画了什么、是什么梗"><span class="hint">模型只读这句文字，所以梗图必须把来源写进去</span></div></div><div class="row"><label>适用场面</label><div class="grow"><input type="text" id="eiSit" placeholder="什么时候该用它（很多表情是应付场面，不是表达情绪）"></div></div><div class="row"><label>情绪</label><div class="grow"><input type="text" id="eiMoods" placeholder="逗号分隔，如：嘲弄,无奈"></div></div><div class="row"><label>把握</label><div class="grow"><select id="eiConf"><option value="high">高（看图就能确定）</option><option value="low">低（疑似梗，需外部资料）</option></select><input type="text" id="eiMeme" placeholder="梗的出处（可留空）" style="margin-left:8px"></div></div><div class="btns"><button class="pri" id="eiSave">保存语义</button><span class="hint" id="eiWho"></span></div></div><div class="sub">④ 向群友请教</div><div class="row"><label>启用</label><div class="grow"><input type="checkbox" data-cfg="emoji.curiosity.enabled"><span class="hint">低把握的表情，机器人可以在群里问一句「这是什么梗」；群友答对了就记下来（默认关 —— 问多了像刷屏）</span></div></div><div class="row"><label>提问概率</label><div class="grow"><input type="number" min="0" max="1" step="0.05" data-cfg="emoji.curiosity.probability"><span class="hint">每次遇到合适机会，问的概率（0~1）</span></div></div><div class="row"><label>冷却(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.cooldown_s"><span class="hint">同一张表情多久内不再问（默认 21600 ＝ 6 小时）</span></div></div><div class="row"><label>应答窗口(秒)</label><div class="grow"><input type="number" min="0" data-cfg="emoji.curiosity.answer_window_s"><span class="hint">超过这么久才回的不算回答（默认 120）</span></div></div><div class="row"><label>当前状态</label><div class="grow"><span class="hint" id="eiCurState">读取中…</span></div></div><div class="row"><label>最近学到</label><div class="grow"><span class="hint" id="eiCurLearned">—</span></div></div><div class="sub">⑤ Emoji 库</div><div class="row"><label>可用清单</label><div class="grow"><b id="ecStats">读取中</b><span class="hint">机器人回话时可以直接写这些方括号码，微信会把它变成表情 —— 这份清单与提示词里摆给模型看的那份同源</span></div></div><div class="row"><label>微信表情码</label><div class="grow"><span class="hint" id="ecWx">读取中…</span></div></div><div class="row"><label>情绪组</label><div class="grow"><span class="hint" id="ecMood">读取中…</span></div></div><div class="row"><label>提示词里摆给模型看</label><div class="grow"><input type="checkbox" data-cfg="emoji.prompt_codes"><span class="hint">关掉可省约 1 K 字符/轮；关掉之后模型可能改用「（微笑）」这种文字对付</span></div></div><div class="row"><label>允许 Unicode 表情</label><div class="grow"><input type="checkbox" data-cfg="emoji.allow_unicode"><span class="hint">开启时情绪组里会一并给出表情字符（笑脸那类）；关掉只给微信 [码]</span></div></div><div class="sub">⑥ 收表情 / 回表情</div><div class="desc">机器人主动收藏别人发的表情、以及在回话里发表情包的频率。默认偏保守，觉得太频繁就把上限调小或冷却调长。</div><div class="mid">
+        <div class="row"><label>收藏表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.collect_emoji.cooldown_s"></div>
+        <div class="row"><label>收藏表情-每日上限</label><input type="number" min="0" data-cfg="behavior.collect_emoji.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>回发表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.send_emoji.cooldown_s"></div>
+        <div class="row"><label>回发表情-每日上限</label><input type="number" min="0" data-cfg="behavior.send_emoji.daily_limit"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>@群友-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.at_member.cooldown_s"></div>
+        <div class="row"><label>@群友-每日上限</label><input type="number" min="0" data-cfg="behavior.at_member.daily_limit"></div>
+      </div></section>
 <section id="sec-community" class="card" data-sec data-mg="sec-emoji">
       <h2>社区与学习</h2>
       <div class="desc">金句/意见/聊天记录本地导出；可选上传到自配服务器；反应评分引擎让机器人越聊越有趣（防饱和）。</div>
@@ -2099,6 +2167,23 @@ th{color:var(--tx2);font-weight:500}
           <span class="hint">按接收端要求选。默认<b>放请求头</b>（<b>Bearer</b>，收到 2xx 就算成功）；<b>放请求体</b>＝凭据放在请求体的 <b>key</b> 字段里、<b>且要求回包 ok:true 才算成功</b>——自建站常常"路径写错也回 200"，这时只有第二种能分清"真收下了"和"没接住"。</span></div></div>
         <div class="row"><label>连通结果</label><div class="grow"><span id="cloudStat" class="hint">还没测过</span></div></div>
       </div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div class="sub">⑥ 语言风格训练（机器学习）</div>
+      <div class="desc">机器学习</div>
+      <div class="hint" style="margin-top:0">
+        机制：机器人每次发言后，若群友在 24h 内热烈回应（@ 它 / 接话 / 追问）→ 该条话术加分；冷场 → 降权。热度半衰期 7 天，老梗自动衰减，防饱和。<br>
+        <b>不变人原则</b>：风格学习<b>只给内置的 DeepSeek 小鲸鱼用</b>——它学的是"话怎么说才机灵"，不是学群友的口癖。你自己导入的角色卡（动漫角色 / 原创 / 真人）<b>不参与风格学习</b>：角色设定是绝对基准、权重最高，参考素材只能"换衣服不能换魂"。
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;margin:14px 0 18px;padding:14px;border-radius:14px;background:rgba(63,168,240,.08);border:1px solid var(--blue-line)">
+        <button id="learnApply" class="pri" title="点击开启机器学习，机制会真的开始工作（有群友回应时学习）">确定学习</button>
+        <button id="learnEval" class="ghost" title="模型按评分细则评估：学习前后对话质量变化，打分并说明提升多少" style="font-weight:700">学习评估</button>
+        <span id="learnRst" class="hint" style="flex:1"></span>
+      </div>
+      <div class="row"><label>种子库状态</label><div class="grow">
+        <span class="hint" id="seedStats" style="display:inline-block">加载中…</span>
+        <button id="seedReload" class="ghost" style="margin-left:8px">刷新</button>
+        <span class="hint">趣味种子库（内置官方 212 条 + 你导入的金句，合计可在下方状态看到）；「社区与学习」页可导入金句墙种子。</span>
+      </div></div>
     </section>
 <section id="sec-media" class="card" data-sec>
       <div class="sec-hd"><h2>媒体与语音（随机图 / 语音转文字 / 视频·文件）</h2><span class="st" id="stMedia">读取中</span></div>
@@ -2741,6 +2826,56 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint"><b>当前未接线</b>：勾与不勾目前都不改变发送行为（发送链自己会「先试系统无障碍接口直写输入框、不行再回退粘贴」，不由这里切换）。留着是为了不弄丢你的选择，接上后这里会写清。</span></div>
       <div class="row"><label>允许真鼠标兜底</label><input type="checkbox" data-cfg="input.allow_real_fallback">
         <span class="hint">默认关：投递档确认不了目标会话时<b>宁可漏发、绝不发错</b>，全程不动你的鼠标。打开＝允许机器人<b>真实移动光标、点输入框、点发送</b>（会短暂占用你的鼠标）；只建议「投递档老失败、机器空闲可托管」的场景再开，会话识别正常时不需要它。</span></div>
+      <div class="sub">⑦ 风控闸门（内容与任务把关）</div>
+      <div class="desc">默认只管内容与任务层；节奏类默认不限，交给你自己把控。</div>
+      <div class="hint" style="margin-top:0">
+        默认把关的是<b>内容与任务</b>：同一内容短时间发给多个会话（群发特征）· 同会话重复内容 · 链接堆积（只记录）· 你自己填的禁止词。<br>
+        频率与夜间静默默认<b>不限 / 关闭</b>；想自己掐节奏就在下面填数字，<b>0＝不限</b>。账号风险由使用者自行把控与承担。
+      </div>
+      <div class="mid">
+        <div class="row"><label>闸门总开关</label><input type="checkbox" data-cfg="risk.enabled"><span class="hint">取消勾选＝完全不做内容/任务把关</span></div>
+        <div class="row"><label>暂停所有发送</label><input type="checkbox" data-cfg="risk.paused"><span class="hint">勾上＝立刻停发（本机生效，不会给对方发任何提示）</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>每分钟上限</label><input type="number" min="0" data-cfg="risk.per_minute"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>每小时上限</label><input type="number" min="0" data-cfg="risk.per_hour"><span class="hint">0＝不限</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>每天上限</label><input type="number" min="0" data-cfg="risk.per_day"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>单会话每小时</label><input type="number" min="0" data-cfg="risk.per_chat_per_hour"><span class="hint">0＝不限</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>同会话最小间隔(秒)</label><input type="number" min="0" data-cfg="risk.min_gap_seconds"><span class="hint">0＝不限</span></div>
+        <div class="row"><label>群发判定：会话数</label><input type="number" min="0" data-cfg="risk.broadcast_chats"><span class="hint">同一内容窗口内发给 N 个不同会话即判群发；0＝关</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>群发判定：窗口(秒)</label><input type="number" min="0" data-cfg="risk.broadcast_window_seconds"></div>
+        <div class="row"><label>单条链接上限</label><input type="number" min="0" data-cfg="risk.max_links"><span class="hint">超过只记录不拦</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>重复内容窗口(秒)</label><input type="number" min="0" data-cfg="risk.dup_window_seconds"></div>
+        <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>夜间静默时段</label><div class="grow"><input data-cfg="risk.quiet_hours" placeholder="如 22，7（起止小时，跨零点自动处理）；留空＝不启用"><div class="hint">这段小时数内一条都不发；填两个 0~23 的整数，用逗号分隔</div></div></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>连续被拦升级</label><input type="number" min="0" data-cfg="risk.escalate_after"><span class="hint">连续拦下 N 条就自动暂停发送；0＝不自动暂停</span></div>
+      </div>
+      <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
+      <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
+      <div class="sub">⑧ 跟着群冷热调频率</div>
+      <div class="desc">让上面的风控上限跟着<b>这个群的冷热</b>缩放。默认关 ⇒ 关着的时候上面那几个上限一字不差照旧。</div>
+      <div class="row"><label>启用</label><input type="checkbox" data-cfg="group_adaptive.enabled"><span class="hint">勾上＝冷群把上限往下调、热群往上调（都不超过封顶）；不勾＝上面那几个上限固定</span></div>
+      <div class="row"><label>看多久算“近期”</label><input type="number" min="1" data-cfg="group_adaptive.window_min"><span class="hint">分钟；与这个群自己的长期均值比</span></div>
+      <div class="mid">
+        <div class="row"><label>冷群降到几成</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.cold_scale"><span class="hint">0.6＝降到 60%</span></div>
+        <div class="row"><label>热群提到几成</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.hot_scale"><span class="hint">1.4＝提到 140%</span></div>
+      </div>
+      <div class="mid">
+        <div class="row"><label>最多提到几倍</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.max_scale"><span class="hint">封顶，防"越聊越上头"</span></div>
+        <div class="row"><label>至少留几条</label><input type="number" min="1" data-cfg="group_adaptive.min_cap"><span class="hint">缩完不低于这个数（群冷 ≠ 不许说话）</span></div>
+      </div>
       <div class="btns"><button class="pri" data-save>保存设置（发送限制）</button></div>
     </section>
 <section id="sec-log" class="card" data-sec>
@@ -2767,156 +2902,6 @@ th{color:var(--tx2);font-weight:500}
         <div class="hint">概览卡的「今日/本周/本月」用量卡按此周期归零重计（历史保留 24 期）。</div></div></div>
       <div class="btns"><button class="pri" data-save>保存设置（服务器）</button></div>
     </section>
-<section id="sec-advanced" class="card" data-sec>
-      <h2>调试 · 高级功能</h2>
-      <div class="desc">一般用户不用、其他分区没覆盖的可调项（行为引擎完整参数 / UI 图标库 / 学习机制）。</div>
-      <div class="sub">本机适配（先试哪条路）</div>
-      <div class="row"><label>按本机战绩自动选路</label><input type="checkbox" data-cfg="env_profile.auto_apply">
-        <span class="hint">默认开。机器人记着"这台机器上哪条路真成过"（切会话路线 / 点击目标 / 识字引擎档位），开着时会**先试更可能成的那条**；**只动"先试哪个"，不动任何安全约束**（不动光标、不主动置前、不群发、不越版本门），而且**连败到阈值就把记忆丢掉**、退回默认顺序。关掉＝只探测、给建议、记事实，不改执行顺序。</span></div>
-
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <div class="desc">人性化行为完整参数（一般用户不用；微信卡只有概率，这里调冷却/每日上限/开关）：</div>
-      <div class="mid">
-        <div class="sub">① 表情与互动</div>
-        <div class="row"><label>收藏表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.collect_emoji.cooldown_s"></div>
-        <div class="row"><label>收藏表情-每日上限</label><input type="number" min="0" data-cfg="behavior.collect_emoji.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>回发表情-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.send_emoji.cooldown_s"></div>
-        <div class="row"><label>回发表情-每日上限</label><input type="number" min="0" data-cfg="behavior.send_emoji.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>@群友-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.at_member.cooldown_s"></div>
-        <div class="row"><label>@群友-每日上限</label><input type="number" min="0" data-cfg="behavior.at_member.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>点赞-每日上限</label><input type="number" min="0" data-cfg="behavior.like_moments.daily_limit"></div>
-        <div class="row"><label>点赞-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.like_moments.cooldown_s"></div>
-      </div>
-      <div class="desc">朋友圈（刷/点赞/评论/发布；默认全关=机器人不主动碰朋友圈，打开后按概率低频触发）：</div>
-      <div class="mid">
-        <div class="sub">② 朋友圈</div>
-        <div class="row"><label>刷朋友圈</label><input type="checkbox" data-cfg="behavior.moments_surf.enabled"><span class="hint">开启后按概率自动刷（截图给模型看更耗用量，频率请保守）</span></div>
-        <div class="row"><label>刷-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_surf.probability"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>刷-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_surf.daily_limit"></div>
-        <div class="row"><label>刷-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_surf.cooldown_s"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>点赞</label><input type="checkbox" data-cfg="behavior.like_moments.enabled"></div>
-        <div class="row"><label>评论朋友圈</label><input type="checkbox" data-cfg="behavior.moments_comment.enabled"><span class="hint">默认关（评论是有感而发不该高频）</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>评-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_comment.probability"></div>
-        <div class="row"><label>评-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_comment.daily_limit"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>发朋友圈</label><input type="checkbox" data-cfg="behavior.moments_publish.enabled"><span class="hint">默认关（公开发布，慎重）</span></div>
-        <div class="row"><label>发-概率</label><input type="number" min="0" max="1" step="0.05" data-cfg="behavior.moments_publish.probability"></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>发-每日上限</label><input type="number" min="0" data-cfg="behavior.moments_publish.daily_limit"></div>
-        <div class="row"><label>发-冷却(秒)</label><input type="number" min="0" data-cfg="behavior.moments_publish.cooldown_s"></div>
-      </div>
-      <div class="desc">风险闸门（默认只管内容与任务层；节奏类默认不限，交给你自己把控）</div>
-      <div class="hint" style="margin-top:0">
-        默认把关的是<b>内容与任务</b>：同一内容短时间发给多个会话（群发特征）· 同会话重复内容 · 链接堆积（只记录）· 你自己填的禁止词。<br>
-        频率与夜间静默默认<b>不限 / 关闭</b>；想自己掐节奏就在下面填数字，<b>0＝不限</b>。账号风险由使用者自行把控与承担。
-      </div>
-      <div class="mid">
-        <div class="sub">③ 发送闸门与限流</div>
-        <div class="row"><label>闸门总开关</label><input type="checkbox" data-cfg="risk.enabled"><span class="hint">取消勾选＝完全不做内容/任务把关</span></div>
-        <div class="row"><label>暂停所有发送</label><input type="checkbox" data-cfg="risk.paused"><span class="hint">勾上＝立刻停发（本机生效，不会给对方发任何提示）</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>每分钟上限</label><input type="number" min="0" data-cfg="risk.per_minute"><span class="hint">0＝不限</span></div>
-        <div class="row"><label>每小时上限</label><input type="number" min="0" data-cfg="risk.per_hour"><span class="hint">0＝不限</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>每天上限</label><input type="number" min="0" data-cfg="risk.per_day"><span class="hint">0＝不限</span></div>
-        <div class="row"><label>单会话每小时</label><input type="number" min="0" data-cfg="risk.per_chat_per_hour"><span class="hint">0＝不限</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>同会话最小间隔(秒)</label><input type="number" min="0" data-cfg="risk.min_gap_seconds"><span class="hint">0＝不限</span></div>
-        <div class="row"><label>群发判定：会话数</label><input type="number" min="0" data-cfg="risk.broadcast_chats"><span class="hint">同一内容窗口内发给 N 个不同会话即判群发；0＝关</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>群发判定：窗口(秒)</label><input type="number" min="0" data-cfg="risk.broadcast_window_seconds"></div>
-        <div class="row"><label>单条链接上限</label><input type="number" min="0" data-cfg="risk.max_links"><span class="hint">超过只记录不拦</span></div>
-      </div>
-      <div class="mid">
-        <div class="row"><label>重复内容窗口(秒)</label><input type="number" min="0" data-cfg="risk.dup_window_seconds"></div>
-        <div class="row"><label>重复判定最短字数</label><input type="number" min="0" data-cfg="risk.dup_min_len"></div>
-      </div>
-      <div class="mid">
-        <!-- 群活跃度自适应（第 134 项）：让上面那几个「上限」跟着**这个群的冷热**缩放。
-             ⛔ 默认关 ⇒ 关着的时候上面那几个上限一字不差照旧。
-             有意不暴露（3 个）：cold_ratio / hot_ratio / baseline_days ——
-             它们是「多冷算冷、多热算热、拿多少天当基线」的**内部判据**，
-             改错会把冷热判反（那比不调更糟），所以不给裸改口子。 -->
-        <div class="sub">⑤ 跟着群冷热调频率</div>
-        <div class="row"><label>启用</label><input type="checkbox" data-cfg="group_adaptive.enabled"><span class="hint">勾上＝冷群把上限往下调、热群往上调（都不超过封顶）；不勾＝上面那几个上限固定</span></div>
-        <div class="row"><label>看多久算"近期"</label><input type="number" min="1" data-cfg="group_adaptive.window_min"><span class="hint">分钟；与这个群自己的长期均值比</span></div>
-        <div class="row"><label>冷群降到几成</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.cold_scale"><span class="hint">0.6＝降到 60%</span></div>
-        <div class="row"><label>热群提到几成</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.hot_scale"><span class="hint">1.4＝提到 140%</span></div>
-        <div class="row"><label>最多提到几倍</label><input type="number" step="0.05" min="0.1" data-cfg="group_adaptive.max_scale"><span class="hint">封顶，防"越聊越上头"</span></div>
-        <div class="row"><label>至少留几条</label><input type="number" min="1" data-cfg="group_adaptive.min_cap"><span class="hint">缩完不低于这个数（群冷 ≠ 不许说话）</span></div>
-      </div>
-      <div class="mid">
-        <div class="sub">④ 静默与拦截</div>
-        <div class="row"><label>夜间静默时段</label><div class="grow"><input data-cfg="risk.quiet_hours" placeholder="如 22，7（起止小时，跨零点自动处理）；留空＝不启用"><div class="hint">这段小时数内一条都不发；填两个 0~23 的整数，用逗号分隔</div></div></div>
-        <div class="row"><label>连续被拦升级</label><input type="number" min="0" data-cfg="risk.escalate_after"><span class="hint">连续拦下 N 条就自动暂停发送；0＝不自动暂停</span></div>
-      </div>
-      <div class="row"><label>禁止词</label><div class="grow"><input data-cfg="risk.block_keywords" placeholder="逗号分隔，命中即拦下；留空＝不启用"></div></div>
-      <div class="row"><label>观察词</label><div class="grow"><input data-cfg="risk.watch_keywords" placeholder="逗号分隔，命中只记录不拦"></div></div>
-      <div class="desc">微信 UI 图标库（一次性标定；自动检测侧栏图标序列，坐标按窗口尺寸换算）：</div>
-      <div class="sub">⑤ 提醒 · 节日 · 状态</div>
-      <div class="row"><label>当前布局</label><div class="grow">
-        <span class="hint" id="uiLayoutStat">加载中…</span>
-        <button id="uiLayoutReload" class="ghost" style="margin-left:8px">刷新</button>
-        <button id="uiRecalibrate" class="pri" style="margin-left:8px">重新标定（接管鼠标）</button>
-        <div class="hint">自动检测微信侧栏图标序列写入 data/ui_layout.json；请确保微信窗口在前台再点（会瞬间点击左栏）</div>
-      </div></div>
-      <div class="desc">语言风格训练（机器学习）</div>
-      <div class="hint" style="margin-top:0">
-        机制：机器人每次发言后，若群友在 24h 内热烈回应（@ 它 / 接话 / 追问）→ 该条话术加分；冷场 → 降权。热度半衰期 7 天，老梗自动衰减，防饱和。<br>
-        <b>不变人原则</b>：风格学习<b>只给内置的 DeepSeek 小鲸鱼用</b>——它学的是"话怎么说才机灵"，不是学群友的口癖。你自己导入的角色卡（动漫角色 / 原创 / 真人）<b>不参与风格学习</b>：角色设定是绝对基准、权重最高，参考素材只能"换衣服不能换魂"。
-      </div>
-      <div style="display:flex;gap:12px;align-items:center;margin:14px 0 18px;padding:14px;border-radius:14px;background:rgba(63,168,240,.08);border:1px solid var(--blue-line)">
-        <button id="learnApply" class="pri" title="点击开启机器学习，机制会真的开始工作（有群友回应时学习）">确定学习</button>
-        <button id="learnEval" class="ghost" title="模型按评分细则评估：学习前后对话质量变化，打分并说明提升多少" style="font-weight:700">学习评估</button>
-        <span id="learnRst" class="hint" style="flex:1"></span>
-      </div>
-      <div class="row"><label>种子库状态</label><div class="grow">
-        <span class="hint" id="seedStats" style="display:inline-block">加载中…</span>
-        <button id="seedReload" class="ghost" style="margin-left:8px">刷新</button>
-        <span class="hint">趣味种子库（内置官方 212 条 + 你导入的金句，合计可在下方状态看到）；「社区与学习」页可导入金句墙种子。</span>
-      </div></div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
-      <div class="row"><label>计时提醒</label><input type="checkbox" data-cfg="timers.enabled">
-        <span class="hint">群友在对话里让你「N 分钟后提醒」，模型就调 set_timer —— <b>只能设到当前会话</b>（工具参数里没有"发给谁"），每条会话最多挂 3 条、全局最多 20 条、30 秒~7 天；到点发送<b>仍然过风险闸门</b>，暂停/禁言期间不发、恢复后补发</span></div>
-      <div class="row"><label>节日问候</label><div class="grow"><select data-cfg="holiday.mode">
-        <option value="off">off：完全不提</option>
-        <option value="passive">passive：只在对话里自然带一句（默认，绝不主动发）</option>
-        <option value="active">active：到点主动问候（必须填下面的白名单）</option></select>
-        <div class="hint">默认 passive ＝ 只往提示词里加一句「今天是 X 节」，<b>一条消息都不会主动发</b>；active 才主动发，且受"白名单 + 每天每会话一次 + 只在 9~21 点"三重限制</div>
-      </div></div>
-      <div class="mid" id="holidayRows">
-        <div class="row"><label>问候白名单</label><div class="grow">
-          <textarea data-cfg="holiday.greet_chats" rows="2" spellcheck="false" placeholder="如：家人群, 文件传输助手（逗号或换行分隔）"></textarea>
-          <div class="hint">只有名单里的会话会被主动问候；<b>留空＝即使选了 active 也不会主动发</b>（防"节日变群发"）</div>
-        </div></div>
-        <div class="row"><label>起始小时</label><input type="number" min="0" max="20" data-cfg="holiday.greet_hour"><span class="hint">默认 9：只在 9 点到 21 点之间主动问候</span></div>
-      </div>
-      <div class="row"><label>提醒/节日现状</label><div class="grow"><span id="timerStat" class="hint">读取中…</span></div></div>
-          <div class="sub">⑥ 省用量档</div><div class="row"><label>档位</label><div class="grow">
-        <label class="hint" style="display:inline-block"><input type="checkbox" data-cfg="token_budget.saver"> 省用量档（每次对话少发给模型一些内容，但模型可能变笨一点）</label>
-        <div class="hint"><b>不勾 ＝ 完整档（默认）</b>：表情码清单、工具完整说明、网页原文、翻聊天记录 100 条 —— 全给模型，效果最好、也最费额度。<br>
-        <b>勾上 ＝ 省用量档</b>：① 不摆表情码清单（少发 ≈1147 字/轮）② 翻聊天记录上限 100→50、网页回执只留头 6000 字＋尾 3000 字 ③ 工具说明只留第一句（工具表是每次请求最大的单块，实测 37 个工具 ≈7324 字）④ 提示模型“能一次调完的别分两轮”。<br>
-        <b>代价（如实说）</b>：后三项属“可能掉效果” —— 长正文中段被省略、模型可能选错工具或漏参数。所以默认不勾；想省钱就勾，觉得变笨了取消即可。</div>
-      </div></div>
-</section>
 <section id="sec-ui" class="card" data-sec>
       <h2>界面适配（缩放 / 遮挡 / 主题）</h2>
       <div class="desc">这台机器的显示缩放、遮挡清理与主题。点击位置对不上时先来这里。</div>
@@ -2960,6 +2945,14 @@ th{color:var(--tx2);font-weight:500}
         <span class="hint">默认关＝任何操作都不会抢你的前台，也不把微信钉在最上层；只有确实需要前台点击的老路子才用得上。</span></div>
       <div class="sub">③ 其他</div><div class="row"><label>地址栏乱码化</label><input type="checkbox" data-cfg="ui.obscure_url">
         <span class="hint">开启后：进入页面把地址栏路径替换成随机乱码（保护访问地址不被他人复制直接登入；刷新靠会话 Cookie）。端口号无法乱码（浏览器必须用真实端口连接）。默认关。</span></div>
+      <div class="sub">④ 微信 UI 图标库</div>
+      <div class="desc">一次性标定；自动检测微信侧栏图标序列，坐标按窗口尺寸换算。</div>
+      <div class="row"><label>当前布局</label><div class="grow">
+        <span class="hint" id="uiLayoutStat">加载中…</span>
+        <button id="uiLayoutReload" class="ghost" style="margin-left:8px">刷新</button>
+        <button id="uiRecalibrate" class="pri" style="margin-left:8px">重新标定（接管鼠标）</button>
+        <div class="hint">自动检测微信侧栏图标序列写入 data/ui_layout.json；请确保微信窗口在前台再点（会瞬间点击左栏）</div>
+      </div></div>
       <div class="btns"><button class="pri" data-save>保存设置（界面适配）</button></div>
     </section>
 <section id="sec-json" class="card" data-sec data-mg="sec-ui">

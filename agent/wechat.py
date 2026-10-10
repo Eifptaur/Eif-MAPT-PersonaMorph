@@ -2438,6 +2438,23 @@ class WeChatAdapter:
             self.load_self_identity()
         except Exception:
             pass
+        # ⛔ **最后一道兜底：从"这个库属于谁"推自己是谁**。
+        #   为什么必须补：`get_self_info()`（读 contact.db）**在某些账号/微信版本下返回空**，
+        #   而落盘身份首次运行时也没有 ⇒ `_self_wxid` 为空 ⇒ **所有"这条是不是我发的"判断
+        #   （含本轮新增的"按库发送者判自己"）静默失效** ⇒ 机器人回自己。
+        #   但**账号目录名**（`db_account_wxid()`：去掉末尾 4 位哈希）本身就是"这个库属于谁"，
+        #   与 contact.db 能不能读无关 ⇒ 拿它兜底，让"我是谁"几乎永远有值。
+        #   ⚠️ 只在**前面都没给出**时用（`from='dbdir'`），且只认 wxid 形状（`_valid_self_id`），
+        #      认不出就照旧留空（守住"宁可漏判回声，也绝不把别人的话丢掉"）。
+        if not self._self_wxid:
+            try:
+                _dw = str(self.db_account_wxid() or "").strip()
+                if _dw and _valid_self_id(_dw):
+                    self._self_wxid = _dw
+                    self._self_wxid_src = "dbdir"
+                    log.info("已按账号目录推出「自己是谁」：%s（来源 dbdir）", _mask_id(_dw))
+            except Exception as _e:
+                log.debug("按账号目录推自己是谁失败（不影响接入）：%s", _e)
         self._self_ident_ok = bool(self._self_wxid)
         # 「我的其他账号（大号）」登记表—— 见 _load_owner_accounts 的注释
         self._load_owner_accounts()
@@ -3817,8 +3834,22 @@ class WeChatAdapter:
                 sl_hit = self.is_self_local(chat_id, raw.get("local_id"), raw.get("create_time"))
             except Exception:
                 sl_hit = False
+            # ★ **按库里的发送者判自己**：图文/表情/语音的正文只是 `[图片]`/`[表情]`，
+            #   文本类判据（self_hit 靠正文前缀、echo_hit 靠文本）都失效；而 `is_self_local` 台账
+            #   在**重启后是空的** ⇒ 重启前自己发的图/表情会被当成群友的话（自说自话）。
+            #   这里补一档：把 sender_id 解析成 wxid（`_resolve_sender_wxid`）再跟"我"比，
+            #   与"这次跑没跑过"无关。台账单列，方便下次一眼定位是哪一档救回的。
+            try:
+                _sx0 = (m.group(1) if m else "") or ""
+                if not _sx0:
+                    _sx0 = self._resolve_sender_wxid(raw.get("sender_id"), chat_id or "")
+                db_self_hit = bool(self._self_wxid and _sx0 and _sx0 == self._self_wxid)
+            except Exception:
+                db_self_hit = False
             if self_hit:
                 why = "判为自己：self_wxid 命中"
+            elif db_self_hit:
+                why = "判为自己：库发送者命中（解析 sender_id ⇒ wxid 等于自己，图文/表情也认得出）"
             elif sl_hit:
                 why = "判为自己：自家行号命中（我们自己发出去并回读确认过的库行）"
             elif echo_hit:
@@ -4063,6 +4094,26 @@ class WeChatAdapter:
         _sx = str(sender_wxid or "").strip()
         if not _sx:
             _sx = self._resolve_sender_wxid(sender_id, chat_id or "")
+
+        # ── 🔴 **按库里的发送者判自己**（不依赖文本、不依赖本次运行的记忆）────────────
+        #   为什么必须补这一档：上面那条「文本回声」（`_is_self_echo`）与行号台账（`is_self_local`）
+        #   都只覆盖"**本次运行**发出去的消息"。可**图片/表情/语音/文件**的正文只是 `[图片]`/`[表情]`
+        #   这种类型标签 —— 文本判据对它**永远无效**，只能靠行号台账；而台账在**重启后是空的**
+        #   （内存档）、或**首次运行/换号**时也空 ⇒ 于是"机器人把自己**重启前**发的图/表情又读进来、
+        #   当成群友的话去接" ⇒ 表现就是**自说自话**。
+        #   DB 本身就把"谁发的"写在了行里（`real_sender_id` → 本会话正文自证 → wxid）：
+        #   解析出来的 wxid 只要等于机器人自己，就一定是自己的消息，与"这次跑没跑过"无关。
+        #   ⛔ 放在 `_resolve_sender_wxid` **之后**（这样图文/表情也能认出发送者）；
+        #      `_self_wxid` 为空时**不判自己**（那条老红线：宁可漏判一次回声，也绝不把别人的话丢掉）。
+        if self._self_wxid and _sx and _sx == self._self_wxid:
+            # 顺带把这条行号补进台账：下次同一条再来，`is_self_local` 这一档也能直接命中
+            # （图片/表情类下游还靠它，见 `is_self_local` 的注释）。
+            try:
+                _self_local_note(self, chat_id, local_id, create_time)
+            except Exception:
+                pass
+            return None
+
         sender_name = self.resolve_member_name(_sx, chat_id) if _sx else (
             (str(sender_id) if sender_id else "群成员"))
 

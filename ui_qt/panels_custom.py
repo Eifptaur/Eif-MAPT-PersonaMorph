@@ -4422,6 +4422,12 @@ def memory_panel(t: Tokens) -> QWidget:
     chat_row.addWidget(b_refresh)
     mcard.body.addLayout(chat_row)
     mcard.body.addWidget(desc(t, "群内搜索框实时过滤上面的下拉选项。"))
+    # 成员是谁、印象从哪来、怎么改 —— 这三件用户最常问的写在最显眼处（不藏在按钮 tooltip 里）：
+    #   「成员ID」不是用户要填的东西，是微信消息里自带的发送者标识，机器人自动认人；
+    #   印象由机器人聊完自动总结，也可在下面每一行的「编辑」里手改。
+    mcard.body.addWidget(desc(t, "成员不用手填 ID：机器人从群消息里自动认人（那一串 userId 就是它的身份）。"
+                              "印象平时由机器人聊天时自动总结；想改就选好群后，在下面成员行点「编辑」——"
+                              "每行一条，保存即覆盖。"))
 
     mem_table = _bordered_list(t, "memTable", 220)
     mcard.body.addWidget(mem_table)
@@ -5425,6 +5431,153 @@ def emoji_panel(t: Tokens, on_save=None) -> QWidget:
                               "标了「把握不足」的，用之前先想场合。"))
     lay.addWidget(lc)
 
+    # ── 收藏夹文件（web `#sec-emoji` 里的「收藏夹表情」row，本面板与它同区）──
+    #   与上面的「清单」分工：清单 = 每张图**什么意思**（语义索引）；
+    #   这里 = 收藏夹目录里**有哪些图片文件**（机器人 send_emoji 真正发出去的那些）。
+    fc = Card(t)
+    fc.body.addWidget(h2(t, "收藏夹文件（机器人 send_emoji 用的图）"))
+    fc.body.addWidget(desc(t, "群里收到好玩的表情，机器人用 collect_emoji 收藏；"
+                              "需要时按上面标的语义挑一张发出。这里可以看/搜/删收藏的文件。"))
+    _fc_search = _line(t, "", placeholder="搜索表情（按文件名）")
+    _fc_search.setObjectName("emojiSearch")
+    fc.body.addWidget(_fc_search)
+    _fc_count = desc(t, "读取中…")
+    fc.body.addWidget(_fc_count)
+    _fc_grid_w = QWidget()
+    _fc_grid = QGridLayout(_fc_grid_w)
+    _fc_grid.setContentsMargins(0, 2, 0, 2)
+    _fc_grid.setHorizontalSpacing(8)
+    _fc_grid.setVerticalSpacing(8)
+    fc.body.addWidget(_fc_grid_w)
+    _fc_note = desc(t, "")
+    fc.body.addWidget(_fc_note)
+    lay.addWidget(fc)
+
+    _fc_state: dict = {"all": []}
+
+    def _fc_render() -> None:
+        q = (_fc_search.text() or "").strip().lower()
+        lst = [e for e in _fc_state["all"] if q in (e.get("name") or "").lower()]
+        _fc_count.setText("共 %d 个（显示前 60）" % len(lst) if lst else
+                          ("没有匹配「%s」的表情" % q if q else
+                           "收藏夹为空：群里收到好玩的表情后，机器人可用 collect_emoji 收藏。"))
+        _fc_set_grid(lst[:60])
+
+    def _fc_set_grid(rows: list) -> None:
+        while _fc_grid.count():
+            it = _fc_grid.takeAt(0)
+            wdg = it.widget()
+            if wdg is not None:
+                wdg.deleteLater()
+                wdg.setParent(None)
+        import urllib.parse as _up # noqa: PLC0415
+        import urllib.request as _uq # noqa: PLC0415
+
+        try:
+            from agent_bridge import current_url # noqa: PLC0415
+
+            base = current_url().split("?")[0].rstrip("/")
+        except Exception: # noqa: BLE001
+            base = "http://127.0.0.1:3210"
+        for i, e in enumerate(rows):
+            cell = QWidget()
+            cell.setStyleSheet("background:transparent;")
+            cv = QVBoxLayout(cell)
+            cv.setContentsMargins(0, 0, 0, 0)
+            cv.setSpacing(0)
+            name = str(e.get("name") or "")
+            img = QLabel()
+            img.setFixedSize(44, 44)
+            img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            img.setStyleSheet("border:1px solid %s;border-radius:8px;background:rgba(0,0,0,.15);"
+                              % getattr(t, "bd", "#334"))
+            try:
+                req = _uq.Request(base + "/assets/emoji/" + _up.quote(name),
+                                  headers={"User-Agent": "persona-morph-qt"})
+                with _uq.urlopen(req, timeout=3.0) as rr:
+                    pm = QPixmap()
+                    if pm.loadFromData(rr.read()) and not pm.isNull():
+                        img.setPixmap(pm.scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                    else:
+                        raise ValueError("pm")
+            except Exception: # noqa: BLE001 — 拉图失败降级为名称块（收藏夹仍可用）
+                img.setText(name[:4])
+                img.setToolTip(name)
+            cv.addWidget(img)
+            delb = QPushButton("×")
+            delb.setFixedSize(18, 18)
+            delb.setToolTip("删除 " + name)
+            delb.clicked.connect(lambda _=False, n=name: _fc_del(n))
+            cv.addWidget(delb, 0, Qt.AlignmentFlag.AlignRight)
+            _fc_grid.addWidget(cell, i // 8, i % 8)
+
+    def _fc_del(name: str) -> None:
+        from confirm import ConfirmDialog # noqa: PLC0415
+        d = ConfirmDialog(t, page, "删除表情", f"删除表情「{name}」？",
+                          ["会从收藏夹移除（机器人不再能发送它）"], confirm_label="删除")
+        if not d.exec():
+            return
+        import threading as _th # noqa: PLC0415
+
+        bx: dict = {"done": False, "rsp": None, "tries": 0}
+
+        def _work() -> None:
+            try:
+                from agent_bridge import post_json # noqa: PLC0415
+
+                bx["rsp"] = post_json("/api/emojis/delete", {"name": name}, timeout=8.0)
+            except Exception as e: # noqa: BLE001
+                bx["err"] = str(e)
+            bx["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="emoji-del").start()
+
+        def _apply() -> None:
+            if not _qt_alive(_fc_search):
+                return
+            if not bx["done"]:
+                bx["tries"] += 1
+                if bx["tries"] > 25:
+                    return
+                QTimer.singleShot(150, _apply)
+                return
+            _fc_load()
+
+        QTimer.singleShot(150, _apply)
+
+    def _fc_load() -> None:
+        import threading as _th # noqa: PLC0415
+
+        bx: dict = {"done": False, "rsp": None, "tries": 0}
+
+        def _work() -> None:
+            try:
+                from config_io import get_json # noqa: PLC0415
+
+                bx["rsp"] = get_json("/api/emojis", timeout=6.0)
+            except Exception: # noqa: BLE001
+                bx["rsp"] = None
+            bx["done"] = True
+
+        _th.Thread(target=_work, daemon=True, name="emoji-load").start()
+
+        def _apply() -> None:
+            if not _qt_alive(_fc_search):
+                return
+            if not bx["done"]:
+                bx["tries"] += 1
+                if bx["tries"] > 25:
+                    return
+                QTimer.singleShot(150, _apply)
+                return
+            _fc_state["all"] = (bx["rsp"] or {}).get("emojis") or []
+            _fc_render()
+
+        QTimer.singleShot(150, _apply)
+
+    _fc_search.textChanged.connect(_fc_render)
+    QTimer.singleShot(400, _fc_load) # 面板建好后后台拉一次（不冻建页）
+
     # ── 回填 ──
     ec = Card(t)
     ec.body.addWidget(h2(t, "回填语义（选中上面一条开始改）"))
@@ -5542,8 +5695,87 @@ def emoji_panel(t: Tokens, on_save=None) -> QWidget:
 
     _ec_load()
 
-    # ★ 三级索引（第三层）：这五块就是 web 里
-    #   `① 索引概况 / ② 清单 / ③ 回填语义 / ④ 向群友请教 / ⑤ Emoji 库` 五组
+    # ── 收表情 / 回表情（web 的 ⑥ 组）：机器人收藏与回发表情的频率旋钮 ──
+    #   默认偏保守，觉得太频繁就把上限调小或冷却调长。
+    ec3 = Card(t)
+    ec3.body.addWidget(h2(t, "收表情 / 回表情"))
+    ec3.body.addWidget(desc(t, "机器人主动收藏别人发的表情、以及在回话里发表情包的频率。"
+                              "默认偏保守；觉得太频繁就把上限调小或冷却调长。"))
+    v_c_cool = _line(t, "", placeholder="秒，默认 0")
+    v_c_day = _line(t, "", placeholder="条，默认 0=不限")
+    v_s_cool = _line(t, "", placeholder="秒，默认 0")
+    v_s_day = _line(t, "", placeholder="条，默认 0=不限")
+    v_at_cool = _line(t, "", placeholder="秒，默认 0")
+    v_at_day = _line(t, "", placeholder="条，默认 0=不限")
+    ec3.body.addWidget(Field(t, "收藏表情-冷却(秒)", "两次收藏至少隔这么久", v_c_cool))
+    ec3.body.addWidget(Field(t, "收藏表情-每日上限", "0 = 不限", v_c_day))
+    ec3.body.addWidget(Field(t, "回发表情-冷却(秒)", "两次回发表情至少隔这么久", v_s_cool))
+    ec3.body.addWidget(Field(t, "回发表情-每日上限", "0 = 不限", v_s_day))
+    ec3.body.addWidget(Field(t, "@群友-冷却(秒)", "两次 @ 群友至少隔这么久", v_at_cool))
+    ec3.body.addWidget(Field(t, "@群友-每日上限", "0 = 不限", v_at_day))
+    e3_note = desc(t, "")
+    b_e3save = Btn("保存表情行为", t, "primary")
+    e3row = QHBoxLayout()
+    e3row.addWidget(b_e3save)
+    e3row.addWidget(e3_note, 1)
+    ec3.body.addLayout(e3row)
+    lay.addWidget(ec3)
+
+    def _e3_int(txt: str, default: int = 0) -> int:
+        s2 = (txt or "").strip()
+        return int(float(s2)) if s2 else default
+
+    def _e3_load() -> None:
+        def _work(box: dict) -> None:
+            try:
+                box["r"] = config_io.get_json("/api/config", timeout=10.0)
+            except Exception as e: # noqa: BLE001
+                box["err"] = str(e)
+
+        def _done(box: dict) -> None:
+            if not _qt_alive(v_c_cool):
+                return
+            r = box.get("r") or {}
+            # `/api/config` 直接返回配置字典本体（不是包在 "config" 键里）
+            cfg = r if isinstance(r, dict) else {}
+            beh = cfg.get("behavior") or {}
+
+            def _v2(key: str) -> str:
+                d = beh.get(key) or {}
+                return str(d.get("cooldown_s") if d.get("cooldown_s") is not None else "")
+
+            def _v3(key: str) -> str:
+                d = beh.get(key) or {}
+                return str(d.get("daily_limit") if d.get("daily_limit") is not None else "")
+
+            v_c_cool.setText(_v2("collect_emoji"))
+            v_c_day.setText(_v3("collect_emoji"))
+            v_s_cool.setText(_v2("send_emoji"))
+            v_s_day.setText(_v3("send_emoji"))
+            v_at_cool.setText(_v2("at_member"))
+            v_at_day.setText(_v3("at_member"))
+
+        run_async(_work, _done, page=page, interval=200, name="emoji-behavior")
+
+    def _e3_save() -> None:
+        try:
+            patch = {"behavior.collect_emoji.cooldown_s": _e3_int(v_c_cool.text()),
+                     "behavior.collect_emoji.daily_limit": _e3_int(v_c_day.text()),
+                     "behavior.send_emoji.cooldown_s": _e3_int(v_s_cool.text()),
+                     "behavior.send_emoji.daily_limit": _e3_int(v_s_day.text()),
+                     "behavior.at_member.cooldown_s": _e3_int(v_at_cool.text()),
+                     "behavior.at_member.daily_limit": _e3_int(v_at_day.text())}
+        except Exception: # noqa: BLE001
+            e3_note.setText("这几个格子都填数字（0 = 不限）⇒ 没保存")
+            return
+        ok, msg = config_io.write_patch(patch)
+        e3_note.setText("已保存（下一轮生效）" if ok else ("没保存成：" + str(msg)))
+
+    b_e3save.clicked.connect(_e3_save)
+    _e3_load()
+
+    # ★ 三级索引（第三层）：这六块就是 web 里
+    #   `① 索引概况 / ② 清单 / ③ 回填语义 / ④ 向群友请教 / ⑤ Emoji 库 / ⑥ 收表情 · 回表情` 六组
     #   ⇒ 标成组起点，顶部锚点条才会生成、点了才真能滚。
     #   ⛔ 组名不在这里抄：`mark_group` 按 `sec_meta` 从 web 的 `.sub` 原文取（一处真值）。
     #   任一组对不上（web 加了组而这里没跟上）⇒ 置 mismatch，让判据红出来。
@@ -5551,7 +5783,8 @@ def emoji_panel(t: Tokens, on_save=None) -> QWidget:
                 mark_group(page, "emoji", 1, lc),
                 mark_group(page, "emoji", 2, ec),
                 mark_group(page, "emoji", 3, qc),
-                mark_group(page, "emoji", 4, ec2))):
+                mark_group(page, "emoji", 4, ec2),
+                mark_group(page, "emoji", 5, ec3))):
         page._c8_group_mismatch = True
 
     def _render() -> None:
@@ -5752,173 +5985,6 @@ MANUAL = {
     "vermat": vermat_panel,
     "emoji": emoji_panel,
 }
-
-# 面板追加区（build_panel 在元数据页构建后调用）——动态列表卡挂进元数据面板
-# （APPENDIX 定义在 _wechat_emoji_appendix 之后，避免前向引用）
-
-
-def _wechat_emoji_appendix(t: Tokens, page: QWidget) -> None:
-    """表情包收藏夹（web #emojiBox :6820-6890 对齐）。
-
-    GET /api/emojis → 名称网格（显示前 60）+ 搜索过滤 + 单个删除（POST /api/emojis/delete）
-    + 刷新。图片走后台 URL 拉取（/assets/emoji/<name>），拉不到降级为名称块（可用性优先）。
-    """
-    card = Card(t)
-    card.body.addWidget(h2(t, "表情包收藏夹（机器人 send_emoji 用）"))
-    from panels_qt import _line # noqa: PLC0415
-
-    search = _line(t, "", placeholder="搜索表情…")
-    search.setObjectName("emojiSearch")
-    card.body.addWidget(search)
-    count_lb = desc(t, "读取中…")
-    card.body.addWidget(count_lb)
-
-    from PySide6.QtCore import Qt as _Qt, QTimer # noqa: PLC0415
-    from PySide6.QtGui import QPixmap # noqa: PLC0415
-    from PySide6.QtWidgets import QGridLayout, QLabel # noqa: PLC0415
-
-    grid_w = QWidget()
-    grid = QGridLayout(grid_w)
-    grid.setContentsMargins(0, 2, 0, 2)
-    grid.setHorizontalSpacing(8)
-    grid.setVerticalSpacing(8)
-    card.body.addWidget(grid_w)
-    note = desc(t, "")
-    card.body.addWidget(note)
-    _append_card(page, card)
-
-    state: dict = {"all": []}
-
-    def _set_grid(rows: list) -> None:
-        while grid.count():
-            it = grid.takeAt(0)
-            wdg = it.widget()
-            if wdg is not None:
-                wdg.deleteLater()
-                wdg.setParent(None) # 立刻脱离父子树（见上）
-        import urllib.parse as _up # noqa: PLC0415
-        import urllib.request as _uq # noqa: PLC0415
-
-        try:
-            from agent_bridge import current_url # noqa: PLC0415
-
-            base = current_url().split("?")[0].rstrip("/")
-        except Exception: # noqa: BLE001
-            base = "http://127.0.0.1:3210"
-        for i, e in enumerate(rows):
-            cell = QWidget()
-            cell.setStyleSheet("background:transparent;")
-            cv = QVBoxLayout(cell)
-            cv.setContentsMargins(0, 0, 0, 0)
-            cv.setSpacing(0)
-            name = str(e.get("name") or "")
-            # ⚠️ 拼 URL 必须用 `file`（**带扩展名**的真文件名），不是 `name`（无扩展名的键）：
-            #    服务端 `/assets/emoji/` 只认 `xxx.(jpg|png|gif…)`，拿无扩展名的 name 去要 ⇒ 必 404
-            #    ⇒ 就是"收藏夹一张图都不显示"的原因。老数据没有 `file` 时退回 `name`（尽量显示）。
-            _fname = str(e.get("file") or name)
-            img = QLabel()
-            img.setFixedSize(44, 44)
-            img.setAlignment(_Qt.AlignCenter)
-            img.setStyleSheet("border:1px solid %s;border-radius:8px;background:rgba(0,0,0,.15);"
-                              % getattr(t, "bd", "#334"))
-            try:
-                req = _uq.Request(base + "/assets/emoji/" + _up.quote(_fname),
-                                  headers={"User-Agent": "persona-morph-qt"})
-                with _uq.urlopen(req, timeout=3.0) as rr:
-                    pm = QPixmap()
-                    if pm.loadFromData(rr.read()) and not pm.isNull():
-                        img.setPixmap(pm.scaled(42, 42, _Qt.KeepAspectRatio, _Qt.SmoothTransformation))
-                    else:
-                        raise ValueError("pm")
-            except Exception: # noqa: BLE001 — 拉图失败降级为名称块（收藏夹仍可用）
-                img.setText(name[:4])
-                img.setToolTip(name)
-            cv.addWidget(img)
-            delb = QPushButton("×")
-            delb.setFixedSize(18, 18)
-            delb.setToolTip("删除 " + name)
-            delb.clicked.connect(lambda _=False, n=name: _del(n))
-            cv.addWidget(delb, 0, _Qt.AlignRight)
-            grid.addWidget(cell, i // 8, i % 8)
-
-    def _render() -> None:
-        q = (search.text() or "").strip().lower()
-        lst = [e for e in state["all"] if q in (e.get("name") or "").lower()]
-        count_lb.setText("共 %d 个（显示前 60）" % len(lst) if lst else
-                         ("没有匹配「%s」的表情" % q if q else
-                          "收藏夹为空：群里收到好玩的表情后，机器人可用 collect_emoji 收藏。"))
-        _set_grid(lst[:60])
-
-    def _del(name: str) -> None:
-        # 对齐 web uiConfirm 口径（assets/console/index.html:6755）：删表情前二次确认
-        from confirm import ConfirmDialog # noqa: PLC0415
-        d = ConfirmDialog(
-            t, page, "删除表情", f"删除表情「{name}」？",
-            ["会从收藏夹移除（机器人不再能发送它）"], confirm_label="删除")
-        if not d.exec():
-            return
-
-        def _work(bx: dict) -> None:
-            try:
-                from agent_bridge import post_json # noqa: PLC0415
-
-                bx["rsp"] = post_json("/api/emojis/delete", {"name": name}, timeout=8.0)
-            except Exception as e: # noqa: BLE001
-                bx["err"] = str(e)
-            bx["done"] = True
-
-        import threading as _th # noqa: PLC0415
-
-        bx: dict = {"done": False, "rsp": None, "err": None, "tries": 0}
-        _th.Thread(target=_work, daemon=True, args=(bx,), name="emoji-del").start()
-
-        def _apply() -> None:
-            if not _qt_alive(note): # 同上：页面销毁后本闭包仍会被定时器叫醒
-                return
-            if not bx["done"]:
-                bx["tries"] += 1
-                if bx["tries"] > 25:
-                    return
-                QTimer.singleShot(150, _apply)
-                return
-            note.setText(("已删除 " + name) if bx["err"] is None else ("删除失败：" + bx["err"]))
-            _load()
-
-        QTimer.singleShot(150, _apply)
-
-    def _load() -> None:
-        def _work(bx: dict) -> None:
-            try:
-                bx["rsp"] = config_io.get_json("/api/emojis", timeout=6.0)
-            except Exception as e: # noqa: BLE001
-                bx["err"] = str(e)
-            bx["done"] = True
-
-        import threading as _th # noqa: PLC0415
-
-        bx: dict = {"done": False, "rsp": None, "err": None, "tries": 0}
-        _th.Thread(target=_work, daemon=True, args=(bx,), name="emoji-load").start()
-
-        def _apply() -> None:
-            # 存活判 + 自链上限：本页是**可重建**的（切页/刷新），闭包挂在定时器上，
-            # 页面销毁后 `_render()` 里的 `search.text()` 会打在已析构的 QLineEdit 上
-            # （RuntimeError: Internal C++ object already deleted）。
-            if not _qt_alive(search):
-                return
-            if not bx["done"]:
-                bx["tries"] += 1
-                if bx["tries"] > 25: # 25 × 150ms ≈ 3.8s，盖住 6s 超时的一半就够止损
-                    return
-                QTimer.singleShot(150, _apply)
-                return
-            state["all"] = (bx["rsp"] or {}).get("emojis") or []
-            _render()
-
-        QTimer.singleShot(150, _apply)
-
-    search.textChanged.connect(_render)
-    QTimer.singleShot(400, _load) # 面板建好后后台拉一次（不冻建页）
-
 
 def _tools_utlist_appendix(t: Tokens, page: QWidget) -> None:
     """工具清单（web sec-tools 的 utGlobals/utProblems/utList :3826-3935 对齐）。
@@ -10044,7 +10110,7 @@ def _rhythm_appendix(t: Tokens, page: QWidget) -> None:
 
 
 APPENDIX = {
-    "wechat": (_wechat_emoji_appendix, _briefs_appendix, _wechat_recheck_appendix,
+    "wechat": (_briefs_appendix, _wechat_recheck_appendix,
                _rowgeom_appendix),
     "send": _rhythm_appendix,
     "tools": _tools_utlist_appendix,

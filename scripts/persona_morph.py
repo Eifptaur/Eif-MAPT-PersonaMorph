@@ -3123,6 +3123,12 @@ def main():
             recent = []
             by_group = {}
             try:
+                # ⛔ **关机印象绝不许把机器人自己写进去**（自说自话污染记忆的一条独立路径）：
+                #   这条路是直接读库（`_db.get_messages`）再 `normalize`，虽然后者已会丢掉
+                #   "自己发的"（含图文/表情，按库内发送者判），但这里**再显式挡一层** ——
+                #   因为写进去的是**长期印象**（会一直影响机器人怎么对待那位"群友"），
+                #   写错一次比少写一次严重得多；同时也挡住主人的其他账号（大号）被当普通群友总结。
+                _self_wxid = str(getattr(orch.wechat, "self_wxid", "") or "")
                 for g in (orch.wechat.list_groups() if orch.wechat else [])[:3]:
                     wxid = g.get("wxid") or g.get("id") or ""
                     if not wxid:
@@ -3130,11 +3136,22 @@ def main():
                     ck = "group:" + str(wxid)
                     for raw in orch.wechat._db.get_messages(wxid, limit=40):
                         n = orch.wechat.normalize(raw, wxid)
-                        if n and str(n.get("sender_id") or "").startswith("wxid_") and str(n.get("text") or "").strip():
-                            nm = str(n.get("sender_name") or "?")
-                            txt = str(n["text"])[:60]
-                            recent.append((nm, txt))
-                            by_group.setdefault(ck, []).append(nm)
+                        if not n or not str(n.get("text") or "").strip():
+                            continue
+                        _sid = str(n.get("sender_id") or "")
+                        if not _sid.startswith("wxid_"):
+                            continue
+                        if _self_wxid and _sid == _self_wxid:
+                            continue # 机器人自己（双保险；normalize 一般已挡掉）
+                        try:
+                            if orch.wechat.is_owner(_sid, str(n.get("sender_name") or "")):
+                                continue # 主人自己的号（大号）不是"群友"，不该被总结成印象
+                        except Exception:
+                            pass
+                        nm = str(n.get("sender_name") or "?")
+                        txt = str(n["text"])[:60]
+                        recent.append((nm, txt))
+                        by_group.setdefault(ck, []).append(nm)
             except Exception as _e:
                 log.debug("宽捕处出错（留栈，便于归因）：%s", _e, exc_info=True)
                 recent, by_group = [], {}

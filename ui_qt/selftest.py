@@ -110,20 +110,20 @@ def t_nav() -> None:
     wid = (HERE / "widgets.py").read_text(encoding="utf-8")
 
     flat = [e[0] for _t, _k, es in NAV for e in es]
-    # IA-4 之后左栏是 **17 行**（9 行合并 + 8 行单项），成员收在二级、默认收起。
+    # IA-4 之后左栏是 **16 行**（9 行合并 + 7 行单项），成员收在二级、默认收起。
     # ⛔ 别把这条写成"28 项"：那会逼着后人把合并拆掉。
-    ck("导航可见行数 = 17（IA-4 归并后）", len(flat) == 17, f"实际 {len(flat)}")
-    # 链接总数仍是 29 —— 成员只是显示上收进二级，**入口一条都没删**
-    # （web `ui_arch_selftest`：导航链接序列必须与 <section> 序列逐位相同，29 == 29）。
+    ck("导航可见行数 = 16（IA-4 归并后）", len(flat) == 16, f"实际 {len(flat)}")
+    # 链接总数仍是 28 —— 成员只是显示上收进二级，**入口一条都没删**
+    # （web `ui_arch_selftest`：导航链接序列必须与 <section> 序列逐位相同，28 == 28）。
     n_links = len(flat) + sum(len(e[3]) for _t, _k, es in NAV for e in es)
-    ck("导航入口总数 = 29（成员的入口一个都没删）", n_links == 29, f"实际 {n_links}")
+    ck("导航入口总数 = 28（成员的入口一个都没删）", n_links == 28, f"实际 {n_links}")
 
     # ★ 真对齐：以 web 源码解析结果为唯一真值，全等比对。
     web = _nav_truth_from_web()
     mine = [(t, k, [(e[0], e[2], list(e[3])) for e in es]) for t, k, es in NAV]
     theirs = [(t[0], t[1], [(r[0], r[1], r[2]) for r in t[2]]) for t in web]
-    ck("web 侧解析出 5 组 17 行（解析器没跟丢）",
-       len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 17,
+    ck("web 侧解析出 5 组 16 行（解析器没跟丢）",
+       len(theirs) == 5 and sum(len(t[2]) for t in theirs) == 16,
        f"组 {len(theirs)} / 行 {sum(len(t[2]) for t in theirs)}")
     ck("组名与 web 侧逐字一致（顺序含内）",
        [m[0] for m in mine] == [t[0] for t in theirs],
@@ -520,11 +520,11 @@ def t_panels() -> None:
     ck("导航点击真正换页（当前页变为目标页）",
        p2 is st.widget(w._page_of["model"]) and p2 is not p1)
     ck("旧页不残留（切换后旧页隐藏）", p1.isHidden())
-    for s in BATCH_SECS: # 全量走一遍：28 页全部就位（一次性预建等价语义）
+    for s in BATCH_SECS: # 全量走一遍：27 页全部就位（一次性预建等价语义）
         w._go(s, s)
     QApplication.processEvents()
-    ck("遍历全部 sec 后页栈页数 = 29（惰性预建闭环）",
-       st.count() == 29 and not w._lazy, f"count={st.count()} lazy_n={len(w._lazy)}")
+    ck("遍历全部 sec 后页栈页数 = 28（惰性预建闭环）",
+       st.count() == 28 and not w._lazy, f"count={st.count()} lazy_n={len(w._lazy)}")
 
     # ③ 鲸语切换对新面板文案同样生效（_orig_texts 收录新面板控件）
     w._go("model", "模型")
@@ -2882,7 +2882,7 @@ def t_commfb() -> None:
 
 def t_veradv() -> None:
     """全链路真跑：vermat（放行修复/指纹取丢/拍板入口/一键修复）
-    + advanced（布局/标定/种子/学习）+ ui（背景）+ cursor（重置/保存）。
+    + ui（图标库标定/背景）+ community（种子库/学习）+ cursor（重置/保存）。
 
     手法同 t_commfb：假后端 + patch current_url/QDialog.exec/QFileDialog/
     config_io.write_patch（防测试真写本机 config.json）。
@@ -3188,21 +3188,21 @@ def t_veradv() -> None:
         _d3.close()
         _d3.deleteLater()
 
-        # ── advanced 页：布局/标定/种子/学习 ──
-        wrap_a = panels_qt.build_panel(t, "advanced")
-        adv = wrap_a.widget()
-        adv.show()
+        # ── ui 页：微信 UI 图标库（布局/标定）──
+        wrap_u = panels_qt.build_panel(t, "ui")
+        uip = wrap_u.widget()
+        uip.show()
         QApplication.processEvents()
         calls.clear()
-        _btext(adv, "刷新")[0].click() # advanced 页第一个「刷新」= uiLayoutReload
+        _btext(uip, "刷新")[0].click() # ui 页第一个「刷新」= uiLayoutReload
         _wait(lambda: any("/api/ui-layout" in c for c in calls))
-        _wait(lambda: "已标定 2 个侧栏图标" in _btext(adv, "刷新")[0].property("c8_note").text())
+        _wait(lambda: "已标定 2 个侧栏图标" in _btext(uip, "刷新")[0].property("c8_note").text())
         ck("UI 布局刷新：GET /api/ui-layout，回显「已标定 2 个侧栏图标（聊天,通讯录）」",
            any("/api/ui-layout" in c for c in calls)
-           and "已标定 2 个侧栏图标（聊天,通讯录）" in _btext(adv, "刷新")[0].property("c8_note").text(),
-           _btext(adv, "刷新")[0].property("c8_note").text())
+           and "已标定 2 个侧栏图标（聊天,通讯录）" in _btext(uip, "刷新")[0].property("c8_note").text(),
+           _btext(uip, "刷新")[0].property("c8_note").text())
 
-        cal_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "uiRecalibrate"][0]
+        cal_btn = [b for b in uip.findChildren(Btn) if b.property("web_action") == "uiRecalibrate"][0]
         calls.clear()
         cal_btn.click()
         _wait(lambda: any("/api/ui/recalibrate" in c for c in calls))
@@ -3212,7 +3212,12 @@ def t_veradv() -> None:
            and "标定完成：检测到 8 个侧栏图标" in cal_btn.property("c8_note").text(),
            cal_btn.property("c8_note").text() + " btn=" + cal_btn.text())
 
-        sr_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "seedReload"][0]
+        # ── community 页：种子库 / 学习机制 ──
+        wrap_c = panels_qt.build_panel(t, "community")
+        com = wrap_c.widget()
+        com.show()
+        QApplication.processEvents()
+        sr_btn = [b for b in com.findChildren(Btn) if b.property("web_action") == "seedReload"][0]
         calls.clear()
         sr_btn.click()
         _wait(lambda: any("/api/scoring/stats" in c for c in calls))
@@ -3221,7 +3226,7 @@ def t_veradv() -> None:
            "种子库 9 条 · 已学反应 2 条 · 高分参考 2 条" in sr_btn.property("c8_note").text(),
            sr_btn.property("c8_note").text())
 
-        la_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "learnApply"][0]
+        la_btn = [b for b in com.findChildren(Btn) if b.property("web_action") == "learnApply"][0]
         calls.clear()
         la_btn.click()
         _wait(lambda: any("/api/learning/start" in c for c in calls))
@@ -3230,7 +3235,7 @@ def t_veradv() -> None:
            "学习机制已开启" in la_btn.property("c8_note").text(),
            la_btn.property("c8_note").text())
 
-        le_btn = [b for b in adv.findChildren(Btn) if b.property("web_action") == "learnEval"][0]
+        le_btn = [b for b in com.findChildren(Btn) if b.property("web_action") == "learnEval"][0]
         calls.clear()
         le_btn.click()
         _wait(lambda: any("/api/learning/evaluate" in c for c in calls))
@@ -3240,10 +3245,6 @@ def t_veradv() -> None:
            le_btn.property("c8_note").text())
 
         # ── ui 页：背景上传/恢复 ──
-        wrap_u = panels_qt.build_panel(t, "ui")
-        uip = wrap_u.widget()
-        uip.show()
-        QApplication.processEvents()
         bc_btn = [b for b in uip.findChildren(Btn) if b.property("web_action") == "bgClear"][0]
         calls.clear()
         bc_btn.click()
@@ -5001,7 +5002,7 @@ def t_g9() -> None:
            "body=%s" % (mvb,))
 
         # ── ⑤ emoji 删除 ──
-        wrap = panels_qt.build_panel(t, "wechat")
+        wrap = panels_qt.build_panel(t, "emoji")
         wp = wrap.widget()
         keep.append(wrap)
         wp.show()
@@ -5009,7 +5010,7 @@ def t_g9() -> None:
         xbtn = [b for b in wp.findChildren(QPushButton) if b.text() == "×"]
         _wait(lambda: bool([b for b in wp.findChildren(QPushButton) if b.text() == "×"]))
         xbtn = [b for b in wp.findChildren(QPushButton) if b.text() == "×"]
-        ck("g9 emoji 网格 × 钮在场（加载后）", bool(xbtn), "n=%d" % len(xbtn))
+        ck("g9 emoji 收藏夹 × 钮在场（表情面板，加载后）", bool(xbtn), "n=%d" % len(xbtn))
         n0 = _n_posts("/api/emojis/delete")
         if xbtn:
             xbtn[0].click()
@@ -6312,14 +6313,14 @@ def t_g15() -> None:
     t = THEMES["whale"]
     keep: list = []
     found: dict = {}
-    for sec in ("advanced", "community"):
+    for sec in ("send", "community"):
         wrap = panels_qt.build_panel(t, sec)
         keep.append(wrap)
         pg = wrap.widget()
         for r, ctrl in (getattr(pg, "_c8_binds", None) or []):
             if r.cfg in K5:
                 found[r.cfg] = (sec, r.kind, type(ctrl).__name__)
-    ck("g15 Qt 面板渲染出 5 个活键行（advanced 2 + community 3）",
+    ck("g15 Qt 面板渲染出 5 个活键行（send 2 + community 3）",
        set(found) == set(K5),
        "缺: %s / 得: %s" % ([k for k in K5 if k not in found],
                             {k: v[0] for k, v in found.items()}))
@@ -6329,15 +6330,15 @@ def t_g15() -> None:
        and found.get("meme.enabled", (None, ""))[1] == "checkbox",
        str({k: v[1] for k, v in found.items()}))
 
-    # ④ 端到端：在 advanced 页填 quiet_hours 再走一次 _collect，值必须是 list[int]
-    wrap = panels_qt.build_panel(t, "advanced")
+    # ④ 端到端：在 send 页填 quiet_hours 再走一次 _collect，值必须是 list[int]
+    wrap = panels_qt.build_panel(t, "send")
     keep.append(wrap)
     pg = wrap.widget()
     pg.show()
     QApplication.processEvents()
     row = next((c for r, c in (getattr(pg, "_c8_binds", None) or [])
                 if r.cfg == "risk.quiet_hours"), None)
-    ck("g15 advanced 页取到 quiet_hours 控件（可交互）",
+    ck("g15 send 页取到 quiet_hours 控件（可交互）",
        isinstance(row, QLineEdit), "ctrl=%s" % type(row).__name__)
     if isinstance(row, QLineEdit):
         row.setText("23，7")

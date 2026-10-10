@@ -248,5 +248,50 @@ ok("台账 why 里写明行号命中",
 ok("台账把行号判据单拎出来算（不再只看 wxid/回声）",
    "sl_hit = self.is_self_local(" in _SRC)
 
+print("── L. 按库里的发送者判自己（图文/表情重启后也不许自说自话）──")
+# 起因：文本类判据（正文前缀 / 回声窗）对 `[图片]`/`[表情]` 这类**类型标签**完全失效，
+#   而 `is_self_local` 台账**重启后是空的**、首次运行/换号也空 ⇒ 重启前自己发的图/表情
+#   会被当成群友的话接上去（自说自话）。DB 行里就写着发送者，解析成 wxid 跟"我"比即可。
+_i_dbself = _impl.find("按库里的发送者判自己")
+ok("L1 `_normalize_impl` 里补了『按库发送者判自己』这一档", _i_dbself >= 0)
+ok("L2 这一档在 `_resolve_sender_wxid` **之后**（这样图文/表情才认得出谁发的）",
+   _i_dbself >= 0 and _impl.find("_resolve_sender_wxid(sender_id, chat_id or \"\")") < _i_dbself)
+ok("L3 `_self_wxid` 为空时**不判自己**（老红线：宁可漏判回声，也绝不丢别人的话）",
+   "if self._self_wxid and _sx and _sx == self._self_wxid:" in _impl)
+ok("L4 命中就 return None（跳过这条消息，不往下当群友处理）",
+   "if self._self_wxid and _sx and _sx == self._self_wxid:" in _impl
+   and "_self_local_note(self, chat_id, local_id, create_time)" in _impl)
+ok("L5 命中顺手补行号台账（图文类下游 `is_self_local` 也靠它）",
+   "_self_local_note(self, chat_id, local_id, create_time)" in _impl)
+ok("L6 台账单列这一档（`db_self_hit`），下次能一眼定位是哪一档救回的",
+   '"db_self_hit"' in _SRC or "db_self_hit" in _SRC)
+ok("L7 台账 why 写明按库发送者命中",
+   "判为自己：库发送者命中" in _SRC)
+
+print("── M. 「我是谁」必须有兜底（否则上面那一档形同虚设）──")
+# 若 `get_self_info()` 返回空、落盘身份也没有 ⇒ `_self_wxid` 为空 ⇒ L 档永不命中 ⇒ 回自己。
+# 账号目录名本身就是"这个库属于谁"，必须拿它兜底。
+_i_dw = _SRC.find("最后一道兜底：从\"这个库属于谁\"推自己是谁")
+ok("M1 初始化里补了『按账号目录推自己是谁』兜底", _i_dw >= 0)
+ok("M2 兜底只在前面都没给时才用（`if not self._self_wxid:` 守卫）",
+   _i_dw >= 0 and _SRC.find("if not self._self_wxid:", _i_dw) >= 0)
+ok("M3 兜底值走 `db_account_wxid()`（账号目录名去哈希，不依赖 contact.db）",
+   _i_dw >= 0 and "self.db_account_wxid()" in _SRC[_i_dw:_i_dw + 900])
+ok("M4 兜底值必须过 `_valid_self_id`（不认数字槽位号；认不出就留空）",
+   _i_dw >= 0 and "_valid_self_id(_dw)" in _SRC[_i_dw:_i_dw + 900])
+ok("M5 兜底来源可追溯（`_self_wxid_src = \"dbdir\"`）",
+   '_self_wxid_src = "dbdir"' in _SRC)
+
+print("── N. 关机印象不许把机器人自己/主人写进记忆（污染长期印象的独立路径）──")
+_pm = open(os.path.join(ROOT, "scripts", "persona_morph.py"), encoding="utf-8").read()
+ok("N1 关机印象开头写明「不许把自己写进记忆」（这条不变量有据可依）",
+   "关机印象绝不许把机器人自己写进去" in _pm)
+_seg = _pm[_pm.find("def _summarize_on_exit"):] if "def _summarize_on_exit" in _pm else ""
+_seg = _seg[:_seg.find("\n    def ", 10)] if _seg else ""
+ok("N2 `_summarize_on_exit` 里排掉自己（`_sid == _self_wxid` 跳过）",
+   "_sid == _self_wxid" in _seg)
+ok("N3 `_summarize_on_exit` 里排掉主人其他号（`is_owner` 跳过）",
+   "orch.wechat.is_owner(_sid" in _seg)
+
 print("\n==== 自我行号判据：%d 通过 / %d 失败 ====" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
