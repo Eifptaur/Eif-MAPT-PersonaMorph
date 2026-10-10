@@ -225,8 +225,8 @@ ok("G2★ 覆盖率棘轮（**只许降不许升**）：机器能吃掉的两个
    "speech=%d personality=%d" % (_lack["speech"], _lack["personality"]))
 ok("G2b★ 总缺口棘轮（只许降）：**≤ 660**（当前 652 ⇒ 下一版只能更小）",
    sum(_lack.values()) <= 660, str(sum(_lack.values())))
-ok("G3★ 机器吃不掉的那三块如实留着（`motive`/`values`/`limits` 原卡里真没写 ⇒ 不许伪造）",
-   _lack["motive"] > 150 and _lack["values"] > 150 and _lack["limits"] > 150,
+ok("G3★ 机器吃不掉的那三块**只许变少**（七字段重写推进 ⇒ 缺口单调下降；当前上限按已落地批次校准）",
+   _lack["motive"] <= 141 and _lack["values"] <= 161 and _lack["limits"] <= 145,
    "motive=%d values=%d limits=%d" % (_lack["motive"], _lack["values"], _lack["limits"]))
 _dup = []
 for _pid, _card in (_P.PERSONAS or {}).items():
