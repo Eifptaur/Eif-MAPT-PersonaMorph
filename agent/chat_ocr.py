@@ -4402,6 +4402,40 @@ def _popover_history_row(t: str) -> bool:
         return False
 
 
+def _popover_web_row(s: str) -> bool:
+    """这行 OCR 文本是不是「搜索网络结果」那一行 —— **点它就会打开"搜一搜"**。
+
+    ⛔ 为什么必须显式挡它（2026-10-10 真机反馈驱动）：
+      用户报「老是点到搜一搜」，并给了浮窗截图：浮层里**一条真实会话结果都没有**，
+      只有顶部「搜索网络结果 / 文章、公众号、视频号等」＋下面「最近在搜 / <四条历史>」。
+      那一行**整行可点**、点了就进"搜一搜"。
+      而 `find_popover_row` 在**闸①没生效**时（OCR 把副标题读岔、或漏读「最近在搜」
+      ⇒ `popover_is_empty_shell` 返回 False），会走到最后的**段兜底**：
+      只要 `POPOVER_SECTIONS` 里任一骨架词在**这行文本**里出现（例如「搜索网络结果」被
+      OCR 串上「联系」「群聊」之类），`sec_y` 就落在这行上 ⇒ `sec_y + 55`
+      ⇒ **落点正好压在「搜索网络结果」下面** ⇒ 上层点下去＝打开搜一搜。
+      ⇒ 判据：**这行永远不许当段标题、也永远不许当落点**。
+    ⚠️ 用「骨架」判（首字+尾字都在）以容忍 OCR 认岔，与 `_hit_shell_subtitle` 同一口径。
+    """
+    try:
+        x = str(s or "").strip()
+        if not x:
+            return False
+        # 直接词面（最稳的一条）
+        if "搜索网络结果" in x or "搜一搜" in x:
+            return True
+        # 骨架：OCR 常把「搜索网络结果」读岔（如「搜索网绩结果」「搜索网络结杲」）
+        #   口径：**「搜索」+「结果」都在** ⇒ 判是那一行（真会话名几乎不可能同时含这两截）。
+        if "搜索" in x and ("结果" in x or "结杲" in x or "结菓" in x):
+            return True
+        # 副标题骨架：「文章…公众号…视频号」这类 —— 也属于那一行的一部分
+        if _hit_shell_subtitle(x):
+            return True
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _hit_recent_title(s: str) -> bool:
     """这段 OCR 文本是不是「最近在搜」的标题（**容忍 OCR 认岔单字**）。
 
@@ -4552,6 +4586,40 @@ def find_popover_row(img, name: str, zoom: int = 2):
             return None
     except Exception:
         pass
+    # ⛔⛔ **闸⓪（2026-10-10 补，真机反馈驱动 · 这条最根本）**：
+    #    **输入框里没字 ⇒ 浮层里不可能有"联系人/群聊"结果段 ⇒ 一律不取行。**
+    #
+    #    为什么必须有（用户口述推演，逐字成立）：
+    #      字没投进去（框是空的，只有灰色的占位词「搜索」）时，程序**不查框**就直接来找结果行；
+    #      而框空 ⇒ 微信**根本不会渲染任何"联系人/群聊"段** ⇒ 画面里只有
+    #      「搜索网络结果 / 文章、公众号、视频号等」和「最近在搜 / <历史>」。
+    #      于是 `sec_y` 的段扫描**落到「搜索网络结果」那一片**（OCR 认岔时尤其容易）
+    #      ⇒ `sec_y + 55` ⇒ **落点正好是"搜一搜"入口** ⇒ 上层点下去 ⇒ 用户看到"点到搜一搜"。
+    #      ⇒ 在**找行之前先确认"框里真有字"**，是把这条路从**源头**掐掉（而不是事后拦落点）。
+    #
+    #    ⚠️ 为什么"闸①"（空白外壳）挡不住：闸① 要求**同时**认出「搜索网络结果 + 最近在搜」，
+    #      OCR 把副标题读岔或漏读「最近在搜」时它就**整条失效**（本机实测正是这种：
+    #      读到的是空串 ⇒ `popover_is_empty_shell` 返回 False）⇒ 闸① 不能当唯一防线。
+    #    ⚠️ 读不到字（OCR 不可用 / 读取异常）⇒ **当"有字"处理**（不拦）：
+    #      那是 `search_input_text` 本身不可用的环境，不能因"读不出"就废掉整条搜索链。
+    try:
+        _intxt_probe = search_input_text(img)
+        _has = bool(str(_intxt_probe or "").strip())
+        # 只有当**明确读出"框是空的"**（返回空串、且本次 OCR 确实工作过）才拦；
+        #   为了区分"空框"与"OCR 读不出"，再看一眼整图 OCR 有没有读到任何字 ——
+        #   整图也一个字读不出 ⇒ 是 OCR 环境问题 ⇒ 不拦（否则本机这种无 OCR 环境全废）。
+        if not _has:
+            _any = False
+            try:
+                _any = bool(recognize(img))
+            except Exception:  # noqa: BLE001
+                _any = False
+            if _any:
+                log.info("搜索浮层输入框里**空着**（占位词）⇒ 不会有结果段 ⇒ 不取行"
+                         "（防段兜底点到「搜索网络结果」＝搜一搜入口）")
+                return None
+    except Exception:  # noqa: BLE001
+        pass
     try:
         w, h = img.size
         items = recognize(img.crop((0, 80, int(w * 0.8), min(h, int(h * 0.55)))))
@@ -4560,12 +4628,24 @@ def find_popover_row(img, name: str, zoom: int = 2):
     sec_y = None
     sec_name = ""
     contains_hit = None
+    # ⛔ **「搜索网络结果」那一行**（＝"搜一搜"入口）在识别区里的 y 与行高 —— 一旦落点
+    #    落到它身上或**紧邻它下面那一条**，点下去就是打开搜一搜（2026-10-10 真机反馈）。
+    #    这里先把它记下来，落点前核对。
+    _web_y = None
+    _web_h = 0
     for t, x, y, ww, hh in items:
         s = str(t)
         cy = int(y) + 80
         # ⛔ 闸③：历史条目（群号/wxid）**绝不当落点** —— 它长得像行、位置也在结果区，
         #   但点它什么会话都切不到（真群名不会长成 `10000000005@chatroom`）。
         if _popover_history_row(s):
+            continue
+        # ⛔ 闸④（2026-10-10 补）：「搜索网络结果」那一行**不是会话行** —— 它是"搜一搜"入口。
+        #   既不许当落点（下面的段兜底），也**不许当段标题**（它含"搜索"二字、还可能被 OCR
+        #   串上"联系/群聊"之类骨架词 ⇒ 会把 `sec_y` 带到这一行上 ⇒ +55 正好压在搜一搜上）。
+        if _popover_web_row(s):
+            if _web_y is None:            # 只记**最上面**那条（真正的"搜索网络结果"）
+                _web_y, _web_h = cy, int(hh)
             continue
         if norm(s) == norm(name) and norm(name):
             return {"x": max(60, int(w * 0.35)), "y": int(cy + hh / 2), "why": "OCR 命中 %r" % s[:12]}
@@ -4592,6 +4672,24 @@ def find_popover_row(img, name: str, zoom: int = 2):
         #    「最常使用」→ 结果行，有时是「联系人」；而单字母名字（E）OCR 根本读不出来）
         #    ⇒ 只要认到**任一段标题**，就取它下面第一行（实测行中心 ≈ 标题下方 55px）；
         #      点到的是不是目标会话，仍由点完之后的**内容级复核**说了算（错行 ⇒ 不发送）。
-        return {"x": max(60, int(w * 0.35)), "y": int(sec_y + 55),
+        _sec_row_y = sec_y + 55
+        # ⛔ **落点复核（2026-10-10 补，真机反馈驱动）**：算出来的这一行**不许落在
+        #    「搜索网络结果」那一带的**危险区**里 —— 落进去＝点开"搜一搜"（用户报的正是这个）。
+        #    ⚠️ **危险区不是一行、而是一片**（真机口述）：「搜索网络结果」这一条
+        #       与「群聊」段那一条**长得极像、高度也一样**；点「搜索网络结果」出搜一搜，
+        #       **点它下面那一条也会出搜一搜** ⇒ 「那一行」与「它下面一条」都不可用。
+        #       ⇒ 判据：危险区＝从 `_web_y` 起、**往下盖两行**（含它本身与紧邻下一条）。
+        #          行高拿不到（`_web_h<=0`）时按经验值 46px 兜（真机浮层行高实测 42~52）。
+        #    ⚠️ 拿不到 `_web_y`（OCR 没读出那一行）⇒ 本闸不生效、退回原行为
+        #      （不因"缺信息"就瞎拦 —— 那会把正常的段兜底一起废掉）。
+        if _web_y is not None:
+            _row_h = int(_web_h) if int(_web_h) > 0 else 46
+            _band_lo = _web_y - 8                 # 上沿留一点（那一行自身也可能被判成段标题）
+            _band_hi = _web_y + _row_h * 2 + 10   # 往下盖两行（那一行 + 它下面那条）
+            if _band_lo <= _sec_row_y <= _band_hi:
+                log.info("段兜底落点 y=%d 落在「搜索网络结果」危险带 [%d, %d] 内 ⇒ "
+                         "判为搜一搜入口，不取行", _sec_row_y, _band_lo, _band_hi)
+                return None
+        return {"x": max(60, int(w * 0.35)), "y": _sec_row_y,
                 "why": "「%s」段第一行（标题 y=%d）" % (sec_name, sec_y)}
     return None
