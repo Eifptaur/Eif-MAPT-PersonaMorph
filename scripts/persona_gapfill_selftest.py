@@ -124,6 +124,26 @@ def main() -> int:
     ok("「必须人写」卡数 > 0（说明库里确实还有活）", len(gr["need_human"]) > 0,
        "%d 张" % len(gr["need_human"]))
 
+    # ── E. 真进度口径：**按小标题存在性**（唯一可信）──
+    # ⛔ 为什么不能用 `missing_fields()` 当进度尺：
+    #    `persona_card._harvest_sentences` 会从卡的自由正文里**捞句子**塞进字段，
+    #    于是一张**压根没写「## 动机」**的老卡，拆栏后 `motive` 也非空、也"不算缺"。
+    #    实测（2026-10-10，第一批落地后）：真写了「## 动机」的只有 21 张，
+    #    但 `motive` 非空的有 60 张 —— 39 张是**捞出来的假填充**。
+    #    ⇒ 判"人有没有写"只能看**正文里有没有那个小标题**。
+    print("\n── E. 真进度：正文里带七栏小标题的卡数（棘轮：只许涨）──")
+    has_head = sum(1 for c in P.values() if "## 身份背景" in str(c.get("text") or ""))
+    n_motive_head = sum(1 for c in P.values() if "## 动机" in str(c.get("text") or ""))
+    n_motive_nonempty = sum(
+        1 for c in P.values()
+        if len(str(persona_card.to_fields(c.get("text", "")).get("motive") or "").strip()) >= 12)
+    ok("带七栏标题的卡数 ≥ 21（第一批已落地）", has_head >= 21, "%d / %d" % (has_head, len(P)))
+    ok("真写了「## 动机」的卡数 == 带标题的卡数（不许有落差）",
+       n_motive_head == has_head, "标题=%d 非空=%d" % (n_motive_head, n_motive_nonempty))
+    ok("识别出「看似有动机、实为 harvest 捞的」假填充（>0 即有，应随重写推进递减）",
+       n_motive_nonempty > n_motive_head,
+       "假填充 %d 张" % (n_motive_nonempty - n_motive_head))
+
     # ── 收尾 ──
     print("\n" + "=" * 72)
     print("通过 %d / 失败 %d" % (_n[0], _n[1]))
