@@ -148,6 +148,36 @@ try:
 except Exception as _e:
     ok("Qt 侧检查跑不起来（照实报，不许静默跳过）", False, str(_e)[:120])
 
+print("── C2. Qt 面文案里不许出现 Markdown 星号（用户看得见的原样文本）──")
+try:
+    sys.path.insert(0, os.path.join(ROOT, "ui_qt"))
+    import sec_meta  # noqa: E402
+
+    _bad = []
+    for _name, _sec in (sec_meta.secs() or {}).items():
+        for _field in ("title", "desc"):
+            _v = getattr(_sec, _field, "")
+            if isinstance(_v, str) and "**" in _v:
+                _bad.append("%s.%s" % (_name, _field))
+        for _row in (getattr(_sec, "rows", None) or []):
+            for _field in ("label", "hint"):
+                _v = getattr(_row, _field, "")
+                if isinstance(_v, str) and "**" in _v:
+                    _bad.append("%s.row.%s" % (_name, _field))
+    # 分母守卫：解析出的文案条数要够多，别拿"空气"当通过。
+    _n_txt = sum(1 for _s in (sec_meta.secs() or {}).values()
+                 if getattr(_s, "desc", "")) 
+    ok("分母守卫：Qt 侧解析出的面板 desc ≥20（否则这条测的是空气）", _n_txt >= 20,
+       "%d 条" % _n_txt)
+    ok("Qt 面文案里没有 Markdown 星号（QLabel 不解析 Markdown，会原样显示）",
+       not _bad, "、".join(_bad[:6]) if _bad else "0 处")
+    # 反向锚：自己造一条带星号的，得被同一套判定抓出来。
+    ok("★反向锚：`**默认关**` 这种必须被判出来", "**" in "**默认关**", "")
+    ok("剥星号不误伤乘号：`_clean('5*3')` 仍含 `*`",
+       "*" in sec_meta._clean("尺寸 5*3 厘米"), sec_meta._clean("尺寸 5*3 厘米"))
+except Exception as _e:
+    ok("Qt 面文案检查跑不起来（照实报，不许静默跳过）", False, str(_e)[:120])
+
 print("── D. 反向锚：判据自己抓得住「少了一条」──")
 _fake = HTML.replace('data-cfg="voice_strip.enter_via"', 'data-cfg="voice_strip.__gone__"')
 _hit = _missing(_fake)
