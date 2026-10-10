@@ -913,6 +913,47 @@ class Shell(QWidget):
         except Exception: # noqa: BLE001
             pass
 
+    def _titlebar_colors(self) -> dict:
+        """顶栏的**色档** ⇒ `{tx, tx2, ink, chip_base, chip_bd, chip_tx, chip_v}`。
+
+        ⚠️ 从 `_build_titlebar` 里抽出来的（那函数已 300+ 行，结构棘轮盯着）——
+        **逻辑一字未改**，只是把"纯配色推导"从"装配"里分开。各条理由如下：
+
+        ── 顶栏文字 / 图标色档 ──
+        whale 的顶栏底是**天蓝**（#3E7FA8）：白字在其上 ≈4.4:1 且笔画醒目，
+        深字只有 ≈4.1:1、整条顶栏看着发暗 —— 实测同一底色下白字更清爽。
+        ⚠️ 这条只跟"底的明度落在哪一段"有关，与"底是不是彩色"无关：
+           若底再往上亮一档（回到灰蓝 #5C8094 那种），就该换回深字，否则白字发飘。
+        light/dark 的顶栏底与各自主题同向，直接用各自的 `t.tx` / `t.tx2`。
+        （`tx2` 写成 8 位 hex 而不是 `rgba(...)`：Qt 样式表只认 `#AARRGGBB`）
+
+        ── 浅底档按钮的墨色 ──
+        顶栏**按钮**走的也是"浅底档"（只有浅色底才需要它）：
+        light 的顶栏是白底、dark 是近黑底，它们照旧走主题自己的按钮档 ——
+        传空串即"不启用"。⚠️ 别把 `tx` 直接传下去：light 的 `tx` 是深字，
+        一旦被当成浅底档，白底上会画出"白描边按钮"（边界消失）。
+
+        ── 顶栏信息胶囊（web `.chip`）的底/边/字三色 ──
+        whale 的顶栏是**天蓝** ⇒ 胶囊要比它更"沉"才成块（半透深色，即"深一层"）；
+        light/dark 的顶栏与各自主题同向，照 web 用 `t.card`（web 那边 `.chip` 的底就是 `--bg-solid`）。
+        """
+        glass = bool(self.t.glass)
+        if glass:
+            # ⚠️ **实色、不透明**。半透明时底图的海浪纹理会从胶囊里透出来（深浅不均），
+            #    看着发脏。顶栏那层"透"是设计（要透出海面），但**胶囊是控件** ——
+            #    控件要"实"才像一块东西。这里取半透时的等效显示色，观感一致、只是不透了。
+            #    （右边那排按钮/图标钮不走这套，它们保持原来的半透档。）
+            _chip_base, _chip_bd = QColor("#2A5B7A"), "#1E4460"
+            _chip_tx, _chip_v = "#DBFFFFFF", "#FFFFFF"
+        else:
+            _chip_base, _chip_bd = self.t.q("card"), self.t.bd
+            _chip_tx, _chip_v = self.t.tx2, self.t.tx
+        return {"tx": "#FFFFFF" if glass else self.t.tx,
+                "tx2": "#DBFFFFFF" if glass else self.t.tx2,
+                "ink": "#FFFFFF" if glass else "",
+                "chip_base": _chip_base, "chip_bd": _chip_bd,
+                "chip_tx": _chip_tx, "chip_v": _chip_v}
+
     def _build_titlebar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("TitleBar")
@@ -927,36 +968,13 @@ class Shell(QWidget):
 
         lay.addWidget(WhaleBadge())
 
-        # ── 顶栏文字 / 图标色档 ──
-        # whale 的顶栏底是**天蓝**（#3E7FA8）：白字在其上 ≈4.4:1 且笔画醒目，
-        # 深字只有 ≈4.1:1、整条顶栏看着发暗 —— 实测同一底色下白字更清爽。
-        # ⚠️ 这条只跟"底的明度落在哪一段"有关，与"底是不是彩色"无关：
-        #    若底再往上亮一档（回到灰蓝 #5C8094 那种），就该换回深字，否则白字发飘。
-        # light/dark 的顶栏底与各自主题同向，直接用各自的 `t.tx` / `t.tx2`。
-        # （`bar_tx2` 写成 8 位 hex 而不是 `rgba(...)`：Qt 样式表只认 `#AARRGGBB`）
-        bar_tx = "#FFFFFF" if self.t.glass else self.t.tx
-        bar_tx2 = "#DBFFFFFF" if self.t.glass else self.t.tx2
-        # 顶栏**按钮**走的也是"浅底档"（只有浅色底才需要它）：
-        # light 的顶栏是白底、dark 是近黑底，它们照旧走主题自己的按钮档 ——
-        # 传空串即"不启用"。⚠️ 别把 `bar_tx` 直接传下去：light 的 `tx` 是深字，
-        # 一旦被当成浅底档，白底上会画出"白描边按钮"（边界消失）。
-        bar_ink = "#FFFFFF" if self.t.glass else ""
-
-        # 顶栏信息胶囊（web `.chip`）的底/边/字三色。
-        # whale 的顶栏是**天蓝** ⇒ 胶囊要比它更"沉"才成块（半透深色，即"深一层"）；
-        # light/dark 的顶栏与各自主题同向，照 web 用 `t.card`（web 那边 `.chip` 的底就是 `--bg-solid`）。
-        if self.t.glass:
-            # ⚠️ **实色、不透明**。半透明时底图的海浪纹理会从胶囊里透出来（深浅不均），
-            #    看着发脏。顶栏那层"透"是设计（要透出海面），但**胶囊是控件** ——
-            #    控件要"实"才像一块东西。这里取半透时的等效显示色，观感一致、只是不透了。
-            #    （右边那排按钮/图标钮不走这套，它们保持原来的半透档。）
-            _chip_base = QColor("#2A5B7A")
-            _chip_bd = "#1E4460"
-            _chip_tx, _chip_v = "#DBFFFFFF", "#FFFFFF"
-        else:
-            _chip_base = self.t.q("card")
-            _chip_bd = self.t.bd
-            _chip_tx, _chip_v = self.t.tx2, self.t.tx
+        # ⭐ 顶栏的**色档**（文字色 / 浅底档按钮墨色 / 胶囊三色）抽成独立方法 ——
+        #   `_build_titlebar` 已 300+ 行（结构棘轮盯着）⇒ 把这段"纯配色推导"挪出去，
+        #   让本函数只剩"装配"这件事。逻辑一字未改，理由跟着搬过去。
+        _c = self._titlebar_colors()
+        bar_tx, bar_tx2, bar_ink = _c["tx"], _c["tx2"], _c["ink"]
+        _chip_base, _chip_bd = _c["chip_base"], _c["chip_bd"]
+        _chip_tx, _chip_v = _c["chip_tx"], _c["chip_v"]
 
         def _chip_style() -> str:
             """胶囊的**实体感**：渐变底 ＋ 上受光/下背光边（与 `Btn` 同一套做法）。
