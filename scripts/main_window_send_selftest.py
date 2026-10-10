@@ -93,11 +93,18 @@ def main():
         not (0 <= i_posted < i_gate),
         "判据自身失效（posted 已经在 gate 前面了？）")
 
-    print("== C. 但有一条『等价放行』：主窗恰好开着同名会话 ==")
-    # 这就是用户问的"为什么会在主窗发"的真根 —— 设计要点③
-    chk("C1 ★库里确实写着『主窗里当前会话恰好同名 ⇒ 也照样可用』",
-        "也照样可用" in ww and "标题=会话名" in ww.replace("`", ""),
-        "这条等价放行不见了（可能被改掉/搬走）⇒ 结论会变，必须复核")
+    print("== C. 主窗一律不用：命中主窗 ⇒ 去开独立窗（2026-10-10 用户拍板） ==")
+    # 用户原话：「我为什么要说一定要开独立窗？因为独立窗它没有搜索栏，就不会误发」
+    # ⇒ 旧的"主窗恰好同名 ⇒ 也照样可用（行为等价）"这条**放行已废**。
+    chk("C1 ★旧的『主窗同名也照样可用』放行**已删**（没删就是没修）",
+        "也照样可用" not in ww,
+        "那条等价放行还在 ⇒ 用户看到的『在主窗聊天』会复现")
+    chk("C1b ★新口径写进 docstring：命中主窗一律当『没有独立窗』",
+        "一律当" in ww and "没有独立窗" in ww,
+        "口径没写下来 ⇒ 后人会把放行加回去")
+    chk("C1c ★docstring 引了用户的理由『独立窗没有搜索栏，就不会误发』",
+        "没有搜索栏" in ww,
+        "理由没落盘 ⇒ 以后有人会问『为什么不能省这一步』")
     i_ep = ww.find("def ensure_popup(")
     seg_ep = ww[i_ep:i_ep + 30000] if i_ep > 0 else ""
     chk("C2 取到 ensure_popup 源码切片（分母守卫）", len(seg_ep) > 2000, "切片为空")
@@ -105,7 +112,7 @@ def main():
     i_fcw = ww.find("def find_chat_window(")
     seg_fcw = ww[i_fcw:i_fcw + 3000] if i_fcw > 0 else ""
     chk("C3 find_chat_window 会把 'is_popup=False' 如实标出来（不谎报是独立窗）",
-        '"is_popup": not _is_main_window' in seg_fcw or "is_popup" in seg_fcw,
+        "is_popup" in seg_fcw,
         "标注丢了 ⇒ 调用方没法区分主窗/独立窗")
     # 关键：send_to_popup 里"命中主窗"之后是不是**拒绝**
     i_stp = ww.find("def send_to_popup(")
@@ -113,6 +120,25 @@ def main():
     chk("C4 send_to_popup 里『不是独立窗』⇒ 走 ensure_popup 去**开窗**（不是就地用主窗）",
         "not hit.get(\"is_popup\")" in seg_stp and "ensure_popup(" in seg_stp,
         "少了这一步 ⇒ 会直接对主窗打字")
+
+    print("== C2. 列表只有一个会话 ⇒ 跳过多双击，改走右键开窗 ==")
+    # 用户点出的真洞：「他会话列表就只有一个群，然后他还自己选中高亮行」
+    #   高亮在目标行 ⇒ 双击开不出窗；列表只有一行 ⇒ 没有替代行可点
+    chk("C5 ★『没有替代行』时不再放弃，而是回一个专门信号（no_alt_row）",
+        "no_alt_row" in ww,
+        "还是老写法『找不到可用的替代行（不改动，直接双击试试）』⇒ 必然白双击")
+    chk("C6 ★调用方认得这个信号（不是定义了没人用）",
+        re.search(r'str\(_ds_note\)\s*==\s*"no_alt_row"', ww) is not None,
+        "信号没人接 ⇒ 等于没做")
+    chk("C7 ★命中后**跳过多双击**（`_skip_dbl` 置真）",
+        "_skip_dbl = True" in ww and "if not _skip_dbl:" in ww,
+        "没跳过 ⇒ 还是白双击两轮")
+    chk("C8 ★重试那一轮也要跳过（否则还是白等一个 timeout）",
+        ww.count("if not _skip_dbl:") >= 2,
+        "只跳过了第一轮 ⇒ 重试仍在白双击")
+    chk("C9 ★右键那条路**与选中态无关**的理由落盘了",
+        "与选中态无关" in ww or "不依赖\"双击手势" in ww.replace("＋", "+"),
+        "理由没写 ⇒ 后人会以为是多余代码")
 
     print("== D. 那条放行就算命中主窗，也**不会**把字打到左边搜索框 ==")
     # send_to_popup 的打字/点击全部带 hwnd，不碰主窗坐标系

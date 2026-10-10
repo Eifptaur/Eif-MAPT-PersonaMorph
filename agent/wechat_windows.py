@@ -590,8 +590,17 @@ def send_to_popup(chat_name: str, text: str, *, timeout_s: float = 6.0,
          不会与打架；`WM_PASTE` 那条路会覆盖用户剪贴板，**不进主路**。
       ② **发送前必须确认"字真进去了"**：靠 `send_button_green()`（绿占比 ≥0.30）
          —— 实测"API 返回 (True,'') 但字没进去"，**不能只看返回值**（§59）。
-      ③ **目标窗口必须是"独立弹窗"**（有 `标题=会话名`）；主窗里当前会话恰好同名时会误命中，
-         故若命中的是"主窗且其当前会话＝该名"，也照样可用（行为等价）。
+      ③ ⛔⛔ **目标窗口必须是"独立弹窗"** —— **主窗一律不用**（2026-10-10 用户拍板）。
+         · **为什么这条是硬的**（用户原话）：「我为什么要说一定要开独立窗？因为
+           **独立窗它没有搜索栏，就不会误发**」——
+           独立窗 = 一窗一会话、标题即会话名 ⇒ **结构上就只有那一个输入框**，
+           不存在"把话打进左边搜索框/群名"那种角落；
+           而主窗有搜索框、有会话列表、有群名栏 ⇒ **多一个可落错的地方就多一次发错的机会**。
+         · ⛔ **旧写法的洞（已废）**：原来写"主窗里当前会话恰好同名 ⇒ 就当作可以用
+           （行为等价）"。**这个"等价"不成立** —— 用户实测到"它居然是在主窗聊天的"，
+           正是这条放行让它不去开独立窗、直接拿主窗用。
+         · ✅ 现在：命中主窗 ⇒ **一律当"没有独立窗"处理** ⇒ 走 `ensure_popup` 去
+           **把独立窗开出来**；开不出来 ⇒ **如实失败**（这条不发），**绝不在主窗发**。
       ④ **失败即停**：任一步不过就返回，**绝不盲目点发送**。
       ⑤ **全程不动光标**（`MessageBackend.touches_cursor=False`）—— 注意口径：投递链的伪激活
          可能让微信**短暂置前约 1~3 秒后自动还回** ⇒ 对外文案一律写成这个口径，
@@ -4378,7 +4387,18 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
         ⚠️ 副作用：主窗当前会话会被切到那一行 —— 该副作用可接受
           （**要操作的只是那个独立窗，主窗不必保持原状态**）。
 
-        返回 `(ok, note)`。
+        ⛔ **列表只有一行时怎么办（2026-10-10 用户点出的真洞）**：
+          目标行就是第一行、而列表里**只有那一个会话** ⇒ "第二行"不存在，
+          没有任何"别行"可点 ⇒ 老写法只能返回"找不到可用的替代行（不改动，直接双击试试）"
+          ⇒ 接着双击**必然开不出窗**（高亮还在目标行上）⇒ 走到 `open_failed`。
+          用户原话：「他会话列表就只有一个群，然后他还自己选中高亮行，所以不切会话，
+          直接就在那儿发了」—— 这正是那条现象的成因之一。
+          ✅ 现在：没有替代行时**不再放弃**，而是返回一个专门的信号
+             （`"no_alt_row"`），由调用方改走「**右键菜单 → 开成独立窗口**」
+             —— 右键菜单是**显式命令**，不依赖"双击手势 + 高亮态"这对组合，
+             **与选中态无关** ⇒ 高亮着也能开出来。
+
+        返回 `(ok, note)`；`note == "no_alt_row"` 表示"没有替代行，请改走右键"。
         """
         has, same = _target_row_is_selected()
         if not has or not same:
@@ -4387,7 +4407,8 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
         alt_order = 0 if int(order) != 0 else 1
         alt_y = int(round(first_row_center_phys + alt_order * row_pitch_phys))
         if alt_y < int(list_top_phys) or alt_y > (r[3] - r[1]):
-            return True, "找不到可用的替代行（不改动，直接双击试试）"
+            # ⛔ 没有可用替代行（典型：列表只有一个会话）⇒ 交给调用方走右键那条路
+            return False, "no_alt_row"
         be.click(main, (x, int(r[1] + alt_y)), hover_ms=60, press_ms=60)
         _t.sleep(0.6)
         has2, same2 = _target_row_is_selected()
@@ -4395,20 +4416,31 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
             return False, "已单击第 %d 行但目标行仍被选中（去选中失败）" % (alt_order + 1)
         return True, "已把选中挪到第 %d 行（目标行现为未选中）" % (alt_order + 1)
 
+    # ⛔ **列表只有一个会话 ⇒ 没有替代行可点**（`no_alt_row`）：
+    #   目标行仍高亮着，双击**必然开不出来**（实测：高亮行上双击会被拆散）
+    #   ⇒ 与其白双击两轮、白等 timeout，不如**跳过双击**直接走右键那条路
+    #     （右键菜单是显式命令，**与选中态无关**，高亮着也能开）。用户点出的这条现象就修在这。
+    _skip_dbl = False
     if double_click:
         _ds_ok, _ds_note = _deselect_target_row()
         out["deselect"] = {"ok": bool(_ds_ok), "note": _ds_note}
         if not _ds_ok:
-            # 去选中失败不致命：照旧双击（可能仍成），但如实记下
-            out["deselect"]["warn"] = "去选中未成功，仍按双击流程继续"
+            if str(_ds_note) == "no_alt_row":
+                _skip_dbl = True
+                out["deselect"]["note"] = "列表只有一个会话（无替代行）⇒ 跳过多双击，改走右键开窗"
+            else:
+                # 去选中失败不致命：照旧双击（可能仍成），但如实记下
+                out["deselect"]["warn"] = "去选中未成功，仍按双击流程继续"
 
-    ok2, why2 = _open_by_human_rhythm(main)
-    out["click_target"] = IB3.win_kind(main, main)
-    out["rhythm"] = {"double_gap_s": DOUBLE_GAP_S, "press_ms": press_ms,
-                     "src": "真机录制的鼠标节奏真值"}
-    if not ok2:
-        out.update(step="click", detail=why2)
-        return out
+    ok2, why2 = True, ""
+    if not _skip_dbl:
+        ok2, why2 = _open_by_human_rhythm(main)
+        out["click_target"] = IB3.win_kind(main, main)
+        out["rhythm"] = {"double_gap_s": DOUBLE_GAP_S, "press_ms": press_ms,
+                         "src": "真机录制的鼠标节奏真值"}
+        if not ok2:
+            out.update(step="click", detail=why2)
+            return out
 
     # ④ 等新独立窗 + 按标题确认
     t0 = _t.time()
@@ -4426,18 +4458,21 @@ def ensure_popup(chat_name: str, *, adapter=None, timeout_s: float = 6.0,
             return out
 
     # ⑤ 自愈：再试一轮（第一次可能被叉掉 / 一闪即没）
-    out["retried"] = True
-    ok3, _why3 = _open_by_human_rhythm(main)
-    if ok3:
-        t0 = _t.time()
-        while _t.time() - t0 < float(timeout_s):
-            _t.sleep(0.05 if (_t.time() - t0) < 1.0 else 0.3)
-            h3 = find_popup(title_name)
-            if h3.get("hwnd"):
-                out.update(ok=True, hwnd=int(h3["hwnd"]), how="opened_retry", step="opened",
-                           detail="第一轮未成（疑似被叉掉/一闪即没）⇒ 重试后出现独立窗")
-                out["parked"] = park_popup(int(h3["hwnd"]), why="重试开出的窗也立刻收起")
-                return out
+    #   ⛔ `_skip_dbl`（列表只有一个会话）时不重试 —— 高亮还在目标行上，再双击还是开不出来，
+    #     白白多动两次鼠标还拖长等待 ⇒ 直接落到下面的右键路。
+    if not _skip_dbl:
+        out["retried"] = True
+        ok3, _why3 = _open_by_human_rhythm(main)
+        if ok3:
+            t0 = _t.time()
+            while _t.time() - t0 < float(timeout_s):
+                _t.sleep(0.05 if (_t.time() - t0) < 1.0 else 0.3)
+                h3 = find_popup(title_name)
+                if h3.get("hwnd"):
+                    out.update(ok=True, hwnd=int(h3["hwnd"]), how="opened_retry", step="opened",
+                               detail="第一轮未成（疑似被叉掉/一闪即没）⇒ 重试后出现独立窗")
+                    out["parked"] = park_popup(int(h3["hwnd"]), why="重试开出的窗也立刻收起")
+                    return out
     # ③′ ★★ **右键退路**（第 225 项：「**双击 → 右键**」两级开窗里的第二级）
     #   为什么要有它：开独立窗是本项目**唯一**的发送入口（发送只走独立窗，不切会话）。
     #   双击靠**手势判定**（受列表滚动、选中态、窗口可见性影响），而**右键菜单是显式命令**
