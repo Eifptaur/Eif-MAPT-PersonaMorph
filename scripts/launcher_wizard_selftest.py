@@ -180,16 +180,18 @@ ok("④a‴ ★反例锚：探测**拿不准就当真不齐**（空输出/异常
    bool(re.search(r"if\s*\(string\.IsNullOrEmpty\(outp\)\)\s*return\s+false", _L))
    and bool(re.search(r"static bool DepsProbeOk\([^)]*\)[\s\S]*?catch\s*\{\s*return false;\s*\}", _L)),
    "")
-ok("④b ★静默判定被接到向导页序上（`GoPage(Silent ? PageInstalling : PageWelcome)`）",
-   bool(re.search(r"GoPage\(\s*Silent\s*\?\s*PageInstalling\s*:\s*PageWelcome\s*\)", _L)),
-   "")
+_GOPAGE_INST = r"GoPage\(\s*\(\s*Silent\s*\|\|\s*JustInstalled\s*\)\s*\?\s*PageInstalling\s*:\s*PageWelcome\s*\)"
+ok("④b ★静默判定被接到向导页序上（`GoPage((Silent || JustInstalled) ? PageInstalling : PageWelcome)`）",
+   bool(re.search(_GOPAGE_INST, _L)),
+   "`JustInstalled`＝装在用户选的目录后由新位置拉起（`--installed`），同样不许停在欢迎页")
 ok("④c ★`GoPage` 起手就把 `_page` 钳到合法区间（防越界页 ⇒ 四页全隐藏＝空白窗）",
    bool(re.search(r"if\s*\(\s*p\s*<\s*PageWelcome\s*\)\s*p\s*=\s*PageWelcome\s*;", _L))
    and bool(re.search(r"if\s*\(\s*p\s*>\s*PageDone\s*\)\s*p\s*=\s*PageDone\s*;", _L)),
    "")
-ok("④d ★反例锚：把上面那句 `GoPage(Silent ? …)` 改写成「总是欢迎页」⇒ ④b 必须变红",
-   not bool(re.search(r"GoPage\(\s*Silent\s*\?\s*PageInstalling\s*:\s*PageWelcome\s*\)",
-                      _L.replace("GoPage(Silent ? PageInstalling : PageWelcome)", "GoPage(PageWelcome)"))),
+ok("④d ★反例锚：把上面那句 `GoPage(… ? …)` 改写成「总是欢迎页」⇒ ④b 必须变红",
+   not bool(re.search(_GOPAGE_INST, _L.replace(
+                      "GoPage((Silent || JustInstalled) ? PageInstalling : PageWelcome)",
+                      "GoPage(PageWelcome)"))),
    "反向锚有效")
 ok("④e ⛔ 静默档下窗体不显示（`Opacity=0` ＋ 不进任务栏 ＋ 最小化）仍在",
    ("ShowInTaskbar = false" in _L and "Opacity = 0" in _L
@@ -284,6 +286,42 @@ ok("⑧a ★`SaveGeo` 在探针模式下直接返回（不写 `data\\console_win
    "去掉它 ⇒ 用真 exe 跑一次 `--shot` 就把用户调好的窗口位置覆盖掉")
 ok("⑧b ★反例锚：`SaveGeo` 里确实有写盘语句（⑧a 那条 guard 不是空过）",
    "File.WriteAllText(p," in _SAVEGEO, "")
+
+
+print("\n── ⑨ 安装位置是**真**搬运（用户实测：选了 G 盘还是装到 C 盘）──")
+# 口径：`PickDir()` 选的目录必须被**安装流程真的消费**。旧版这里只更新 `lblDir` 显示，
+#   真安装根走 `Application.ExecutablePath` ⇒ 用户选哪儿都白选（＝假动作）。
+ok("⑨a ★`NeedMove()` 存在：归一化比较后判断「要不要搬」（防选自己所在目录时白复制一遍）",
+   bool(re.search(r"bool\s+NeedMove\(\)", _L))
+   and "GetFullPath" in _L and "OrdinalIgnoreCase" in _L, "")
+ok("⑨b ★点「开始安装」时按 `NeedMove()` 分流（要搬 ⇒ 起后台线程搬，不搬 ⇒ 走原流程）",
+   bool(re.search(r"if\s*\(\s*_page\s*==\s*PageLocation\s*&&\s*NeedMove\(\)\s*\)", _L))
+   and bool(re.search(r"new\s+Thread\(\s*MoveThenRelaunch\s*\)", _L)), "")
+ok("⑨c ★`MoveThenRelaunch` 真复制目录树（`CopyTree`）并**从新位置重启**（带 `--installed`）",
+   bool(re.search(r"void\s+MoveThenRelaunch\(\)", _L))
+   and bool(re.search(r"CopyTree\(", _L))
+   and bool(re.search(r'new\s+ProcessStartInfo\(\s*newExe\s*,\s*"--installed"\s*\)', _L)), "")
+ok("⑨d ★`--installed` 让新位置的那份跳过欢迎/安装位置两页（`JustInstalled` 开关已接线）",
+   "JustInstalled" in _L
+   and bool(re.search(r"args\[0\]\s*==\s*\"--installed\"", _L))
+   and bool(re.search(r"LauncherForm\.JustInstalled\s*=\s*true", _L)), "")
+# 反向锚 1：把 `--installed` 去掉 ⇒ ⑨c 的判据式必红（证明它不是空过）
+_STRIP_RE = re.compile(r'new\s+ProcessStartInfo\(\s*newExe\s*,\s*"--installed"\s*\)')
+_STRIPPED = _STRIP_RE.sub('new ProcessStartInfo(newExe)', _L)
+ok("⑨e ★反例锚：去掉 `--installed` ⇒ ⑨c 变红",
+   not bool(_STRIP_RE.search(_STRIPPED)) and bool(_STRIP_RE.search(_L)),
+   "反向锚有效")
+# 反向锚 2：把这句换成旧版的"只更新显示" ⇒ ⑨b 必红
+ok("⑨f ★反例锚：去掉 `_page == PageLocation && NeedMove()` 分流 ⇒ ⑨b 变红（回到假动作）",
+   not bool(re.search(r"if\s*\(\s*_page\s*==\s*PageLocation\s*&&\s*NeedMove\(\)\s*\)",
+                      _L.replace("if (_page == PageLocation && NeedMove())", "if (false)"))),
+   "")
+# ⛔ 目标目录不许落在源目录内部（会自我递归复制把自己吃满盘）
+ok("⑨g ★搬之前挡掉「目标在源目录内部」（自我递归会复制到盘满）",
+   bool(re.search(r"StartsWith\(\s*src\s*\+\s*\"\\\\\"", _L)), "")
+# ⛔ csc v4.0.30319 只支持 C# 5：异常筛选器（`catch (...) when (...)`）编不过
+ok("⑨h ★不许用 C# 6 的异常筛选器 `catch (...) when (...)`（csc v4.0 编不过，实测过）",
+   " when (" not in _L.replace(" when (tries", ""), "")
 
 
 print("\n==== launcher 安装向导判据：%d 通过 / %d 失败 ====" % (len(PASS), len(FAIL)))

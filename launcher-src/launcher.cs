@@ -106,6 +106,9 @@ namespace WxLauncher
         /// <summary>静默档：`Main` 判定"一切都就绪"时置 true ⇒ 本窗不显示、出错才显形。</summary>
         public static bool Silent = false;
 
+        /// <summary>刚从"用户选的目录"启动（`--installed`）⇒ 跳过欢迎/安装位置两页，直接跑安装流程。</summary>
+        public static bool JustInstalled = false;
+
         /// <summary>把窗口从静默档**显形**（出错时调；幂等）。</summary>
         public void RevealOnFailure()
         {
@@ -439,10 +442,19 @@ namespace WxLauncher
             {
                 if (_page == PageDone) { FinishAndMaybeLaunch(); return; }
                 if (_page == PageWelcome) { GoPage(PageLocation); return; }
-                // 安装位置 → 开始安装：先把 P3 的按钮行排好，再切页（`StartFlow` 由 `Shown` 起）
+                // ⭐ 安装位置 → 开始安装：**先把这份程序搬到用户选的目录**，再切页。
+                //    ⛔ 不搬 = 假动作（2026-10-10 用户实测："我明明改到 G 盘根目录了，
+                //       结果你还是给我安在 C 盘"）。搬运在后台线程做，界面切到"正在安装"页显示进度。
+                if (_page == PageLocation && NeedMove())
+                {
+                    GoPage(PageInstalling);
+                    Thread mt = new Thread(MoveThenRelaunch);
+                    mt.IsBackground = true;
+                    mt.Start();
+                    return;
+                }
                 GoPage(PageInstalling);
-            };
-            Controls.Add(btnNext);
+            };            Controls.Add(btnNext);
 
             // #12 F1：窗高也不再是"先猜一个数再祈祷内容装得下" —— 由最后一块的底边反推。
             //   （`Apply` 会再 + BarH 给自绘标题栏，所以这里是"标题栏以下"的设计高度。）
@@ -452,7 +464,7 @@ namespace WxLauncher
             bottomMost = Math.Max(bottomMost, contentTop + StyleKit.Space.x4 + StyleKit.LineHeight(btnNext.Font) + StyleKit.Space.x1);
             ClientSize = new Size(620, bottomMost + StyleKit.Space.x6);
 
-            GoPage(Silent ? PageInstalling : PageWelcome); // ⛔ 静默档直接进"正在安装"，不许停在欢迎页
+            GoPage((Silent || JustInstalled) ? PageInstalling : PageWelcome); // ⛔ 静默档/刚装完直接进"正在安装"，不许停在欢迎页
             Shown += (s, e) => { if (ProbeMode) return; Thread t = new Thread(StartFlow); t.IsBackground = true; t.Start(); };
             StyleKit.Apply(this, "群相 安装向导");
 
@@ -513,8 +525,9 @@ namespace WxLauncher
         }
 
         /// <summary>「更改…」：选安装目录，选完就地更新路径行。</summary>
-        /// ⛔ 不做假动作：绿色包（文件已就地、没有可搬的东西）下按钮会被置灰，
-        ///   不会出现"点了能选、选了没用"的情况。
+        //  ⭐ 用户选的目录**真的会被用**：点「开始安装」时 `MoveThenRelaunch` 把整份程序
+        //     复制到该目录、在新目录里重启启动器（`InstallRoot` 自然变成新目录）。
+        //     ⛔ 旧版本这里是假动作（`_targetDir` 只用于显示）—— 用户实测发现后改成真搬。
         void PickDir()
         {
             try
@@ -539,6 +552,169 @@ namespace WxLauncher
             {
                 // 选目录失败不该把向导打断：记一笔、路径保持原样
                 Log("[目录] 选择失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>用户选的目录是否与当前程序所在目录不同（判"要不要搬"）。</summary>
+        //  两条短路：
+        //  ① 没选过（`_targetDir` 仍等于当前根）⇒ 不搬，直接进原流程；
+        //  ② 只是大小写/斜杠写法不同（Windows 路径不区分大小写）⇒ 归一化后比较，不误判成"要搬"。
+        //     ⛔ 不归一化会让"选了自己所在目录"也走一次整目录复制（280 MB 白复制一遍）。
+        bool NeedMove()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_targetDir)) return false;
+                string a = Path.GetFullPath(Root).TrimEnd('\\', '/');
+                string b = Path.GetFullPath(_targetDir).TrimEnd('\\', '/');
+                return !string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>把整份程序复制到用户选的目录，然后在新目录里重启启动器。</summary>
+        //  为什么是"复制 + 在新目录重启"而不是"就地改路径"：
+        //    本 exe 的代码根 `Program.AppRoot` 在 `Main` 第一句就由 `Application.ExecutablePath`
+        //    定死，进程运行期间**改不了**（第 162 项的双根结构）。要真正装到别处，
+        //    唯一诚实的做法就是"文件先到位、再从新位置跑起来"。
+        //  搬完这一份（旧目录）**不自动删**：它是 Inno 铺的安装目录，删了会连卸载信息一起断；
+        //    由用户自己在确认新目录能跑之后处理（界面上会写明新位置）。
+        void MoveThenRelaunch()
+        {
+            try
+            {
+                string src = Path.GetFullPath(Root).TrimEnd('\\', '/');
+                string dst = Path.GetFullPath(_targetDir).TrimEnd('\\', '/');
+
+                SetState("正在安装…", 8, 0, "正在把程序装到你选的位置：" + dst);
+                Log("[安装] 从 " + src + " 复制到 " + dst);
+
+                // ⛔ 目标目录不许是源目录的**子目录**：那样复制会自我递归（源里不断出现刚复制的内容）。
+                //    正常的"装到别处"不会命中，但用户手选路径时可能选进来 ⇒ 显式挡掉。
+                if ((dst + "\\").StartsWith(src + "\\", StringComparison.OrdinalIgnoreCase))
+                {
+                    Fail("安装位置不能选在当前程序所在文件夹的内部，请选一个独立的文件夹");
+                    return;
+                }
+
+                CopyTree(src, dst, src, dst);
+
+                string newExe = Path.Combine(dst, Path.GetFileName(Application.ExecutablePath));
+                if (!File.Exists(newExe))
+                {
+                    Fail("复制完成，但在新位置没找到启动程序（" + newExe + "）——请换一个目录再试");
+                    return;
+                }
+
+                SetState("正在安装…", 96, 0, "程序已就位，正在从新位置启动…");
+                Log("[安装] 复制完成，从新位置启动：" + newExe);
+
+                // 快捷方式跟着搬：开始菜单里那条是安装时建的、指向旧目录 ⇒ 重建一条指向新目录，
+                // 并把旧的删掉（否则开始菜单出现两个「群相」）。桌面那条由完成页按
+                // `Application.ExecutablePath`（＝新目录）自动补，这里不重复管。
+                FixStartMenuShortcut(dst, newExe);
+
+                // 用新目录里的 exe 重启这一套向导（它的 `InstallRoot` 就是新目录）。
+                // `--installed` 让它跳过欢迎/安装位置两页，直接从"正在安装"页接着跑。
+                ProcessStartInfo psi = new ProcessStartInfo(newExe, "--installed");
+                psi.UseShellExecute = true;
+                psi.WorkingDirectory = dst;
+                Process.Start(psi);
+
+                // 本进程（旧目录那份）退出。⛔ 不删旧目录：留给用户与新位置并存，避免误删数据。
+                BeginInvoke((Action)(() =>
+                {
+                    try { Close(); } catch { }
+                }));
+            }
+            catch (Exception ex)
+            {
+                Fail("安装到新位置失败：" + ex.Message + "（也可以直接装在默认位置，点「关闭」重开一次即可）");
+            }
+        }
+
+        /// <summary>把开始菜单里指向旧目录的快捷方式改成指向新目录（删旧建新，避免出现两条）。</summary>
+        //  只动**指向本产品 exe**的那些 .lnk（按目标路径判，不按名字）：用户自己放的其他快捷方式不碰。
+        //  失败一律吞掉：快捷方式没搬成功不该让安装流程失败（用户仍能从新目录直接双击）。
+        static void FixStartMenuShortcut(string newDir, string newExe)
+        {
+            try
+            {
+                string oldDir = Path.GetDirectoryName(Application.ExecutablePath);
+                string oldExe = Application.ExecutablePath;
+                // 开始菜单（当前用户 + 公共）两处都看
+                string[] dirs = {
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "群相"),
+                    Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
+                };
+                Type t = Type.GetTypeFromProgID("WScript.Shell");
+                dynamic ws = Activator.CreateInstance(t);
+                foreach (string d in dirs)
+                {
+                    if (string.IsNullOrEmpty(d) || !Directory.Exists(d)) continue;
+                    foreach (string f in Directory.GetFiles(d, "*.lnk"))
+                    {
+                        string tp = "";
+                        try { dynamic sc0 = ws.CreateShortcut(f); tp = (string)sc0.TargetPath; } catch { }
+                        if (string.IsNullOrEmpty(tp)) continue;
+                        bool pointsHere = string.Equals(tp, oldExe, StringComparison.OrdinalIgnoreCase)
+                                       || string.Equals(tp, Path.Combine(oldDir, "群相.exe"), StringComparison.OrdinalIgnoreCase)
+                                       || string.Equals(tp, Path.Combine(oldDir, "一键启动.exe"), StringComparison.OrdinalIgnoreCase);
+                        if (!pointsHere) continue;
+                        string savedName = Path.GetFileNameWithoutExtension(f);
+                        try { File.Delete(f); } catch { }
+                        // 在同一个目录里重建一条同名、指向新 exe 的
+                        try
+                        {
+                            dynamic sc = ws.CreateShortcut(Path.Combine(d, savedName + ".lnk"));
+                            sc.TargetPath = newExe;
+                            sc.WorkingDirectory = newDir;
+                            sc.IconLocation = Path.Combine(newDir, "assets", "app.ico");
+                            sc.Save();
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>递归复制目录树；`srcRoot/dstRoot` 用于跳过"目标在源内部"和正在写的日志。</summary>
+        //  跳过两类：
+        //  ① 目标目录自己（若它落在源里，虽然已被 `MoveThenRelaunch` 挡掉，这里再兜一层）；
+        //  ② 源目录里**指向目标目录**的符号链接/联接（用 `FileAttributes.ReparsePoint` 判），
+        //     避免循环复制把自己吃满盘。
+        static void CopyTree(string src, string dst, string srcRoot, string dstRoot)
+        {
+            Directory.CreateDirectory(dst);
+            foreach (string f in Directory.GetFiles(src))
+            {
+                string name = Path.GetFileName(f);
+                // `群相.exe` 可能在运行 ⇒ 复制时可能被占用；重试几次，仍失败就抛出交给上层报错。
+                string target = Path.Combine(dst, name);
+                // ⛔ 不用 `catch (...) when (...)` —— csc v4.0.30319 只支持到 C# 5，异常筛选器是 C# 6 特性。
+                for (int tries = 0; ; tries++)
+                {
+                    try { File.Copy(f, target, true); break; }
+                    catch (IOException)
+                    {
+                        if (tries >= 3) throw;
+                        Thread.Sleep(300);
+                    }
+                }
+            }
+            foreach (string d in Directory.GetDirectories(src))
+            {
+                string full = Path.GetFullPath(d).TrimEnd('\\', '/');
+                // 目标目录本身：绝不再进去（防自我递归）
+                if (string.Equals(full, dstRoot, StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) continue;
+                }
+                catch { }
+                CopyTree(d, Path.Combine(dst, Path.GetFileName(d)), srcRoot, dstRoot);
             }
         }
 
@@ -1673,6 +1849,24 @@ static class Program
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new AskForm());
                 return;
+            }
+            // ⭐ 装在用户选的目录之后，由本分支从新位置启动 —— 不再问路径，直接跑启动流程。
+            //   由来：`MoveThenRelaunch` 把程序复制到用户选的目录、再从那里拉起本 exe。
+            //   新进程的 `InstallRoot` 自然就是新目录（`Main` 第一句按 exe 位置算），
+            //   所以这里**只需跳过"欢迎/安装位置"两页**，直接从"正在安装"页接着跑。
+            if (args != null && args.Length > 0 && args[0] == "--installed")
+            {
+                LauncherForm.JustInstalled = true;
+                // 旧进程此刻可能还没退出（互斥锁仍被它占着）⇒ 等一下再抢，别把用户挡在
+                // `BusyForm`（"已经在运行中"）那一屏。最多等 10 秒，超时就照常走后面的流程。
+                for (int i = 0; i < 20; i++)
+                {
+                    bool ok0;
+                    Mutex probe = new Mutex(true, "Global\\WxAgentLauncher", out ok0);
+                    if (ok0) { probe.ReleaseMutex(); break; }
+                    try { probe.Dispose(); } catch { }
+                    Thread.Sleep(500);
+                }
             }
             // 前置检测：控制台已在运行（3210 有服务）。
             // ⛔ 
