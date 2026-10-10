@@ -107,6 +107,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     blobs = {}     # code -> (bytes, filename, content_type)
     catalog = {}   # kind -> [item...]
     by_id = {}     # (kind, id) -> bytes  站上"按 id 直取包"
+    verify = {}    # code -> row（口令校验的应答）
 
     def log_message(self, *a):  # 静音
         return
@@ -119,6 +120,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        n = int(self.headers.get("content-length") or 0)
+        raw = self.rfile.read(n) if n else b"{}"
+        try:
+            body = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:  # noqa: BLE001
+            body = {}
+        if u.path == "/api/v1/install-codes/verify":
+            out = []
+            for c in (body.get("codes") or []):
+                row = self.verify.get(str(c).upper())
+                out.append(row if row else {"code": str(c).upper(), "found": False})
+            return self._send(200, json.dumps({"ok": True, "results": out},
+                                              ensure_ascii=False).encode())
+        return self._send(404, json.dumps({"ok": False}).encode())
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
@@ -351,7 +369,29 @@ def main():
     ok("★ 已装的那一项在可下载列里被标成 installed=True（不出现装完还能再装）",
        bool(marked and marked[0].get("installed") is True), str(marked)[:150])
 
-    print("── 8. 卸载闭环 ──")
+    print("── 8. 口令取件那条路（用户手里只有一个口令时的入口）──")
+    # 假后端补上 verify_codes 要的接口
+    _Handler.verify = {
+        "ABC123": {"code": "ABC123", "found": True, "kind": "tool", "id": "test_ping_time",
+                   "title": "查时区时间", "sha256": h_t, "fileSize": len(tool_b)},
+    }
+    rows = market_upload.verify_codes(["ABC123"])
+    hit = next((x for x in rows if str(x.get("code") or "").upper() == "ABC123"), None)
+    ok("★ 口令校验：有效口令能查到", bool(hit and hit.get("found")), str(rows)[:140])
+    bad_rows = market_upload.verify_codes(["XXXXXX"])
+    ok("★ 口令校验：无效口令查不到（如实拒）",
+       not any(x.get("found") for x in (bad_rows or [])), str(bad_rows)[:100])
+
+    # 口令落盘那一段（模拟 handler 的做法：取字节 → 校验 sha → 写进本栏目录）
+    raw, fname, _ct = market_upload.download_by_code("TEST-TOOL")
+    got_sha = hashlib.sha256(raw).hexdigest()
+    ok("★ 取回的包 sha 与站上登记一致（可安全落盘）", got_sha == h_t)
+    dest = os.path.join(tdir, "via-code-" + os.path.basename(fname or "x.json"))
+    with open(dest, "wb") as f:
+        f.write(raw)
+    ok("★ 口令取件真落进本栏目录", os.path.isfile(dest), dest)
+
+    print("── 8b. 卸载闭环 ──")
     u = market.uninstall("tool", "test_ping_time")
     ok("★ 工具卸载成功", u.get("ok") is True, str(u)[:100])
     ok("★ 卸载后文件真没了", not os.path.exists(os.path.join(tdir, "test_ping_time.json")))
