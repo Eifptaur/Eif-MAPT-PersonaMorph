@@ -142,6 +142,18 @@ def tracked():
 TRACKED = tracked()
 BASENAMES = {os.path.basename(p) for p in TRACKED}
 
+#: **构建产物名** —— 它们**故意不在仓库里**：是被"做出来"的，不是签入的文件。
+#  ⛔ 别把**真正的入口文件**往这里塞（那会让判据失去意义）。
+#    这里只列"脚本里必然会提到、但按设计就不该存在于仓库"的那几个：
+#      · `setup.exe` / `群相-Setup-<版本>.exe` —— 安装包产物（`make_installer.py` 生成）
+#      · `new.exe` —— 启动器的重编译临时产物（`build_launcher.py` 里"先编成 new.exe 再换名"）
+#    ⚠️ 判据的灵敏度由文件尾那条**反例锚**自证（凭空造一处引用 ⇒ 必须红），
+#      所以这里列白名单不会把"死指引"一起放过去。
+_BUILD_ARTIFACTS = {
+    "setup.exe", "new.exe",
+    "群相-Setup-%s.exe", "群相-Setup-<版本>.exe",
+}
+
 
 def refs_in(text):
     """这份文本里所有"让人去找文件"的引用（去重、去噪）。"""
@@ -166,12 +178,12 @@ def missing_in(text):
     bad = []
     for name in sorted(refs_in(text)):
         base = os.path.basename(name.replace("\\", "/"))
-        if base in BASENAMES or name.replace("\\", "/") in TRACKED:
+        if base in BASENAMES or base in _BUILD_ARTIFACTS or name.replace("\\", "/") in TRACKED:
             continue
         # 归一化：正则可能把紧邻的汉字一起吃进来（`一次「一键启动.exe`）⇒ 从最长的合法后缀里挑
         norm = None
         for k in range(1, len(name)):
-            if name[k:] in BASENAMES:
+            if name[k:] in BASENAMES or name[k:] in _BUILD_ARTIFACTS:
                 norm = name[k:]
                 break
         if norm:

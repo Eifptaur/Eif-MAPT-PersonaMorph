@@ -58,7 +58,17 @@ def main() -> int:
         _t, rep = persona_gapfill.fill_text(card.get("text", ""))
         if not rep.get("unchanged"):
             touched += 1
-    ok("跑完全库（%d 张被处理）" % touched, touched > 0)
+    # ⛔ 原本是 `touched > 0`——要求"库里真有卡需要补"。七字段重写全部落地后必然 0 张被处理
+    #    ⇒ 判据红在"好消息"上（2026-10-11 实测）。⇒ 改成两件事：
+    #      ① 如实报出处理了几张（不再要求 > 0）；
+    #      ② **合成夹具自证灵敏度**：现场造一张缺「## 动机」的卡，断言补缺器认得出它会动它。
+    ok("跑完全库（%d 张被处理；重写全部落地后应为 0）" % touched, touched >= 0)
+    _probe = "# 角色卡：判据夹具\n\n## 身份背景\n你是判据用的夹具。\n\n## 性格\n……\n" \
+             "## 说话风格\n……\n## 行为规则\n……\n## 缺点局限\n……\n"
+    _pt, _prep = persona_gapfill.fill_text(_probe)
+    ok("★合成夹具自证：缺「## 动机」的卡必须被判为「需要处理」（否则判据失去灵敏度）",
+       not _prep.get("unchanged"),
+       "夹具没被识别 ⇒ 上面那个 %d 张就不可信了" % touched)
     _after = hashlib.sha256(open(CARDS, "rb").read()).hexdigest()
     ok("真库逐字节未变", _before == _after, _before[:12] + " → " + _after[:12])
 
@@ -121,8 +131,18 @@ def main() -> int:
             manual[k] += 1
     ok("缺口计数与 missing_fields 逐栏一致", gr["by_field"] == manual,
        "gapfill=%s" % json.dumps(gr["by_field"], ensure_ascii=False))
-    ok("「必须人写」卡数 > 0（说明库里确实还有活）", len(gr["need_human"]) > 0,
-       "%d 张" % len(gr["need_human"]))
+    # ⛔ 这两条原本写成"库里**还有活**才算正常"（`> 0`），那是把**进度监视器**写成了断言：
+    #    七字段重写全部落地后 `need_human` 必然是 0、假填充也必然是 0 ⇒ 判据**因为活干完了而红**，
+    #    红在"好消息"上。2026-10-11 实测：243/243 张带七栏标题、243/243 动机非空，
+    #    而这两条仍是红的。⇒ 改成**如实报告 + 棘轮只许降**，不再要求"必须有活"。
+    ok("如实报出「必须人写」的卡数（重写全部落地后应为 0）",
+       len(gr["need_human"]) >= 0,
+       "need_human=%d" % len(gr["need_human"]))
+    #: 棘轮基线（只许降）：重写推进 ⇒ 这个数字只会变小；涨回来就说明有卡退化了
+    _NEED_HUMAN_RATCHET = 0
+    ok("★「必须人写」卡数不超过棘轮基线（只许降）",
+       len(gr["need_human"]) <= _NEED_HUMAN_RATCHET,
+       "need_human=%d > 基线 %d ⇒ 有卡退化了" % (len(gr["need_human"]), _NEED_HUMAN_RATCHET))
 
     # ── E. 真进度口径：**按小标题存在性**（唯一可信）──
     # ⛔ 为什么不能用 `missing_fields()` 当进度尺：
@@ -140,9 +160,14 @@ def main() -> int:
     ok("带七栏标题的卡数 ≥ 21（第一批已落地）", has_head >= 21, "%d / %d" % (has_head, len(P)))
     ok("真写了「## 动机」的卡数 == 带标题的卡数（不许有落差）",
        n_motive_head == has_head, "标题=%d 非空=%d" % (n_motive_head, n_motive_nonempty))
-    ok("识别出「看似有动机、实为 harvest 捞的」假填充（>0 即有，应随重写推进递减）",
-       n_motive_nonempty > n_motive_head,
-       "假填充 %d 张" % (n_motive_nonempty - n_motive_head))
+    # ⛔ 这条原本要求"库里**真有**假填充"（`nonempty > head`）才算过 —— 那是拿**库的状态**
+    #    当判据的**灵敏度**：七字段重写一落地，假填充归零 ⇒ 判据红了，而这明明是**好消息**。
+    #    ⇒ 改成与上面一致的**棘轮只许降**：现值必须 ≤ 基线；涨回来才说明有卡退化成"捞的"。
+    _FAKE_RATCHET = 0
+    ok("★假填充条数不超过棘轮基线（只许降；重写全部落地后应为 0）",
+       n_motive_nonempty - n_motive_head <= _FAKE_RATCHET,
+       "假填充 %d 张 > 基线 %d ⇒ 有卡退化成「看似有动机、实为 harvest 捞的」"
+       % (n_motive_nonempty - n_motive_head, _FAKE_RATCHET))
 
     # ── 收尾 ──
     print("\n" + "=" * 72)

@@ -1917,7 +1917,7 @@ static class Program
                         try
                         {
                             Ui.NoteFallback(Program.InstallRoot,
-                                "Qt 控制台已经在屏幕上 ⇒ 把它抬到前台，**不开网页端窗**（避免一大一小两个界面）");
+                                "Qt 控制台已经在屏幕上 ⇒ 把它抬到前台，不开网页端窗（避免一大一小两个界面）");
                         }
                         catch { }
                         return;
