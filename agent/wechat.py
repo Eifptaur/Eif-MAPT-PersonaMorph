@@ -5067,6 +5067,26 @@ class WeChatAdapter:
                             # ⛔ 顺序即意图：这道闸门**必须**排在 `send_text_posted` /
                             #    `switch_chat_posted` 之前 —— 否则"只对独立窗操作"就成了空话
                             #    （上面那一支失败后会落到"在主窗投递"或"切会话"，两条都要禁）。
+                            #
+                            # ⭐⭐ **这里必须记一条"求助"**（2026-10-11 用户报障：
+                            #    「only_popup 拦截怎么办啊，用户说这好像是贼严重的问题」）：
+                            #    开独立窗是**唯一的发送入口**，卡在这儿＝机器人什么都不发了。
+                            #    而"如实不发"只写进返回值 —— **调用方在后台循环里，没人看得到**
+                            #    ⇒ 使用者只看到"它不发了"，不知道该做什么。
+                            #    那扇**求助窗早就设计好了**（`wechat_windows.note_popup_help`
+                            #    → `whale_text.popup_help_text`（唯一组装点）→
+                            #    `ui_qt/panels_custom.py::_popup_help_dlg` 弹出来），
+                            #    文案就是「**请手动开一次：在会话列表里找到「X」，把那一行拖出来
+                            #    （或双击它）**」。
+                            #    ⛔ 但它原来**只在 `ensure_popup` 全失败时**才记 —— 而拦截可能发生在
+                            #    `send_to_popup` 更早的 step（locate/grab/precheck…），那条路不记
+                            #    ⇒ 结果就是"设计了的窗，实际没弹"。这里补上。
+                            try:
+                                from .wechat_windows import note_popup_help as _nph
+                                _nph(name or "",
+                                     "按「只对独立窗操作」的口径，本次没能对目标会话的独立窗发出去")
+                            except Exception as _eH:  # noqa: BLE001
+                                log.debug("记「开窗求助」失败（不影响返回）：%s", _eH)
                             return False, ("按「只对独立窗操作」的口径（`send.only_popup` 开着）："
                                            "不切会话、也不在主窗里发；本次没能对目标会话的独立窗发出去，"
                                            "⇒ 如实不发（宁可这条不发，也不冒切错会话的风险）。")
