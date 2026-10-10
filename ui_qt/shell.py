@@ -143,7 +143,7 @@ NAV: list[tuple[str, str, list[tuple[str, str, str, list[str]]]]] = [
         ("体检·版本", "代码检测与点击测试共 55 项，零风险不碰鼠标", "check", ["vermat"]),
     ]),
     ("智能", "brain", [
-        ("模型·搜索", "密钥首次引导填入后自动保存，无需再改配置文件", "model", ["search"]),
+        ("模型·搜索", "密钥首次引导填入后自动保存，无需再改配置文件", "model", ["search", "music"]),
         ("记忆·共享", "每个群友的长期印象，机器人回复时会参考", "memory", ["memory-set"]),
         ("表情·社区", "自定义表情的语义索引：这张图是什么梗、什么时候用", "emoji", ["community"]),
     ]),
@@ -172,6 +172,7 @@ NAV: list[tuple[str, str, list[tuple[str, str, str, list[str]]]]] = [
 _MEMBER_LABEL = {
     "vermat": "版本",
     "search": "搜索",
+    "music": "音乐",
     "memory-set": "共享",
     "community": "社区",
     "videogen": "视频",

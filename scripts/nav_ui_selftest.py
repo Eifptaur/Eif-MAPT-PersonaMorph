@@ -53,7 +53,7 @@ plain = len(re.findall(r'<a href="#sec-[a-z0-9-]+">', nav))
 print("① 导航项与自绘图标（可见行 %d = 合并行 %d + 单项 %d；链接共 %d 条）"
       % (len(rows), len(mg_rows), plain, len(items)))
 ok("可见行 = 17（IA-4 归并后的目标；上界＝左栏滚一屏能到底）", len(rows) == 17, str(len(rows)))
-ok("链接总数仍是 28（一个功能项一条，不许因为归并把入口删掉）", len(items) == 28, str(len(items)))
+ok("链接总数仍是 29（一个功能项一条，不许因为归并把入口删掉）", len(items) == 29, str(len(items)))
 ok("合并行 + 单项 = 可见行（两半对得上，没有漏算）", len(mg_rows) + plain == len(rows),
    "%d + %d = %d" % (len(mg_rows), plain, len(rows)))
 # 合并行的二级项必须真的在（行头写了 +N 却没二级项 ⇒ 那 N 个功能项点不到了）
@@ -68,7 +68,7 @@ ok("二级项默认收起（.nav-mg-bd 基础 display:none，.open 才显示）"
 # ⚠️ 数**带该属性的 section 标签**，不是全文 grep `data-mg="sec-`——
 #    JS 注释里也写了这个词，全文 grep 会多算一条（实测 12 vs 11）。
 _mg_secs = re.findall(r'<section id="sec-[a-z0-9-]+"[^>]*data-mg="sec-[a-z0-9-]+"', HTML)
-ok("归属映射来自 DOM（被并入的 section 带 data-mg=\"sec-主项\"）", len(_mg_secs) == 11, str(len(_mg_secs)))
+ok("归属映射来自 DOM（被并入的 section 带 data-mg=\"sec-主项\"）", len(_mg_secs) == 12, str(len(_mg_secs)))
 # 收起态只剩图标 ⇒ 二级也得露出来，否则那 11 个功能项在窄栏里点不到。
 ok("收起态（.tight）二级项照样显示（否则窄栏里点不到）",
    re.search(r"\.side\.tight \.nav-mg-bd\{display:block\}", HTML) is not None, "")
@@ -161,7 +161,7 @@ WANT_ROWS = [
     ("sec-bot", []),
     ("sec-persona", []),
     ("sec-check", ["sec-vermat"]),
-    ("sec-model", ["sec-search"]),
+    ("sec-model", ["sec-search", "sec-music"]),
     ("sec-memory", ["sec-memory-set"]),
     ("sec-emoji", ["sec-community"]),
     ("sec-media", []),
@@ -196,7 +196,7 @@ ok("归并表与实现逐项一致（行序 / 主项 / 成员，全等比对）"
              for g, w in zip(_got, WANT_ROWS) if g != w)
    or ("行数 %d vs %d" % (len(_got), len(WANT_ROWS))))
 _mg_owner = {m: s for s, ms in WANT_ROWS for m in ms}
-ok("被并入项都在（11 个，一个不少）", len(_mg_owner) == 11, str(len(_mg_owner)))
+ok("被并入项都在（12 个，一个不少）", len(_mg_owner) == 12, str(len(_mg_owner)))
 # 反向锚：主项**不许**自己也带 data-mg（那说明它被并进了别人，与上表矛盾）
 ok("主项都不带 data-mg（只有被并入的才带）",
    not re.search(r'<section id="(sec-overview|sec-wechat|sec-bot|sec-persona|sec-check|sec-model|'

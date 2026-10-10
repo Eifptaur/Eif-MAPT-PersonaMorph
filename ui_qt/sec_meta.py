@@ -26,11 +26,13 @@ HERE = Path(__file__).resolve().parent
 WEB_PATH = HERE.parents[0] / "assets" / "console" / "index.html"
 CFG_PATH = HERE.parents[0] / "config.example.json"
 
-# 本棒要建面板的 27 个 sec（28 减去机器人=主面板），顺序照 secs() 的 web 文档序。
+# 本棒要建面板的 28 个 sec（web 的 29 个 section 减去机器人=主面板），顺序照 secs() 的 web 文档序。
 # 第 2 棒 9 项（日常/智能），第 3 棒补齐 17 项（内容/运行/外观）。
+# ⚠️ 「音乐」曾经漏在这里（web 也漏了它的导航链接）⇒ 两端都点不到「音乐推荐」。
+#    补法＝白名单加 music + `shell.NAV` 的模型行加成员 + web 补一条 `#sec-music` 二级链接。
 SECS_OF_THIS_BATCH = (
     "overview", "wechat", "persona", "check",
-    "model", "memory", "memory-set", "search", "community", "emoji",
+    "model", "memory", "memory-set", "search", "music", "community", "emoji",
     "media", "tts", "imggen", "videogen", "tools", "poke",
     "sessions", "feedback", "send", "log", "vermat", "server", "advanced",
     "ui", "json", "cursor", "wavefx",

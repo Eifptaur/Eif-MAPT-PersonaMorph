@@ -113,10 +113,10 @@ def t_nav() -> None:
     # IA-4 之后左栏是 **17 行**（9 行合并 + 8 行单项），成员收在二级、默认收起。
     # ⛔ 别把这条写成"28 项"：那会逼着后人把合并拆掉。
     ck("导航可见行数 = 17（IA-4 归并后）", len(flat) == 17, f"实际 {len(flat)}")
-    # 链接总数仍是 28 —— 成员只是显示上收进二级，**入口一条都没删**
-    # （web `ui_arch_selftest`：导航链接序列必须与 <section> 序列逐位相同）。
+    # 链接总数仍是 29 —— 成员只是显示上收进二级，**入口一条都没删**
+    # （web `ui_arch_selftest`：导航链接序列必须与 <section> 序列逐位相同，29 == 29）。
     n_links = len(flat) + sum(len(e[3]) for _t, _k, es in NAV for e in es)
-    ck("导航入口总数 = 28（成员的入口一个都没删）", n_links == 28, f"实际 {n_links}")
+    ck("导航入口总数 = 29（成员的入口一个都没删）", n_links == 29, f"实际 {n_links}")
 
     # ★ 真对齐：以 web 源码解析结果为唯一真值，全等比对。
     web = _nav_truth_from_web()
@@ -135,11 +135,11 @@ def t_nav() -> None:
     bad_rows = [(m[0], m[2], t[2]) for m, t in zip(mine, theirs) if m[2] != t[2]]
     ck("行名、主项与成员与 web 侧逐项一致（含成员顺序）", not bad_rows,
        "; ".join(f"{b[0]}: {b[1]} ≠ {b[2]}" for b in bad_rows))
-    # 合并行必须是 9 行、成员必须正好 11 个（web `.nav-mg-hd` / `.nav-mg-it` 的数）
+    # 合并行必须是 9 行、成员必须正好 12 个（web `.nav-mg-hd` / `.nav-mg-it` 的数）
     n_mg = sum(1 for _t, _k, es in NAV for e in es if e[3])
     n_mem = sum(len(e[3]) for _t, _k, es in NAV for e in es)
-    ck("合并行 = 9 行、被并入项 = 11 个（与 web 逐数一致）",
-       n_mg == 9 and n_mem == 11, f"{n_mg} 行 / {n_mem} 项")
+    ck("合并行 = 9 行、被并入项 = 12 个（与 web 逐数一致）",
+       n_mg == 9 and n_mem == 12, f"{n_mg} 行 / {n_mem} 项")
 
     # 「机器人」必须排在第 3 位 —— web 侧 ui_arch_selftest 有同一条硬断言
     ck("「机器人」排在第 3 位（同 ui_arch 硬断言）", flat.index("机器人") + 1 == 3,
@@ -197,13 +197,13 @@ def t_nav() -> None:
        "it.text() + \" \" + g.title" in src and "it.hint or" in src)
 
     # ★ 导航图标
-    #   判据一：icons.INNER 覆盖全部 28 个 sec 锚点（与 web 同一份 path 数据）
-    #   28 ＝ 17 可见行的主项 + 11 个被并进合并行的成员（成员不在行上，但一样要图标）
+    #   判据一：icons.INNER 覆盖全部 29 个 sec 锚点（与 web 同一份 path 数据）
+    #   29 ＝ 17 可见行的主项 + 12 个被并进合并行的成员（成员不在行上，但一样要图标）
     ico_src = (HERE / "icons.py").read_text(encoding="utf-8")
     secs = [e[2] for _t, _k, es in NAV for e in es]
     secs += [m for _t, _k, es in NAV for e in es for m in e[3]]
     missing_ico = [s for s in secs if f'"{s}"' not in ico_src]
-    ck("28 个导航图标与 sec 锚点一一对应（icons.py）", not missing_ico, ",".join(missing_ico))
+    ck("29 个导航图标与 sec 锚点一一对应（icons.py）", not missing_ico, ",".join(missing_ico))
     #   判据二：NavItem 真的把图标接上了（有 icon_key 参数 + 渲染调用），组头有 chevron
     ck("导航项图标已接线（icon_key → setIcon）",
        "icon_key" in wid and "nav_icon(" in wid and "_refresh_icon" in wid)
@@ -520,11 +520,11 @@ def t_panels() -> None:
     ck("导航点击真正换页（当前页变为目标页）",
        p2 is st.widget(w._page_of["model"]) and p2 is not p1)
     ck("旧页不残留（切换后旧页隐藏）", p1.isHidden())
-    for s in BATCH_SECS: # 全量走一遍：27 页全部就位（一次性预建等价语义）
+    for s in BATCH_SECS: # 全量走一遍：28 页全部就位（一次性预建等价语义）
         w._go(s, s)
     QApplication.processEvents()
-    ck("遍历全部 sec 后页栈页数 = 28（惰性预建闭环）",
-       st.count() == 28 and not w._lazy, f"count={st.count()} lazy_n={len(w._lazy)}")
+    ck("遍历全部 sec 后页栈页数 = 29（惰性预建闭环）",
+       st.count() == 29 and not w._lazy, f"count={st.count()} lazy_n={len(w._lazy)}")
 
     # ③ 鲸语切换对新面板文案同样生效（_orig_texts 收录新面板控件）
     w._go("model", "模型")
