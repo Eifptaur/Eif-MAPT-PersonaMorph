@@ -1475,12 +1475,31 @@ class MemoryStore:
         return n
 
     def replace_member(self, chat_key: str, user_id: str, name: str, contents):
-        uid = str(user_id or "").strip()
-        if not uid:
-            raise ValueError("userId 不能为空")
+        """整份覆盖某位群友的印象。
+
+        ⛔ `user_id` 为空**不再拒收**：记忆里确实存在没有 userId 的档 ——
+        "关机总结"那条路拿不到精确 id，落盘成 `_n_<名字>.json`（见 `_member_file_name`，
+        读侧的 key 规则见 `_ensure_chat`）。这些成员在界面名录里是**列得出来的**
+        （`member_book.list_book` 用 `"n:<名字>"` 给他们一个身份），
+        所以也必须能编辑；只报错等于"看得见、改不了"。
+        定位规则：先按 `name` 认领**既有的**无 id 档（复用它的文件名，免得改个名就多出一份），
+        认不到才按名字新建。`user_id` 与 `name` 都为空 ⇒ 谁都定位不到，仍如实报错。
+        """
         m = self._ensure_chat(chat_key)
-        old = m.get(uid) or {"userId": uid, "name": name, "impressions": [], "updatedAt": 0, "lastConsolidatedAt": 0}
-        final_name = str(name or "").strip()[:60] or str(old.get("name") or "").strip() or uid
+        uid = str(user_id or "").strip()
+        nm = str(name or "").strip()
+        if not uid and not nm:
+            raise ValueError("userId 与名字都为空，无法定位要编辑的群友")
+        if uid:
+            key = uid
+        else:
+            key = next((k for k, v in m.items()
+                        if not str(v.get("userId") or "").strip()
+                        and str(v.get("name") or "").strip() == nm), None)
+            if key is None:
+                key = "_n_" + _member_file_name("", nm)
+        old = m.get(key) or {"userId": uid, "name": nm, "impressions": [], "updatedAt": 0, "lastConsolidatedAt": 0}
+        final_name = nm[:60] or str(old.get("name") or "").strip() or uid
         now = int(__import__("time").time() * 1000)
         impressions = [{"content": str(s or "").strip()[:300], "createdAt": now}
                        for s in contents if str(s or "").strip()][:20]
@@ -1491,8 +1510,10 @@ class MemoryStore:
                             [e["content"] for e in impressions])
         member = {"userId": uid, "name": final_name, "impressions": impressions,
                   "updatedAt": now, "lastConsolidatedAt": old.get("lastConsolidatedAt") or 0}
-        _write_json(_member_file(chat_key, uid, final_name), member)
-        m[uid] = member
+        # 无 id 档的 key 就是 `"_n_"+文件名`（与读侧同一约定）⇒ 去掉前缀拿回文件名，原地覆盖
+        _fn = (key[len("_n_"):] if key.startswith("_n_") else _member_file_name(uid, final_name))
+        _write_json(os.path.join(_chat_dir(chat_key), _fn), member)
+        m[key] = member
         return member
 
     def overwrite_history(self, chat_key: str, limit: int = 20) -> list:

@@ -33,11 +33,18 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
-def start_qt_shell(log=None, theme: str = "whale") -> bool:
-    """在子线程里拉起 Qt 壳。返回是否成功**派发**（线程起没起来，不含 Qt 内部结果）。
+def start_qt_shell(log=None, theme: str = "whale", wait_shown: float = 0.0) -> bool:
+    """在子线程里拉起 Qt 壳。
 
-    调用方（persona_morph.py）在 PySide6 自举通过之后调用本函数；
-    Qt 壳的后续生死都走日志，不影响机器人主循环。
+    返回值＝**窗口是否真的显示出来**，不再是"线程有没有派发出去"：
+      · `wait_shown > 0` ⇒ 最多等这么多秒；期间 `show()` 执行过就是 True；
+        超时、或界面线程自己异常退出 ⇒ False（调用方据此回落网页控制台）。
+      · `wait_shown == 0` ⇒ 只判"线程已派发"（旧行为，留给不关心结果的调用方）。
+
+    ⛔ 为什么不能继续拿 `th.is_alive()` 当结果：那是 `start()` 之后**紧接着**查，
+      刚起来的线程必然是 alive ⇒ 返回**几乎恒为 True**。后果不是"多开一个窗"，
+      而是它的反面：界面线程真崩了也判成"成功" ⇒ 既没有原生界面、也不回落网页控制台
+      （用户一个界面都看不到，且日志里还写着"已打开"）。
     """
     def _log(level: str, msg: str) -> None:
         if log is not None:
@@ -45,6 +52,9 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
                 getattr(log, level)("Qt 控制台：%s", msg)
             except Exception: # noqa: BLE001
                 pass
+
+    #: 窗口**真的显示出来**的信号（给 `wait_shown` 用；`show()` 之后立刻置位）
+    _shown = threading.Event()
 
     def _run() -> None:
         try:
@@ -80,7 +90,8 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
             w = Shell(t)
             w.setWindowTitle("群相 控制台")
             w.show()
-            _log("info", "原生界面已打开（与网页控制台并存）")
+            _shown.set() # ⛔ 必须在 show() 之后：这才是"界面真的出来了"的证据
+            _log("info", "原生界面已打开")
             app.exec()
             _log("info", "原生界面已退出")
         except Exception: # noqa: BLE001
@@ -88,6 +99,8 @@ def start_qt_shell(log=None, theme: str = "whale") -> bool:
 
     th = threading.Thread(target=_run, daemon=True, name="qt-shell")
     th.start()
+    if wait_shown and float(wait_shown) > 0:
+        return bool(_shown.wait(float(wait_shown)))
     return th.is_alive()
 
 

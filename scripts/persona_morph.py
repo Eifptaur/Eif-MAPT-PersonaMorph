@@ -3363,6 +3363,12 @@ def main():
     #          开出 WebView2 窗、紧接着 start_qt_shell 又开一窗 ⇒ 两窗并存抢主）；
     # Qt 自举失败 ⇒ 照旧 open_console。
     #   条"随时可回退"），收口的只是"启动时再自动弹一个网页窗"这件事。
+    # ⛔ `_qt_ok` 的口径＝**窗口真的显示出来了**，不是"线程派发出去了"。
+    #   旧写法只判线程存活（`start()` 后立刻查 ⇒ 恒真）⇒ 界面崩了也当成功，
+    #   结果是既没有原生界面、也不回落网页控制台，用户一个界面都看不到。
+    #   8 秒是上限：正常机器 `Shell()` 构造 + `show()` 在 1~2 秒内完成，
+    #   只有"刚装完 PySide6 头一次加载"可能拖长；再长就是拿开机时间换小概率。
+    QT_SHOWN_WAIT = 8.0
     _qt_ok = False
     url = ""
     try:
@@ -3383,7 +3389,7 @@ def main():
         _ok6, _why6 = ensure_pyside6(log=log)
         if _ok6:
             from ui_qt.app import start_qt_shell
-            _qt_ok = bool(start_qt_shell(log=log))
+            _qt_ok = bool(start_qt_shell(log=log, wait_shown=QT_SHOWN_WAIT))
             if not _qt_ok:
                 log.warning("Qt 控制台线程派发失败，本次走网页控制台")
         else:

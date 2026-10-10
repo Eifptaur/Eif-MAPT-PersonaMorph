@@ -855,6 +855,27 @@ ok("M4 派生文件（console.url / 开窗锁）跑完**一律还原**（判红�
    "_DERIVED" in _RA and "_restore_derived" in _RA and "logs/console.url" in _RA)
 ok("M5 还原动作**有可见回执**（不许悄悄做）", "派生文件已还原" in _RA)
 
+# ── N. 「Qt 到底起来没有」必须判得准 ⇒ 才谈得上"网页端只在 Qt 没出来时才出现" ──
+#   ⛔ 旧写法 `return th.is_alive()`：`start()` 之后**紧接着**查，刚起的线程必然 alive
+#     ⇒ 返回几乎恒为 True —— 界面线程真崩了也判"成功"，于是既没有原生界面、
+#       也不回落网页端，用户一个界面都看不到（日志里还写着"已打开"）。
+_ap = src("ui_qt/app.py")
+ok("N1 `start_qt_shell` 有 `wait_shown` 口（调用方才能问「窗口真出来了吗」）",
+   "wait_shown" in _ap)
+ok("N2 ★返回值取 `_shown.wait(...)`，不再拿线程存活当结果", "_shown.wait(" in _ap)
+_i_show, _i_set = _ap.find("w.show()"), _ap.find("_shown.set()")
+ok("N3 ★`_shown.set()` 在 `w.show()` **之后**（放前面就等于谎报「已打开」）",
+   0 <= _i_show < _i_set, "show@%s set@%s" % (_i_show, _i_set))
+ok("N4 不传 `wait_shown` 时保持旧语义（别的调用方不受影响）",
+   "return th.is_alive()" in _ap)
+_pm2 = src("scripts/persona_morph.py")
+ok("N5 ★启动编排真的接上了（修了不接＝等于没修）", "wait_shown=QT_SHOWN_WAIT" in _pm2)
+_i_q, _i_e = _pm2.find("if url and _qt_ok:"), _pm2.find("elif url and")
+ok("N6 ★Qt 成功 ⇒ 不开网页端；失败 ⇒ 才回落（两条分支都在，且顺序对）",
+   0 <= _i_q < _i_e, "if@%s elif@%s" % (_i_q, _i_e))
+ok("N7 ★反向锚：把「等窗口显示」改回「判线程存活」后 N2 那条会报红（说明它真在起作用）",
+   "_shown.wait(" not in _ap.replace("_shown.wait(", "th.is_alive()"))
+
 print("控制台开窗/窗口/导航判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP))
 if _exe_dir:
     shutil.rmtree(_exe_dir, ignore_errors=True) # 判据自带的 exe 副本不留痕迹

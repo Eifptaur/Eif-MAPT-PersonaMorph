@@ -51,8 +51,11 @@ _src = io.open(os.path.join(ROOT, "agent", "memory.py"), encoding="utf-8").read(
 _i = _src.find("def replace_member(")
 _seg = _src[_i:].split("\n    def ")[0] if _i >= 0 else ""
 ok("replace_member 里调了 audit_overwrite（覆盖前留痕）", _sm.has(_seg, "audit_overwrite("))
+# ⚠️ 顺序锚用写盘调用的**通用形式** `_write_json(`：那行的第一个参数会随
+#   "有没有 userId"变（无 id 档要落到 `_n_<名字>.json`）⇒ 钉死成
+#   `_write_json(_member_file(` 会让判据随实现的正当调整而假红（本轮实测踩到）。
 ok("留痕在写档**之前**（先记再覆盖 ⇒ 中途崩了也留下痕迹）",
-   _sm.has(_seg, "audit_overwrite(", "_write_json(_member_file("))
+   _sm.has(_seg, "audit_overwrite(", "_write_json("))
 ok("只有旧档非空才记（第一次写不叫覆盖）", _sm.has(_seg, "if old.get(\"impressions\"):"))
 ok("审计目录用 DATA_DIR/memory_history，**不在** memory/ 下面",
    _sm.has(_src, 'HISTORY_DIR = os.path.join(DATA_DIR, "memory_history")'))
@@ -116,6 +119,25 @@ try:
        "%d / %d" % (len(MEM.history(CK)), len(MEM.history(CK, 2))))
     ok("没有审计的群／坏路径 ⇒ 空表，不抛异常",
        MEM.history("group_never_written@chatroom") == [])
+
+    # ⭐ 没有 userId 的成员档也必须**改得动**：界面上这些成员是列得出来的
+    #    （`member_book.list_book` 用 `"n:<名字>"` 给他们一个身份），
+    #    只报错等于"看得见、改不了"—— 报障原文「印象更新失败：userId不能为空」就是这条路。
+    _n1 = store.replace_member(CK, "", "没身份的群友", ["只记得他养猫"])
+    _names = [str(x.get("name") or "") for x in store.members(CK)]
+    ok("★无 userId 的成员档也能编辑（不再报「userId 不能为空」）",
+       str((_n1 or {}).get("userId") or "") == "" and "没身份的群友" in _names, str(_names))
+    # 同一个名字再编辑 ⇒ 认领既有档、原地覆盖（不许每写一次就多出一份档案）
+    store.replace_member(CK, "", "没身份的群友", ["只记得他养猫", "还爱钓鱼"])
+    _n_files = [f for f in os.listdir(MEM._chat_dir(CK)) if f.startswith("_n_")]
+    ok("★同名再编辑是原地覆盖，不新增档案", len(_n_files) == 1, str(_n_files))
+    # 反向锚：userId 与名字**都**空 ⇒ 护栏仍在（谁都定位不到就不该硬写）
+    _raised = False
+    try:
+        store.replace_member(CK, "", "", ["x"])
+    except ValueError:
+        _raised = True
+    ok("★反向锚：userId 与名字都空 ⇒ 仍如实报错（护栏没被拆掉）", _raised)
 finally:
     MEM.MEMORY_DIR, MEM.HISTORY_DIR = _orig_mem, _orig_hist
     shutil.rmtree(tmp, ignore_errors=True)
