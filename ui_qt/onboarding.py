@@ -430,7 +430,7 @@ class _Wizard(DraggableDialog, QDialog):
         self._env_i = 0
         total = self._env_total_steps()
         self.desc.setText(
-            "第 5 步/共 %d 步：环境校准 —— 这两样会影响识别的准头，顺手调一下。"
+            "第 5 步/共 %d 步：环境校准 —— 这几项会影响识别的准头，顺手调一下。"
             "**只是提醒：不改也能用**，只是容易认错、要多绕一层。" % total)
         self.mid.setVisible(False)
         self._clear_body()
@@ -441,6 +441,8 @@ class _Wizard(DraggableDialog, QDialog):
         _steps = (
             "① 微信 → 我 → 设置 → 通用 → 深色模式：选「普通」（浅色界面，深色会让识别认错字）。",
             "② 微信 → 我 → 设置 → 通用 → 字体大小：拖到中间那档（默认的「标准」，改大改小都会改行高）。",
+            "③ 把机器人要盯的每个群都点成独立窗口（群上点右键 →「在独立窗口中显示」，"
+            "或双击群头像）：一窗一会话，往里发消息最稳，主窗口最小化也不受影响的。",
         )
         for _s in _steps:
             lb = QLabel(_s.replace("**", ""))
@@ -450,7 +452,7 @@ class _Wizard(DraggableDialog, QDialog):
             bl.addWidget(lb)
         self.body_lay.addWidget(box)
         self.body_lay.addWidget(desc(
-            t, "这两样按上面的位置调成默认档就行；不想改也能继续用。"))
+            t, "这几项按上面的位置调成默认档就行；不想改也能继续用。"))
         if self._env_pending_cache:
             self.body_lay.addWidget(desc(
                 t, "接下来 %d 步逐条讲「还缺的是什么、用来干啥、怎么补」。" % len(self._env_pending_cache)))
@@ -466,7 +468,7 @@ class _Wizard(DraggableDialog, QDialog):
         self.b_next.setText("下一步")
 
     def _open_env_guide(self) -> None:
-        """打开环境引导弹窗（一个弹窗，引导用户把微信调成浅色 + 标准字号）。
+        """打开环境引导弹窗（一个弹窗：浅色 + 标准字号 + 群聊点成独立窗）。
 
         ⚠️ 弹窗**只提醒、不替用户改微信**；用户点「我已设好」⇒ 刷新本页（让他看到已记录）。
         """

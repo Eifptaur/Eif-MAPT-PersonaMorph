@@ -2943,6 +2943,25 @@ def _make_handler(parent):
             except Exception as e:
                 self._json({"ok": False, "error": str(e)}, 500)
 
+        def _rapi_ext_persona_cats(self, path, data, parsed, method):
+            """现有分区清单（人设页的下拉）。**「下载」分区永远在列。**"""
+            try:
+                from . import ext_center # noqa: PLC0415
+                self._json(ext_center.cats())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
+        def _rapi_ext_persona_cat_post(self, path, data, parsed, method):
+            """把某一项人设挪到别的分区（用户自建的新分区名也走这里）。
+
+            ⛔ 只改那一项的 `cat`，别的不动；找不到就如实说"没找到"。
+            """
+            try:
+                from . import ext_center # noqa: PLC0415
+                self._json(ext_center.set_cat(str(data.get("key") or ""), str(data.get("cat") or "")))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+
         def _rapi_market_upload_post(self, path, data, parsed, method):
             """投稿上传（真发网络）。文件由客户端本机读，走三步：presign → PUT → 登记。
 

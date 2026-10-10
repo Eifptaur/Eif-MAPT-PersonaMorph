@@ -248,6 +248,53 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def _import_persona_file(path: str) -> dict:
+    """把下载落地的人设文件**导进人设页**（并落「下载」分区）。
+
+    接受的两种形态：
+      · 单张卡：`{"name": "...", "text": "..."}`（人设页的口径）；
+      · JSON 里带 `name`/`text` 或 `title`/`body` 的任意壳（别家的导出件）—— 尽量认。
+
+    ⛔ 认不出就**如实报**（`bad-manifest`），不猜、不硬塞一张空卡。
+    """
+    if not path or not os.path.isfile(path):
+        return {"ok": False, "code": "bad-manifest", "message": "落点没有可导入的人设文件", "cat": ""}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+    except Exception as _e:  # noqa: BLE001
+        log.debug("人设文件不是合法 JSON：%s", _e, exc_info=True)
+        return {"ok": False, "code": "bad-manifest", "message": "这份人设不是合法的 JSON", "cat": ""}
+
+    # 允许「一个数组装多张卡」或「一张卡」两种形态。
+    cards = obj if isinstance(obj, list) else [obj]
+    ok_n, last = 0, {}
+    for c in cards:
+        if not isinstance(c, dict):
+            continue
+        flat = dict(c)
+        # 兼容别家字段名（自创 / 真人模板里的写法）。
+        if not flat.get("text"):
+            flat["text"] = flat.get("body") or flat.get("persona") or flat.get("content") or ""
+        if not flat.get("name"):
+            flat["name"] = flat.get("title") or ""
+        if not str(flat.get("name") or "").strip() or not str(flat.get("text") or "").strip():
+            continue
+        try:
+            from . import ext_center
+            last = ext_center.import_persona(flat)
+        except Exception as _e:  # noqa: BLE001
+            log.debug("导入人设失败：%s", _e, exc_info=True)
+            last = {"ok": False, "code": "load-failed", "message": str(_e)[:120], "cat": ""}
+        if last.get("ok"):
+            ok_n += 1
+    if not ok_n:
+        return last or {"ok": False, "code": "bad-manifest",
+                        "message": "这份人设里没找到「名字 + 正文」，装不进人设页", "cat": ""}
+    return {"ok": True, "code": "ok",
+            "message": ("已装进人设页 %d 张" % ok_n), "cat": last.get("cat", "")}
+
+
 def install(kind: str, item_id: str, expect_sha256: str = "", data: bytes | None = None) -> dict:
     """装一个资源：**先落到临时目录 → 校验 → 再整体换档**，失败不留半个包。
 
@@ -294,7 +341,24 @@ def install(kind: str, item_id: str, expect_sha256: str = "", data: bytes | None
         dst = os.path.join(dst_dir, safe + (".bin" if data[:2] == b"PK" else ".json"))
         with open(tmp_file, "rb") as sf, open(dst, "wb") as df:
             shutil.copyfileobj(sf, df)
-        return {"ok": True, "code": "ok", "message": "已安装", "path": dst}
+
+        # ⭐ 人设的收尾：**自动导入人设页 ＋ 落「下载」分区**（用户不用自己再走一遍导入）。
+        #    ⚠️ 光把文件丢进 assets/persona/ 是**看不见**的 —— 人设页读的是
+        #       data/custom_personas.json。所以下载完必须再走这一步，否则用户"装了却找不到"。
+        #    ⚠️ 收尾失败**不回滚安装**：文件已经在落点，失败只如实说明（附 `import` 结果），
+        #       让用户知道"文件在、但人设页没看见"（这比整包回滚更好，回滚会连文件一起丢掉）。
+        imp = None
+        if k == "persona":
+            imp = _import_persona_file(dst)
+            if imp and not imp.get("ok"):
+                return {"ok": False, "code": imp.get("code") or "load-failed",
+                        "message": imp.get("message") or reason("load-failed"), "path": dst}
+        ret = {"ok": True, "code": "ok", "message": "已安装", "path": dst}
+        if imp:
+            ret["message"] = ("已装进人设页的「%s」分区" % imp.get("cat", "")) \
+                if imp.get("ok") else ret["message"]
+            ret["cat"] = imp.get("cat", "")
+        return ret
     except OSError as e:
         code = "no-permission" if getattr(e, "errno", None) in (13, 1) else "load-failed"
         return {"ok": False, "code": code, "message": reason(code), "path": ""}

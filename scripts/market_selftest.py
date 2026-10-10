@@ -167,5 +167,64 @@ try:
 except Exception as e:  # noqa: BLE001
     ok("路由接线点检", False, "导入 routes 失败：%s" % str(e)[:60])
 
+print("── H. 下载来的人设：自动导入人设页 + 落「下载」分区 ──")
+try:
+    from agent import ext_center  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+
+    _cp = os.path.join(ROOT, "data", "custom_personas.json")
+    _pc = os.path.join(ROOT, "data", "persona_cats.json")
+    _back_cp = open(_cp, encoding="utf-8").read() if os.path.exists(_cp) else ""
+    _back_pc = open(_pc, encoding="utf-8").read() if os.path.exists(_pc) else ""
+    try:
+        _cats = ext_center.cats()
+        ok("★ 分区清单里永远有「下载」分区（用户装完就有地方落）",
+           ext_center.DOWNLOAD_CAT in (_cats.get("cats") or []), str(_cats.get("cats"))[:80])
+
+        _r = ext_center.import_persona({"name": "__判据卡__", "text": "# 判据\n自检用。"})
+        ok("★ 下载来的人设自动进人设页（不用用户再走导入）", _r.get("ok") is True, str(_r)[:90])
+        ok("★ 且落在「下载」分区（不是散在自定义里）",
+           _r.get("cat") == ext_center.DOWNLOAD_CAT, str(_r.get("cat")))
+        _data = _json.load(open(_cp, encoding="utf-8"))
+        ok("★ 真写进了 custom_personas.json（人设页读的就是这份）",
+           "__判据卡__" in _data and _data["__判据卡__"].get("cat") == ext_center.DOWNLOAD_CAT)
+
+        _m = ext_center.set_cat("__判据卡__", "🧪 自检分区")
+        _data2 = _json.load(open(_cp, encoding="utf-8"))
+        ok("★ 用户能把它挪到别的分区（自建的新分区名也认）",
+           _m.get("ok") is True and _data2["__判据卡__"].get("cat") == "🧪 自检分区",
+           str(_m.get("cat")))
+        ok("★ 挪走时新分区被登记（下次列分区才看得到，否则用户以为没建成）",
+           "🧪 自检分区" in (ext_center.cats().get("cats") or []))
+
+        # 反向锚：缺名字或缺正文的，装不进去且如实报 —— 不许硬塞一张空卡。
+        _bad = ext_center.import_persona({"name": "", "text": ""})
+        ok("★ 反向锚：空人设装不进去、如实报 bad-manifest",
+           _bad.get("ok") is False and _bad.get("code") == "bad-manifest", str(_bad.get("code")))
+    finally:
+        # 恢复原状（判据不许在用户数据上留痕）
+        if _back_cp:
+            open(_cp, "w", encoding="utf-8").write(_back_cp)
+        if _back_pc:
+            open(_pc, "w", encoding="utf-8").write(_back_pc)
+
+    # 下载落点接进 market.install 的收尾（人设那一栏）
+    ok("★ market.install 对 persona 有导入收尾（光落文件＝人设页看不见）",
+       "_import_persona_file" in SRC and 'if k == "persona"' in SRC)
+
+    # 接线：两条分区路由成对
+    from agent import routes as _routes  # noqa: PLC0415
+    _need = ["/api/ext/persona/cats", "/api/ext/persona/cat"]
+    ok("分区两条路由都在 ROUTES 里", all(p in _routes.ROUTES for p in _need),
+       str([p for p in _need if p not in _routes.ROUTES]))
+    ok("分区两条路由都在 HANDLERS 里成对接上", all(p in _routes.HANDLERS for p in _need),
+       str([p for p in _need if p not in _routes.HANDLERS]))
+    _wsrc = open(os.path.join(ROOT, "agent", "webui.py"), encoding="utf-8").read()
+    ok("两个 handler 在 webui.py 里真有 def",
+       all(("def %s(" % n) in _wsrc
+           for n in ("_rapi_ext_persona_cats", "_rapi_ext_persona_cat_post")))
+except Exception as e:  # noqa: BLE001
+    ok("下载分区链路点检", False, "异常：%s" % str(e)[:90])
+
 print("\n%d/%d 通过（跳过 %d）" % (PASS, PASS + FAIL, SKIP))
 sys.exit(1 if FAIL else 0)

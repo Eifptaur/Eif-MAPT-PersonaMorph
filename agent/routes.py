@@ -52,6 +52,10 @@ ROUTES = {
     "/api/market/check": ("POST",),
     "/api/market/code": ("POST",),
     "/api/market/health": ("GET",),
+    # 人设分区（`agent/ext_center.py`）：下载来的人设落「下载」分区，
+    # 用户可查看现有分区 / 把某项挪到别的分区 / 自建新分区。⛔ 只改人设清单，不碰发送链。
+    "/api/ext/persona/cats": ("GET",),
+    "/api/ext/persona/cat": ("POST",),
     "/api/config": ("GET", "POST"),
     "/api/cursor/reset": ("POST",),
     "/api/cursor/upload": ("POST",),
@@ -275,6 +279,12 @@ HANDLERS = {
     },
     "/api/market/health": {
         "GET": "_rapi_market_health_get",
+    },
+    "/api/ext/persona/cats": {
+        "GET": "_rapi_ext_persona_cats",
+    },
+    "/api/ext/persona/cat": {
+        "POST": "_rapi_ext_persona_cat_post",
     },
     "/api/config": {
         "GET": "_rapi_config",
