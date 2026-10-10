@@ -3439,10 +3439,14 @@ class WeChatAdapter:
         return {"sender": sender, "sender_id": sender_id, "text": text}
 
     def _mark_sent(self, text: str):
-        """记录一条自己刚发出去的消息文本（用于过滤数据库回读的"回声"）。"""
-        t = str(text or "").strip()
-        if t:
-            self._recent_sent.append((t, time.time()))
+        """记录一条自己刚发出去的消息文本。
+
+        ⛔ **2026-10-10：判自己已改成「只按微信 ID」⇒ 这里记的文本再也没有判据读它了。**
+        （原来喂 `_is_self_echo` 的文本回声窗，已撤 —— 它会"别人复述你的话"就误判成本人。）
+        调用点保留（发送链上五处，删了反而动到发送代码）⇒ 实现改成**空操作**，
+        `_recent_sent` 这个 deque 也不再被任何判据读取，只是留个容器防 AttributeError。
+        """
+        return
 
     # ── 「这条库行是不是我自己发的」：按 **行号** 判自己────────────
     # 为什么需要（用户两次反馈）：判自己原来只有三档证据 ——
@@ -3649,13 +3653,21 @@ class WeChatAdapter:
         return d
 
     def learn_self_from_echo(self, sender_wxid: str, sample: str = "") -> bool:
-        """**从自己消息的库回读里学会"我"是谁**。
+        """**已停用**（2026-10-10）：判自己只认微信 ID，"从回声学我是谁"这条一并撤掉。
 
-        为什么需要它：原来"自己是谁"只有 `get_self_info()` 一个来源，而它在某些账号/微信版本上
-        **返回空** ⇒ 下面那串"这条是不是我发的"判断全部失效 ⇒ 表现就是**机器人回自己**（尤其当
-        用户拿机器人号手打一句话时：那句不在我们的发送台账里，回声窗认不出）。
-        现在把"我们刚发出去、又读回来的那条"当成最可靠样本：它的 sender_wxid 必然是我。
+        为什么撤：它的**唯一喂入口是文本回声判据**（`_is_self_echo`），而那条判据本身会误判
+        （别人复述你的话 ⇒ 判成你的回声）⇒ 于是**一次误判就把别人的号学成"我自己"**（且落盘）。
+        撤掉它之后，"我"这三个来源已经够用、且都**不靠猜**：
+          · `get_self_info()`（contact.db，最准，但某些账号返回空）；
+          · `data/self_identity.json` 落盘（带账号闸，切号自动失效）；
+          · **账号目录名推**（`db_account_wxid()`，与 contact.db 能不能读无关）—— 最后一道兜底。
+        ⇒ 三者任一有值，`_normalize_impl` 的"按库发送者判自己"那一档就能工作（图文/表情也认得出）。
+        本方法保留为**恒 False 的空壳**（外部若还有引用不会崩，但绝不再改"我是谁"）。
         """
+        return False
+
+    def _learn_self_from_echo_retired(self, sender_wxid: str, sample: str = "") -> bool:
+        """（历史实现，已停用，留档备查 —— **不要接回调用点**）"""
         w = str(sender_wxid or "").strip()
         # ⛔ **数字槽位号不是账号**（`real_sender_id`）——只挡空串与 `gh_` 会把
         #   `"3"` 这类槽位号学成"我自己"。判别收在一处：`_valid_self_id`。
@@ -3796,52 +3808,23 @@ class WeChatAdapter:
         return t
 
     def _is_self_echo(self, text: str) -> bool:
-        """判断一条消息是不是自己刚发的（数据库回读回声）。
+        """**已停用**（2026-10-10）：判自己只认微信 ID，不再用"文本回声"。恒返回 False。
 
-        微信发出的消息会写回本地库，且群聊里 sender_id 不可靠，所以用"文本对得上 + 时间窗"
-        兜底过滤，避免自问自答死循环。三档判据（宽→严）：
-        ① **归一化后完全一致**（去空白/零宽/统一标点）；
-        ② **包含关系（⛔ 只许一个方向）**：**我发出去的那条**包含**库里读回来的那条**，
-           且短的那条 ≥4 字（治"我发整段、库里回来的是半句"）；
-        ③ 老口径的严格 `==` 仍在（①的退化情形）。
-
-        ⛔ **2026-10-10 修的一处误判（"把自己认成别人"）**：
-          原来②是**双向**的（`short in long_`，不管谁长谁短）⇒ 有这样一个坑：
-            我刚发了「今天好累啊」，紧接着群里**另一个人**发「今天好累啊我快死了」
-            ⇒ 别人的话被当成"我的回声" ⇒ 两条连锁后果：
-              ① **漏回**：那条本该回的话被丢掉；
-              ② **认错自己**：这一档命中后会调 `learn_self_from_echo(sender_wxid, ...)`
-                 ⇒ 把**那个群友的 wxid 学成"我自己"**（并落盘）⇒ 从此他说的话全被当自己丢掉、
-                 我自己的话反而被当群友来回 ⇒ 就是用户报的"**把自己认成别人**"。
-          ⇒ 现在只认**"我发的（长）包含 库回来的（短）"**这一个方向：
-            库里的回读**只会比发出去的那条短或被截断**，**不可能凭空比它长** ——
-            所以"对方的话比我的长、且把我的话包在里面"**在物理上就不可能是我的回声**，必须判否。
+        为什么整条撤掉（用户口径："就只按那个微信ID判，不就没有问题了吗"）：
+          · 文本回声本质是**猜** —— 靠"我刚发过的文本"跟进来的消息比对。群里有人**复述你的话**
+            （哪怕只是碰巧说了同一句）⇒ 就被判成"这是我自己的回声"⇒ 那条该回的话被丢掉；
+          · 更糟的是判中那一档还会"**从回声里学我是谁**"（`learn_self_from_echo`）⇒
+            一次误判就把**别人的号**学成"我自己"（且**落盘**）⇒ 从此彻底乱套。
+        保留这个壳是因为台账/诊断处还引用它（现在恒 False，不再影响判定）。
         """
-        t = str(text or "").strip()
-        if not t:
-            return False
-        now = time.time()
-        win = self._echo_window()
-        nt = self._echo_norm(t)
-        for sent_text, sent_ts in list(self._recent_sent or []):
-            if (now - float(sent_ts)) >= win:
-                continue
-            if sent_text == t:
-                return True
-            ns = self._echo_norm(sent_text)
-            if not ns:
-                continue
-            if ns == nt:
-                return True
-            # ⛔ **方向固定：`ns`（我发的）必须包含 `nt`（进来的这条）** ——
-            #   即 `nt in ns`：库里的回读**只可能是我发出去那条的等长副本、或它的截断**，
-            #   所以**进来的那条一定是"我发的"的子串**，反过来不成立。
-            #   ⛔ 若写成 `ns in nt`（我发的被对方的话包住）就是**认错人**：
-            #     对方发「今天好累啊我快死了」而我发过「今天好累啊」⇒ 会被误判成我的回声。
-            #   再卡一道**长度差**：进来的比我发的短太多（截掉了大半）就不像回读，
-            #   更像"我说了前半句、对方接了后半句"⇒ 不判回声。
-            if len(nt) >= 4 and nt in ns and len(ns) - len(nt) <= max(0, len(nt) // 4):
-                return True
+        return False
+
+    def _is_self_echo_retired(self, text: str) -> bool:
+        """（历史实现，已停用；留档说明这条判据当年长什么样，**不要启用**）
+
+        三档（宽→严）：① 归一化后完全一致；② 一方完整包含另一方且短的那条 ≥4 字；
+        ③ 老口径的严格 `==`。问题就出在②：**双向包含** ⇒ 别人更长、把你的话包住 ⇒ 误判。
+        """
         return False
 
     def _note_ledger(self, chat_id, raw: dict, out) -> None:
@@ -3861,7 +3844,10 @@ class WeChatAdapter:
             sender_wxid = (m.group(1) if m else "") or ""
             text = str((out or {}).get("text") or (content[m.end():].strip() if m else content)).strip()
             self_hit = bool(self._self_wxid and sender_wxid and sender_wxid == self._self_wxid)
-            echo_hit = bool(text) and self._is_self_echo(text)
+            # ⛔ 这里原来记的是"文本回声命中"（`_is_self_echo`）。2026-10-10 起**判自己只认微信 ID**，
+            #   不再有文本回声这一档 ⇒ 改记「按库发送者解析出的 wxid 是否等于我」，
+            #   与主流程（`_normalize_impl` 的 db_self_hit 档）同源，台账才有诊断价值。
+            echo_hit = False
             # 自家行号命中：判自己的**最强**一档，不依赖文本（发图/表情/文件的回读
             # 文本是 `[图片]`/`[表情]`，靠文本判永远认不出自己）。台账里单列一项，方便下次一眼定位。
             try:
@@ -4046,23 +4032,13 @@ class WeChatAdapter:
                 text = content[m.end():].strip()
             else:
                 text = content.strip()
-            # 自己发的消息：发送者 wxid 是机器人自己 → 跳过（群聊 sender_id 不可靠，用 wxid 兜底）
+            # 自己发的消息：发送者 wxid 是机器人自己 → 跳过（**判自己只认微信 ID**）
             if self._self_wxid and sender_wxid and sender_wxid == self._self_wxid:
                 return None
-            # ⛔ 兜底（已知现象）：
-            #   认不出自己的 wxid 时，退一步用**昵称 + 我刚发过东西**双重条件来判断 ——
-            #   单看昵称会误伤同名群友（把别人的话丢掉＝漏回），所以再加一条"我确实在 30 秒内发过"。
-            #   宁可少数漏判（回声还有 `_is_self_echo` 的文本+时间窗兜着），也不要因为认不出自己而**回自己**。
-            if (not self._self_wxid) and self._self_nickname and sender_wxid:
-                try:
-                    _sn = str((self._nick_map or {}).get(sender_wxid) or "").strip()
-                    _now = time.time()
-                    _recent = any((_now - float(_ts)) < self._echo_window()
-                                  for _t, _ts in (self._recent_sent or []))
-                    if _sn and _sn == self._self_nickname.strip() and _recent:
-                        return None
-                except Exception:
-                    pass
+            # ⛔ 这里原来还有一档"昵称 + 我刚发过"的兜底（认不出自己 wxid 时退一步猜）。
+            #   2026-10-10 用户口径：**只按微信 ID 判** ⇒ 撤掉。
+            #   它的问题是"猜"：同名群友 + 我刚好在 30 秒内发过东西 ⇒ 别人的话被当自己的丢掉。
+            #   宁可认不出自己（多回一次），也不误伤别人。
         elif mtype == "图片":
             sender_wxid = str(sender_id or "") if sender_id not in (0, 2, None) else ""
             text = "[图片]"
@@ -4109,16 +4085,14 @@ class WeChatAdapter:
         if not text.strip():
             return None
 
-        # 回声过滤：这条消息是自己刚发出去的（文本完全一致）→ 跳过，避免自问自答死循环
-        if text and self._is_self_echo(text):
-            # ⭐ **从回声里学会"我"是谁**。
-            # 起因（追问）：
-            #   我们发出去的消息会写回数据库，**那条记录里的 sender_wxid 就是机器人自己** ⇒
-            #   这里正好是"最可靠的自我识别样本"。学会之后，任何人（包括用户**手打**用机器人号
-            #   发的消息——它不在我们的发送台账里、回声窗认不出）用那个号发言都会被正确跳过，
-            #   而不再依赖有时拿不到的 `get_self_info()`。
-            self.learn_self_from_echo(sender_wxid, text)
-            return None
+        # ⛔ **不再按"文本回声"判自己**（2026-10-10 用户口径：**只按微信 ID 判**）。
+        #   原先这里有一条 `_is_self_echo(text)`：拿"我刚发过的文本"跟进来的消息比对，
+        #   对上了就当"这是我自己的回声"丢掉。它的两个毛病：
+        #     ① **别人复述你的话会被误判成本人**（群里有人说「今天好累啊」而我刚发过同一句）；
+        #     ② 判中的那一档还会顺手"从回声里学我是谁" ⇒ 一次误判就把别人的号学成"我自己"（且落盘）。
+        #   ⇒ 整条撤掉，改由**微信 ID**判（见下：文本正文前缀 / `_resolve_sender_wxid` 解析 / 行号台账）。
+        #   **代价与兜底**：认不出自己 wxid 时，就不再"猜"自己是别人 —— 宁可多回一次，
+        #   也绝不把别人的话当自己的丢掉（用户明确选了这个方向）。
 
         # ★ 发送者身份（**认人不靠 OCR**）：
         #   文本类消息的正文自带 `wxid_xxx:\n…` 前缀 ⇒ `sender_wxid` 已经是 wxid；
