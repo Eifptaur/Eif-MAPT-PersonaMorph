@@ -876,6 +876,31 @@ ok("N6 ★Qt 成功 ⇒ 不开网页端；失败 ⇒ 才回落（两条分支都
 ok("N7 ★反向锚：把「等窗口显示」改回「判线程存活」后 N2 那条会报红（说明它真在起作用）",
    "_shown.wait(" not in _ap.replace("_shown.wait(", "th.is_alive()"))
 
+# ── O. 启动器**绝不再主动开网页端**（Qt 在 ⇒ 抬到前台就收工）────────────────────
+#   用户口径原话："本质上就不应该让网页端出来，**除非 Qt 都没出来**"。
+#   网友反馈的那一幕（"启动后一大一小两个界面"，小＝Qt 控制台、大＝网页控制台）就出在这条：
+#   启动器的"第二次启动"分支原来只看**网页端窗在不在**（`!ConsoleWindowAlive()`），
+#   完全没看 Qt ⇒ "上次的 Qt 窗还开着、网页端没开"这个**最常见的场景**会**再开一个网页端**。
+_lc = src("launcher-src/launcher.cs")
+ok("O1 ★启动器已有「Qt 壳窗在不在」的判据（现成的，不是新发明）",
+   "QtShellWindowAlive()" in _lc)
+ok("O2 ★启动器已有「把 Qt 窗抬到前台」的能力（用户要的是看见界面，不是多一个窗）",
+   "QtShellForeground" in _lc)
+_i_qt = _lc.find("ConsoleForm.QtShellWindowAlive()")
+_i_web = _lc.find("Ui.OpenConsole(url0)")
+ok("O3 ★★那条分支**先看 Qt、再决定开不开网页端**（顺序不能反）",
+   0 <= _i_qt < _i_web, "Qt判据@%s 网页端开窗@%s" % (_i_qt, _i_web))
+_i_fg = _lc.find("ConsoleForm.QtShellForeground();")
+_i_ret = _lc.find("return;", _i_fg) if _i_fg >= 0 else -1
+# 中间隔着的是"写一行现场日志"（语句本身百来字符）⇒ 范围给宽点，别把正常日志当成"没 return"
+ok("O4 ★抬到前台之后**直接收工**（不再往下走去开网页端窗）",
+   _i_fg >= 0 and 0 <= _i_ret <= _i_fg + 800,
+   "foreground@%s return@%s" % (_i_fg, _i_ret))
+# 反向锚：把 Qt 判据抽掉 ⇒ O3 那条**判据式原样求值**当场变假
+_gone = _lc.replace("ConsoleForm.QtShellWindowAlive()", "REMOVED_CALL()")
+ok("O5 ★反向锚：抽掉 Qt 判据后 O3 那条当场变假（说明它真在起作用）",
+   not (0 <= _gone.find("ConsoleForm.QtShellWindowAlive()") < _gone.find("Ui.OpenConsole(url0)")))
+
 print("控制台开窗/窗口/导航判据：%d 通过 / %d 失败 / %d 跳过" % (PASS, FAIL, SKIP))
 if _exe_dir:
     shutil.rmtree(_exe_dir, ignore_errors=True) # 判据自带的 exe 副本不留痕迹

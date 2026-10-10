@@ -1903,6 +1903,25 @@ static class Program
                 {
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
+                    // ⛔⛔ **Qt 窗在屏幕上 ⇒ 绝不再开网页端**（用户口径："本质上就不应该让网页端
+                    //   出来，**除非 Qt 都没出来**"）。
+                    //   这条分支原来的判据是 `!ConsoleWindowAlive()` —— 只看**网页端**窗在不在，
+                    //   完全没看 Qt。于是最常见的那个场景（上次的 Qt 窗还开着、网页端没开）
+                    //   会**再开一个网页端** ⇒ 用户看到一大一小两个界面
+                    //   （小＝Qt 控制台、大＝网页控制台），正是网友反馈的那一幕。
+                    //   现在：Qt 在 ⇒ 把它**抬到前台**就收工（用户要的是"看见界面"，
+                    //   不是"再多一个窗"）；Qt 不在 ⇒ 才照旧探活开网页端。
+                    if (ConsoleForm.QtShellWindowAlive())
+                    {
+                        ConsoleForm.QtShellForeground();
+                        try
+                        {
+                            Ui.NoteFallback(Program.InstallRoot,
+                                "Qt 控制台已经在屏幕上 ⇒ 把它抬到前台，**不开网页端窗**（避免一大一小两个界面）");
+                        }
+                        catch { }
+                        return;
+                    }
                     if (!Ui.ConsoleWindowAlive())
                     {
                         // ⛔ 第 162 项：`ConsoleUrl` 读 `logs\console.url`、`NoteFallback` 写 `logs\`
@@ -2946,9 +2965,16 @@ static class Program
         /// 判窗口径沿用 Ui.ConsoleWindowAlive() 的 MainWindowTitle 精确相等，不另发明。
         internal static bool QtShellWindowAlive()
         {
+            return _QtShellWindow() != IntPtr.Zero;
+        }
+
+        /// 找「Qt 壳」那个窗的句柄；找不到 ⇒ `IntPtr.Zero`。
+        /// ⛔ 判据**只此一份**：`QtShellWindowAlive()` 也走它 ⇒ 两处不会漂移。
+        internal static IntPtr _QtShellWindow()
+        {
             int self = Process.GetCurrentProcess().Id;
             Process[] ps = null;
-            try { ps = Process.GetProcesses(); } catch { return false; }
+            try { ps = Process.GetProcesses(); } catch { return IntPtr.Zero; }
             try
             {
                 foreach (Process pr in ps)
@@ -2959,8 +2985,9 @@ static class Program
                         string nm = "";
                         try { nm = pr.ProcessName.ToLowerInvariant(); } catch { }
                         if (nm != "python" && nm != "pythonw") continue;
-                        if (pr.MainWindowHandle == IntPtr.Zero) continue;
-                        if (pr.MainWindowTitle == "群相 控制台") return true;
+                        IntPtr h = pr.MainWindowHandle;
+                        if (h == IntPtr.Zero) continue;
+                        if (pr.MainWindowTitle == "群相 控制台") return h;
                     }
                     catch { }
                 }
@@ -2969,7 +2996,21 @@ static class Program
             {
                 foreach (Process pr in ps) { try { pr.Dispose(); } catch { } }
             }
-            return false;
+            return IntPtr.Zero;
+        }
+
+        /// 把「Qt 壳」窗**抬到前台**（用户点了启动、而界面其实早就在跑 ⇒ 该让他看见它，
+        /// 而不是再开一个网页端窗）。找不到窗 ⇒ false。
+        internal static bool QtShellForeground()
+        {
+            IntPtr h = _QtShellWindow();
+            if (h == IntPtr.Zero) return false;
+            try
+            {
+                ShowWindow(h, 9); // SW_RESTORE：窗被最小化时也能抬回来
+                return SetForegroundWindow(h);
+            }
+            catch { return false; }
         }
 
         void StartQtWatch()
