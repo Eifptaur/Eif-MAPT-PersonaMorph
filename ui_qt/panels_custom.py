@@ -5137,7 +5137,12 @@ def _popup_help_dlg(parent, t: Tokens, ph: dict) -> None:
     前端**不许自己拼**这两句（两处写必然漂移）。
     """
     dlg, v = _card_dialog(t, parent, str(ph.get("title") or "需要你帮一下"), width=560)
-    body = QLabel(str(ph.get("text") or ""))
+    # ⛔ **正文里的 markdown 星号必须在这里去掉**：`QLabel` 不解析 `**加粗**`，
+    #    会把它**原样显示**成两个星号（`launcher_wizard_selftest` 的 ⑤f 抓的就是这类）。
+    #    后端那段文案（`whale_text.popup_help_text`）是**唯一组装点**、web 端也在用同一份
+    #    ⇒ **不去改它**（那边 `innerHTML` 认 markdown），只在这一处按 Qt 的口径净化。
+    _body_txt = str(ph.get("text") or "").replace("**", "")
+    body = QLabel(_body_txt)
     body.setWordWrap(True)
     body.setFont(qfont(t, 12.5))
     body.setStyleSheet(f"color:{t.tx};background:transparent;")
