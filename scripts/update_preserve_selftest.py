@@ -15,6 +15,9 @@
   D. 运行期**没有任何代码写** `assets/persona/cards.json`（只读加载）
      ⇒ 用户在界面里的编辑不可能落到它上面。
   E. 反向锚：把保护名单改坏 ⇒ A 段必须红。
+  F. ⭐ **云端出包这一头**（更新器只能换"包里有的文件"）：
+     内置人设库必须**真进包**（受版本控制 ＋ 不被 EXCLUDE 挡 ＋ 在随包发布的根里），
+     否则"我们改了人设"根本到不了用户机器 —— 更新器再安全也换不出来。
 
 用法：./runtime/python/python.exe -u scripts/update_preserve_selftest.py
 """
@@ -139,6 +142,29 @@ def main():
         "抽掉保护后仍判'受保护' ⇒ A 段的判据是假的")
     chk("E2 ★原样名单下自建人设受保护（否则 E1 是假阳性）",
         not U._touched("data/custom_personas.json"))
+
+    # F. ⭐ **云端出包这一头**：更新器只管"换进来之后别覆盖"，但更新器**只能换包里有的文件**
+    #    ⇒ 内置人设库必须真进包，否则"我们更新了人设"根本到不了用户机器（更新器再安全也没用）。
+    #    （2026-10-10 用户问："我们更新程序现在能换吗，如果用户本地都是更新程序、都是不换人设的，
+    #      那我云端就成为换人设的那种，能更新到吗" ⇒ 答案必须由"包里有没有它"来证明。）
+    import pack_online as _po  # noqa: PLC0415  与出包脚本共用同一份跟踪/排除规则
+    chk("F1 内置人设库**受版本控制**（出包源＝`git ls-files`，不在库里就进不了包）",
+        "assets/persona/cards.json" in _po.tracked(),
+        "人设库没入库 ⇒ 出包时不会带上 ⇒ 我们的新卡发不出去")
+    chk("F2 内置人设库**没被出包排除名单挡掉**",
+        not _po.excluded("assets/persona/cards.json"),
+        "被 EXCLUDE 挡了 ⇒ 即使入库也不进包")
+    chk("F3 内置人设库在'随包发布'的根里（assets/ ⇒ 出包闸门会核它齐不齐）",
+        any("assets/persona/cards.json".startswith(p) for p in _po.SHIP_ROOTS),
+        "不在随包发布的根里 ⇒ 出包链路不会为它把关")
+    chk("F4 出包源只认已入库的文件 ⇒ 新卡改完必须 `git add` 才发得出去",
+        hasattr(_po, "untracked_ship_files"),
+        "少了'该进包却没入库'的闸门 ⇒ 新卡改了没提交、包照样出成功（静默少东西）")
+    # 两库的**出包分档**必须一致：内置进包、用户库不进包
+    chk("F5 ★出包也分档：内置库进包、用户自建库不进包（`data/` 在 EXCLUDE 里）",
+        (not _po.excluded("assets/persona/cards.json"))
+        and _po.excluded("data/custom_personas.json"),
+        "分档反了 ⇒ 要么新卡发不出去，要么把用户的自建库打进包里")
 
     print()
     print("== 汇总：%d 通过 / %d 失败 ==" % (len(OKS), len(FAILS)))
